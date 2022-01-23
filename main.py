@@ -473,6 +473,18 @@ def setup():
         if "x-api-key" not in settings['registration']:
             raise Exception ("Missing registration -> x-api-key in settings.json")
 
+        if "operators" not in settings:
+            raise Exception ("operators object is missing from settings.json")
+
+        if "uri" not in settings['operators']:
+            raise Exception ("Missing registration -> uri in settings.json")
+
+        if "$CALLSIGN$" not in settings['operators']['uri']:
+            raise Exception ("Missing $CALLSIGN$ text in operators -> uri in settings.json")
+
+        if "x-api-key" not in settings['operators']:
+            raise Exception ("Missing operators -> x-api-key in settings.json")
+
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
             logger.info("Using memory for localDb.")
