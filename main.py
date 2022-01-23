@@ -17,6 +17,7 @@ from pymongo import MongoClient
 import threading
 from threading import Thread, current_thread
 import requests
+import re
 #import paho.mqtt.client
 
 # Requires pyModeS to be installed, pip3 install pyModeS
@@ -119,13 +120,21 @@ def storeMessageLocal(data):
         aircraft['velocities'] = []
         aircraft['total_messages'] = 0
 
-        #Get the aircraft registration
-        registration = getRegistration(aircraft['icao_hex'])
+        #Get the aircraft data
+        aircraftData = getRegistration(aircraft['icao_hex'])
 
         #If the registration was returned, store the data
-        if registration is not None:
-            del registration['icao_hex']
-            aircraft['registration'] = registration
+        if aircraftData is not None:
+
+            #Set the registration to the root of the document
+            if 'registration' in aircraftData:
+                aircraft['registration'] = aircraftData['registration']
+
+            #Delete the repetitive data, we already have it
+            del aircraftData['icao_hex']
+            del aircraftData['registration']
+
+            aircraft['aircraft'] = aircraftData
         
     else:
         aircraft = result[0]
@@ -175,7 +184,25 @@ def storeMessageLocal(data):
         aircraft['category'] = data['category']
 
     if "callsign" in data:
-        aircraft['callsign'] = data['callsign']
+
+        #If the callsign is currently empty and the incoming data is not empty
+        if aircraft['callsign'] == "" and data['callsign'] != "":
+
+            #Store the callsign, note only the first callsign received will be used
+            aircraft['callsign'] = data['callsign']
+
+            #See if there is operator data in the callsign
+            parseCallsignResponse = parseCallsign(aircraft['callsign'], aircraft['registration'])
+
+            #print({"response": parseCallsignResponse, "callsign": aircraft['callsign'], "reg": aircraft['registration']})
+
+            if parseCallsignResponse is not None:
+
+                #Delete repetitive data
+                del parseCallsignResponse['callsign']
+
+                #There is operator data, store it
+                aircraft['operator'] = parseCallsignResponse
 
     if "adsb_version" in data:
         aircraft['adsb_version'] = data['adsb_version']
@@ -184,9 +211,50 @@ def storeMessageLocal(data):
     localDb.upsert(aircraft, Record.icao == data['icao_hex'])
 
 
+def parseCallsign(callsign, registration):
+
+    #If the callsign is empty, return the registration
+    if callsign == "":
+        return None
+
+    #If the callsign and registration are the same, just return the registration
+    if callsign == registration:
+        return None
+
+    #Callsigns are 3 letter designators followed by numbers
+    if re.match("^[A-Z][A-Z][A-Z][0-9]+$",callsign) is None:
+        return None
+
+    #Valid callsign received, parse to get the operator and flight number
+    getOperatorResponse = getOperator(callsign[0:3])
+
+    if getOperatorResponse == None:
+        return None
+
+    returnValue = {}
+
+    returnValue['callsign'] = callsign
+    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
+    returnValue['flight_number'] = callsign[3:]
+    returnValue['operator'] = getOperatorResponse['name']
+    returnValue['phonic'] = getOperatorResponse['callsign'] + " " + str(returnValue['flight_number'])
+    returnValue['country'] = getOperatorResponse['country']
+
+    return returnValue
+
+
 def getRegistration(icao_hex):
 
     r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
+
+    if r.status_code != 200:
+        return None
+    else:
+        return json.loads(r.text)
+
+def getOperator(callsign):
+
+    r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
 
     if r.status_code != 200:
         return None
