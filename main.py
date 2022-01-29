@@ -293,24 +293,41 @@ def parseAircraftCategory(category):
 
     return None
 
+
 def getRegistration(icao_hex):
 
-    r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
+    try:
 
-    if r.status_code != 200:
+        r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
+
+        if r.status_code != 200:
+            return None
+        else:
+            return json.loads(r.text)
+
+    except Exception as ex:
+        logger.info("Error getting registration.")
+        logger.error(ex)
+        print(ex)
         return None
-    else:
-        return json.loads(r.text)
 
 
 def getOperator(callsign):
 
-    r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
+    try:
 
-    if r.status_code != 200:
+        r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
+
+        if r.status_code != 200:
+            return None
+        else:
+            return json.loads(r.text)
+
+    except Exception as ex:
+        logger.info("Error getting operator.")
+        logger.error(ex)
+        print(ex)
         return None
-    else:
-        return json.loads(r.text)
 
 
 def storeMessageRemote():
