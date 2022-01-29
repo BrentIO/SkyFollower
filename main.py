@@ -5,22 +5,20 @@ import logging
 import logging.handlers as handlers
 import json
 import sys
-from tinydb import TinyDB, Query
+from tinydb import TinyDB, Query                    #pip3 install tinydb
 from tinydb.storages import MemoryStorage
-import pyModeS as pms
+import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
+from pymongo import MongoClient                     #pip3 install pymongo
 import uuid
 import time
 import datetime
 from datetime import datetime, timedelta
-from pymongo import MongoClient
 import threading
 from threading import Thread, current_thread
 import requests
 import re
-#import paho.mqtt.client
-
-# Requires pyModeS to be installed, pip3 install pyModeS
+import paho.mqtt.client                             #pip3 install paho-mqtt
 
 
 class ADSBClient(TcpClient):
