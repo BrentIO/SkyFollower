@@ -112,10 +112,6 @@ def storeMessageLocal(data):
         aircraft['first_message'] = data['timestamp']
         aircraft['_id'] = str(uuid.uuid4())
         aircraft['last_message'] = 0
-        aircraft['callsign'] = ""
-        aircraft['category'] = ""
-        aircraft['squawk'] = ""
-        aircraft['adsb_version'] = ""
         aircraft['positions'] = []
         aircraft['velocities'] = []
         aircraft['total_messages'] = 0
