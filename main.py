@@ -347,6 +347,32 @@ def storeMessageRemote():
                 break
 
 
+def mqtt_publishOnline():
+    
+    #Set the status online
+    mqttClient.publish(settings["mqtt"]["statusTopic"], "ONLINE")
+
+
+def mqtt_onConnect(client, userdata, flags, rc):
+    #########################################################
+    # Handles MQTT Connections
+    #########################################################
+
+    try:
+        if rc != 0:
+            logger.warning("Failed to connect to MQTT.  Response code: " + str(rc) + ".")
+
+        else:
+            logger.info("MQTT connected to " + settings["mqtt"]["uri"] + ".")
+
+            mqtt_publishOnline()
+
+    except Exception as ex:
+        logger.error(ex)
+        print("Unable to connect to MQTT.")
+        print(ex)
+        
+
 def exitApp(exitCode=None):
 
     if exitCode is None:
@@ -373,6 +399,7 @@ def setup():
     global settings
     global logger
     global localDb
+    global mqttClient
 
     #Define some constants
     applicationName = "SkyFollower"
@@ -399,7 +426,7 @@ def setup():
         #Settings file exists, read it in and verify its contents
         with open(os.path.join(filePath, 'settings.json')) as settingsFile:
             settings = json.load(settingsFile)
-
+        
         if "adsb" not in settings:
             raise Exception ("adsb object is missing from settings.json")
 
@@ -465,7 +492,22 @@ def setup():
             raise Exception ("Missing mqtt -> password in settings.json")
 
         if settings['mqtt']['password'] == "":
-            raise Exception ("Empty mqtt -> password in settings.json")
+            raise Exception ("Empty mqtt -> password in settings.json")   
+
+        if "statusTopic" not in settings['mqtt']:
+            raise Exception ("Missing mqtt -> statusTopic in settings.json")
+
+        if settings['mqtt']['statusTopic'] == "":
+            raise Exception ("Empty mqtt -> statusTopic in settings.json")
+
+        if "notificationTopic" not in settings['mqtt']:
+            raise Exception ("Missing mqtt -> notificationTopic in settings.json")
+
+        if settings['mqtt']['notificationTopic'] == "":
+            raise Exception ("Empty mqtt -> notificationTopic in settings.json") 
+
+        #Create MQTT Client
+        mqttClient = paho.mqtt.client.Client()
 
         if 'local_database_mode' not in settings:
             settings['local_database_mode'] = "memory"
@@ -530,17 +572,37 @@ def main():
 
     try:
 
+        #Setup the handlers for connection and messages
+        mqttClient.on_connect = mqtt_onConnect
+
         # run new client, change the host, port, and rawtype if needed
         adsb_client = ADSBClient()
 
         dbCleaner = threading.Thread(name="storeMessageRemote", target=storeMessageRemote)
+
+        #Create the MQTT credentials from the settings file
+        mqttClient.username_pw_set(settings["mqtt"]["username"], password=settings["mqtt"]["password"])
+
+        #Set the last will and testament
+        mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=False)
+
+        #Connect to MQTT
+        mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
+
+        #Start the threads
+        mqttClient.loop_start()
+
         dbCleaner.start()
 
-        adsb_client.run()
+        adsb_client.run() #Blocking, must be last            
 
         exitApp(0)
 
-    except KeyboardInterrupt as ex:
+    except KeyboardInterrupt:
+
+        #Set the status online
+        mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
+
         dbCleaner.alive = False
         logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         print("Attempting to shutdown, waiting for remote storage thread to be terminated.")
