@@ -177,20 +177,22 @@ def storeMessageLocal(data):
         aircraft['squawk'] = data['squawk']
 
     if "category" in data:
-        aircraft['category'] = data['category']
+
+        parseAircraftCategoryResponse = parseAircraftCategory(data['category'])
+
+        if parseAircraftCategoryResponse is not None:
+            aircraft['category'] = {"code": data['category'], "value" : parseAircraftCategoryResponse}
 
     if "callsign" in data:
 
         #If the callsign is currently empty and the incoming data is not empty
-        if aircraft['callsign'] == "" and data['callsign'] != "":
+        if 'callsign' not in aircraft and data['callsign'] != "" and 'registration' in aircraft:
 
             #Store the callsign, note only the first callsign received will be used
             aircraft['callsign'] = data['callsign']
 
             #See if there is operator data in the callsign
             parseCallsignResponse = parseCallsign(aircraft['callsign'], aircraft['registration'])
-
-            #print({"response": parseCallsignResponse, "callsign": aircraft['callsign'], "reg": aircraft['registration']})
 
             if parseCallsignResponse is not None:
 
@@ -239,6 +241,31 @@ def parseCallsign(callsign, registration):
     return returnValue
 
 
+def parseAircraftCategory(category):
+
+    if category == 1:
+        return "Light"
+
+    if category == 2:
+        return "Medium 1"
+
+    if category == 3:
+        return "Medium 2"
+
+    if category == 4:
+        return "High Vortex Aircraft"
+
+    if category == 5:
+        return "Heavy"
+
+    if category == 6:
+        return "High Performance"
+
+    if category == 7:
+        return "Rotorcraft"
+
+    return None
+
 def getRegistration(icao_hex):
 
     r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
@@ -247,6 +274,7 @@ def getRegistration(icao_hex):
         return None
     else:
         return json.loads(r.text)
+
 
 def getOperator(callsign):
 
