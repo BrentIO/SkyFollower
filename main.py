@@ -23,11 +23,40 @@ import paho.mqtt.client                             #pip3 install paho-mqtt
 
 class ADSBClient(TcpClient):
 
+    connected = False
+   
     def __init__(self):
         super(ADSBClient, self).__init__(settings['adsb']['uri'], settings['adsb']['port'], settings['adsb']['type'])
 
+        threadStatusCheck = threading.Thread(target=self.checkIfAlive)
+        threadStatusCheck.start()
+
+
+    def setConnected(self):
+        if self.connected == False:
+            self.connected = True
+            logger.info("ADS-B message processor connected to " + settings['adsb']['uri'] + ".")
+
+
+    def checkIfAlive(self):
+
+        try:
+
+            #Timeout
+            time.sleep(30)
+        
+            if self.connected == False:
+                raise Exception("No data received from " + settings['adsb']['uri'] + " before timeout.")                
+
+        except Exception as ex:
+            logger.error(ex)
+            print(ex)
+            logger.info("Error; Exiting with code 2")
+            os._exit(2)
+
 
     def handle_messages(self, messages):
+        self.setConnected()
         threadMessageProcessor = threading.Thread(target=messageProcessor, args=(messages,))
         threadMessageProcessor.start()
 
