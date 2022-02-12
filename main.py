@@ -391,6 +391,16 @@ def storeMessageRemote():
                 break
 
 
+def checkFlightOfInterest(flight):
+
+
+    return
+
+
+def mqtt_publishNotication(flight):
+    print(flight)
+
+
 def mqtt_publishOnline():
     
     #Set the status online
