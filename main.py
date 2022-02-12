@@ -35,7 +35,7 @@ class ADSBClient(TcpClient):
     def setConnected(self):
         if self.connected == False:
             self.connected = True
-            logger.info("ADS-B message processor connected to " + settings['adsb']['uri'] + ".")
+            logger.info("ADS-B client connected to " + settings['adsb']['uri'] + ".")
 
 
     def checkIfAlive(self):
@@ -49,9 +49,9 @@ class ADSBClient(TcpClient):
                 raise Exception("No data received from " + settings['adsb']['uri'] + " before timeout.")                
 
         except Exception as ex:
-            logger.error(ex)
+            logger.critical(ex)
             print(ex)
-            logger.info("Error; Exiting with code 2")
+            logger.critical("Error; Exiting with code 2")
             os._exit(2)
 
 
@@ -419,6 +419,9 @@ def mqtt_onConnect(client, userdata, flags, rc):
 
 def exitApp(exitCode=None):
 
+    #Force the log level to info
+    logger.setLevel(logging.INFO)
+
     if exitCode is None:
         exitCode = 0
 
@@ -435,6 +438,31 @@ def exitApp(exitCode=None):
         logger.info("Error; Exiting with code " + str(exitCode))
 
     sys.exit(exitCode)
+
+
+def setLogLevel(logLevel):
+
+    logLevel = logLevel.lower()
+
+    if logLevel == "debug":
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Logging set to DEBUG.")
+        return
+
+    if logLevel == "error":
+        logger.setLevel(logging.ERROR)
+        logger.error("Logging set to ERROR.")
+        return
+
+    if logLevel == "warning":
+        logger.setLevel(logging.WARNING)
+        logger.warning("Logging set to WARNING.")
+        return
+
+    if logLevel == "critical":
+        logger.setLevel(logging.CRITICAL)
+        logger.critical("Logging set to CRITICAL.")
+        return
 
 
 def setup():
@@ -597,12 +625,12 @@ def setup():
 
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
-            logger.info("Using memory for localDb.")
+            logger.debug("Using memory for localDb.")
             localDb = TinyDB(storage=MemoryStorage)
 
         else:
             settings['local_database_mode'] = "disk"
-            logger.info("Using disk for localDb.")
+            logger.debug("Using disk for localDb.")
             settings['database_file'] = os.path.join(filePath, applicationName + ".tinydb")
             localDb = TinyDB(settings['database_file'])
 
