@@ -132,41 +132,34 @@ def storeMessageLocal(data):
     Record = Query()
     result = localDb.search(Record.icao_hex == data['icao_hex'])
 
-    aircraft = {}
+    flight = {}
 
     if len(result) == 0:
-        aircraft['icao_hex'] = data['icao_hex']
-        aircraft['first_message'] = data['timestamp']
-        aircraft['_id'] = str(uuid.uuid4())
-        aircraft['last_message'] = 0
-        aircraft['positions'] = []
-        aircraft['velocities'] = []
-        aircraft['total_messages'] = 0
+        flight['icao_hex'] = data['icao_hex']
+        flight['first_message'] = data['timestamp']
+        flight['_id'] = str(uuid.uuid4())
+        flight['last_message'] = 0
+        flight['total_messages'] = 0
+        flight['notified'] = False
 
         #Get the aircraft data
-        aircraftData = getRegistration(aircraft['icao_hex'])
+        aircraftData = getRegistration(flight['icao_hex'])
 
         #If the registration was returned, store the data
         if aircraftData is not None:
+            flight['aircraft'] = aircraftData
 
-            #Set the registration to the root of the document
-            if 'registration' in aircraftData:
-                aircraft['registration'] = aircraftData['registration']
-
-            #Delete the repetitive data, we already have it
-            del aircraftData['icao_hex']
-            del aircraftData['registration']
-
-            aircraft['aircraft'] = aircraftData
+        if flight['notified'] == False:
+            checkFlightOfInterest(flight)
         
     else:
-        aircraft = result[0]
+        flight = result[0]
 
     #Set the last message to now
-    aircraft['last_message'] = data['timestamp']
+    flight['last_message'] = data['timestamp']
 
     #Increment the number of messages received
-    aircraft['total_messages'] = aircraft['total_messages'] + 1
+    flight['total_messages'] = flight['total_messages'] + 1
 
     #Check message for position reports
     if "latitude" in data and "longitude" in data and "altitude" in data:
@@ -182,7 +175,10 @@ def storeMessageLocal(data):
         if "altitude" in data:
             positionReport['altitude'] = data['altitude']
 
-        aircraft['positions'].append(positionReport)
+        if 'positions' not in flight:
+            flight['positions'] = []
+
+        flight['positions'].append(positionReport)
 
     #Check message for velocity reports
     if "velocity" in data or "heading" in data or "vertical_speed" in data:
@@ -198,28 +194,34 @@ def storeMessageLocal(data):
         if "vertical_speed" in data:
             velocityReport['vertical_speed'] = data['vertical_speed']
 
-        aircraft['velocities'].append(velocityReport)
+        if 'velocities' not in flight:
+            flight['velocities'] = []
+
+        flight['velocities'].append(velocityReport)
 
     if "squawk" in data:
-        aircraft['squawk'] = data['squawk']
+        flight['squawk'] = data['squawk']
 
     if "category" in data:
-
+        
         parseAircraftCategoryResponse = parseAircraftCategory(data['category'])
 
         if parseAircraftCategoryResponse is not None:
-            aircraft['category'] = {"code": data['category'], "value" : parseAircraftCategoryResponse}
+            if 'aircraft' not in flight:
+                flight['aircraft'] = {}
+                
+            flight['aircraft']['wake_turbulence_category'] = parseAircraftCategoryResponse
 
     if "callsign" in data:
 
         #If the callsign is currently empty and the incoming data is not empty
-        if 'callsign' not in aircraft and data['callsign'] != "" and 'registration' in aircraft:
+        if 'callsign' not in flight and data['callsign'] != "" and 'registration' in flight['aircraft']:
 
             #Store the callsign, note only the first callsign received will be used
-            aircraft['callsign'] = data['callsign']
+            flight['callsign'] = data['callsign']
 
             #See if there is operator data in the callsign
-            parseCallsignResponse = parseCallsign(aircraft['callsign'], aircraft['registration'])
+            parseCallsignResponse = parseCallsign(flight['callsign'], flight['aircraft']['registration'])
 
             if parseCallsignResponse is not None:
 
@@ -227,13 +229,17 @@ def storeMessageLocal(data):
                 del parseCallsignResponse['callsign']
 
                 #There is operator data, store it
-                aircraft['operator'] = parseCallsignResponse
+                flight['operator'] = parseCallsignResponse
 
     if "adsb_version" in data:
-        aircraft['adsb_version'] = data['adsb_version']
+
+        if 'aircraft' not in flight:
+            flight['aircraft'] = {}
+
+        flight['aircraft']['adsb_version'] = data['adsb_version']
 
     #Commit to the local database
-    localDb.upsert(aircraft, Record.icao == data['icao_hex'])
+    localDb.upsert(flight, Record.icao == data['icao_hex'])
 
 
 def parseCallsign(callsign, registration):
@@ -347,6 +353,7 @@ def storeMessageRemote():
             #Determine if we will continue to live after this round
             if threadState:
                 stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['aircraft_ttl_seconds']).total_seconds()))
+                mqtt_publishOnline()
             else:
                 #Thread is shutting down, persist all the records regardless of their status
                 logger.info("Shutdown detected, persisting all local records to MongoDB.")
@@ -360,26 +367,40 @@ def storeMessageRemote():
                 #An array will be returned, cycle through each flight
                 for flight in stale_flights:
 
+                    icao_hex = flight['icao_hex']
+
                     #Make the datestamps human-readable
                     flight['first_message'] = datetime.utcfromtimestamp(flight['first_message'])
                     flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
+
+                    #Delete data we do not want to persist
+                    del flight['notified']
+
+                    if 'aircraft' in flight:
+                        
+                        #ICAO Hex will be repetitive, but only delete it if there is an aircraft object
+                        del flight['icao_hex']
+
+                        if 'military' in flight['aircraft']:
+                            if flight['aircraft']['military'] == False:
+                                del flight['aircraft']['military']
 
                     adsbDB.flights.insert_one(flight)
 
                     countOfMigrated = countOfMigrated + 1
 
-                    localDb.remove(Record.icao_hex == flight['icao_hex'])
+                    localDb.remove(Record.icao_hex == icao_hex)
                 
                 mongoDBClient.close()
 
-                logger.info("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
+                logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
 
             #Determine if we should break out of the loop
             if not threadState:
                 break
 
         except Exception as ex:
-            logger.info("Error migrating data to MongoDB.")
+            logger.critical("Error migrating data to MongoDB.")
             logger.error(ex)
             print(ex)
 
@@ -669,7 +690,7 @@ def main():
         mqttClient.username_pw_set(settings["mqtt"]["username"], password=settings["mqtt"]["password"])
 
         #Set the last will and testament
-        mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=False)
+        mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=True)
 
         #Connect to MQTT
         mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
@@ -685,13 +706,14 @@ def main():
 
     except KeyboardInterrupt:
 
-        #Set the status online
         mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
 
         dbCleaner.alive = False
         logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         print("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         dbCleaner.join()
+        mqttClient.loop_stop()
+
         logger.info("Remote storage thread terminated.")
         exitApp(0)
 
