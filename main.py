@@ -498,7 +498,10 @@ def setup():
         #Settings file exists, read it in and verify its contents
         with open(os.path.join(filePath, 'settings.json')) as settingsFile:
             settings = json.load(settingsFile)
-        
+
+        if "log_level" in settings:
+            setLogLevel(settings['log_level'])
+
         if "adsb" not in settings:
             raise Exception ("adsb object is missing from settings.json")
 
