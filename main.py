@@ -302,6 +302,9 @@ def parseAircraftCategory(category):
 
 def getRegistration(icao_hex):
 
+    if settings['registration']['enabled'] != True:
+        return None
+
     try:
 
         r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
@@ -319,6 +322,9 @@ def getRegistration(icao_hex):
 
 
 def getOperator(callsign):
+
+    if settings['operators']['enabled'] != True:
+        return None
 
     try:
 
@@ -352,7 +358,7 @@ def storeMessageRemote():
 
             #Determine if we will continue to live after this round
             if threadState:
-                stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['aircraft_ttl_seconds']).total_seconds()))
+                stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds()))
                 mqtt_publishOnline()
             else:
                 #Thread is shutting down, persist all the records regardless of their status
@@ -419,10 +425,17 @@ def checkFlightOfInterest(flight):
 
 
 def mqtt_publishNotication(flight):
+
+    if settings['mqtt']['enabled'] != True:
+        return
+
     print(flight)
 
 
 def mqtt_publishOnline():
+
+    if settings['mqtt']['enabled'] != True:
+        return
     
     #Set the status online
     mqttClient.publish(settings["mqtt"]["statusTopic"], "ONLINE")
@@ -432,6 +445,9 @@ def mqtt_onConnect(client, userdata, flags, rc):
     #########################################################
     # Handles MQTT Connections
     #########################################################
+
+    if settings['mqtt']['enabled'] != True:
+        return
 
     try:
         if rc != 0:
@@ -554,12 +570,12 @@ def setup():
         if settings['adsb']['type'].lower() not in ['beast','raw']:
             raise Exception ("Unknown adsb -> type in settings.json.  Valid values are beast | raw")
 
-        if "aircraft_ttl_seconds" not in settings:
-            logger.warning("Setting 'aircraft_ttl_seconds' not declared in the settings file; Defaulting to 90 seconds.")
-            settings['aircraft_ttl_seconds'] = 90
+        if "flight_ttl_seconds" not in settings:
+            logger.warning("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")
+            settings['flight_ttl_seconds'] = 300
 
-        if str(settings['aircraft_ttl_seconds']).isnumeric() != True:
-            raise Exception ("Invalid aircraft_ttl_seconds in settings.json")
+        if str(settings['flight_ttl_seconds']).isnumeric() != True:
+            raise Exception ("Invalid flight_ttl_seconds in settings.json")
 
         if "latitude" not in settings:
             raise Exception ("Missing latitude in settings.json")
@@ -573,47 +589,55 @@ def setup():
         if isinstance(settings['longitude'], float) == False:
             raise Exception ("Invalid longitude in settings.json.  Expected float.")
 
+        if settings['latitude'] == 38.8969137 and settings['longitude'] == -77.0357096:
+            raise Exception ("Configure the latitude and longitude in settings.json.")
+
         if 'mqtt' not in settings:
-            raise Exception ("mqtt object is missing from settings.json")
+            logger.warning("mqtt is not declared in the settings file; MQTT will be disabled.")
 
-        if "uri" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> uri in settings.json")
+            settings['mqtt']['enabled'] = False
 
-        if settings['mqtt']['uri'] == "":
-            raise Exception ("Empty mqtt -> uri in settings.json")
+        else:
+            settings['mqtt']['enabled'] = True
 
-        if "port" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> port in settings.json")
+            if "uri" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> uri in settings.json")
 
-        if str(settings['mqtt']['port']).isnumeric() != True:
-            raise Exception ("Invalid mqtt -> port in settings.json")
+            if settings['mqtt']['uri'] == "":
+                raise Exception ("Empty mqtt -> uri in settings.json")
 
-        if "username" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> username in settings.json")
+            if "port" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> port in settings.json")
 
-        if settings['mqtt']['username'] == "":
-            raise Exception ("Empty mqtt -> username in settings.json")
+            if str(settings['mqtt']['port']).isnumeric() != True:
+                raise Exception ("Invalid mqtt -> port in settings.json")
 
-        if "password" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> password in settings.json")
+            if "username" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> username in settings.json")
 
-        if settings['mqtt']['password'] == "":
-            raise Exception ("Empty mqtt -> password in settings.json")   
+            if settings['mqtt']['username'] == "":
+                raise Exception ("Empty mqtt -> username in settings.json")
 
-        if "statusTopic" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> statusTopic in settings.json")
+            if "password" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> password in settings.json")
 
-        if settings['mqtt']['statusTopic'] == "":
-            raise Exception ("Empty mqtt -> statusTopic in settings.json")
+            if settings['mqtt']['password'] == "":
+                raise Exception ("Empty mqtt -> password in settings.json")   
 
-        if "notificationTopic" not in settings['mqtt']:
-            raise Exception ("Missing mqtt -> notificationTopic in settings.json")
+            if "statusTopic" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> statusTopic in settings.json")
 
-        if settings['mqtt']['notificationTopic'] == "":
-            raise Exception ("Empty mqtt -> notificationTopic in settings.json") 
+            if settings['mqtt']['statusTopic'] == "":
+                raise Exception ("Empty mqtt -> statusTopic in settings.json")
 
-        #Create MQTT Client
-        mqttClient = paho.mqtt.client.Client()
+            if "notificationTopic" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> notificationTopic in settings.json")
+
+            if settings['mqtt']['notificationTopic'] == "":
+                raise Exception ("Empty mqtt -> notificationTopic in settings.json") 
+
+            #Create MQTT Client
+            mqttClient = paho.mqtt.client.Client()
 
         if 'local_database_mode' not in settings:
             settings['local_database_mode'] = "memory"
@@ -633,29 +657,45 @@ def setup():
         if "database" not in settings['mongoDb']:
             raise Exception ("Missing mongoDb -> database in settings.json")
 
-        if "registration" not in settings:
-            raise Exception ("registration object is missing from settings.json")
+        if 'registration' not in settings:
+            logger.warning("registration is not declared in the settings file; Retrieving registrations will be disabled.")
 
-        if "uri" not in settings['registration']:
-            raise Exception ("Missing registration -> uri in settings.json")
+            settings['registration']['enabled'] = False
 
-        if "$ICAO_HEX$" not in settings['registration']['uri']:
-            raise Exception ("Missing $ICAO_HEX$ text in registration -> uri in settings.json")
+        else:
+            settings['registration']['enabled'] = True
 
-        if "x-api-key" not in settings['registration']:
-            raise Exception ("Missing registration -> x-api-key in settings.json")
+            if "registration" not in settings:
+                raise Exception ("registration object is missing from settings.json")
 
-        if "operators" not in settings:
-            raise Exception ("operators object is missing from settings.json")
+            if "uri" not in settings['registration']:
+                raise Exception ("Missing registration -> uri in settings.json")
 
-        if "uri" not in settings['operators']:
-            raise Exception ("Missing registration -> uri in settings.json")
+            if "$ICAO_HEX$" not in settings['registration']['uri']:
+                raise Exception ("Missing $ICAO_HEX$ text in registration -> uri in settings.json")
 
-        if "$CALLSIGN$" not in settings['operators']['uri']:
-            raise Exception ("Missing $CALLSIGN$ text in operators -> uri in settings.json")
+            if "x-api-key" not in settings['registration']:
+                raise Exception ("Missing registration -> x-api-key in settings.json")
 
-        if "x-api-key" not in settings['operators']:
-            raise Exception ("Missing operators -> x-api-key in settings.json")
+        if 'operators' not in settings:
+            logger.warning("operators is not declared in the settings file; Retrieving operators will be disabled.")
+
+            settings['operators']['enabled'] = False
+
+        else:
+            settings['operators']['enabled'] = True
+        
+            if "operators" not in settings:
+                raise Exception ("operators object is missing from settings.json")
+
+            if "uri" not in settings['operators']:
+                raise Exception ("Missing registration -> uri in settings.json")
+
+            if "$CALLSIGN$" not in settings['operators']['uri']:
+                raise Exception ("Missing $CALLSIGN$ text in operators -> uri in settings.json")
+
+            if "x-api-key" not in settings['operators']:
+                raise Exception ("Missing operators -> x-api-key in settings.json")
 
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
@@ -678,25 +718,28 @@ def main():
 
     try:
 
-        #Setup the handlers for connection and messages
-        mqttClient.on_connect = mqtt_onConnect
+        if settings['mqtt']['enabled'] == True:
+    
+            #Setup the handlers for connection and messages
+            mqttClient.on_connect = mqtt_onConnect
+
+            #Create the MQTT credentials from the settings file
+            mqttClient.username_pw_set(settings["mqtt"]["username"], password=settings["mqtt"]["password"])
+
+            #Set the last will and testament
+            mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=True)
+
+            #Connect to MQTT
+            mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
 
         # run new client, change the host, port, and rawtype if needed
         adsb_client = ADSBClient()
 
         dbCleaner = threading.Thread(name="storeMessageRemote", target=storeMessageRemote)
 
-        #Create the MQTT credentials from the settings file
-        mqttClient.username_pw_set(settings["mqtt"]["username"], password=settings["mqtt"]["password"])
-
-        #Set the last will and testament
-        mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=True)
-
-        #Connect to MQTT
-        mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
-
         #Start the threads
-        mqttClient.loop_start()
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.loop_start()
 
         dbCleaner.start()
 
@@ -706,13 +749,16 @@ def main():
 
     except KeyboardInterrupt:
 
-        mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
 
         dbCleaner.alive = False
         logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         print("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         dbCleaner.join()
-        mqttClient.loop_stop()
+
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.loop_stop()
 
         logger.info("Remote storage thread terminated.")
         exitApp(0)
