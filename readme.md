@@ -35,7 +35,7 @@ python3 --version
 ### Python Packages
 Prior to running SkyFollower you must install several dependent Python packages:
 ```
-pip3 install tinydb pyModeS pymongo requests paho-mqtt
+sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt
 ```
 
 ### Aircraft Registration
