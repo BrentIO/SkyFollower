@@ -10,20 +10,20 @@
         "username": "my_username",
         "password": "my_clear_text_password"
     },
-    "aircraft_ttl_seconds": 300,
+    "flight_ttl_seconds": 300,
     "local_database_mode": "memory",
     "mongoDb": {
-        "uri": "my.mongodb.server.lan",
+        "uri": "localhost",
         "port": 27017,
-        "database" : "flights"
+        "database": "flights"
     },
-    "registration" : {
+    "registration": {
         "uri": "http://my.web.server.lan/registration.php?icao_hex=$ICAO_HEX$",
-        "x-api-key" : "some_secret_key"
+        "x-api-key": "some_secret_key"
     },
-    "operators" : {
+    "operators": {
         "uri": "http://my.web.server.lan/operator.php?airline_designator=$CALLSIGN$",
-        "x-api-key" : "some_secret_key"
+        "x-api-key": "some_secret_key"
     },
     "latitude": 38.8969137,
     "longitude": -77.0357096
