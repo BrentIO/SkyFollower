@@ -473,9 +473,10 @@ def exitApp(exitCode=None):
         exitCode = 0
 
     #Commit the database if it is not memory
-    if settings['local_database_mode'] == "disk":
-        logger.info("Committing database to disk.")
-        localDb.commit()
+    if 'local_database_mode' in settings:
+        if settings['local_database_mode'] == "disk":
+            logger.info("Committing database to disk.")
+            localDb.commit()
 
     if exitCode == 0:
         print(applicationName + " application finished successfully.")
@@ -595,6 +596,8 @@ def setup():
         if 'mqtt' not in settings:
             logger.warning("mqtt is not declared in the settings file; MQTT will be disabled.")
 
+            settings['mqtt'] = {}
+
             settings['mqtt']['enabled'] = False
 
         else:
@@ -660,6 +663,8 @@ def setup():
         if 'registration' not in settings:
             logger.warning("registration is not declared in the settings file; Retrieving registrations will be disabled.")
 
+            settings['registration'] = {}
+
             settings['registration']['enabled'] = False
 
         else:
@@ -679,6 +684,8 @@ def setup():
 
         if 'operators' not in settings:
             logger.warning("operators is not declared in the settings file; Retrieving operators will be disabled.")
+
+            settings['operators'] = {}
 
             settings['operators']['enabled'] = False
 
