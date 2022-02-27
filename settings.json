@@ -8,7 +8,9 @@
         "uri": "my.mqtt.server.lan",
         "port": 1883,
         "username": "my_username",
-        "password": "my_clear_text_password"
+        "password": "my_clear_text_password",
+        "statusTopic" : "SkyFollower/status",
+        "notificationTopic" : "SkyFollower/notify"
     },
     "flight_ttl_seconds": 300,
     "local_database_mode": "memory",

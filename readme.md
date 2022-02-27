@@ -78,6 +78,8 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `mqtt -> port` | 1883 | Port for your MQTT broker. :information_source: Coming soon.|
 | `mqtt -> username` | my_username | Username to use when authenticating to your MQTT broker. :information_source: Coming soon.|
 | `mqtt -> password` | my_clear_text_password | Password to use when authenticating to your MQTT broker. :information_source: Coming soon.|
+| `mqtt -> statusTopic` | SkyFollower/status | MQTT topic used to announce SkyFollower service status.|
+| `mqtt -> notificationTopic` | SkyFollower/notify | MQTT topic used to notify about aircraft which meet the monitoring criteria. :information_source: Coming soon.|
 | `mongoDb -> uri` | localhost | URL for the MongoDB server.  You should only need to change this if you are not running SkyFollower and MongoDB on the same device.|
 | `mongoDb -> port`| 27017 | Port for your MongoDB server.  You should only need to change this if you did a custom installation of MongoDB and specifically changed the port binding.|
 | `mongoDb -> database`| flights | Name of the MongoDB database to store the flight data.|
