@@ -375,6 +375,7 @@ def storeMessageRemote():
 
                 mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
                 adsbDB = mongoDBClient[settings['mongoDb']['database']]
+                adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
 
                 #An array will be returned, cycle through each flight
                 for flight in stale_flights:
@@ -397,7 +398,7 @@ def storeMessageRemote():
                             if flight['aircraft']['military'] == False:
                                 del flight['aircraft']['military']
 
-                    adsbDB.flights.insert_one(flight)
+                    adsbDBCollection.insert_one(flight)
 
                     countOfMigrated = countOfMigrated + 1
 

@@ -73,6 +73,8 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `local_database_mode` | memory | Determines if the cached database is stored in memory or disk.  Options are `disk` or `memory`.  If using disk, be mindful that this will cause significant writes, and is intended for debugging purposes only.|
 | `adsb -> port` | 30002 | The port of your ADS-B receiver where the data can be found.  Use `30002` when setting the `adsb -> type` to `raw`.  Use `30005` when setting the `adsb -> type` to `beast`.|
 | `adsb -> type` | raw | The data format your ADS-B receiver is sending to SkyFollower.  Use `raw` when setting the `adsb -> port` to `30002`.  Use `beast` when setting the `adsb -> port` to `30005`.|
+| `mongoDb -> database`| SkyFollower | Name of the MongoDB database to store the flight data.|
+| `mongoDb -> collection`| flights | Name of the document collection in the database to store the flight data.|
 | `mqtt` |  If this object is omitted, MQTT will be disabled.|
 | `mqtt -> uri` | my.mqtt.server.lan | IP address or domain name of your MQTT broker. :information_source: Coming soon.|
 | `mqtt -> port` | 1883 | Port for your MQTT broker. :information_source: Coming soon.|
