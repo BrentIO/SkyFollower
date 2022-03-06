@@ -154,7 +154,10 @@ def storeMessageLocal(data):
         aircraftData = getRegistration(flight['icao_hex'])
 
         #If the registration was returned, store the data
-        if aircraftData is not None:
+        if aircraftData is None:
+            flight['aircraft'] = {}
+            flight['aircraft']['icao_hex'] = flight['icao_hex']
+        else:
             flight['aircraft'] = aircraftData
 
         if flight['notified'] == False:
@@ -579,7 +582,7 @@ def setup():
             raise Exception ("Unknown adsb -> type in settings.json.  Valid values are beast | raw")
 
         if "flight_ttl_seconds" not in settings:
-            logger.warning("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")
+            logger.info("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")
             settings['flight_ttl_seconds'] = 300
 
         if str(settings['flight_ttl_seconds']).isnumeric() != True:
@@ -601,14 +604,19 @@ def setup():
             raise Exception ("Configure the latitude and longitude in settings.json.")
 
         if 'mqtt' not in settings:
-            logger.warning("mqtt is not declared in the settings file; MQTT will be disabled.")
+            logger.info("mqtt is not declared in the settings file; MQTT will be disabled.")
 
             settings['mqtt'] = {}
 
             settings['mqtt']['enabled'] = False
 
         else:
-            settings['mqtt']['enabled'] = True
+            
+            if 'enabled' not in settings['mqtt']:
+                settings['mqtt']['enabled'] = False
+
+            if settings['mqtt']['enabled'] == False:
+                logger.info("MQTT is disabled in the settings file; MQTT will be disabled.")
 
             if "uri" not in settings['mqtt']:
                 raise Exception ("Missing mqtt -> uri in settings.json")
@@ -667,15 +675,23 @@ def setup():
         if "database" not in settings['mongoDb']:
             raise Exception ("Missing mongoDb -> database in settings.json")
 
+        if "collection" not in settings['mongoDb']:
+            raise Exception ("Missing mongoDb -> collection in settings.json")
+
         if 'registration' not in settings:
-            logger.warning("registration is not declared in the settings file; Retrieving registrations will be disabled.")
+            logger.info("registration is not declared in the settings file; Retrieving registrations will be disabled.")
 
             settings['registration'] = {}
 
             settings['registration']['enabled'] = False
 
         else:
-            settings['registration']['enabled'] = True
+
+            if 'enabled' not in settings['registration']:
+                settings['registration']['enabled'] = False
+
+            if settings['registration']['enabled'] == False:
+                logger.info("Registration is disabled in the settings file; Retrieving registrations will be disabled.")
 
             if "registration" not in settings:
                 raise Exception ("registration object is missing from settings.json")
@@ -690,17 +706,19 @@ def setup():
                 raise Exception ("Missing registration -> x-api-key in settings.json")
 
         if 'operators' not in settings:
-            logger.warning("operators is not declared in the settings file; Retrieving operators will be disabled.")
+            logger.info("operators is not declared in the settings file; Retrieving operators will be disabled.")
 
             settings['operators'] = {}
 
             settings['operators']['enabled'] = False
 
         else:
-            settings['operators']['enabled'] = True
-        
-            if "operators" not in settings:
-                raise Exception ("operators object is missing from settings.json")
+
+            if 'enabled' not in settings['operators']:
+                settings['operators']['enabled'] = False
+
+            if settings['operators']['enabled'] == False:
+                logger.info("Operators is disabled in the settings file; Retrieving operators will be disabled.")
 
             if "uri" not in settings['operators']:
                 raise Exception ("Missing registration -> uri in settings.json")
