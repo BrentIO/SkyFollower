@@ -59,7 +59,6 @@ class ADSBClient(TcpClient):
 
         except Exception as ex:
             logger.critical(ex)
-            print(ex)
             logger.critical("Error; Exiting with code 2")
             os._exit(2)
 
@@ -326,7 +325,6 @@ def getRegistration(icao_hex):
     except Exception as ex:
         logger.info("Error getting registration.")
         logger.error(ex)
-        print(ex)
         return None
 
 
@@ -347,7 +345,6 @@ def getOperator(callsign):
     except Exception as ex:
         logger.info("Error getting operator.")
         logger.error(ex)
-        print(ex)
         return None
 
 
@@ -417,7 +414,6 @@ def storeMessageRemote():
         except Exception as ex:
             logger.critical("Error migrating data to MongoDB.")
             logger.error(ex)
-            print(ex)
 
         finally:
             #Sleep another 10 seconds if the thread is still alive
@@ -488,7 +484,6 @@ def exitApp(exitCode=None):
             localDb.commit()
 
     if exitCode == 0:
-        print(applicationName + " application finished successfully.")
         logger.info(applicationName + " application finished successfully.")
 
     if exitCode != 0:
@@ -726,7 +721,6 @@ def setup():
 
     except Exception as ex:
         logger.error(ex)
-        print(ex)
         exitApp(1)
 
 
