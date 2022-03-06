@@ -1,34 +1,34 @@
 {
+    "latitude": 38.8969137,
+    "longitude": -77.0357096,
     "adsb": {
         "uri": "my.adsb.server.lan",
         "port": 30002,
         "type": "raw"
     },
-    "mqtt": {
-        "uri": "my.mqtt.server.lan",
-        "port": 1883,
-        "username": "my_username",
-        "password": "my_clear_text_password",
-        "statusTopic" : "SkyFollower/status",
-        "notificationTopic" : "SkyFollower/notify"
-    },
-    "flight_ttl_seconds": 300,
-    "local_database_mode": "memory",
     "mongoDb": {
         "uri": "localhost",
         "port": 27017,
-        "database": "flights"
         "database": "SkyFollower",
         "collection" : "flights"
     },
     "registration": {
-        "uri": "http://my.web.server.lan/registration.php?icao_hex=$ICAO_HEX$",
+        "enabled": false,
+        "uri": "http://localhost/api/registration?icao_hex=$ICAO_HEX$",
         "x-api-key": "some_secret_key"
     },
     "operators": {
-        "uri": "http://my.web.server.lan/operator.php?airline_designator=$CALLSIGN$",
+        "enabled": false,
+        "uri": "http://localhost/api/operator?airline_designator=$CALLSIGN$",
         "x-api-key": "some_secret_key"
     },
-    "latitude": 38.8969137,
-    "longitude": -77.0357096
+    "mqtt": {
+        "enabled": false,
+        "uri": "my.mqtt.server.lan",
+        "port": 1883,
+        "username": "my_username",
+        "password": "my_clear_text_password",
+        "statusTopic": "SkyFollower/status",
+        "notificationTopic": "SkyFollower/notify"
+    }
 }
