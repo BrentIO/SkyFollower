@@ -19,8 +19,17 @@ from threading import Thread, current_thread
 import requests
 import re
 import paho.mqtt.client                             #pip3 install paho-mqtt
+import signal
 
 
+def handle_interrupt(signal, frame):
+    raise sigKill("SIGKILL Requested")
+
+
+class sigKill(Exception):
+    pass
+
+    
 class ADSBClient(TcpClient):
 
     connected = False
@@ -754,6 +763,22 @@ def main():
 
         exitApp(0)
 
+    except sigKill:
+
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
+
+        dbCleaner.alive = False
+        logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
+        dbCleaner.join()
+
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.loop_stop()
+
+        logger.info("Remote storage thread terminated.")
+        exitApp(0)       
+
+
     except KeyboardInterrupt:
 
         if settings['mqtt']['enabled'] == True:
@@ -761,22 +786,21 @@ def main():
 
         dbCleaner.alive = False
         logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
-        print("Attempting to shutdown, waiting for remote storage thread to be terminated.")
         dbCleaner.join()
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_stop()
 
         logger.info("Remote storage thread terminated.")
-        exitApp(0)
+        exitApp(0)       
 
     except Exception as ex:
         logger.error(ex)
-        print(ex)
         exitApp(1)
 
 
 if __name__ == "__main__":
 
+    signal.signal(signal.SIGTERM, handle_interrupt)
     setup()
     main()
