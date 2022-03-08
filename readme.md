@@ -123,5 +123,7 @@ sudo systemctl start SkyFollower.service
   - The ADS-B listener is stopped and data stored in memory is immediately written to MongoDB.  Restarting SkyFollower immediately will likely cause a duplication of the flight information, since SkyFollower doesn't retroactively merge documents in MongoDB.
 - Is this going to break my map or other tools that I currently use?
   - SkyFollower listens to the same stream of data that your other tools do, and therefore should not interfere with those functions.  Custom maps, real-time statistics, and other neat add-on's that you might be using will continue to work unaffected.  Note, however, that if you install the [Aircraft Registration and Operator Information](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information), it is possible this could conflict with the port your map uses, so read those docs carefully.
+- The service won't start and there's nothing in any of the logs.  What do I do?
+  - Try starting the service manually by using `sudo python3 main.py`.  If there is an error, it will usually be printed on the screen for you to see.
 - What promised features haven't been implemented yet?
   - `To Do`: MQTT notifications engine
