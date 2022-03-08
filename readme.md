@@ -28,7 +28,7 @@ sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt
 ```
 
 ### Optional: Aircraft Registration and Operator Information
-This step is optional, but SkyFollower can retrieve aircraft registration and operator information to enrich your data. This can be helpful if you want to trigger alerts about specific operators or registration numbers.  To do so, download and configure the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information).
+This step is optional, but SkyFollower can retrieve aircraft registration and operator information to enrich your data. This can be helpful if you want to trigger alerts about specific operators or registration numbers.  To do so, download and configure the [Aircraft Registration and Operator Information](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information).
 
 ## Download and Install SkyFollower
 Clone SkyFollower from GitHub:
@@ -122,6 +122,6 @@ sudo systemctl start SkyFollower.service
 - What happens when my computer shuts down or I stop the SkyFollower service?
   - The ADS-B listener is stopped and data stored in memory is immediately written to MongoDB.  Restarting SkyFollower immediately will likely cause a duplication of the flight information, since SkyFollower doesn't retroactively merge documents in MongoDB.
 - Is this going to break my map or other tools that I currently use?
-  - SkyFollower listens to the same stream of data that your other tools do, and therefore should not interfere with those functions.  Custom maps, real-time statistics, and other neat add-on's that you might be using will continue to work unaffected.  Note, however, that if you install the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information), it is possible this could conflict with the port your map uses, so read those docs carefully.
+  - SkyFollower listens to the same stream of data that your other tools do, and therefore should not interfere with those functions.  Custom maps, real-time statistics, and other neat add-on's that you might be using will continue to work unaffected.  Note, however, that if you install the [Aircraft Registration and Operator Information](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information), it is possible this could conflict with the port your map uses, so read those docs carefully.
 - What promised features haven't been implemented yet?
   - `To Do`: MQTT notifications engine
