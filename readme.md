@@ -2,11 +2,10 @@
 Track, store, and alert on aircraft movement from an ADS-B locally.
 
 ## What Does it Do?
-SkyFollower reads data from your ADS-B output using either Beast or raw message output, enriches that data by calling an [external web service](https://github.com/BrentIO/Aircraft-Registration-Import) for registration and aircraft information, and sends notifications about tracked aircraft movements using a rules-based engine.  All of the output is stored in MongoDB for any other use you might have in a simple, easy-to-query format.
+SkyFollower reads data from your ADS-B output using either Beast or raw message output, enriches that data by calling an [external web service](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information) for aircraft registration and operator information, and sends notifications about tracked aircraft movements using a rules-based engine.  All of the output is stored in MongoDB for any other use you might have in a simple, easy-to-query format.
 
 ## How does it Work?
-As your ADS-B receiver publishes data, SkyFollower reads that data into a local in-memory database.  As messages are sent by the aircraft, a profile of the flight is built using the local, in-memory data.  Data is stored in-memory until the signal has been lost and then persisted to MongoDB.  If the service shuts down gracefully, the data is also persisted.
-
+As your ADS-B receiver publishes data, SkyFollower reads that data into a local in-memory database.  As messages are sent by the aircraft, a profile of the flight is built using the local, in-memory data.  Data is stored in-memory until loss of signal with the tracked aircraft and then persisted to MongoDB.  If the service exits, the in-memory data is persisted immediately.
 
 
 ## Prerequisites
@@ -20,11 +19,16 @@ MongoDB is a document-based datastore and is perfect for operations like trackin
 ### Required packages
 Using apt, install the prerequisite packages, if you don't already have them installed:
 ```
-sudo apt-get install -y python3 python3-pip tinydb pyModeS pymongo requests paho-mqtt
+sudo apt-get install -y python3 python3-pip
+```
+
+Python also requires a number of packages that must be installed:
+```
+sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt
 ```
 
 ### Optional: Aircraft Registration and Operator Information
-This step is optional, but SkyFollower can retrieve aircraft registration and operator information to enrich your data. This can be helpful if you want to trigger alerts about specific operators or registration numbers.  To do so, download and configure the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-Import).
+This step is optional, but SkyFollower can retrieve aircraft registration and operator information to enrich your data. This can be helpful if you want to trigger alerts about specific operators or registration numbers.  To do so, download and configure the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information).
 
 ## Download and Install SkyFollower
 Clone SkyFollower from GitHub:
@@ -81,7 +85,7 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 
 
 
-## Installation
+## Service Installation
 
 Copy the service file to the systemctl directory
 ```
@@ -93,7 +97,7 @@ Reload the systemctrl daemon to pick up the new SkyFollower service
 sudo systemctl daemon-reload
 ```
 
-Enable the service
+Enable the service to run
 ```
 sudo systemctl enable SkyFollower.service
 ```
@@ -118,11 +122,6 @@ sudo systemctl start SkyFollower.service
 - What happens when my computer shuts down or I stop the SkyFollower service?
   - The ADS-B listener is stopped and data stored in memory is immediately written to MongoDB.  Restarting SkyFollower immediately will likely cause a duplication of the flight information, since SkyFollower doesn't retroactively merge documents in MongoDB.
 - Is this going to break my map or other tools that I currently use?
-  - SkyFollower listens to the same stream of data that your other tools do, and therefore should not interfere with those functions.  Custom maps, real-time statistics, and other neat add-on's that you might be using will continue to work unaffected.  Note, however, that if you install the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-Import), it is possible this could conflict with the port your map uses, so read those docs carefully.
+  - SkyFollower listens to the same stream of data that your other tools do, and therefore should not interfere with those functions.  Custom maps, real-time statistics, and other neat add-on's that you might be using will continue to work unaffected.  Note, however, that if you install the [Aircraft Registration Import](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information), it is possible this could conflict with the port your map uses, so read those docs carefully.
 - What promised features haven't been implemented yet?
   - `To Do`: MQTT notifications engine
-
-
-
-## Credits
-- [PyModeS](https://github.com/junzis/pyModeS), which powers the decoding of the native ADS-B messages
