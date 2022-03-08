@@ -68,11 +68,11 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `mongoDb -> collection`| flights | Name of the document collection in the database to store the flight data.|
 | `registration` | If this object is ommitted, retrieving registration data will be disabled.  Useful for converting the ICAO hex code to a registration object.  For example, querying `A8AE7F` would return to an object for a Boeing 757.  |
 | `registration -> enabled` | false | Controls if retrieving registration data is enabled or disabled.|
-| `registration -> uri` | http://localhost/api/registration?icao_hex=$ICAO_HEX$ | The URL of the webserver where the registration microservice runs.  Note, $ICAO_HEX$ will subsitute the ICAO hex code of the aircraft. |
+| `registration -> uri` | http://localhost/registration?icao_hex=$ICAO_HEX$ | The URL of the webserver where the registration microservice runs.  Note, $ICAO_HEX$ will subsitute the ICAO hex code of the aircraft. |
 | `registration -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `operators` | If this object is ommitted, retrieving operator data will be disabled.  Useful for converting aircraft callsigns to operators.  For example, querying for `DAL` would return an object for Delta Air Lines.|
 | `operators -> enabled` | false | Controls if retrieving operator data is enabled or disabled.|
-| `operators -> uri` | http://localhost/api/operator?airline_designator=$CALLSIGN$ | The URL of the webserver where the operators microservice runs.  Note, $CALLSIGN$ will subsitute the ICAO callsign of the aircraft. |
+| `operators -> uri` | http://localhost/operator?airline_designator=$CALLSIGN$ | The URL of the webserver where the operators microservice runs.  Note, $CALLSIGN$ will subsitute the ICAO callsign of the aircraft. |
 | `operators -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `mqtt` |  If this object is omitted, MQTT will be disabled.|
 | `mqtt -> enabled` | false | Controls if MQTT is enabled or disabled.|

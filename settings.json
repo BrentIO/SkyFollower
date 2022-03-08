@@ -14,12 +14,12 @@
     },
     "registration": {
         "enabled": false,
-        "uri": "http://localhost/api/registration?icao_hex=$ICAO_HEX$",
+        "uri": "http://localhost/registration?icao_hex=$ICAO_HEX$",
         "x-api-key": "some_secret_key"
     },
     "operators": {
         "enabled": false,
-        "uri": "http://localhost/api/operator?airline_designator=$CALLSIGN$",
+        "uri": "http://localhost/operator?airline_designator=$CALLSIGN$",
         "x-api-key": "some_secret_key"
     },
     "mqtt": {
