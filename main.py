@@ -320,11 +320,11 @@ def getRegistration(icao_hex):
 
         r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
 
-        if r.status_code != 200:
-            logger.warning("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
-            return None
-        else:
+        if r.status_code == 200:
             return json.loads(r.text)
+
+        logger.warning("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
+        return None
 
     except Exception as ex:
         logger.info("Error getting registration.")
@@ -341,11 +341,11 @@ def getOperator(callsign):
 
         r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
 
-        if r.status_code != 200:
-            logger.warning("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
-            return None
-        else:
+        if r.status_code == 200:
             return json.loads(r.text)
+        
+        logger.warning("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+        return None
 
     except Exception as ex:
         logger.info("Error getting operator.")
