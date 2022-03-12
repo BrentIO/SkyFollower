@@ -107,6 +107,243 @@ Start the service
 sudo systemctl start SkyFollower.service
 ```
 
+## Areas
+An area is a simple GeoJSON polygon of an interesting area.  The feature must include a property called `name` to be permitted.  A great tool to define your GeoJSON can be found at [https://geojson.io](https://geojson.io).
+
+Below is an example which will be used in the next section, note that a `name` property of `LI` has been added to the `properties` section:
+```
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "LI"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            -73.8006591796875,
+                            40.82835864973048
+                        ],
+                        [
+                            -73.97369384765625,
+                            40.734770989672406
+                        ],
+                        [
+                            -74.03961181640625,
+                            40.54720023441049
+                        ],
+                        [
+                            -73.7677001953125,
+                            40.538851525354666
+                        ],
+                        [
+                            -73.245849609375,
+                            40.58684239087908
+                        ],
+                        [
+                            -72.70751953125,
+                            40.73685214795608
+                        ],
+                        [
+                            -71.8560791015625,
+                            40.97160353279909
+                        ],
+                        [
+                            -71.80938720703125,
+                            41.044145364313174
+                        ],
+                        [
+                            -71.89727783203125,
+                            41.14970617453726
+                        ],
+                        [
+                            -72.11700439453125,
+                            41.21998578493921
+                        ],
+                        [
+                            -72.36145019531249,
+                            41.17038447781618
+                        ],
+                        [
+                            -72.70477294921874,
+                            41.03585891144301
+                        ],
+                        [
+                            -72.83935546875,
+                            41.04621681452063
+                        ],
+                        [
+                            -73.1964111328125,
+                            40.994410999439516
+                        ],
+                        [
+                            -73.553466796875,
+                            40.94671366508002
+                        ],
+                        [
+                            -73.8006591796875,
+                            40.82835864973048
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}
+```
+
+## Rules
+SkyFollower will optionally raise an event via MQTT based on a configured rule being met.
+
+Rules are comprised of the following attributes.  Note that the field name is case sensitive.
+
+
+| Field | Data Type | Required | Example | Meaning |
+|-------|-----------|----------|---------|---------|
+| `name` | string | No | Any Boeing 757-200 | An arbitrary name that is human-friendly to help identify the given rule |
+| `description` | string | No | Boeing 757's are my favorite airplanes | An arbitrary description that is human-friendly to help identify the given rule |
+| `identifer` | string | Yes | All_B752 | A unique identifier that will be sent in the MQTT message that may be used by other systems to apply further notification processing |
+| `level` | integer | Yes | 50 | A numeric value that will be sent in the MQTT message that may be used by other systems to apply further notification processing |
+| `enabled` | boolean | Yes | true | Indication if the rule should be processed or ignored |
+| `conditions` | array | Yes | See below | The array of conditions that must be satisifed for this rule to trigger.  Conditions are treated as an `AND` is inserted between them.  
+
+### Conditions
+Conditions are evaluated individually, but all conditions must evaluate to `true` in order for the rule to be triggered, resulting in an MQTT notification being sent.
+
+The structure of a condition is consistent across each condition type.  Values are always strings, and are not case sensitive.
+
+- `type` is the type of condition evaluation which should occur (see below).
+- `value` is the value which will be evaluated.
+- `operator` indicates how the value should be evaluted.  Permitted values are `equals`, `minimum`, and `maximum`.  Numeric values are inclusive when using `minimum` or `maximum`.
+
+Condition Types
+
+| Type | Value | Permitted Operators | Meaning |
+|------|-------|---------------------|---------|
+| `velocity` | Any positive integer | `minimum`, `maximum` | Forward velocity of the aircraft in knots |
+| `vertical_speed` | Any integer | `minimum`, `maximum` | Vertical speed of the aircraft in knots |
+| `altitude` | Any positive integer | `minimum`, `maximum` | Aircraft altitude MSL |
+| `heading` | Minimum `0`, Maximum `359`, inclusive | `minimum`, `maximum` | Aircraft ground track in degrees
+| `aircraft_type_designator` | Any | `equals` | ICAO type designator for the aircraft |
+| `aircraft_registration` | Any | `equals` | Aircraft registration mark |
+| `aircraft_icao_hex` | Any | `equals` | Aircraft ICAO hex |
+| `aircraft_powerplant_count` | Any positive integer | `equals`, `minimum`, `maximum` | Number of powerplants attached to the aircraft |
+| `military` | Boolean | `equals` | If the aircraft is marked as known military |
+| `wake_turbulence_category` | One of: `Light`, `Medium`, `Medium 1`, `Medium 2`, `High Vortex Aircraft`, `Heavy`, `Super`, `Rotorcraft`, `High Performance` | `equals` | Aircraft wake turbulence category, as reported from the registry or through the ADS-B message. |
+| `callsign` | Any | `equals` | Flight ICAO callsign |
+| `operator_airline_designator` | Any | `equals` | ICAO airline designator |
+| `date` | ISO-8601 date format | `minimum`, `maximum` | Date in GMT |
+| `area` | Any | `equals` | Name of the feature collection in the geoJSON file |
+
+> If any condition in the trigger evalutes to false, the entire rule evaluates to false. 
+
+### Example Rules and Conditions
+1. Any aircraft with an altitude at or below 10,000ft
+
+```
+{
+  "name": "All aircraft below 10,000",
+  "identifier": "acft_10k_and_below",
+  "description": "Any aircraft with an altitude at or below 10,000ft",
+  "level": 50,
+  "enabled" : true,
+  "conditions": [
+      {
+          "type": "altitude",
+          "value": "10000",
+          "operator": "maximum"
+      }
+    ]
+}
+```
+
+2.  United Airlines Boeing 757's between 12,000 and 15,000ft heading north
+
+```
+{
+  "name": "UAL B757-200",
+  "identifier": "Northbound_United_B75s_12k-15k",
+  "description": "United Airlines Boeing 757-200's between 12,000 and 15,000ft heading north after takeoff",
+  "level": 300,
+  "enabled" : true,
+  "conditions": [
+      {
+          "type": "altitude",
+          "value": "15000",
+          "operator": "maximum"
+      },
+      {
+          "type": "altitude",
+          "value": "12000",
+          "operator": "minimum"
+      },
+      {
+          "type": "operator_airline_designator",
+          "value": "UAL",
+          "operator": "equals"
+      },
+      {
+          "type": "aircraft_type_designator",
+          "value": "B752",
+          "operator": "equals"
+      },
+      {
+          "type": "heading",
+          "value": "340",
+          "operator": "minimum"
+      },
+      {
+          "type": "heading",
+          "value": "020",
+          "operator": "maximum"
+      },
+      {
+          "type": "vertical_speed",
+          "value": "500",
+          "operator": "minimum"
+      }
+    ]     
+}
+```
+
+3.  Delta Flight 2 on Christmas Eve Crossing over Long Island
+> Refer to the "Areas" section of this guide for the definition of Long Island.
+
+```
+{
+  "name": "Grandma's Flight Home",
+  "identifier": "grandma",
+  "description": "Grandma's Flight Home Arriving on Christmas Eve",
+  "level": 99999999,
+  "enabled" : true,
+  "conditions": [
+      {
+          "type": "callsign",
+          "value": "DAL2",
+          "operator": "equals"
+      },
+      {
+          "type": "date",
+          "value": "2022-12-24",
+          "operator": "minimum"
+      },
+      {
+          "type": "date",
+          "value": "2022-12-24",
+          "operator": "maximum"
+      },
+      {
+          "type": "area",
+          "value": "LI",
+          "operator": "equals"
+      }
+    ]
+}
+```
 
 ## FAQ
 - Can I run this on Raspberry Pi?
