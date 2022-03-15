@@ -4,6 +4,7 @@ import os
 import logging
 import logging.handlers as handlers
 import json
+from queue import Empty
 import sys
 from tinydb import TinyDB, Query                    #pip3 install tinydb
 from tinydb.storages import MemoryStorage
@@ -20,6 +21,7 @@ import requests
 import re
 import paho.mqtt.client                             #pip3 install paho-mqtt
 import signal
+import rulesEngine
 
 
 def handle_interrupt(signal, frame):
@@ -159,9 +161,6 @@ def storeMessageLocal(data):
             flight['aircraft']['icao_hex'] = flight['icao_hex']
         else:
             flight['aircraft'] = aircraftData
-
-        if flight['notified'] == False:
-            checkFlightOfInterest(flight)
         
     else:
         flight = result[0]
@@ -248,6 +247,13 @@ def storeMessageLocal(data):
             flight['aircraft'] = {}
 
         flight['aircraft']['adsb_version'] = data['adsb_version']
+
+    #Check if the flight is of interest
+    interestResult = checkFlightOfInterest(flight)
+
+    if interestResult != []:
+        for matchedRule in interestResult:
+            flight['matched_rules'].append(matchedRule['identifier'])
 
     #Commit to the local database
     localDb.upsert(flight, Record.icao == data['icao_hex'])
@@ -431,8 +437,25 @@ def storeMessageRemote():
 
 def checkFlightOfInterest(flight):
 
+    result = rulesEngine.evaluate(flight)
 
-    return
+    for matchedRule in result:
+        print("Aircraft " + json.dumps(flight['aircraft']) + " matched rule " + matchedRule['identifier'])
+        #print("I will send something to MQTT here!" + matchedRule['identifier'])
+        #flight['matched_rules'].append(matchedRule['identifier'])
+
+
+
+
+
+    
+
+
+
+    
+
+
+    return result
 
 
 def mqtt_publishNotication(flight):
