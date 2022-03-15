@@ -148,7 +148,7 @@ def storeMessageLocal(data):
         flight['_id'] = str(uuid.uuid4())
         flight['last_message'] = 0
         flight['total_messages'] = 0
-        flight['notified'] = False
+        flight['matched_rules'] = []
 
         #Get the aircraft data
         aircraftData = getRegistration(flight['icao_hex'])
