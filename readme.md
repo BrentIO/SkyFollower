@@ -261,7 +261,7 @@ Condition Types
 }
 ```
 
-2.  United Airlines Boeing 757's between 12,000 and 15,000ft heading north
+2.  United Airlines Boeing 757's between 12,000 and 15,000ft heading north (between 340 and 020 degrees)
 
 ```
 {
@@ -293,13 +293,8 @@ Condition Types
       },
       {
           "type": "heading",
-          "value": "340",
-          "operator": "minimum"
-      },
-      {
-          "type": "heading",
-          "value": "020",
-          "operator": "maximum"
+          "value": "340,020",
+          "operator": "equals"
       },
       {
           "type": "vertical_speed",
