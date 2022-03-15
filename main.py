@@ -392,7 +392,7 @@ def storeMessageRemote():
                     flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
 
                     #Delete data we do not want to persist
-                    del flight['notified']
+                    del flight['matched_rules']
 
                     if 'aircraft' in flight:
                         
