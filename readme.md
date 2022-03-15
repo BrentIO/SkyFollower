@@ -224,20 +224,20 @@ Condition Types
 
 | Type | Value | Permitted Operators | Meaning |
 |------|-------|---------------------|---------|
-| `velocity` | Any positive integer | `minimum`, `maximum` | Forward velocity of the aircraft in knots |
-| `vertical_speed` | Any integer | `minimum`, `maximum` | Vertical speed of the aircraft in knots |
-| `altitude` | Any positive integer | `minimum`, `maximum` | Aircraft altitude MSL |
-| `heading` | Minimum `0`, Maximum `359`, inclusive | `minimum`, `maximum` | Aircraft ground track in degrees
-| `aircraft_type_designator` | Any | `equals` | ICAO type designator for the aircraft |
-| `aircraft_registration` | Any | `equals` | Aircraft registration mark |
 | `aircraft_icao_hex` | Any | `equals` | Aircraft ICAO hex |
 | `aircraft_powerplant_count` | Any positive integer | `equals`, `minimum`, `maximum` | Number of powerplants attached to the aircraft |
-| `military` | Boolean | `equals` | If the aircraft is marked as known military |
-| `wake_turbulence_category` | One of: `Light`, `Medium`, `Medium 1`, `Medium 2`, `High Vortex Aircraft`, `Heavy`, `Super`, `Rotorcraft`, `High Performance` | `equals` | Aircraft wake turbulence category, as reported from the registry or through the ADS-B message. |
-| `callsign` | Any | `equals` | Flight ICAO callsign |
-| `operator_airline_designator` | Any | `equals` | ICAO airline designator |
-| `date` | ISO-8601 date format | `minimum`, `maximum` | Date in GMT |
+| `aircraft_registration` | Any | `equals` | Aircraft registration mark |
+| `aircraft_type_designator` | Any | `equals` | ICAO type designator for the aircraft |
+| `altitude` | Any positive integer | `minimum`, `maximum` | Aircraft altitude MSL |
 | `area` | Any | `equals` | Name of the feature collection in the geoJSON file |
+| `callsign` | Any | `equals` | Flight ICAO callsign |
+| `date` | ISO-8601 date format YYYY-mm-dd | `equals`, `minimum`, `maximum` | Date in GMT |
+| `heading` | Tuple  | `equals` | Aircraft ground track in degrees, where the first value is the minimum heading and the second value is the maximum heading.  Legal vales are `0` to `359`, inclusive
+| `military` | Boolean | `equals` | If the aircraft is marked as known military |
+| `operator_airline_designator` | Any | `equals` | ICAO airline designator |
+| `velocity` | Any positive integer | `minimum`, `maximum` | Forward velocity of the aircraft in knots |
+| `vertical_speed` | Any integer | `minimum`, `maximum` | Vertical speed of the aircraft in knots |
+| `wake_turbulence_category` | One of: `Light`, `Medium`, `Medium 1`, `Medium 2`, `High Vortex Aircraft`, `Heavy`, `Super`, `Rotorcraft`, `High Performance` | `equals` | Aircraft wake turbulence category, as reported from the registry or through the ADS-B message. |
 
 > If any condition in the trigger evalutes to false, the entire rule evaluates to false. 
 
