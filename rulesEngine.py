@@ -319,9 +319,9 @@ def loadRules(path):
             
             tmpConditions.append(condition)
 
-        tmpRule['conditions'] = tmpConditions.copy()
+            tmpRule['conditions'] = tmpConditions.copy()
 
-    tmpRules.append(tmpRule)
+        tmpRules.append(tmpRule)
 
     observed_rules = tmpRules.copy()
 
