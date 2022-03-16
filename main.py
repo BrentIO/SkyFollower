@@ -444,17 +444,6 @@ def checkFlightOfInterest(flight):
         #print("I will send something to MQTT here!" + matchedRule['identifier'])
         #flight['matched_rules'].append(matchedRule['identifier'])
 
-
-
-
-
-    
-
-
-
-    
-
-
     return result
 
 
