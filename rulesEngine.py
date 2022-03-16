@@ -263,6 +263,15 @@ def loadRules(path):
         if "name" in rule:
             tmpRule['name'] = str(rule['name'])
 
+        if "enabled" not in rule:
+            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an \"enabled\" field.")
+
+        if not isinstance(rule['enabled'], bool):
+            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a boolean value for \"enabled\".")
+
+        if str(rule['enabled']).lower().strip() != "true":
+            continue
+
         if "description" in rule:
             tmpRule['description'] = str(rule['description'])
 
@@ -278,14 +287,6 @@ def loadRules(path):
             raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an integer value for \"level\".")
 
         tmpRule['level'] = rule['level']
-
-        if "enabled" not in rule:
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an \"enabled\" field.")
-
-        if not isinstance(rule['enabled'], bool):
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a boolean value for \"enabled\".")
-
-        tmpRule['enabled'] = rule['enabled']
 
         if "conditions" not in rule:
             raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a \"conditions\" array.")
