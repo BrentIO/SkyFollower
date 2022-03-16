@@ -150,39 +150,6 @@ def evaluate(flight):
     return matchedRules
 
 
-
-
-
-
-
-
-
-
-    
-        
-
-
-
-
-
-
-
-
-
-def getAreasContainingPoint(point):
-
-    if len(observed_areas) == 0:
-        raise Exception("Unable to determine if point is within an area because there are no areas.")
-
-    returnValue = []
-
-    for area in observed_areas:
-        if point.within(area['geometry']) == True:
-            returnValue.append(area['name'])
-
-    return returnValue
-
-
 def loadAreas(path):
 
     global observed_areas
@@ -835,28 +802,6 @@ class exactLengthNotMet(Exception):
         super().__init__(self.message)
 
 
-
-
-    
-
-
 ### DEBUG
 loadAreas("/Users/brent/GitHub/P5Software/SkyFollower/areas.geojson")
 loadRules("/Users/brent/GitHub/P5Software/SkyFollower/rules.json")
-
-
-
-
-
-
-
-#poi = Point(-81.7136,28.9793 ) # Outside
-#poi = Point(-81.7143,28.9702 ) #Inside inbound
-#poi = Point(-81.3256,28.6647 ) #Inbound, pool visible
-#poi = Point(-81.3342,28.6240 ) #All
-#poi = Point(-81.325480,28.617985 ) #Outside SE
-
-
-
-#print(getAreasOfInterestFromPoint(poi))
-    
