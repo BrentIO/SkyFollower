@@ -41,40 +41,100 @@ def evaluate(flight):
                     break               
 
             if condition['type'] == "aircraft_powerplant_count":
-                continue
+                
+                if aircraft_powerplant_count_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "aircraft_registration":
-                continue
+                
+                if aircraft_registration_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "aircraft_type_designator":
-                continue
+                
+                if aircraft_type_designator_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "altitude":
-                continue
+                
+                if altitude_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "area":
-                continue
+                
+                if area_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "callsign":
-                continue
+                
+                if callsign_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "date":
-                continue
+                
+                if date_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "heading":
-                continue
+              
+                if heading_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "military":
-                continue
+                
+                if military_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "operator_airline_designator":
-                continue
+                
+                if operator_airline_designator_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "velocity":
-                continue
+                
+                if velocity_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "vertical_speed":
-                continue
+                
+                if vertical_speed_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
+                    break   
 
             if condition['type'] == "wake_turbulence_category":
 
@@ -340,6 +400,13 @@ def aircraft_icao_hex_validateCondition(condition):
 
 
 def aircraft_icao_hex_validateData(condition, flight):
+
+    if "icao_hex" not in flight:
+        return False
+
+    if str(flight['icao_hex']).strip().lower() == condition['value']:
+        return True
+
     return False
 
 
@@ -357,7 +424,32 @@ def aircraft_powerplant_count_validateCondition(condition):
 
 
 def aircraft_powerplant_count_validateData(condition, flight):
-    return
+
+    if "aircraft" not in flight:
+        return False
+
+    if "powerplant" not in flight['aircraft']:
+        return False
+
+    if "count" not in flight['aircraft']['powerplant']:
+        return False
+
+    if condition['value'] == "equals":
+
+        if flight['aircraft']['powerplant']['count'] ==  condition['value']:
+            return True
+
+    if condition['value'] == "minimum":
+
+        if flight['aircraft']['powerplant']['count'] >= condition['value']:
+            return True
+
+    if condition['value'] == "maximum":
+
+        if flight['aircraft']['powerplant']['count'] <= condition['value']:
+            return True
+
+    return False
 
 
 def aircraft_registration_validateCondition(condition):
@@ -374,7 +466,17 @@ def aircraft_registration_validateCondition(condition):
 
 
 def aircraft_registration_validateData(condition, flight):
-    return
+    
+    if "aircraft" not in flight:
+        return False
+
+    if "registration" not in flight['aircraft']:
+        return False
+
+    if flight['aircraft']['registration'] == condition['value']:
+        return True
+
+    return False
     
 
 def aircraft_type_designator_validateCondition(condition):
@@ -391,7 +493,17 @@ def aircraft_type_designator_validateCondition(condition):
 
 
 def aircraft_type_designator_validateData(condition, flight):
-    return
+    
+    if "aircraft" not in flight:
+        return False
+
+    if "type_designator" not in flight['aircraft']:
+        return False
+
+    if flight['aircraft']['type_designator'] == condition['value']:
+        return True
+
+    return False
     
 
 def altitude_validateCondition(condition):
@@ -411,7 +523,25 @@ def altitude_validateCondition(condition):
 
 
 def altitude_validateData(condition, flight):
-    return
+    
+    if "positions" not in flight:
+        return False
+
+    theLength = len(flight['positions'])
+    
+    if theLength == 0:
+        return False
+
+    if "altitude" not in flight['positions'][theLength-1]:
+        return False
+
+    if condition['operator'] == "minimum":
+        if flight['positions'][theLength-1]['altitude'] >= condition['value']:
+            return True
+
+    if condition['operator'] == "maximum":
+        if flight['positions'][theLength-1]['altitude'] <= condition['value']:
+            return True
     
 
 def area_validateCondition(condition):
@@ -427,7 +557,33 @@ def area_validateCondition(condition):
 
 
 def area_validateData(condition, flight):
-    return
+    
+    if len(observed_areas) == 0:
+        return False
+
+    if "positions" not in flight:
+        return False
+
+    theLength = len(flight['positions'])
+    
+    if theLength == 0:
+        return False
+
+    if "latitude" not in flight['positions'][theLength-1]:
+        return False
+
+    if "longitude" not in flight['positions'][theLength-1]:
+        return False
+
+    point = Point(flight['positions'][theLength-1]['longitude'],flight['positions'][theLength-1]['latitude'])
+    
+    for area in observed_areas:
+
+        if area['name'] == condition['value']:
+            if point.within(area['geometry']) == True:
+                return True
+
+    return False
 
 
 def callsign_validateCondition(condition):
@@ -441,13 +597,20 @@ def callsign_validateCondition(condition):
 
 
 def callsign_validateData(condition, flight):
-    return
+    
+    if "callsign" not in flight:
+        return False
+
+    if flight['callsign'] == condition['value']:
+        return True
+
+    return False
     
 
 def date_validateCondition(condition):
 
     try:
-        condition['value'] = datetime.strptime(condition['value'], "%Y-%m-%d")
+        condition['value'] = datetime.strptime(condition['value'], "%Y-%m-%d").date()
 
     except ValueError as ve:
         raise Exception(condition['type'] + " \"" + condition['value'] + "\" is a valid date or not in format YYYY-mm-dd.")
@@ -456,7 +619,20 @@ def date_validateCondition(condition):
 
 
 def date_validateData(condition, flight):
-    return
+
+    if condition['operator'] == "equals":
+        if datetime.today().utcnow().date() == condition['value']:
+            return True
+
+    if condition['operator'] == "minimum":
+        if datetime.today().utcnow().date() >= condition['value']:
+            return True
+
+    if condition['operator'] == "maximum":
+        if datetime.today().utcnow().date() <= condition['value']:
+            return True
+
+    return False
     
 
 def heading_validateCondition(condition):
@@ -465,7 +641,7 @@ def heading_validateCondition(condition):
         raise operatorShouldBeEqualsException(condition)
 
     try:
-        condition['value'] = tuple(map(int, condition['value'].split(",")))
+        condition['value'] = tuple(map(float, condition['value'].split(",")))
     except ValueError:
         raise valueNotNumeric(condition)
 
@@ -480,7 +656,36 @@ def heading_validateCondition(condition):
 
 
 def heading_validateData(condition, flight):
-    return
+
+    if "velocities" not in flight:
+        return False
+
+    theLength = len(flight['velocities'])
+    
+    if theLength == 0:
+        return False
+
+    if "heading" not in flight['velocities'][theLength-1]:
+        return False
+
+    if flight['velocities'][theLength-1]['heading'] is None:
+        return False
+
+    theHeading = flight['velocities'][theLength-1]['heading']
+
+    #Check for northbound operations, which span 0
+    if condition['value'][0] > condition['value'][1]:
+
+        if theHeading >= condition['value'][0] and theHeading <= 359:
+            return True
+
+        if theHeading >= 0 and theHeading <=condition['value'][1]:
+            return True
+
+    else:
+        if theHeading >= condition['value'][0] and theHeading <= condition['value'][1]:
+            return True
+
 
 
 def military_validateCondition(condition):
