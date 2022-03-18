@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 from array import array
 import json
 from nis import match
@@ -164,6 +165,9 @@ def loadAreas(path):
 
     tmpAreas = []
 
+    if os.path.exists(path) == False:
+        raise Exception("File \"" + path + "\" could not be found.")
+
     with open(path) as geojsonFile:
         geojsonData = json.load(geojsonFile)
 
@@ -221,6 +225,9 @@ def loadRules(path):
     global observed_rules
 
     tmpRules = []
+
+    if os.path.exists(path) == False:
+        raise Exception("File \"" + path + "\" could not be found.")
 
     with open(path) as rulesFile:
         rules = json.load(rulesFile)
@@ -842,8 +849,3 @@ class exactLengthNotMet(Exception):
     def __init__(self, condition, minimum):
         self.message = condition['type'] + " value \"" + str(condition['value']).strip() + "\" must be exactly " + str(minimum) + " characters."
         super().__init__(self.message)
-
-
-### DEBUG
-loadAreas("/Users/brent/GitHub/P5Software/SkyFollower/areas.geojson")
-loadRules("/Users/brent/GitHub/P5Software/SkyFollower/rules.json")
