@@ -10,7 +10,7 @@
         "uri": "localhost",
         "port": 27017,
         "database": "SkyFollower",
-        "collection" : "flights"
+        "collection": "flights"
     },
     "registration": {
         "enabled": false,
