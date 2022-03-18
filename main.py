@@ -440,19 +440,33 @@ def checkFlightOfInterest(flight):
     result = rulesEngine.evaluate(flight)
 
     for matchedRule in result:
-        print("Aircraft " + json.dumps(flight['aircraft']) + " matched rule " + matchedRule['identifier'])
-        #print("I will send something to MQTT here!" + matchedRule['identifier'])
-        #flight['matched_rules'].append(matchedRule['identifier'])
+
+        notification = {}
+
+        if 'aircraft' in flight:
+            notification['aircraft'] = flight['aircraft']
+
+        if 'squawk' in flight:
+            notification['squawk'] = flight['squawk']
+
+        notification['rule'] = {}
+
+        notification['rule']['name'] = matchedRule['name']
+        notification['rule']['description'] = matchedRule['description']
+        notification['rule']['identifier'] = matchedRule['identifier']
+        notification['rule']['level'] = matchedRule['level']
+
+        mqtt_publishNotication(json.dumps(notification))
 
     return result
 
 
-def mqtt_publishNotication(flight):
+def mqtt_publishNotication(message):
 
     if settings['mqtt']['enabled'] != True:
         return
 
-    print(flight)
+    mqttClient.publish(settings["mqtt"]["notificationTopic"], message)
 
 
 def mqtt_publishOnline():
