@@ -30,5 +30,9 @@
         "password": "my_clear_text_password",
         "statusTopic": "SkyFollower/status",
         "notificationTopic": "SkyFollower/notify"
+    },
+    "files": {
+        "areas": "/etc/P5Software/SkyFollower/areas.geojson",
+        "rules": "/etc/P5Software/SkyFollower/rules.json"
     }
 }

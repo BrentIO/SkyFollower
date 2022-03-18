@@ -572,6 +572,19 @@ def setup():
         if "log_level" in settings:
             setLogLevel(settings['log_level'])
 
+        if "files" not in settings:
+            raise Exception ("files object is missing from settings.json")
+
+        if "areas" in settings['files']:
+            rulesEngine.loadAreas(settings['files']['areas'])
+        else:
+            logger.warning("Missing files -> areas in settings.json")
+
+        if "rules" in settings['files']:
+            rulesEngine.loadRules(settings['files']['rules'])
+        else:
+            logger.warning("Missing files -> rules in settings.json")
+
         if "adsb" not in settings:
             raise Exception ("adsb object is missing from settings.json")
 
