@@ -15,11 +15,6 @@ from datetime import datetime
 observed_areas = []
 observed_rules = []
 
-    
-def DEBUG_defaultconverter(o):
-    if isinstance(o, datetime):
-        return o.__str__()
-
 def evaluate(flight):
 
     matchedRules = []
@@ -669,7 +664,6 @@ def heading_validateData(condition, flight):
     else:
         if theHeading >= condition['value'][0] and theHeading <= condition['value'][1]:
             return True
-
 
 
 def military_validateCondition(condition):
