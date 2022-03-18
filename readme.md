@@ -24,7 +24,7 @@ sudo apt-get install -y python3 python3-pip
 
 Python also requires a number of packages that must be installed:
 ```
-sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt
+sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt shapely
 ```
 
 ### Optional: Aircraft Registration and Operator Information
@@ -82,6 +82,9 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `mqtt -> password` | my_clear_text_password | Password to use when authenticating to your MQTT broker. :information_source: Coming soon.|
 | `mqtt -> statusTopic` | SkyFollower/status | MQTT topic used to announce SkyFollower service status.|
 | `mqtt -> notificationTopic` | SkyFollower/notify | MQTT topic used to notify about aircraft which meet the monitoring criteria. :information_source: Coming soon.|
+| `files` | Locations to additional files used by SkyFollower |
+| `files -> areas` | /etc/P5Software/SkyFollower/areas.geojson | Path to the defined areas GeoJSON file |
+| `files -> rules` | /etc/P5Software/SkyFollower/rules.json | Path to the notification rules |
 
 
 
@@ -235,6 +238,7 @@ Condition Types
 | `heading` | Tuple  | `equals` | Aircraft ground track in degrees, where the first value is the minimum heading and the second value is the maximum heading.  Legal vales are `0` to `359`, inclusive
 | `military` | Boolean | `equals` | If the aircraft is marked as known military |
 | `operator_airline_designator` | Any | `equals` | ICAO airline designator |
+| `squawk` | Any positive integer | `equals` | Transponder squawk code, including leading zeros as necessary
 | `velocity` | Any positive integer | `minimum`, `maximum` | Forward velocity of the aircraft in knots |
 | `vertical_speed` | Any integer | `minimum`, `maximum` | Vertical speed of the aircraft in knots |
 | `wake_turbulence_category` | One of: `Light`, `Medium`, `Medium 1`, `Medium 2`, `High Vortex Aircraft`, `Heavy`, `Super`, `Rotorcraft`, `High Performance` | `equals` | Aircraft wake turbulence category, as reported from the registry or through the ADS-B message. |
