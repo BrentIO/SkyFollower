@@ -118,6 +118,14 @@ def evaluate(flight):
 
                     conditions_met = conditions_met + 1
                 else:
+                    break
+
+            if condition['type'] == "squawk":
+                
+                if squawk_validateData(condition, flight) == True:
+
+                    conditions_met = conditions_met + 1
+                else:
                     break   
 
             if condition['type'] == "velocity":
@@ -292,6 +300,7 @@ def loadRules(path):
                     'heading',
                     'military',
                     'operator_airline_designator',
+                    'squawk',
                     'velocity',
                     'vertical_speed',
                     'wake_turbulence_category']:
@@ -670,7 +679,40 @@ def military_validateCondition(condition):
 
 
 def military_validateData(condition, flight):
-    return
+
+    if "aircraft" not in flight:
+        return False
+
+    if "military" not in flight['aircraft']:
+        return False
+
+    if flight['aircraft']['military'] == condition['value']:
+        return True
+
+
+def squawk_validateCondition(condition):
+
+    condition['value'] = str(condition['value']).strip()
+
+    if condition['operator'] != "equals":
+        raise operatorShouldBeEqualsException(condition)
+
+    if str(condition['value']).isnumeric() == False:
+        raise valueNotNumeric(condition)    
+
+    if len(condition['value']) != 4:
+        raise exactLengthNotMet(condition, 4)
+
+    return condition
+
+
+def squawk_validateData(condition, flight):
+
+    if "squawk" not in flight:
+        return False
+
+    if flight['squawk'] == condition['value']:
+        return True
 
 
 def operator_airline_designator_validateCondition(condition):
