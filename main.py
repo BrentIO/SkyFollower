@@ -62,6 +62,7 @@ class ADSBClient(TcpClient):
         except Exception as ex:
             logger.critical(ex)
             logger.critical("Error; Exiting with code 2")
+            mqtt_publishError(ex)
             os._exit(2)
 
 
@@ -376,7 +377,6 @@ def storeMessageRemote():
             #Determine if we will continue to live after this round
             if threadState:
                 stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds()))
-                mqtt_publishOnline()
             else:
                 #Thread is shutting down, persist all the records regardless of their status
                 logger.info("Shutdown detected, persisting all local records to MongoDB.")
@@ -457,16 +457,25 @@ def checkFlightOfInterest(flight):
         notification['rule']['level'] = matchedRule['level']
 
         mqtt_publishNotication(json.dumps(notification))
+        mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification))
 
     return result
 
 
-def mqtt_publishNotication(message):
+def mqtt_publishNotication(identifier, message):
 
     if settings['mqtt']['enabled'] != True:
         return
 
-    mqttClient.publish(settings["mqtt"]["notificationTopic"], message)
+    mqttClient.publish(settings["mqtt"]["topic_notification"] + identifier, message)
+
+
+def mqtt_publishError(message):
+
+    if settings['mqtt']['enabled'] != True:
+        return
+
+    mqttClient.publish(settings["mqtt"]["topic_error"], message)
 
 
 def mqtt_publishOnline():
@@ -475,8 +484,14 @@ def mqtt_publishOnline():
         return
     
     #Set the status online
-    mqttClient.publish(settings["mqtt"]["statusTopic"], "ONLINE")
+    mqttClient.publish(settings['mqtt']['topic_status'], "ONLINE")
 
+def mqtt_publishAutoDiscovery():
+
+    if settings['mqtt']['enabled'] != True:
+        return
+
+    #TO DO
 
 def mqtt_onConnect(client, userdata, flags, rc):
     #########################################################
@@ -681,17 +696,15 @@ def setup():
             if settings['mqtt']['password'] == "":
                 raise Exception ("Empty mqtt -> password in settings.json")   
 
-            if "statusTopic" not in settings['mqtt']:
-                raise Exception ("Missing mqtt -> statusTopic in settings.json")
+            if "topic" not in settings['mqtt']:
+                raise Exception ("Missing mqtt -> topic in settings.json")
 
-            if settings['mqtt']['statusTopic'] == "":
-                raise Exception ("Empty mqtt -> statusTopic in settings.json")
+            if settings['mqtt']['topic'] == "":
+                raise Exception ("Empty mqtt -> topic in settings.json")
 
-            if "notificationTopic" not in settings['mqtt']:
-                raise Exception ("Missing mqtt -> notificationTopic in settings.json")
-
-            if settings['mqtt']['notificationTopic'] == "":
-                raise Exception ("Empty mqtt -> notificationTopic in settings.json") 
+            settings['mqtt']['topic_status'] = str(settings['mqtt']['topic']+ "/status").replace("//", "/")
+            settings['mqtt']['topic_notification'] = str(settings['mqtt']['topic'] + "/rule/").replace("//", "/")
+            settings['mqtt']['topic_error'] = str(settings['mqtt']['topic'] + "/error").replace("//", "/")
 
             #Create MQTT Client
             mqttClient = paho.mqtt.client.Client()
@@ -813,6 +826,7 @@ def main():
 
         dbCleaner.start()
 
+        mqtt_publishAutoDiscovery()
         adsb_client.run() #Blocking, must be last            
 
         exitApp(0)
@@ -820,7 +834,7 @@ def main():
     except sigKill:
 
         if settings['mqtt']['enabled'] == True:
-            mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
+            mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
         dbCleaner.alive = False
         logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")

@@ -76,12 +76,11 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `operators -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `mqtt` |  If this object is omitted, MQTT will be disabled.|
 | `mqtt -> enabled` | false | Controls if MQTT is enabled or disabled.|
-| `mqtt -> uri` | my.mqtt.server.lan | IP address or domain name of your MQTT broker. :information_source: Coming soon.|
-| `mqtt -> port` | 1883 | Port for your MQTT broker. :information_source: Coming soon.|
-| `mqtt -> username` | my_username | Username to use when authenticating to your MQTT broker. :information_source: Coming soon.|
-| `mqtt -> password` | my_clear_text_password | Password to use when authenticating to your MQTT broker. :information_source: Coming soon.|
-| `mqtt -> statusTopic` | SkyFollower/status | MQTT topic used to announce SkyFollower service status.|
-| `mqtt -> notificationTopic` | SkyFollower/notify | MQTT topic used to notify about aircraft which meet the monitoring criteria. :information_source: Coming soon.|
+| `mqtt -> uri` | my.mqtt.server.lan | IP address or domain name of your MQTT broker. |
+| `mqtt -> port` | 1883 | Port for your MQTT broker. |
+| `mqtt -> username` | my_username | Username to use when authenticating to your MQTT broker. |
+| `mqtt -> password` | my_clear_text_password | Password to use when authenticating to your MQTT broker. |
+| `mqtt -> topic` | SkyFollower/ | Root for all topics.|
 | `files` | Locations to additional files used by SkyFollower |
 | `files -> areas` | /etc/P5Software/SkyFollower/areas.geojson | Path to the defined areas GeoJSON file |
 | `files -> rules` | /etc/P5Software/SkyFollower/rules.json | Path to the notification rules |
@@ -343,6 +342,9 @@ Condition Types
     ]
 }
 ```
+
+### Example MQTT Payload
+
 
 ## FAQ
 - Can I run this on Raspberry Pi?

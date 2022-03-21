@@ -28,8 +28,7 @@
         "port": 1883,
         "username": "my_username",
         "password": "my_clear_text_password",
-        "statusTopic": "SkyFollower/status",
-        "notificationTopic": "SkyFollower/notify"
+        "topic": "SkyFollower/",
     },
     "files": {
         "areas": "./areas.geojson",
