@@ -10,7 +10,7 @@ from tinydb import TinyDB, Query                    #pip3 install tinydb
 from tinydb.storages import MemoryStorage
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
-from pymongo import MongoClient                     #pip3 install pymongo
+from pymongo import MongoClient, errors                    #pip3 install pymongo
 import uuid
 import time
 import datetime
@@ -424,9 +424,39 @@ def storeMessageRemote():
             if not threadState:
                 break
 
+        except errors.DuplicateKeyError as dke:
+
+            if 'keyValue' in dke.details:
+                if '_id' in dke.details['keyValue']:
+
+                    try:
+                        
+                        directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "/errors/")
+
+                        if not os.path.exists(directory):
+                            os.makedirs(directory)
+
+                        fileName = os.path.join(directory, "dke_" + str(datetime.utcnow().isoformat()).replace(":", "-") + ".json")
+
+                        flight['error'] = "pymongo.errors.DuplicateKeyError"
+
+                        with open(fileName, 'w') as outfile:
+                            json.dump(flight, outfile, default=jsonDefaultConverter)
+
+                        localDb.remove(Record._id == dke.details['keyValue']['_id'])
+
+                        logger.critical("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
+                        mqtt_publishError("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
+
+                    except Exception as ex:
+                        logger.critical("Duplicate key error failed when attempting to write to disk.  Data was lost.  The duplicate _id=" + str(dke.details['keyValue']['_id']))
+                        logger.critical(ex)
+                        mqtt_publishError("MongoDB Failure, check logs.")
+
         except Exception as ex:
-            logger.critical("Error migrating data to MongoDB.")
+            logger.error("Error migrating data to MongoDB.")
             logger.error(ex)
+            mqtt_publishError("MongoDB Failure, check logs.")
 
         finally:
             #Sleep another 10 seconds if the thread is still alive
@@ -434,6 +464,11 @@ def storeMessageRemote():
                 time.sleep(10)
             else:
                 break
+
+
+def jsonDefaultConverter(o):
+  if isinstance(o, datetime):
+      return o.__str__()
 
 
 def checkFlightOfInterest(flight):
@@ -852,25 +887,34 @@ def main():
         logger.info("Remote storage thread terminated.")
         exitApp(0)       
 
-
-    except KeyboardInterrupt:
-
-        if settings['mqtt']['enabled'] == True:
-            mqttClient.publish(settings["mqtt"]["statusTopic"], "TERMINATING")
-
-        dbCleaner.alive = False
-        logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
-        dbCleaner.join()
-
-        if settings['mqtt']['enabled'] == True:
-            mqttClient.loop_stop()
-
-        logger.info("Remote storage thread terminated.")
-        exitApp(0)       
-
     except Exception as ex:
         logger.error(ex)
         exitApp(1)
+        
+    finally:
+
+        if observer:
+
+            if observer.is_alive():
+                observer.stop()
+                observer.join()
+
+
+class fileChanged(PatternMatchingEventHandler):
+
+    def __init__(self):
+        # Set the patterns for PatternMatchingEventHandler
+        PatternMatchingEventHandler.__init__(self, patterns=[os.path.basename(settings['files']['areas']),os.path.basename(settings['files']['rules'])], ignore_directories=True, case_sensitive=False)
+
+    def on_modified(self, event):
+
+        global rulesEngine
+
+        if os.path.basename(event.src_path) == os.path.basename(settings['files']['areas']):
+            rulesEngine.loadAreas(settings['files']['areas'])
+
+        if os.path.basename(event.src_path) == os.path.basename(settings['files']['rules']):
+            rulesEngine.loadRules(settings['files']['rules'])
 
 
 if __name__ == "__main__":
