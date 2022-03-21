@@ -208,8 +208,7 @@ Rules are comprised of the following attributes.  Note that the field name is ca
 |-------|-----------|----------|---------|---------|
 | `name` | string | No | Any Boeing 757-200 | An arbitrary name that is human-friendly to help identify the given rule |
 | `description` | string | No | Boeing 757's are my favorite airplanes | An arbitrary description that is human-friendly to help identify the given rule |
-| `identifer` | string | Yes | All_B752 | A unique identifier that will be sent in the MQTT message that may be used by other systems to apply further notification processing |
-| `level` | integer | Yes | 50 | A numeric value that will be sent in the MQTT message that may be used by other systems to apply further notification processing |
+| `identifer` | string | Yes | All_B752 | A unique identifier that will be sent in the MQTT message that may be used by other systems to apply further notification processing.  The identifier is appended to the MQTT topic. |
 | `enabled` | boolean | Yes | true | Indication if the rule should be processed or ignored |
 | `conditions` | array | Yes | See below | The array of conditions that must be satisifed for this rule to trigger.  Conditions are treated as an `AND` is inserted between them.  
 
@@ -252,7 +251,6 @@ Condition Types
   "name": "All aircraft below 10,000",
   "identifier": "acft_10k_and_below",
   "description": "Any aircraft with an altitude at or below 10,000ft",
-  "level": 50,
   "enabled" : true,
   "conditions": [
       {
@@ -271,7 +269,6 @@ Condition Types
   "name": "UAL B757-200",
   "identifier": "Northbound_United_B75s_12k-15k",
   "description": "United Airlines Boeing 757-200's between 12,000 and 15,000ft heading north after takeoff",
-  "level": 300,
   "enabled" : true,
   "conditions": [
       {
@@ -316,7 +313,6 @@ Condition Types
   "name": "Grandma's Flight Home",
   "identifier": "grandma",
   "description": "Grandma's Flight Home Arriving on Christmas Eve",
-  "level": 99999999,
   "enabled" : true,
   "conditions": [
       {
