@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from importlib.resources import path
 import os
 import logging
 import logging.handlers as handlers
@@ -21,8 +22,9 @@ import requests
 import re
 import paho.mqtt.client                             #pip3 install paho-mqtt
 import signal
-import rulesEngine
 from rulesEngine import rulesEngine as skyFollowerRE
+from watchdog.observers import Observer
+from watchdog.events import PatternMatchingEventHandler
 
 
 def handle_interrupt(signal, frame):
@@ -492,9 +494,7 @@ def checkFlightOfInterest(flight):
         notification['rule']['name'] = matchedRule['name']
         notification['rule']['description'] = matchedRule['description']
         notification['rule']['identifier'] = matchedRule['identifier']
-        notification['rule']['level'] = matchedRule['level']
 
-        mqtt_publishNotication(json.dumps(notification))
         mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification))
 
     return result
@@ -550,8 +550,6 @@ def mqtt_onConnect(client, userdata, flags, rc):
 
     except Exception as ex:
         logger.error(ex)
-        print("Unable to connect to MQTT.")
-        print(ex)
         
 
 def exitApp(exitCode=None):
@@ -646,11 +644,13 @@ def setup():
         rulesEngine = skyFollowerRE(logger)
 
         if "areas" in settings['files']:
+            settings['files']['areas'] = settings['files']['areas'].replace("./", filePath + "/")
             rulesEngine.loadAreas(settings['files']['areas'])
         else:
             logger.warning("Missing files -> areas in settings.json")
 
         if "rules" in settings['files']:
+            settings['files']['rules'] = settings['files']['rules'].replace("./", filePath + "/")
             rulesEngine.loadRules(settings['files']['rules'])
         else:
             logger.warning("Missing files -> rules in settings.json")
@@ -677,7 +677,7 @@ def setup():
             raise Exception ("Unknown adsb -> type in settings.json.  Valid values are beast | raw")
 
         if "flight_ttl_seconds" not in settings:
-            logger.info("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")
+            logger.debug("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")
             settings['flight_ttl_seconds'] = 300
 
         if str(settings['flight_ttl_seconds']).isnumeric() != True:
@@ -851,7 +851,7 @@ def main():
             mqttClient.username_pw_set(settings["mqtt"]["username"], password=settings["mqtt"]["password"])
 
             #Set the last will and testament
-            mqttClient.will_set(settings["mqtt"]["statusTopic"], payload="OFFLINE", qos=0, retain=True)
+            mqttClient.will_set(settings["mqtt"]["topic_status"], payload="OFFLINE", qos=0, retain=True)
 
             #Connect to MQTT
             mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
@@ -868,11 +868,18 @@ def main():
         dbCleaner.start()
 
         mqtt_publishAutoDiscovery()
+
+        observer = Observer()
+        event_handler = fileChanged()
+        observer.schedule(event_handler, path=os.path.dirname(settings['files']['areas']))
+        observer.schedule(event_handler, path=os.path.dirname(settings['files']['rules']))
+        observer.start()
+
         adsb_client.run() #Blocking, must be last            
 
         exitApp(0)
 
-    except sigKill:
+    except (sigKill, KeyboardInterrupt):
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
