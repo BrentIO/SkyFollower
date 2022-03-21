@@ -6,840 +6,953 @@ import json
 from nis import match
 from shapely.geometry import Polygon, Point #pip3 install shapely
 from datetime import datetime
+import logging
 
 
 #################
 ## May require brew install geos on mac, apt-get install libgeos-dev on Linux
 #################
 
-observed_areas = []
-observed_rules = []
 
-def evaluate(flight):
+class rulesEngine():
 
-    matchedRules = []
+    def __init__(self, logger):
+        self.logger = logging.getLogger()
+        self.logger = logger
+        self.observed_areas = []
+        self.observed_rules = []
 
-    for rule in observed_rules:
+    def evaluate(self, flight):
 
-        if rule['identifier'] in flight['matched_rules']:
-            continue
+        matchedRules = []
 
-        conditions_met = 0
+        for rule in self.observed_rules:
 
-        for condition in rule['conditions']:
+            if rule['identifier'] in flight['matched_rules']:
+                continue
 
-            if condition['type'] == "aircraft_icao_hex":
+            conditions_met = 0
 
-                if aircraft_icao_hex_validateData(condition, flight) == True:
+            for condition in rule['conditions']:
 
-                    conditions_met = conditions_met + 1
-                else:
-                    break               
+                if condition['type'] == "aircraft_icao_hex":
 
-            if condition['type'] == "aircraft_powerplant_count":
-                
-                if aircraft_powerplant_count_validateData(condition, flight) == True:
+                    if self.aircraft_icao_hex_validateData(condition, flight) == True:
 
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
+                        conditions_met = conditions_met + 1
+                    else:
+                        break               
 
-            if condition['type'] == "aircraft_registration":
-                
-                if aircraft_registration_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "aircraft_type_designator":
-                
-                if aircraft_type_designator_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "altitude":
-                
-                if altitude_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "area":
-                
-                if area_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "callsign":
-                
-                if callsign_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "date":
-                
-                if date_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "heading":
-              
-                if heading_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "military":
-                
-                if military_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "operator_airline_designator":
-                
-                if operator_airline_designator_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break
-
-            if condition['type'] == "squawk":
-                
-                if squawk_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "velocity":
-                
-                if velocity_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "vertical_speed":
-                
-                if vertical_speed_validateData(condition, flight) == True:
-
-                    conditions_met = conditions_met + 1
-                else:
-                    break   
-
-            if condition['type'] == "wake_turbulence_category":
-
-                if wake_turbulence_category_validateData(condition, flight) == True:
+                if condition['type'] == "aircraft_powerplant_count":
                     
-                    conditions_met = conditions_met + 1
-                else:
-                    break
+                    if self.aircraft_powerplant_count_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        if conditions_met == len(rule['conditions']):           
-            matchedRules.append(rule)
+                if condition['type'] == "aircraft_registration":
+                    
+                    if self.aircraft_registration_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-    return matchedRules
+                if condition['type'] == "aircraft_type_designator":
+                    
+                    if self.aircraft_type_designator_validateData(condition, flight) == True:
 
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-def loadAreas(path):
+                if condition['type'] == "altitude":
+                    
+                    if self.altitude_validateData(condition, flight) == True:
 
-    global observed_areas
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-    tmpAreas = []
+                if condition['type'] == "area":
+                    
+                    if self.area_validateData(condition, flight) == True:
 
-    if os.path.exists(path) == False:
-        raise Exception("File \"" + path + "\" could not be found.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-    with open(path) as geojsonFile:
-        geojsonData = json.load(geojsonFile)
+                if condition['type'] == "callsign":
+                    
+                    if self.callsign_validateData(condition, flight) == True:
 
-    if 'type' not in geojsonData:
-        raise Exception("Invalid GeoJSON file, missing 'type'")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-    if str(geojsonData['type']).lower() != "featurecollection":
-        raise Exception("Invalid GeoJSON file, type must be a featureCollection")
+                if condition['type'] == "date":
+                    
+                    if self.date_validateData(condition, flight) == True:
 
-    for feature in geojsonData['features']:
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        tmpFeature = {}
+                if condition['type'] == "heading":
+                
+                    if self.heading_validateData(condition, flight) == True:
 
-        if "type" not in feature:
-            raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"type\" field.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        if str(feature['type']).lower() != "feature":
-            raise Exception("Feature " + str(len(tmpAreas)) + " \"type\" is invalid; Expected \"Feature\".")
+                if condition['type'] == "military":
+                    
+                    if self.military_validateData(condition, flight) == True:
 
-        if "properties" not in feature:
-            raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"properties\" object.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        if "name" not in feature['properties']:
-            raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"name\" field in the \"properties\" object.")
+                if condition['type'] == "operator_airline_designator":
+                    
+                    if self.operator_airline_designator_validateData(condition, flight) == True:
 
-        tmpFeature['name'] = str(feature['properties']['name']).strip()
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
 
-        if 'geometry' not in feature:
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"geometry\" object.")
-        
-        if 'type' not in feature['geometry']:
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"type\" field in geometry.")
+                if condition['type'] == "squawk":
+                    
+                    if self.squawk_validateData(condition, flight) == True:
 
-        if str(feature['geometry']['type']) != "Polygon":
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" has an unsupported feature -> geometry -> type of " + feature['geometry']['type'] + "; Only type \"Polygon\" is supported.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        if "coordinates" not in feature['geometry']:
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"coordinates\" array in geometry.")
+                if condition['type'] == "velocity":
+                    
+                    if self.velocity_validateData(condition, flight) == True:
 
-        if len(feature['geometry']['coordinates']) != 1:
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" does not have an expected number of coordinates in the array.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        tmpFeature['geometry'] = Polygon([tuple(coord) for coord in feature['geometry']['coordinates'][0]])
+                if condition['type'] == "vertical_speed":
+                    
+                    if self.vertical_speed_validateData(condition, flight) == True:
 
-        if tmpFeature['geometry'].is_valid == False:
-            raise Exception("Feature \"" + tmpFeature['name'] + "\" is not a valid polygon.")
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
 
-        tmpAreas.append(tmpFeature)
+                if condition['type'] == "wake_turbulence_category":
 
-    observed_areas = tmpAreas.copy()
+                    if self.wake_turbulence_category_validateData(condition, flight) == True:
+                        
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
 
+            if conditions_met == len(rule['conditions']):           
+                matchedRules.append(rule)
 
-def loadRules(path):
+        return matchedRules
 
-    global observed_rules
 
-    tmpRules = []
+    def loadAreas(self, path):
 
-    if os.path.exists(path) == False:
-        raise Exception("File \"" + path + "\" could not be found.")
+        tmpAreas = []
 
-    with open(path) as rulesFile:
-        rules = json.load(rulesFile)
+        try:
 
-    if not isinstance(rules, list):
-        raise Exception("Rules file does not contain an array of rules.")
+            if os.path.exists(path) == False:
+                raise Exception("File \"" + path + "\" could not be found.")
 
-    if len(rules) == 0:
-        raise Exception("Rules file contains no rules.")
+            with open(path) as geojsonFile:
+                geojsonData = json.load(geojsonFile)
 
-    for rule in rules:
+            if 'type' not in geojsonData:
+                raise Exception("Invalid GeoJSON file, missing 'type'")
 
-        tmpRule = {}
+            if str(geojsonData['type']).lower() != "featurecollection":
+                raise Exception("Invalid GeoJSON file, type must be a featureCollection")
 
-        if "name" in rule:
-            tmpRule['name'] = str(rule['name'])
+            for feature in geojsonData['features']:
 
-        if "enabled" not in rule:
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an \"enabled\" field.")
+                tmpFeature = {}
 
-        if not isinstance(rule['enabled'], bool):
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a boolean value for \"enabled\".")
+                if "type" not in feature:
+                    raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"type\" field.")
 
-        if str(rule['enabled']).lower().strip() != "true":
-            continue
+                if str(feature['type']).lower() != "feature":
+                    raise Exception("Feature " + str(len(tmpAreas)) + " \"type\" is invalid; Expected \"Feature\".")
 
-        if "description" in rule:
-            tmpRule['description'] = str(rule['description'])
+                if "properties" not in feature:
+                    raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"properties\" object.")
 
-        if "identifier" not in rule:
-            raise Exception("Rule " + str(len(tmpRules)) +  " does not contain an \"identifier\" field.")
+                if "name" not in feature['properties']:
+                    raise Exception("Feature " + str(len(tmpAreas)) + " does not contain a \"name\" field in the \"properties\" object.")
 
-        tmpRule['identifier'] = rule['identifier']
+                tmpFeature['name'] = str(feature['properties']['name']).strip()
 
-        if "level" not in rule:
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a \"level\" field.")
+                if 'geometry' not in feature:
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"geometry\" object.")
+                
+                if 'type' not in feature['geometry']:
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"type\" field in geometry.")
 
-        if not isinstance(rule['level'], int):
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an integer value for \"level\".")
+                if str(feature['geometry']['type']) != "Polygon":
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" has an unsupported feature -> geometry -> type of " + feature['geometry']['type'] + "; Only type \"Polygon\" is supported.")
 
-        tmpRule['level'] = rule['level']
+                if "coordinates" not in feature['geometry']:
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"coordinates\" array in geometry.")
 
-        if "conditions" not in rule:
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain a \"conditions\" array.")
+                if len(feature['geometry']['coordinates']) != 1:
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" does not have an expected number of coordinates in the array.")
 
-        if not isinstance(rule['conditions'], list):
-            raise Exception("Rule " + tmpRule['identifier'] +  " does not contain an array of conditions.")
+                tmpFeature['geometry'] = Polygon([tuple(coord) for coord in feature['geometry']['coordinates'][0]])
 
-        if len(rule['conditions']) < 1:
-            raise Exception("Rule " + tmpRule['identifier'] +  " contains no conditions.")
+                if tmpFeature['geometry'].is_valid == False:
+                    raise Exception("Feature \"" + tmpFeature['name'] + "\" is not a valid polygon.")
 
-        tmpConditions = []
+                tmpAreas.append(tmpFeature)
 
-        for condition in rule['conditions']:
+            self.observed_areas = tmpAreas
 
-            if "type" not in condition:
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain a \"type\" field.")
+            self.logger.info("Areas updated successfully.")
 
-            if not isinstance(condition['type'], str):
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " \"type\" is not a string.")
+            return True
 
-            if "value" not in condition:
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain a \"value\" field.")
-
-            if "operator" not in condition:
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain an \"operator\" field.")
-
-            if str(condition['type']).lower() not in [
-                    'aircraft_icao_hex',
-                    'aircraft_powerplant_count',
-                    'aircraft_registration',
-                    'aircraft_type_designator',
-                    'altitude',
-                    'area',
-                    'callsign',
-                    'date',
-                    'heading',
-                    'military',
-                    'operator_airline_designator',
-                    'squawk',
-                    'velocity',
-                    'vertical_speed',
-                    'wake_turbulence_category']:
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown type \"" + str(condition['type']) + "\".")
-
-            if str(condition['operator']).lower() not in ['equals','minimum','maximum']:
-                raise Exception("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown operator \"" + str(condition['operator']) + "\".")
-
-            condition['operator'] = str(condition['operator']).lower()
-            condition['type'] = str(condition['type']).lower()
-
-            if condition['type'] == "aircraft_icao_hex":
-                condition = aircraft_icao_hex_validateCondition(condition)
-
-            if condition['type'] == "aircraft_powerplant_count":
-                condition = aircraft_powerplant_count_validateCondition(condition)
-
-            if condition['type'] == "aircraft_registration":
-                condition = aircraft_registration_validateCondition(condition)
-
-            if condition['type'] == "aircraft_type_designator":
-                condition = aircraft_type_designator_validateCondition(condition)
-
-            if condition['type'] == "altitude":
-                condition = altitude_validateCondition(condition)
-
-            if condition['type'] == "area":
-                condition = area_validateCondition(condition)
-
-            if condition['type'] == "callsign":
-                condition = callsign_validateCondition(condition)
-
-            if condition['type'] == "date":
-                condition = date_validateCondition(condition)
-
-            if condition['type'] == "heading":
-                condition = heading_validateCondition(condition)
-
-            if condition['type'] == "military":
-                condition = military_validateCondition(condition)
-
-            if condition['type'] == "operator_airline_designator":
-                condition = operator_airline_designator_validateCondition(condition)
-
-            if condition['type'] == "velocity":
-                condition = velocity_validateCondition(condition)
-
-            if condition['type'] == "vertical_speed":
-                condition = vertical_speed_validateCondition(condition)
-
-            if condition['type'] == "wake_turbulence_category":
-                condition = wake_turbulence_category_validateCondition(condition)
+        except (self.operatorShouldBeEqualsException, self.operatorShouldNotBeEqualsException,self.valueNotNumeric,
+                self.valueNotPositiveInteger, self.minimumLengthNotMet, self.exactLengthNotMet,
+                self.ruleCheckException, self.fileNotFound) as ex:
             
-            tmpConditions.append(condition)
+            self.logger.critical("Exception while processing areas file.  The file will not be used.  " + ex.message)
 
-            tmpRule['conditions'] = tmpConditions.copy()
+            return False
 
-        tmpRules.append(tmpRule)
+        except Exception as ex:
+            self.logger.critical("Exception while processing areas file.  The file will not be used.  " + str(ex))
 
-    observed_rules = tmpRules.copy()
-
-
-def aircraft_icao_hex_validateCondition(condition):
-
-    condition['value'] = str(condition['value']).strip().upper()
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    if len(condition['value']) != 6:
-        raise exactLengthNotMet(condition, 6)
-
-    return condition
+            return False
 
 
-def aircraft_icao_hex_validateData(condition, flight):
+    def loadRules(self, path):
 
-    if "icao_hex" not in flight:
-        return False
+        tmpRules = []
 
-    if str(flight['icao_hex']).strip().lower() == condition['value']:
-        return True
+        try:
 
-    return False
+            if os.path.exists(path) == False:
+                raise self.fileNotFound("Rule file \"" + path + "\" could not be found.")
 
+            with open(path) as rulesFile:
+                rules = json.load(rulesFile)
 
-def aircraft_powerplant_count_validateCondition(condition):
+            if not isinstance(rules, list):
+                raise self.ruleCheckException("Rules file does not contain an array of rules.")
 
-    try:
-        condition['value'] = int(float(condition['value']))
-    except ValueError as ve:
-        raise valueNotNumeric(condition)
-    
-    if condition['value'] < 0:
-        raise valueNotPositiveInteger(condition)
+            if len(rules) == 0:
+                raise self.ruleCheckException("Rules file contains no rules.")
 
-    return condition
+            for rule in rules:
 
+                tmpRule = {}
 
-def aircraft_powerplant_count_validateData(condition, flight):
+                if "name" in rule:
+                    tmpRule['name'] = str(rule['name'])
 
-    if "aircraft" not in flight:
-        return False
+                if "enabled" not in rule:
+                    raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " does not contain an \"enabled\" field.")
 
-    if "powerplant" not in flight['aircraft']:
-        return False
+                if not isinstance(rule['enabled'], bool):
+                    raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " does not contain a boolean value for \"enabled\".")
 
-    if "count" not in flight['aircraft']['powerplant']:
-        return False
+                if str(rule['enabled']).lower().strip() != "true":
+                    continue
 
-    if condition['value'] == "equals":
+                if "description" in rule:
+                    tmpRule['description'] = str(rule['description'])
 
-        if flight['aircraft']['powerplant']['count'] ==  condition['value']:
+                if "identifier" not in rule:
+                    raise self.ruleCheckException("Rule " + str(len(tmpRules)) +  " does not contain an \"identifier\" field.")
+
+                for testRule in tmpRules:
+                    if testRule['identifier'] == rule['identifier']:
+                        raise self.ruleCheckException("Duplicate rule identifier \"" + rule['identifier'] + "\".")
+
+                if "identifier" not in rule:
+                    raise self.ruleCheckException("Rule " + str(len(tmpRules)) +  " does not contain an \"identifier\" field.")
+
+                tmpRule['identifier'] = rule['identifier']
+
+                if "conditions" not in rule:
+                    raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " does not contain a \"conditions\" array.")
+
+                if not isinstance(rule['conditions'], list):
+                    raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " does not contain an array of conditions.")
+
+                if len(rule['conditions']) < 1:
+                    raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " contains no conditions.")
+
+                tmpConditions = []
+
+                for condition in rule['conditions']:
+
+                    if "type" not in condition:
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain a \"type\" field.")
+
+                    if not isinstance(condition['type'], str):
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " \"type\" is not a string.")
+
+                    if "value" not in condition:
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain a \"value\" field.")
+
+                    if "operator" not in condition:
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " does not contain an \"operator\" field.")
+
+                    if str(condition['type']).lower() not in [
+                            'aircraft_icao_hex',
+                            'aircraft_powerplant_count',
+                            'aircraft_registration',
+                            'aircraft_type_designator',
+                            'altitude',
+                            'area',
+                            'callsign',
+                            'date',
+                            'heading',
+                            'military',
+                            'operator_airline_designator',
+                            'squawk',
+                            'velocity',
+                            'vertical_speed',
+                            'wake_turbulence_category']:
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown type \"" + str(condition['type']) + "\".")
+
+                    if str(condition['operator']).lower() not in ['equals','minimum','maximum']:
+                        raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown operator \"" + str(condition['operator']) + "\".")
+
+                    condition['operator'] = str(condition['operator']).lower()
+                    condition['type'] = str(condition['type']).lower()
+
+                    if condition['type'] == "aircraft_icao_hex":
+                        condition = self.aircraft_icao_hex_validateCondition(condition)
+
+                    if condition['type'] == "aircraft_powerplant_count":
+                        condition = self.aircraft_powerplant_count_validateCondition(condition)
+
+                    if condition['type'] == "aircraft_registration":
+                        condition = self.aircraft_registration_validateCondition(condition)
+
+                    if condition['type'] == "aircraft_type_designator":
+                        condition = self.aircraft_type_designator_validateCondition(condition)
+
+                    if condition['type'] == "altitude":
+                        condition = self.altitude_validateCondition(condition)
+
+                    if condition['type'] == "area":
+                        condition = self.area_validateCondition(condition)
+
+                    if condition['type'] == "callsign":
+                        condition = self.callsign_validateCondition(condition)
+
+                    if condition['type'] == "date":
+                        condition = self.date_validateCondition(condition)
+
+                    if condition['type'] == "heading":
+                        condition = self.heading_validateCondition(condition)
+
+                    if condition['type'] == "military":
+                        condition = self.military_validateCondition(condition)
+
+                    if condition['type'] == "operator_airline_designator":
+                        condition = self.operator_airline_designator_validateCondition(condition)
+
+                    if condition['type'] == "squawk":
+                        condition = self.squawk_validateCondition(condition)
+
+                    if condition['type'] == "velocity":
+                        condition = self.velocity_validateCondition(condition)
+
+                    if condition['type'] == "vertical_speed":
+                        condition = self.vertical_speed_validateCondition(condition)
+
+                    if condition['type'] == "wake_turbulence_category":
+                        condition = self.wake_turbulence_category_validateCondition(condition)
+                    
+                    tmpConditions.append(condition)
+
+                    tmpRule['conditions'] = tmpConditions
+
+                tmpRules.append(tmpRule)
+
+            self.observed_rules = tmpRules
+
+            self.logger.info("Rules updated successfully.")
+
             return True
 
-    if condition['value'] == "minimum":
+        except (self.operatorShouldBeEqualsException, self.operatorShouldNotBeEqualsException,self.valueNotNumeric,
+                self.valueNotPositiveInteger, self.minimumLengthNotMet, self.exactLengthNotMet,
+                self.ruleCheckException, self.fileNotFound) as ex:
+            
+            self.logger.critical("Exception while processing rules file.  The file will not be used.  " + ex.message)
 
-        if flight['aircraft']['powerplant']['count'] >= condition['value']:
+            return False
+
+        except Exception as ex:
+            self.logger.critical("Exception while processing rules file.  The file will not be used.  " + str(ex))
+
+            return False
+
+
+    def aircraft_icao_hex_validateCondition(self, condition):
+
+        condition['value'] = str(condition['value']).strip().upper()
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        if len(condition['value']) != 6:
+            raise self.exactLengthNotMet(condition, 6)
+
+        return condition
+
+
+    def aircraft_icao_hex_validateData(self, condition, flight):
+
+        if "icao_hex" not in flight:
+            return False
+
+        if str(flight['icao_hex']).strip().lower() == condition['value']:
             return True
 
-    if condition['value'] == "maximum":
-
-        if flight['aircraft']['powerplant']['count'] <= condition['value']:
-            return True
-
-    return False
-
-
-def aircraft_registration_validateCondition(condition):
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    condition['value'] = str(condition['value']).strip().upper()
-
-    if len(condition['value']) <2:
-        raise minimumLengthNotMet(condition, 3)
-
-    return condition
-
-
-def aircraft_registration_validateData(condition, flight):
-    
-    if "aircraft" not in flight:
         return False
 
-    if "registration" not in flight['aircraft']:
-        return False
 
-    if flight['aircraft']['registration'] == condition['value']:
-        return True
+    def aircraft_powerplant_count_validateCondition(self, condition):
 
-    return False
-    
+        try:
+            condition['value'] = int(float(condition['value']))
+        except ValueError as ve:
+            raise self.valueNotNumeric(condition)
+        
+        if condition['value'] < 0:
+            raise self.valueNotPositiveInteger(condition)
 
-def aircraft_type_designator_validateCondition(condition):
-    
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    condition['value'] = str(condition['value']).strip()
-
-    if len(condition['value']) != 4:
-        raise exactLengthNotMet(condition, 4)
-
-    return condition
+        return condition
 
 
-def aircraft_type_designator_validateData(condition, flight):
-    
-    if "aircraft" not in flight:
-        return False
+    def aircraft_powerplant_count_validateData(self, condition, flight):
 
-    if "type_designator" not in flight['aircraft']:
-        return False
+        if "aircraft" not in flight:
+            return False
 
-    if flight['aircraft']['type_designator'] == condition['value']:
-        return True
+        if "powerplant" not in flight['aircraft']:
+            return False
 
-    return False
-    
+        if "count" not in flight['aircraft']['powerplant']:
+            return False
 
-def altitude_validateCondition(condition):
+        if condition['value'] == "equals":
 
-    if condition['operator'] == "equals":
-        raise operatorShouldNotBeEqualsException(condition)
-    
-    try:
-        condition['value'] = int(float(condition['value']))
-    except ValueError:
-        raise valueNotNumeric(condition)
-    
-    if condition['value'] < 0:
-        raise valueNotPositiveInteger(condition)
-
-    return condition
-
-
-def altitude_validateData(condition, flight):
-    
-    if "positions" not in flight:
-        return False
-
-    theLength = len(flight['positions'])
-    
-    if theLength == 0:
-        return False
-
-    if "altitude" not in flight['positions'][theLength-1]:
-        return False
-
-    if condition['operator'] == "minimum":
-        if flight['positions'][theLength-1]['altitude'] >= condition['value']:
-            return True
-
-    if condition['operator'] == "maximum":
-        if flight['positions'][theLength-1]['altitude'] <= condition['value']:
-            return True
-    
-
-def area_validateCondition(condition):
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    for area in observed_areas:
-        if str(condition['value']).strip().lower() == str(area['name']).lower():
-            return condition
-
-    raise Exception(condition['type'] + " \"" + str(condition['value']).strip() + "\" not found in observed areas.")
-
-
-def area_validateData(condition, flight):
-    
-    if len(observed_areas) == 0:
-        return False
-
-    if "positions" not in flight:
-        return False
-
-    theLength = len(flight['positions'])
-    
-    if theLength == 0:
-        return False
-
-    if "latitude" not in flight['positions'][theLength-1]:
-        return False
-
-    if "longitude" not in flight['positions'][theLength-1]:
-        return False
-
-    point = Point(flight['positions'][theLength-1]['longitude'],flight['positions'][theLength-1]['latitude'])
-    
-    for area in observed_areas:
-
-        if area['name'] == condition['value']:
-            if point.within(area['geometry']) == True:
+            if flight['aircraft']['powerplant']['count'] ==  condition['value']:
                 return True
 
-    return False
+        if condition['value'] == "minimum":
 
+            if flight['aircraft']['powerplant']['count'] >= condition['value']:
+                return True
 
-def callsign_validateCondition(condition):
+        if condition['value'] == "maximum":
 
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
+            if flight['aircraft']['powerplant']['count'] <= condition['value']:
+                return True
 
-    condition['value'] = str(condition['value']).strip().upper()
-
-    return condition
-
-
-def callsign_validateData(condition, flight):
-    
-    if "callsign" not in flight:
         return False
 
-    if flight['callsign'] == condition['value']:
-        return True
 
-    return False
-    
+    def aircraft_registration_validateCondition(self, condition):
 
-def date_validateCondition(condition):
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
 
-    try:
-        condition['value'] = datetime.strptime(condition['value'], "%Y-%m-%d").date()
+        condition['value'] = str(condition['value']).strip().upper()
 
-    except ValueError as ve:
-        raise Exception(condition['type'] + " \"" + condition['value'] + "\" is a valid date or not in format YYYY-mm-dd.")
+        if len(condition['value']) <2:
+            raise self.minimumLengthNotMet(condition, 3)
 
-    return condition
+        return condition
 
 
-def date_validateData(condition, flight):
+    def aircraft_registration_validateData(self, condition, flight):
+        
+        if "aircraft" not in flight:
+            return False
 
-    if condition['operator'] == "equals":
-        if datetime.today().utcnow().date() == condition['value']:
+        if "registration" not in flight['aircraft']:
+            return False
+
+        if flight['aircraft']['registration'] == condition['value']:
             return True
 
-    if condition['operator'] == "minimum":
-        if datetime.today().utcnow().date() >= condition['value']:
+        return False
+        
+
+    def aircraft_type_designator_validateCondition(self, condition):
+        
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        condition['value'] = str(condition['value']).strip()
+
+        if len(condition['value']) != 4:
+            raise self.exactLengthNotMet(condition, 4)
+
+        return condition
+
+
+    def aircraft_type_designator_validateData(self, condition, flight):
+        
+        if "aircraft" not in flight:
+            return False
+
+        if "type_designator" not in flight['aircraft']:
+            return False
+
+        if flight['aircraft']['type_designator'] == condition['value']:
             return True
 
-    if condition['operator'] == "maximum":
-        if datetime.today().utcnow().date() <= condition['value']:
+        return False
+        
+
+    def altitude_validateCondition(self, condition):
+
+        if condition['operator'] == "equals":
+            raise self.operatorShouldNotBeEqualsException(condition)
+        
+        try:
+            condition['value'] = int(float(condition['value']))
+        except ValueError:
+            raise self.valueNotNumeric(condition)
+        
+        if condition['value'] < 0:
+            raise self.valueNotPositiveInteger(condition)
+
+        return condition
+
+
+    def altitude_validateData(self, condition, flight):
+        
+        if "positions" not in flight:
+            return False
+
+        theLength = len(flight['positions'])
+        
+        if theLength == 0:
+            return False
+
+        if "altitude" not in flight['positions'][theLength-1]:
+            return False
+
+        if condition['operator'] == "minimum":
+            if flight['positions'][theLength-1]['altitude'] >= condition['value']:
+                return True
+
+        if condition['operator'] == "maximum":
+            if flight['positions'][theLength-1]['altitude'] <= condition['value']:
+                return True
+        
+
+    def area_validateCondition(self, condition):
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        for area in self.observed_areas:
+            if str(condition['value']).strip().lower() == str(area['name']).lower():
+                return condition
+
+        raise Exception(condition['type'] + " \"" + str(condition['value']).strip() + "\" not found in observed areas.")
+
+
+    def area_validateData(self, condition, flight):
+        
+        if len(self.observed_areas) == 0:
+            return False
+
+        if "positions" not in flight:
+            return False
+
+        theLength = len(flight['positions'])
+        
+        if theLength == 0:
+            return False
+
+        if "latitude" not in flight['positions'][theLength-1]:
+            return False
+
+        if "longitude" not in flight['positions'][theLength-1]:
+            return False
+
+        point = Point(flight['positions'][theLength-1]['longitude'],flight['positions'][theLength-1]['latitude'])
+        
+        for area in self.observed_areas:
+
+            if area['name'] == condition['value']:
+                if point.within(area['geometry']) == True:
+                    return True
+
+        return False
+
+
+    def callsign_validateCondition(self, condition):
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        condition['value'] = str(condition['value']).strip().upper()
+
+        return condition
+
+
+    def callsign_validateData(self, condition, flight):
+        
+        if "callsign" not in flight:
+            return False
+
+        if flight['callsign'] == condition['value']:
             return True
 
-    return False
-    
-
-def heading_validateCondition(condition):
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    try:
-        condition['value'] = tuple(map(float, condition['value'].split(",")))
-    except ValueError:
-        raise valueNotNumeric(condition)
-
-    if len(condition['value']) != 2:
-        raise Exception(condition['type'] + " \"" + str(condition['value']) + "\" must have exactly two values.")
-
-    for value in condition['value']:
-        if value < 0 or value > 359:
-            raise Exception(condition['type'] + " \"" + str(value) + "\" is invalid and must be between 0 and 359, inclusive.")
-
-    return condition
-
-
-def heading_validateData(condition, flight):
-
-    if "velocities" not in flight:
         return False
+        
 
-    theLength = len(flight['velocities'])
-    
-    if theLength == 0:
+    def date_validateCondition(self, condition):
+
+        try:
+            condition['value'] = datetime.strptime(condition['value'], "%Y-%m-%d").date()
+
+        except ValueError as ve:
+            raise Exception(condition['type'] + " \"" + condition['value'] + "\" is a valid date or not in format YYYY-mm-dd.")
+
+        return condition
+
+
+    def date_validateData(self, condition, flight):
+
+        if condition['operator'] == "equals":
+            if datetime.today().utcnow().date() == condition['value']:
+                return True
+
+        if condition['operator'] == "minimum":
+            if datetime.today().utcnow().date() >= condition['value']:
+                return True
+
+        if condition['operator'] == "maximum":
+            if datetime.today().utcnow().date() <= condition['value']:
+                return True
+
         return False
+        
 
-    if "heading" not in flight['velocities'][theLength-1]:
-        return False
+    def heading_validateCondition(self, condition):
 
-    if flight['velocities'][theLength-1]['heading'] is None:
-        return False
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
 
-    theHeading = flight['velocities'][theLength-1]['heading']
+        try:
+            condition['value'] = tuple(map(float, condition['value'].split(",")))
+        except ValueError:
+            raise self.valueNotNumeric(condition)
 
-    #Check for northbound operations, which span 0
-    if condition['value'][0] > condition['value'][1]:
+        if len(condition['value']) != 2:
+            raise Exception(condition['type'] + " \"" + str(condition['value']) + "\" must have exactly two values.")
 
-        if theHeading >= condition['value'][0] and theHeading <= 359:
+        for value in condition['value']:
+            if value < 0 or value > 359:
+                raise Exception(condition['type'] + " \"" + str(value) + "\" is invalid and must be between 0 and 359, inclusive.")
+
+        return condition
+
+
+    def heading_validateData(self, condition, flight):
+
+        if "velocities" not in flight:
+            return False
+
+        theLength = len(flight['velocities'])
+        
+        if theLength == 0:
+            return False
+
+        if "heading" not in flight['velocities'][theLength-1]:
+            return False
+
+        if flight['velocities'][theLength-1]['heading'] is None:
+            return False
+
+        theHeading = flight['velocities'][theLength-1]['heading']
+
+        #Check for northbound operations, which span 0
+        if condition['value'][0] > condition['value'][1]:
+
+            if theHeading >= condition['value'][0] and theHeading <= 359:
+                return True
+
+            if theHeading >= 0 and theHeading <=condition['value'][1]:
+                return True
+
+        else:
+            if theHeading >= condition['value'][0] and theHeading <= condition['value'][1]:
+                return True
+
+
+    def military_validateCondition(self, condition):
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        if str(condition['value']).strip().lower() == "true":
+            condition['value'] = True
+        else:
+            condition['value'] = False
+
+        return condition
+
+
+    def military_validateData(self, condition, flight):
+
+        if "aircraft" not in flight:
+            return False
+
+        if "military" not in flight['aircraft']:
+            return False
+
+        if flight['aircraft']['military'] == condition['value']:
             return True
 
-        if theHeading >= 0 and theHeading <=condition['value'][1]:
+
+    def squawk_validateCondition(self, condition):
+
+        condition['value'] = str(condition['value']).strip()
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        if str(condition['value']).isnumeric() == False:
+            raise self.valueNotNumeric(condition)    
+
+        if len(condition['value']) != 4:
+            raise self.exactLengthNotMet(condition, 4)
+
+        return condition
+
+
+    def squawk_validateData(self, condition, flight):
+
+        if "squawk" not in flight:
+            return False
+
+        if flight['squawk'] == condition['value']:
             return True
 
-    else:
-        if theHeading >= condition['value'][0] and theHeading <= condition['value'][1]:
+
+    def operator_airline_designator_validateCondition(self, condition):
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        condition['value'] = str(condition['value']).strip().upper()
+
+        if len(condition['value']) != 3:
+            raise self.exactLengthNotMet(condition, 3)
+
+        return condition
+
+
+    def operator_airline_designator_validateData(self, condition, flight):
+        
+        if "operator" not in flight:
+            return False
+
+        if "airline_designator" not in flight['operator']:
+            return False
+
+        if flight['operator']['airline_designator'] == condition['value']:
             return True
 
 
-def military_validateCondition(condition):
+    def velocity_validateCondition(self, condition):
 
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
+        if condition['operator'] == "equals":
+            raise self.operatorShouldNotBeEqualsException(condition)
 
-    if str(condition['value']).strip().lower() == "true":
-        condition['value'] = True
-    else:
-        condition['value'] = False
+        try:
+            condition['value'] = int(float(condition['value']))
+        except ValueError:
+            raise self.valueNotNumeric(condition)
+        
+        if condition['value'] < 0:
+            raise self.valueNotPositiveInteger(condition)
 
-    return condition
+        return condition
 
 
-def military_validateData(condition, flight):
+    def velocity_validateData(self, condition, flight):
+        
+        if "velocities" not in flight:
+            return False
 
-    if "aircraft" not in flight:
+        theLength = len(flight['velocities'])
+        
+        if theLength == 0:
+            return False
+
+        if "velocity" not in flight['velocities'][theLength-1]:
+            return False
+
+        if condition['operator'] == "minimum":
+            if flight['velocities'][theLength-1]['velocity'] >= condition['value']:
+                return True
+
+        if condition['operator'] == "maximum":
+            if flight['velocities'][theLength-1]['velocity'] <= condition['value']:
+                return True
+        
+
+    def vertical_speed_validateCondition(self, condition):
+
+        if condition['operator'] == "equals":
+            raise self.operatorShouldNotBeEqualsException(condition)
+
+        try:
+            condition['value'] = int(float(condition['value']))
+        except ValueError:
+            raise self.valueNotNumeric(condition)
+
+        return condition
+
+
+    def vertical_speed_validateData(self, condition, flight):
+        
+        if "velocities" not in flight:
+            return False
+
+        theLength = len(flight['velocities'])
+        
+        if theLength == 0:
+            return False
+
+        if "vertical_speed" not in flight['velocities'][theLength-1]:
+            return False
+
+        if condition['value'] < 0:
+            #Descending
+            if condition['operator'] == "minimum":
+                if flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                    return True
+
+            if condition['operator'] == "maximum":
+                if flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                    return True
+
+        else:
+            #Climbing or level
+            if condition['operator'] == "minimum":
+                if flight['velocities'][theLength-1]['vertical_speed'] > 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                    return True
+
+            if condition['operator'] == "maximum":
+                if flight['velocities'][theLength-1]['vertical_speed'] > 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                    return True
+
+
+    def wake_turbulence_category_validateCondition(self, condition):
+
+        if condition['operator'] != "equals":
+            raise self.operatorShouldBeEqualsException(condition)
+
+        condition['value'] = str(condition['value']).strip().lower()
+
+        if condition['value'] not in [
+                'light',
+                'medium',
+                'medium 1',
+                'medium 2',
+                'high vortex aircraft',
+                'heavy',
+                'super',
+                'rotorcraft',
+                'high performance']:
+            raise Exception(condition['type'] + " \"" + condition['value'] + "\" is unknown.")
+
+        return condition
+
+
+    def wake_turbulence_category_validateData(self, condition, flight):
+
+        if "wake_turbulence_category" not in flight['aircraft']:
+            return False
+
+        if str(flight['aircraft']['wake_turbulence_category']).strip().lower() == condition['value']:
+            return True
+
         return False
 
-    if "military" not in flight['aircraft']:
-        return False
 
-    if flight['aircraft']['military'] == condition['value']:
-        return True
+    class operatorShouldBeEqualsException(Exception):
 
-
-def squawk_validateCondition(condition):
-
-    condition['value'] = str(condition['value']).strip()
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    if str(condition['value']).isnumeric() == False:
-        raise valueNotNumeric(condition)    
-
-    if len(condition['value']) != 4:
-        raise exactLengthNotMet(condition, 4)
-
-    return condition
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" operator must be \"equals\", but \"" + condition['operator'] + "\" was specified."
+            super().__init__(self.message)
 
 
-def squawk_validateData(condition, flight):
+    class operatorShouldNotBeEqualsException(Exception):
 
-    if "squawk" not in flight:
-        return False
-
-    if flight['squawk'] == condition['value']:
-        return True
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" operator must not be \"equals\"."
+            super().__init__(self.message)
 
 
-def operator_airline_designator_validateCondition(condition):
+    class valueNotNumeric(Exception):
 
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    condition['value'] = str(condition['value']).strip().upper()
-
-    if len(condition['value']) != 3:
-        raise exactLengthNotMet(condition, 3)
-
-    return condition
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" is not numeric."
+            super().__init__(self.message)
 
 
-def operator_airline_designator_validateData(condition, flight):
-    return
-    
+    class valueNotPositiveInteger(Exception):
 
-def velocity_validateCondition(condition):
-
-    if condition['operator'] == "equals":
-        raise operatorShouldNotBeEqualsException(condition)
-
-    try:
-        condition['value'] = int(float(condition['value']))
-    except ValueError:
-        raise valueNotNumeric(condition)
-    
-    if condition['value'] < 0:
-        raise valueNotPositiveInteger(condition)
-
-    return condition
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" is not a positive integer."
+            super().__init__(self.message)
 
 
-def velocity_validateData(condition, flight):
-    return
-    
+    class minimumLengthNotMet(Exception):
 
-def vertical_speed_validateCondition(condition):
-
-    if condition['operator'] == "equals":
-        raise operatorShouldNotBeEqualsException(condition)
-
-    try:
-        condition['value'] = int(float(condition['value']))
-    except ValueError:
-        raise valueNotNumeric(condition)
-
-    return condition
+        def __init__(self, condition, minimum):
+            self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" must be at least " + str(minimum) + " characters."
+            super().__init__(self.message)
 
 
-def vertical_speed_validateData(condition, flight):
-    return
-    
+    class exactLengthNotMet(Exception):
 
-def wake_turbulence_category_validateCondition(condition):
-
-    if condition['operator'] != "equals":
-        raise operatorShouldBeEqualsException(condition)
-
-    condition['value'] = str(condition['value']).strip().lower()
-
-    if condition['value'] not in [
-            'light',
-            'medium',
-            'medium 1',
-            'medium 2',
-            'high vortex aircraft',
-            'heavy',
-            'super',
-            'rotorcraft',
-            'high performance']:
-        raise Exception(condition['type'] + " \"" + condition['value'] + "\" is unknown.")
-
-    return condition
+        def __init__(self, condition, minimum):
+            self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" must be exactly " + str(minimum) + " characters."
+            super().__init__(self.message)
 
 
-def wake_turbulence_category_validateData(condition, flight):
+    class ruleCheckException(Exception):
 
-    if "wake_turbulence_category" not in flight['aircraft']:
-        return False
-
-    if str(flight['aircraft']['wake_turbulence_category']).strip().lower() == condition['value']:
-        return True
-
-    return False
+        def __init__(self, message):
+            self.message = message
+            super().__init__(self.message)
 
 
-class operatorShouldBeEqualsException(Exception):
+    class fileNotFound(Exception):
 
-    def __init__(self, condition):
-        self.message = condition['type'] + " operator must be \"equals\", received \"" + condition['operator'] + "\"."
-        super().__init__(self.message)
-
-
-class operatorShouldNotBeEqualsException(Exception):
-
-    def __init__(self, condition):
-        self.message = condition['type'] + " operator must not be \"equals\"."
-        super().__init__(self.message)
-
-
-class valueNotNumeric(Exception):
-
-    def __init__(self, condition):
-        self.message = condition['type'] + " value \"" + str(condition['value']).strip() + "\" is not numeric."
-        super().__init__(self.message)
-
-
-class valueNotPositiveInteger(Exception):
-
-    def __init__(self, condition):
-        self.message = condition['type'] + " value \"" + str(condition['value']).strip() + "\" is not a positive integer."
-        super().__init__(self.message)
-
-
-class minimumLengthNotMet(Exception):
-
-    def __init__(self, condition, minimum):
-        self.message = condition['type'] + " value \"" + str(condition['value']).strip() + "\" must be at least " + str(minimum) + " characters."
-        super().__init__(self.message)
-
-
-class exactLengthNotMet(Exception):
-
-    def __init__(self, condition, minimum):
-        self.message = condition['type'] + " value \"" + str(condition['value']).strip() + "\" must be exactly " + str(minimum) + " characters."
-        super().__init__(self.message)
+        def __init__(self, message):
+            self.message = message
+            super().__init__(self.message)

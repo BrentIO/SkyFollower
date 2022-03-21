@@ -22,6 +22,7 @@ import re
 import paho.mqtt.client                             #pip3 install paho-mqtt
 import signal
 import rulesEngine
+from rulesEngine import rulesEngine as skyFollowerRE
 
 
 def handle_interrupt(signal, frame):
@@ -437,6 +438,8 @@ def storeMessageRemote():
 
 def checkFlightOfInterest(flight):
 
+    global rulesEngine
+
     result = rulesEngine.evaluate(flight)
 
     for matchedRule in result:
@@ -571,6 +574,7 @@ def setup():
     global logger
     global localDb
     global mqttClient
+    global rulesEngine
 
     #Define some constants
     applicationName = "SkyFollower"
@@ -603,6 +607,8 @@ def setup():
 
         if "files" not in settings:
             raise Exception ("files object is missing from settings.json")
+
+        rulesEngine = skyFollowerRE(logger)
 
         if "areas" in settings['files']:
             rulesEngine.loadAreas(settings['files']['areas'])
