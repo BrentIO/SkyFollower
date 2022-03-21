@@ -32,7 +32,7 @@
         "notificationTopic": "SkyFollower/notify"
     },
     "files": {
-        "areas": "/etc/P5Software/SkyFollower/areas.geojson",
-        "rules": "/etc/P5Software/SkyFollower/rules.json"
+        "areas": "./areas.geojson",
+        "rules": "./rules.json"
     }
 }
