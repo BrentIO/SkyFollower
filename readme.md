@@ -19,7 +19,7 @@ MongoDB is a document-based datastore and is perfect for operations like trackin
 ### Required packages
 Using apt, install the prerequisite packages, if you don't already have them installed:
 ```
-sudo apt-get install -y python3 python3-pip
+sudo apt-get install -y python3 python3-pip libgeos-dev
 ```
 
 Python also requires a number of packages that must be installed:
