@@ -168,7 +168,7 @@ class rulesEngine():
         try:
 
             if os.path.exists(path) == False:
-                raise Exception("File \"" + path + "\" could not be found.")
+                raise Exception("Areas file \"" + path + "\" could not be found.")
 
             with open(path) as geojsonFile:
                 geojsonData = json.load(geojsonFile)
@@ -246,7 +246,7 @@ class rulesEngine():
         try:
 
             if os.path.exists(path) == False:
-                raise self.fileNotFound("Rule file \"" + path + "\" could not be found.")
+                raise self.fileNotFound("Rules file \"" + path + "\" could not be found.")
 
             with open(path) as rulesFile:
                 rules = json.load(rulesFile)
