@@ -14,7 +14,7 @@ SkyFollower can run on pretty much any operating system that runs Python3, but t
 ### MongoDB
 MongoDB is a document-based datastore and is perfect for operations like tracking historical aircraft movement.  It is recommended, but not required, for MongoDB to be installed on the same system as SkyFollower.
 
-> MongoDB 4.4 Community Edition is recommended.  Follow their <a href="https://www.mongodb.com/docs/v4.4/tutorial/install-mongodb-on-ubuntu/" target = "_blank">installation instructions</a>.  Installing MongoDB later than 4.4 may not be possible on your computer, depending on the age and processor capabilities, and has not been tested.
+> MongoDB 4.4 Community Edition is recommended.  Follow their <a href="https://www.mongodb.com/docs/v4.4/tutorial/install-mongodb-on-ubuntu/" target="_blank">installation instructions</a>.  Installing MongoDB later than 4.4 may not be possible on your computer, depending on the age and processor capabilities, and has not been tested.
 ## Allow External Connections
 Set the network binding to allow remote connections.  Only perform this operation if you intend to query MongoDB from a separate computer.
 
