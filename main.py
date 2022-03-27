@@ -156,6 +156,8 @@ def storeMessageLocal(data):
         flight['total_messages'] = 0
         flight['matched_rules'] = []
 
+        logger.debug("New aircraft added to localDb _id:" + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
+
         #Get the aircraft data
         aircraftData = getRegistration(flight['icao_hex'])
 
@@ -411,6 +413,8 @@ def storeMessageRemote():
                         if 'military' in flight['aircraft']:
                             if flight['aircraft']['military'] == False:
                                 del flight['aircraft']['military']
+
+                    logger.debug("Inserting into MongoDB " + flight['_id'] + " " + flight['aircraft']['icao_hex'])
 
                     adsbDBCollection.insert_one(flight)
 
