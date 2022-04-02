@@ -130,7 +130,7 @@ sudo systemctl start SkyFollower.service
 ## Areas
 An area is a simple GeoJSON polygon of an interesting area.  The feature must include a property called `name` to be permitted.  A great tool to define your GeoJSON can be found at [https://geojson.io](https://geojson.io).
 
-Below is an example which will be used in the next section, note that a `name` property of `LI` has been added to the `properties` section:
+Below is an example which will be used in the next section, note that a `name` property of `LI` has been added to the `properties` section.  You may also find this example in the areas.example.geojson file.
 ```
 {
     "type": "FeatureCollection",
@@ -262,6 +262,8 @@ Condition Types
 > If any condition in the trigger evalutes to false, the entire rule evaluates to false. 
 
 ### Example Rules and Conditions
+You may also find all of these examples in the rules.example.json file.
+
 1. Any aircraft with an altitude at or below 10,000ft
 
 ```
