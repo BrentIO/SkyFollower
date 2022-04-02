@@ -88,7 +88,7 @@ def messageProcessor(messages):
         data['downlink_format'] = pms.df(msg)
 
         if data['downlink_format'] not in (0, 11, 16, 4, 20, 5, 21, 17):
-            logger.info("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
+            logger.debug("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
         
         #Throw away certain DF's (0 & 16 are ACAS, 11 is all-call)
         if data['downlink_format'] == 0 or data['downlink_format'] == 11 or data['downlink_format'] == 16:
@@ -335,11 +335,11 @@ def getRegistration(icao_hex):
         if r.status_code == 200:
             return json.loads(r.text)
 
-        logger.warning("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
+        logger.info("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
         return None
 
     except Exception as ex:
-        logger.info("Error getting registration.")
+        logger.warning("Error getting registration.")
         logger.error(ex)
         return None
 
@@ -356,11 +356,11 @@ def getOperator(callsign):
         if r.status_code == 200:
             return json.loads(r.text)
         
-        logger.warning("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+        logger.info("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
         return None
 
     except Exception as ex:
-        logger.info("Error getting operator.")
+        logger.warning("Error getting operator.")
         logger.error(ex)
         return None
 

@@ -204,7 +204,8 @@ class rulesEngine():
                     raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"type\" field in geometry.")
 
                 if str(feature['geometry']['type']) != "Polygon":
-                    raise Exception("Feature \"" + tmpFeature['name'] + "\" has an unsupported feature -> geometry -> type of " + feature['geometry']['type'] + "; Only type \"Polygon\" is supported.")
+                    self.logger.debug("Feature \"" + tmpFeature['name'] + "\" has an unsupported feature -> geometry -> type of " + feature['geometry']['type'] + "; It will not be imported.")
+                    continue
 
                 if "coordinates" not in feature['geometry']:
                     raise Exception("Feature \"" + tmpFeature['name'] + "\" does not contain a \"coordinates\" array in geometry.")
@@ -217,11 +218,13 @@ class rulesEngine():
                 if tmpFeature['geometry'].is_valid == False:
                     raise Exception("Feature \"" + tmpFeature['name'] + "\" is not a valid polygon.")
 
+                self.logger.debug("Area \"" + tmpFeature['name'] + "\" has been staged for import.")
+
                 tmpAreas.append(tmpFeature)
 
             self.observed_areas = tmpAreas
 
-            self.logger.info("Areas updated successfully.")
+            self.logger.info("All staged areas were imported successfully.")
 
             return True
 
@@ -232,6 +235,9 @@ class rulesEngine():
             self.logger.critical("Exception while processing areas file.  The file will not be used.  " + ex.message)
 
             return False
+
+        except json.decoder.JSONDecodeError:
+            self.logger.critical("Exception while processing areas file.  Check that the file contains valid JSON.")
 
         except Exception as ex:
             self.logger.critical("Exception while processing areas file.  The file will not be used.  " + str(ex))
@@ -390,7 +396,7 @@ class rulesEngine():
 
             self.observed_rules = tmpRules
 
-            self.logger.info("Rules updated successfully.")
+            self.logger.info("All staged rules were imported successfully.")
 
             return True
 
@@ -401,6 +407,9 @@ class rulesEngine():
             self.logger.critical("Exception while processing rules file.  The file will not be used.  " + ex.message)
 
             return False
+
+        except json.decoder.JSONDecodeError:
+            self.logger.critical("Exception while processing rules file.  Check that the file contains valid JSON.")
 
         except Exception as ex:
             self.logger.critical("Exception while processing rules file.  The file will not be used.  " + str(ex))
@@ -575,7 +584,7 @@ class rulesEngine():
             if str(condition['value']).strip().lower() == str(area['name']).lower():
                 return condition
 
-        raise Exception(condition['type'] + " \"" + str(condition['value']).strip() + "\" not found in observed areas.")
+        raise Exception("Area \"" + str(condition['value']).strip() + "\" not found in areas file.")
 
 
     def area_validateData(self, condition, flight):
