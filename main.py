@@ -700,7 +700,7 @@ def setup():
             raise Exception ("Invalid longitude in settings.json.  Expected float.")
 
         if settings['latitude'] == 38.8969137 and settings['longitude'] == -77.0357096:
-            raise Exception ("Configure the latitude and longitude in settings.json.")
+            raise Exception ("Configure your latitude and longitude in settings.json.")
 
         if 'mqtt' not in settings:
             logger.info("mqtt is not declared in the settings file; MQTT will be disabled.")
