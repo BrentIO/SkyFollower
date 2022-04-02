@@ -18,7 +18,9 @@ MongoDB is a document-based datastore and is perfect for operations like trackin
 ## Allow External Connections
 Set the network binding to allow remote connections.  Only perform this operation if you intend to query MongoDB from a separate computer.
 
-`sudo nano /etc/mongod.conf`
+```
+sudo nano /etc/mongod.conf
+```
 
 ```
 net:
@@ -28,7 +30,9 @@ net:
 
 Restart mongo
 
-`sudo systemctl restart mongod`
+```
+sudo systemctl restart mongod
+```
 
 ### Required packages
 Using apt, install the prerequisite packages, if you don't already have them installed:
