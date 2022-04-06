@@ -835,6 +835,16 @@ def setup():
         exitApp(1)
 
 
+def run_scheduled_tasks():
+
+    t = current_thread()
+    t.alive = True
+
+    while t.alive:
+        schedule.run_pending()
+        time.sleep(1)
+
+
 def main():
 
     try:
@@ -856,15 +866,20 @@ def main():
         # run new client, change the host, port, and rawtype if needed
         adsb_client = ADSBClient()
 
-        dbCleaner = threading.Thread(name="storeMessageRemote", target=storeMessageRemote)
+        schedule.every().hour.at("00:30").do(stats.reset_hour)
+        schedule.every().day.at("10:20").do(stats.reset_today)
+        schedule.every(10).seconds.do(stats.publish)
+
+        #Remote storage thread
+        schedule.every(10).seconds.do(storeMessageRemote)
+        
+        scheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks)
 
         #Start the threads
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_start()
 
-        dbCleaner.start()
-
-        mqtt_publishAutoDiscovery()
+        scheduler.start()
 
         observer = Observer()
         event_handler = fileChanged()
@@ -881,24 +896,24 @@ def main():
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
-        dbCleaner.alive = False
-        logger.info("Attempting to shutdown, waiting for remote storage thread to be terminated.")
-        dbCleaner.join()
+        if scheduler:            
+            if scheduler.is_alive():
+                scheduler.alive = False
+                scheduler.join()
+     
+        storeMessageRemote(False)
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_stop()
 
-        logger.info("Remote storage thread terminated.")
-        exitApp(0)       
+        exitApp(0)
 
     except Exception as ex:
         logger.error(ex)
         exitApp(1)
         
     finally:
-
         if observer:
-
             if observer.is_alive():
                 observer.stop()
                 observer.join()
