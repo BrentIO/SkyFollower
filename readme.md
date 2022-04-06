@@ -42,7 +42,7 @@ sudo apt-get install -y python3 python3-pip libgeos-dev
 
 Python also requires a number of packages that must be installed:
 ```
-sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt shapely watchdog
+sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt shapely watchdog schedule
 ```
 
 ### Optional: Aircraft Registration and Operator Information
