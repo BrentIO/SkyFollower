@@ -366,111 +366,97 @@ def getOperator(callsign):
         return None
 
 
-def storeMessageRemote():
+def storeMessageRemote(threadState = True):
 
-    t = current_thread()
-    t.alive = True
+    countOfMigrated = 0
 
-    while True:
+    try:
 
-        countOfMigrated = 0
+        Record = Query()
 
-        try:
+        #Determine if we will continue to live after this round
+        if threadState:
+            stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds()))
+        else:
+            #Thread is shutting down, persist all the records regardless of their status
+            logger.info("Shutdown detected, persisting all local records to MongoDB.")
+            stale_flights = localDb.all()
 
-            threadState = t.alive
-            Record = Query()
+        if len(stale_flights) > 0:
 
-            #Determine if we will continue to live after this round
-            if threadState:
-                stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds()))
-            else:
-                #Thread is shutting down, persist all the records regardless of their status
-                logger.info("Shutdown detected, persisting all local records to MongoDB.")
-                stale_flights = localDb.all()
+            mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
+            adsbDB = mongoDBClient[settings['mongoDb']['database']]
+            adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
 
-            if len(stale_flights) > 0:
+            #An array will be returned, cycle through each flight
+            for flight in stale_flights:
 
-                mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
-                adsbDB = mongoDBClient[settings['mongoDb']['database']]
-                adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
+                icao_hex = flight['icao_hex']
 
-                #An array will be returned, cycle through each flight
-                for flight in stale_flights:
+                #Make the datestamps human-readable
+                flight['first_message'] = datetime.utcfromtimestamp(flight['first_message'])
+                flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
 
-                    icao_hex = flight['icao_hex']
+                #Delete data we do not want to persist
+                del flight['matched_rules']
 
-                    #Make the datestamps human-readable
-                    flight['first_message'] = datetime.utcfromtimestamp(flight['first_message'])
-                    flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
+                if 'aircraft' in flight:
+                    
+                    #ICAO Hex will be repetitive, but only delete it if there is an aircraft object
+                    del flight['icao_hex']
 
-                    #Delete data we do not want to persist
-                    del flight['matched_rules']
+                    if 'military' in flight['aircraft']:
+                        if flight['aircraft']['military'] == False:
+                            del flight['aircraft']['military']
 
-                    if 'aircraft' in flight:
-                        
-                        #ICAO Hex will be repetitive, but only delete it if there is an aircraft object
-                        del flight['icao_hex']
+                logger.debug("Inserting into MongoDB " + flight['_id'] + " " + flight['aircraft']['icao_hex'])
 
-                        if 'military' in flight['aircraft']:
-                            if flight['aircraft']['military'] == False:
-                                del flight['aircraft']['military']
+                adsbDBCollection.insert_one(flight)
 
-                    logger.debug("Inserting into MongoDB " + flight['_id'] + " " + flight['aircraft']['icao_hex'])
+                countOfMigrated = countOfMigrated + 1
 
-                    adsbDBCollection.insert_one(flight)
+                localDb.remove(Record.icao_hex == icao_hex)
+            
+            mongoDBClient.close()
 
-                    countOfMigrated = countOfMigrated + 1
+            logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
 
-                    localDb.remove(Record.icao_hex == icao_hex)
-                
-                mongoDBClient.close()
+        else:
+            logger.debug("No records ready to be migrated to MongoDB.")
 
-                logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
+    except errors.DuplicateKeyError as dke:
 
-            #Determine if we should break out of the loop
-            if not threadState:
-                break
+        if 'keyValue' in dke.details:
+            if '_id' in dke.details['keyValue']:
 
-        except errors.DuplicateKeyError as dke:
+                try:
+                    
+                    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "/errors/")
 
-            if 'keyValue' in dke.details:
-                if '_id' in dke.details['keyValue']:
+                    if not os.path.exists(directory):
+                        os.makedirs(directory)
 
-                    try:
-                        
-                        directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "/errors/")
+                    fileName = os.path.join(directory, "dke_" + str(datetime.utcnow().isoformat()).replace(":", "-") + ".json")
 
-                        if not os.path.exists(directory):
-                            os.makedirs(directory)
+                    flight['error'] = "pymongo.errors.DuplicateKeyError"
 
-                        fileName = os.path.join(directory, "dke_" + str(datetime.utcnow().isoformat()).replace(":", "-") + ".json")
+                    with open(fileName, 'w') as outfile:
+                        json.dump(flight, outfile, default=jsonDefaultConverter)
 
-                        flight['error'] = "pymongo.errors.DuplicateKeyError"
+                    localDb.remove(Record._id == dke.details['keyValue']['_id'])
 
-                        with open(fileName, 'w') as outfile:
-                            json.dump(flight, outfile, default=jsonDefaultConverter)
+                    logger.critical("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
+                    mqtt_publishError("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
 
-                        localDb.remove(Record._id == dke.details['keyValue']['_id'])
+                except Exception as ex:
+                    logger.critical("Duplicate key error failed when attempting to write to disk.  Data was lost.  The duplicate _id=" + str(dke.details['keyValue']['_id']))
+                    logger.critical(ex)
+                    mqtt_publishError("MongoDB Failure, check logs.")
 
-                        logger.critical("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
-                        mqtt_publishError("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
-
-                    except Exception as ex:
-                        logger.critical("Duplicate key error failed when attempting to write to disk.  Data was lost.  The duplicate _id=" + str(dke.details['keyValue']['_id']))
-                        logger.critical(ex)
-                        mqtt_publishError("MongoDB Failure, check logs.")
-
-        except Exception as ex:
-            logger.error("Error migrating data to MongoDB.")
-            logger.error(ex)
-            mqtt_publishError("MongoDB Failure, check logs.")
-
-        finally:
-            #Sleep another 10 seconds if the thread is still alive
-            if t.alive:
-                time.sleep(10)
-            else:
-                break
+    except Exception as ex:
+        logger.error("Error migrating data to MongoDB.")
+        logger.error(ex)
+        mqtt_publishError("MongoDB Failure, check logs.")
 
 
 def jsonDefaultConverter(o):
