@@ -25,6 +25,7 @@ import signal
 from rulesEngine import rulesEngine as skyFollowerRE
 from watchdog.observers import Observer
 from watchdog.events import PatternMatchingEventHandler
+import schedule
 
 
 def handle_interrupt(signal, frame):
