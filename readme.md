@@ -102,6 +102,10 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `files` | Locations to additional files used by SkyFollower |
 | `files -> areas` | ./areas.geojson | Path to the defined areas GeoJSON file |
 | `files -> rules` | ./rules.json | Path to the notification rules |
+| `home_assistant` | If this object is omitted, Home Assistant will be disabled.|
+| `home_assistant -> enabled` | false | Controls if Home Assistant integration is enabled or disabled.|
+| `home_assistant -> discovery_prefix` | homeassistant | The prefix that Home Assistant is listening to for auto discovery messages.  By default, Home Assistant is listening for auto discovery on the `homeassistant` MQTT topic and all child topics. |
+
 
 
 
