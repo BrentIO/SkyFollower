@@ -65,7 +65,7 @@ class ADSBClient(TcpClient):
         except Exception as ex:
             logger.critical(ex)
             logger.critical("Error; Exiting with code 2")
-            mqtt_publishError(ex)
+            mqtt_publishError(str(ex))
             os._exit(2)
 
 
