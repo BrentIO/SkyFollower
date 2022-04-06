@@ -974,6 +974,175 @@ class fileChanged(PatternMatchingEventHandler):
             ad.rules()
 
 
+class statistics():
+
+    def __init__(self):
+        self.count_flights_hour = 0
+        self.count_flights_today = 0
+        self.count_flights_lifetime = 0
+        self.count_messages_hour = 0
+        self.count_messages_today = 0
+        self.count_messages_lifetime = 0
+        self.time_start = int(time.time())
+
+    def list(self):
+
+        return [
+            {"name": "count_flights_hour", "description": "Flight Count Last Hour", "value" : self.count_flights_hour, "type" : "count"},
+            {"name": "count_flights_today", "description": "Flight Count Today","value" : self.count_flights_today, "type" : "count"},
+            {"name": "count_flights_lifetime", "description": "Flight Count Total","value" : self.count_flights_lifetime, "type" : "count"},
+            {"name": "count_messages_hour", "description": "Message Count Last Hour","value" : self.count_messages_hour, "type" : "count"},
+            {"name": "count_messages_today", "description": "Message Count Today","value" : self.count_messages_today, "type" : "count"},
+            {"name": "count_messages_lifetime", "description": "Message Count Total","value" : self.count_messages_lifetime, "type" : "count"},
+            {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
+            {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
+        ]
+
+    def reset_today(self):
+        self.count_flights_today = 0
+        self.count_messages_today = 0
+        self.reset_hour()
+
+
+    def reset_hour(self):
+        self.count_flights_hour = 0
+        self.count_messages_hour = 0
+
+
+    def increment_flights_count(self):
+        self.count_flights_hour = self.count_flights_hour + 1
+        self.count_flights_today = self.count_flights_today + 1
+        self.count_flights_lifetime = self.count_flights_lifetime + 1
+
+
+    def increment_message_count(self):
+        self.count_messages_hour = self.count_messages_hour + 1
+        self.count_messages_today = self.count_messages_today + 1
+        self.count_messages_lifetime = self.count_messages_lifetime + 1
+
+
+    def publish(self):
+
+        ## Publishes the current value of each statistic tracked, if MQTT is connected
+
+        if not mqttClient.is_connected():
+            return
+
+        for stat in self.list():
+            mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+ 
+
+class autoDiscovery():
+
+    def __init__(self):
+
+        self.device = {
+                "ids" : applicationName,
+                "name": applicationName,
+                "manufacturer" : "P5Software, LLC"
+            }
+
+
+    def __publish__(self, topic, payload, retain = True):
+
+        if mqttClient.is_connected() == True:
+            mqttClient.publish(topic=topic, payload=json.dumps(payload), retain=retain)
+
+
+    def rules(self):
+        
+        for rule in rulesEngine.observed_rules:
+
+            payload = {
+                "availability_topic" : settings['mqtt']['topic_status'],
+                "payload_available" : "ONLINE",
+                "payload_not_available" : "OFFLINE",
+                "state_topic" : settings["mqtt"]["topic_rule"] + rule['identifier'],
+                "name" : "Rule " + rule['name'],
+                "unique_id" : applicationName + "_rule_" + rule['identifier'],
+                "device" : self.device,
+                "expire_after" : 30,
+                "icon" : "mdi:airplane-alert",
+                "value_template" : "{{ value_json.aircraft.registration }}"
+            }
+
+            topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_rule_"+ rule['identifier'] + "/config"
+
+            self.__publish__(topic, payload)
+
+
+    def stats(self):
+
+        for stat in stats.list():
+
+            payload = {
+                "availability_topic" : settings['mqtt']['topic_status'],
+                "payload_available" : "ONLINE",
+                "payload_not_available" : "OFFLINE",
+                "state_topic" : settings["mqtt"]["topic_statistics"] + stat['name'],
+                "name" : stat['description'],
+                "unique_id" : applicationName + "_" + stat['name'],
+                "device" : self.device
+            }
+
+            if stat['type'] == "timestamp":
+                payload['icon'] = "mdi:clock"
+                payload['value_template'] = "{{ ( value | int ) | timestamp_utc }}"
+                payload['enabled_by_default'] = False
+
+            if stat['type'] == "uptime":
+                payload['icon'] = "mdi:clock"
+                payload['value_template'] = "{% set time = (value | int) | int %} " \
+                    "{% set minutes = ((time % 3600) / 60) | int %} " \
+                    "{% set hours = ((time % 86400) / 3600) | int %} " \
+                    "{% set days = (time / 86400) | int %} " \
+                    "{%- if time < 60 -%} " \
+                    "Less than a minute " \
+                    "{%- else -%} " \
+                    "{%- if days > 0 -%} " \
+                        "{{ days }}d " \
+                    "{%- endif -%} " \
+                    "{%- if hours > 0 -%} " \
+                        "{%- if days > 0 -%} " \
+                        "{{ ' ' }} " \
+                        "{%- endif -%} " \
+                        "{{ hours }}h " \
+                    "{%- endif -%} " \
+                    "{%- if minutes > 0 -%} " \
+                        "{%- if days > 0 or hours > 0 -%} " \
+                        "{{ ' ' }} " \
+                        "{%- endif -%} " \
+                        "{{ minutes }}m " \
+                    "{%- endif -%} " \
+                    "{%- endif -%}"
+
+            if stat['type'] == "count":
+                payload['icon'] = "mdi:broadcast"
+                payload['state_class'] = "total_increasing"
+
+            topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_" + stat['name'] +"/config"
+
+            self.__publish__(topic, payload)
+
+
+    def status(self):
+
+        payload = {
+            "availability_topic" : settings['mqtt']['topic_status'],
+            "payload_available" : "ONLINE",
+            "payload_not_available" : "OFFLINE",
+            "state_topic" : settings['mqtt']['topic_status'],
+            "name" : applicationName + " Application Status",
+            "unique_id" : applicationName + "_status",
+            "icon" : "mdi:lan-connect",
+            "device" : self.device
+        }
+
+        topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_status/config"
+
+        self.__publish__(topic, payload)
+
+    
 if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, handle_interrupt)
