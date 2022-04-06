@@ -566,6 +566,9 @@ class rulesEngine():
         if "altitude" not in flight['positions'][theLength-1]:
             return False
 
+        if not flight['positions'][theLength-1]['altitude']:
+            return False
+
         if condition['operator'] == "minimum":
             if flight['positions'][theLength-1]['altitude'] >= condition['value']:
                 return True
