@@ -33,5 +33,9 @@
     "files": {
         "areas": "./areas.geojson",
         "rules": "./rules.json"
+    },
+    "home_assistant":{
+        "enabled" : true,
+        "discovery_prefix" : "homeassistant"
     }
 }

@@ -499,31 +499,41 @@ def mqtt_publishNotication(identifier, message):
     if settings['mqtt']['enabled'] != True:
         return
 
-    mqttClient.publish(settings["mqtt"]["topic_notification"] + identifier, message)
-
+    if mqttClient.is_connected():
+        mqttClient.publish(settings["mqtt"]["topic_rule"] + identifier, message)
 
 def mqtt_publishError(message):
 
     if settings['mqtt']['enabled'] != True:
         return
 
-    mqttClient.publish(settings["mqtt"]["topic_error"], message)
+    if mqttClient.is_connected():
+        mqttClient.publish(settings["mqtt"]["topic_error"], message)
 
 
 def mqtt_publishOnline():
 
     if settings['mqtt']['enabled'] != True:
         return
-    
-    #Set the status online
-    mqttClient.publish(settings['mqtt']['topic_status'], "ONLINE")
+
+    if mqttClient.is_connected() == True:
+        mqttClient.publish(settings['mqtt']['topic_status'], "ONLINE", retain=True)
+
 
 def mqtt_publishAutoDiscovery():
 
     if settings['mqtt']['enabled'] != True:
         return
 
-    #TO DO
+    if settings['home_assistant']['enabled'] != True:
+        return
+
+    ad = autoDiscovery()
+    ad.status()
+    ad.stats()
+    ad.rules()
+ 
+    
 
 def mqtt_onConnect(client, userdata, flags, rc):
     #########################################################
@@ -541,6 +551,9 @@ def mqtt_onConnect(client, userdata, flags, rc):
             logger.info("MQTT connected to " + settings["mqtt"]["uri"] + ".")
 
             mqtt_publishOnline()
+            mqtt_publishError("")
+            stats.publish()
+            mqtt_publishAutoDiscovery()
 
     except Exception as ex:
         logger.error(ex)
@@ -649,6 +662,7 @@ def setup():
         if "rules" in settings['files']:
             settings['files']['rules'] = settings['files']['rules'].replace("./", filePath + "/")
             rulesEngine.loadRules(settings['files']['rules'])
+            
         else:
             logger.warning("Missing files -> rules in settings.json")
 
@@ -741,7 +755,8 @@ def setup():
                 raise Exception ("Empty mqtt -> topic in settings.json")
 
             settings['mqtt']['topic_status'] = str(settings['mqtt']['topic']+ "/status").replace("//", "/")
-            settings['mqtt']['topic_notification'] = str(settings['mqtt']['topic'] + "/rule/").replace("//", "/")
+            settings['mqtt']['topic_rule'] = str(settings['mqtt']['topic'] + "/rule/").replace("//", "/")
+            settings['mqtt']['topic_statistics'] = str(settings['mqtt']['topic'] + "/stats/").replace("//", "/")
             settings['mqtt']['topic_error'] = str(settings['mqtt']['topic'] + "/error").replace("//", "/")
 
             #Create MQTT Client
@@ -819,6 +834,27 @@ def setup():
             if "x-api-key" not in settings['operators']:
                 raise Exception ("Missing operators -> x-api-key in settings.json")
 
+        if 'home_assistant' not in settings:
+            logger.info("home_assistant is not declared in the settings file; Home Assistant will be disabled.")
+
+            settings['home_assistant'] = {}
+
+            settings['home_assistant']['enabled'] = False
+
+        else:
+
+            if 'enabled' not in settings['home_assistant']:
+                settings['home_assistant']['enabled'] = False
+
+            if settings['home_assistant']['enabled'] == False:
+                logger.info("Home Assistant is disabled in the settings file; Home Assistant operators will be disabled.")
+
+            if settings['home_assistant']['enabled'] == True and 'discovery_prefix' not in settings['home_assistant']:
+                settings['home_assistant']['discovery_prefix'] = "homeassistant"
+                logger.debug("Setting 'home_assistant -> discovery_prefix' not declared in the settings file; Defaulting to 'homeassistant'.")
+
+            settings['mqtt']['topic_home_assistant_autodiscovery'] = str(settings['home_assistant']['discovery_prefix'] + "/").replace("//", "/")
+
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
             logger.debug("Using memory for localDb.")
@@ -887,7 +923,7 @@ def main():
         observer.schedule(event_handler, path=os.path.dirname(settings['files']['rules']))
         observer.start()
 
-        adsb_client.run() #Blocking, must be last            
+        adsb_client.run() #Blocking, must be last        
 
         exitApp(0)
 
@@ -934,6 +970,8 @@ class fileChanged(PatternMatchingEventHandler):
 
         if os.path.basename(event.src_path) == os.path.basename(settings['files']['rules']):
             rulesEngine.loadRules(settings['files']['rules'])
+            ad = autoDiscovery()
+            ad.rules()
 
 
 if __name__ == "__main__":
