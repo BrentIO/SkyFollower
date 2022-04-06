@@ -224,7 +224,7 @@ class rulesEngine():
 
             self.observed_areas = tmpAreas
 
-            self.logger.info("All staged areas were imported successfully.")
+            self.logger.info("All staged areas were imported successfully (" + str(len(self.observed_areas)) + ").")
 
             return True
 
@@ -259,9 +259,6 @@ class rulesEngine():
 
             if not isinstance(rules, list):
                 raise self.ruleCheckException("Rules file does not contain an array of rules.")
-
-            if len(rules) == 0:
-                raise self.ruleCheckException("Rules file contains no rules.")
 
             for rule in rules:
 
@@ -396,7 +393,7 @@ class rulesEngine():
 
             self.observed_rules = tmpRules
 
-            self.logger.info("All staged rules were imported successfully.")
+            self.logger.info("All staged rules were imported successfully (" + str(len(self.observed_rules)) + ").")
 
             return True
 
