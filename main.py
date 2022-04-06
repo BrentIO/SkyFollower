@@ -140,9 +140,11 @@ def messageProcessor(messages):
 
         #Process the message for storage in the local database
         storeMessageLocal(data)
-
+        
 
 def storeMessageLocal(data):
+
+    stats.increment_message_count()
 
     Record = Query()
     result = localDb.search(Record.icao_hex == data['icao_hex'])
@@ -158,6 +160,7 @@ def storeMessageLocal(data):
         flight['matched_rules'] = []
 
         logger.debug("New aircraft added to localDb _id:" + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
+        stats.increment_flights_count()
 
         #Get the aircraft data
         aircraftData = getRegistration(flight['icao_hex'])
@@ -599,10 +602,13 @@ def setup():
     global localDb
     global mqttClient
     global rulesEngine
+    global stats
 
     #Define some constants
     applicationName = "SkyFollower"
     settings = {}
+
+    stats = statistics()
 
     try:
 
