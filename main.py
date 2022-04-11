@@ -77,68 +77,73 @@ class ADSBClient(TcpClient):
 
 def messageProcessor(messages):
     
-    for msg, ts in messages:          
-
-        #Object to store data
-        data = {}
-
-        data['timestamp'] = ts
-
-        #Get the download format
-        data['downlink_format'] = pms.df(msg)
-
-        if data['downlink_format'] not in (0, 11, 16, 4, 20, 5, 21, 17):
-            logger.debug("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
+    for msg, ts in messages:
         
-        #Throw away certain DF's (0 & 16 are ACAS, 11 is all-call)
-        if data['downlink_format'] == 0 or data['downlink_format'] == 11 or data['downlink_format'] == 16:
-            continue
-        
-        data['icao_hex'] = pms.adsb.icao(msg)
+        try:
 
-        #Ensure we have an icao_hex
-        if data['icao_hex'] == None:
-            continue
+            #Object to store data
+            data = {}
 
-        if data['downlink_format'] == 4 or data['downlink_format'] == 20:
-            data['altitude'] = pms.common.altcode(msg)
+            data['timestamp'] = ts
 
-        if data['downlink_format'] == 5 or data['downlink_format'] == 21:
-            data['squawk'] = pms.common.idcode(msg)
+            #Get the download format
+            data['downlink_format'] = pms.df(msg)
 
-        if data['downlink_format'] == 17:
+            if data['downlink_format'] not in (0, 11, 16, 4, 20, 5, 21, 17):
+                logger.debug("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
             
-            typeCode = pms.adsb.typecode(msg)
-            data['messageType'] = typeCode
+            #Throw away certain DF's (0 & 16 are ACAS, 11 is all-call)
+            if data['downlink_format'] == 0 or data['downlink_format'] == 11 or data['downlink_format'] == 16:
+                continue
+            
+            data['icao_hex'] = pms.adsb.icao(msg)
 
-            #Throw away TC 28 and 29...not yet supported
-            if typeCode == 28 or typeCode == 29:
+            #Ensure we have an icao_hex
+            if data['icao_hex'] == None:
                 continue
 
-            if 1 <= typeCode <= 4:
-                data['callsign'] = pms.adsb.callsign(msg).replace("_","")
-                data['category'] = pms.adsb.category(msg)                    
+            if data['downlink_format'] == 4 or data['downlink_format'] == 20:
+                data['altitude'] = pms.common.altcode(msg)
 
-            if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
-                data['latitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[0]
-                data['longitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[1]
-                data['altitude'] = pms.adsb.altitude(msg)
+            if data['downlink_format'] == 5 or data['downlink_format'] == 21:
+                data['squawk'] = pms.common.idcode(msg)
 
-            if 5 <= typeCode <= 8:
-                data['velocity'] = pms.adsb.velocity(msg)[0]
-                data['heading'] = pms.adsb.velocity(msg)[1]
-                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+            if data['downlink_format'] == 17:
+                
+                typeCode = pms.adsb.typecode(msg)
+                data['messageType'] = typeCode
 
-            if typeCode == 19:
-                data['velocity'] = pms.adsb.velocity(msg)[0]
-                data['heading'] = pms.adsb.velocity(msg)[1]
-                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+                #Throw away TC 28 and 29...not yet supported
+                if typeCode == 28 or typeCode == 29:
+                    continue
 
-            if typeCode == 31:
-                data['adsb_version'] = pms.adsb.version(msg)
+                if 1 <= typeCode <= 4:
+                    data['callsign'] = pms.adsb.callsign(msg).replace("_","")
+                    data['category'] = pms.adsb.category(msg)                    
 
-        #Process the message for storage in the local database
-        storeMessageLocal(data)
+                if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
+                    data['latitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[0]
+                    data['longitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[1]
+                    data['altitude'] = pms.adsb.altitude(msg)
+
+                if 5 <= typeCode <= 8:
+                    data['velocity'] = pms.adsb.velocity(msg)[0]
+                    data['heading'] = pms.adsb.velocity(msg)[1]
+                    data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+
+                if typeCode == 19:
+                    data['velocity'] = pms.adsb.velocity(msg)[0]
+                    data['heading'] = pms.adsb.velocity(msg)[1]
+                    data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+
+                if typeCode == 31:
+                    data['adsb_version'] = pms.adsb.version(msg)
+
+            #Process the message for storage in the local database
+            storeMessageLocal(data)
+
+        except Exception as ex:
+            logger.warning("Exception while processing message " + str(msg) + " : " + str(ex))
         
 
 def storeMessageLocal(data):
