@@ -895,8 +895,8 @@ def main():
         adsb_client = ADSBClient()
 
         schedule.every().hour.at("00:30").do(stats.reset_hour)
-        schedule.every().day.at("10:20").do(stats.reset_today)
-        schedule.every(10).seconds.do(stats.publish)
+        schedule.every().day.at("00:00").do(stats.reset_today)
+        schedule.every(30).seconds.do(stats.publish)
 
         #Remote storage thread
         schedule.every(10).seconds.do(storeMessageRemote)
