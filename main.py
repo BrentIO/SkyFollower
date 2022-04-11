@@ -1052,10 +1052,12 @@ class autoDiscovery():
                 "state_topic" : settings["mqtt"]["topic_rule"] + rule['identifier'],
                 "name" : "Rule " + rule['name'],
                 "unique_id" : applicationName + "_rule_" + rule['identifier'],
+                "object_id" : applicationName + "_rule_" + rule['identifier'],
                 "device" : self.device,
                 "expire_after" : 30,
                 "icon" : "mdi:airplane-alert",
-                "value_template" : "{{ value_json.aircraft.registration }}"
+                "value_template" : "{{ value_json.aircraft.registration }}",
+                "json_attributes_topic" : settings["mqtt"]["topic_rule"] + rule['identifier']
             }
 
             topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_rule_"+ rule['identifier'] + "/config"
@@ -1074,6 +1076,7 @@ class autoDiscovery():
                 "state_topic" : settings["mqtt"]["topic_statistics"] + stat['name'],
                 "name" : stat['description'],
                 "unique_id" : applicationName + "_" + stat['name'],
+                "object_id" : applicationName + "_" + stat['name'],
                 "device" : self.device
             }
 
