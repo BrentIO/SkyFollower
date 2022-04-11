@@ -66,7 +66,6 @@ class ADSBClient(TcpClient):
         except Exception as ex:
             logger.critical(ex)
             logger.critical("Error; Exiting with code 2")
-            mqtt_publishError(str(ex))
             os._exit(2)
 
 
@@ -449,17 +448,14 @@ def storeMessageRemote(threadState = True):
                     localDb.remove(Record._id == dke.details['keyValue']['_id'])
 
                     logger.critical("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
-                    mqtt_publishError("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
 
                 except Exception as ex:
                     logger.critical("Duplicate key error failed when attempting to write to disk.  Data was lost.  The duplicate _id=" + str(dke.details['keyValue']['_id']))
                     logger.critical(ex)
-                    mqtt_publishError("MongoDB Failure, check logs.")
 
     except Exception as ex:
         logger.error("Error migrating data to MongoDB.")
         logger.error(ex)
-        mqtt_publishError("MongoDB Failure, check logs.")
 
 
 def jsonDefaultConverter(o):
@@ -502,14 +498,6 @@ def mqtt_publishNotication(identifier, message):
     if mqttClient.is_connected():
         mqttClient.publish(settings["mqtt"]["topic_rule"] + identifier, message)
 
-def mqtt_publishError(message):
-
-    if settings['mqtt']['enabled'] != True:
-        return
-
-    if mqttClient.is_connected():
-        mqttClient.publish(settings["mqtt"]["topic_error"], message)
-
 
 def mqtt_publishOnline():
 
@@ -551,9 +539,8 @@ def mqtt_onConnect(client, userdata, flags, rc):
             logger.info("MQTT connected to " + settings["mqtt"]["uri"] + ".")
 
             mqtt_publishOnline()
-            mqtt_publishError("")
-            stats.publish()
             mqtt_publishAutoDiscovery()
+            stats.publish()
 
     except Exception as ex:
         logger.error(ex)
