@@ -21,6 +21,7 @@ class rulesEngine():
         self.logger = logger
         self.observed_areas = []
         self.observed_rules = []
+        self.removed_rules = []
 
     def evaluate(self, flight):
 
@@ -248,6 +249,7 @@ class rulesEngine():
     def loadRules(self, path):
 
         tmpRules = []
+        tmpRemovedRules = []
 
         try:
 
@@ -391,7 +393,17 @@ class rulesEngine():
 
                 tmpRules.append(tmpRule)
 
+            for rule in self.observed_rules:
+                if rule not in tmpRules:
+                    self.logger.debug("Rule removed: " + rule['name'])
+                    tmpRemovedRules.append(rule)
+
+            for rule in tmpRules:
+                if rule not in self.observed_rules:
+                    self.logger.debug("Rule added: " + rule['name'])
+
             self.observed_rules = tmpRules
+            self.removed_rules = tmpRemovedRules
 
             self.logger.info("All staged rules were imported successfully (" + str(len(self.observed_rules)) + ").")
 

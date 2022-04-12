@@ -1064,6 +1064,12 @@ class autoDiscovery():
 
             self.__publish__(topic, payload)
 
+        for rule in rulesEngine.removed_rules:
+
+            topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_rule_"+ rule['identifier'] + "/config"
+            self.__publish__(topic, "")
+
+
 
     def stats(self):
 
