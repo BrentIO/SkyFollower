@@ -1000,9 +1000,9 @@ class statistics():
             {"name": "count_messages_today", "description": "Message Count Today","value" : self.count_messages_today, "type" : "count"},
             {"name": "count_messages_lifetime", "description": "Message Count Total","value" : self.count_messages_lifetime, "type" : "count"},
             {"name": "count_operator_unknown_today", "description": "Operator Unknown Count Today","value" : self.count_operator_unknown_today, "type" : "count"},
-            {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Lifetime","value" : self.count_operator_unknown_lifetime, "type" : "count"},
+            {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Total","value" : self.count_operator_unknown_lifetime, "type" : "count"},
             {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
-            {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Lifetime","value" : self.count_registration_unknown_lifetime, "type" : "count"},
+            {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Total","value" : self.count_registration_unknown_lifetime, "type" : "count"},
             {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
             {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
         ]
