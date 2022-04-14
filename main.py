@@ -756,10 +756,9 @@ def setup():
             if settings['mqtt']['topic'] == "":
                 raise Exception ("Empty mqtt -> topic in settings.json")
 
-            settings['mqtt']['topic_status'] = str(settings['mqtt']['topic']+ "/status").replace("//", "/")
-            settings['mqtt']['topic_rule'] = str(settings['mqtt']['topic'] + "/rule/").replace("//", "/")
-            settings['mqtt']['topic_statistics'] = str(settings['mqtt']['topic'] + "/stats/").replace("//", "/")
-            settings['mqtt']['topic_error'] = str(settings['mqtt']['topic'] + "/error").replace("//", "/")
+            settings['mqtt']['topic_status'] = str(os.path.join(settings['mqtt']['topic'], "status"))
+            settings['mqtt']['topic_rule'] = str(os.path.join(settings['mqtt']['topic'], "rule/"))
+            settings['mqtt']['topic_statistics'] = str(os.path.join(settings['mqtt']['topic'], "statistic/"))
 
             #Create MQTT Client
             mqttClient = paho.mqtt.client.Client()

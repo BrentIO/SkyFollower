@@ -98,7 +98,7 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `mqtt -> port` | 1883 | Port for your MQTT broker. |
 | `mqtt -> username` | my_username | Username to use when authenticating to your MQTT broker. |
 | `mqtt -> password` | my_clear_text_password | Password to use when authenticating to your MQTT broker. |
-| `mqtt -> topic` | SkyFollower/ | Root for all topics.|
+| `mqtt -> topic` | SkyFollower | Root for all topics.|
 | `files` | Locations to additional files used by SkyFollower |
 | `files -> areas` | ./areas.geojson | Path to the defined areas GeoJSON file |
 | `files -> rules` | ./rules.json | Path to the notification rules |
