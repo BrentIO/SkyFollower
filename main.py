@@ -344,6 +344,7 @@ def getRegistration(icao_hex):
             return json.loads(r.text)
 
         logger.info("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
+        stats.increment_registration_unknown_count()
         return None
 
     except Exception as ex:
@@ -365,6 +366,7 @@ def getOperator(callsign):
             return json.loads(r.text)
         
         logger.info("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+        stats.increment_operator_unknown_count()
         return None
 
     except Exception as ex:
@@ -984,6 +986,10 @@ class statistics():
         self.count_messages_today = 0
         self.count_messages_lifetime = 0
         self.time_start = int(time.time())
+        self.count_operator_unknown_today = 0
+        self.count_operator_unknown_lifetime = 0
+        self.count_registration_unknown_today = 0
+        self.count_registration_unknown_lifetime = 0
 
     def list(self):
 
@@ -994,6 +1000,10 @@ class statistics():
             {"name": "count_messages_hour", "description": "Message Count Last Hour","value" : self.count_messages_hour, "type" : "count"},
             {"name": "count_messages_today", "description": "Message Count Today","value" : self.count_messages_today, "type" : "count"},
             {"name": "count_messages_lifetime", "description": "Message Count Total","value" : self.count_messages_lifetime, "type" : "count"},
+            {"name": "count_operator_unknown_today", "description": "Operator Unknown Count Today","value" : self.count_operator_unknown_today, "type" : "count"},
+            {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Lifetime","value" : self.count_operator_unknown_lifetime, "type" : "count"},
+            {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
+            {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Lifetime","value" : self.count_registration_unknown_lifetime, "type" : "count"},
             {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
             {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
         ]
@@ -1001,6 +1011,8 @@ class statistics():
     def reset_today(self):
         self.count_flights_today = 0
         self.count_messages_today = 0
+        self.count_operator_unknown_today = 0
+        self.count_registration_unknown_today = 0
         self.reset_hour()
 
 
@@ -1019,6 +1031,16 @@ class statistics():
         self.count_messages_hour = self.count_messages_hour + 1
         self.count_messages_today = self.count_messages_today + 1
         self.count_messages_lifetime = self.count_messages_lifetime + 1
+
+
+    def increment_operator_unknown_count(self):
+        self.count_operator_unknown_today = self.count_operator_unknown_today + 1
+        self.count_operator_unknown_lifetime = self.count_operator_unknown_lifetime + 1
+
+
+    def increment_registration_unknown_count(self):
+        self.count_registration_unknown_today = self.count_registration_unknown_today + 1
+        self.count_registration_unknown_lifetime = self.count_registration_unknown_lifetime + 1
 
 
     def publish(self):
