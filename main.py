@@ -481,14 +481,22 @@ def checkFlightOfInterest(flight):
         if 'aircraft' in flight:
             notification['aircraft'] = flight['aircraft']
 
+            if 'source' in notification['aircraft']:
+                del notification['aircraft']['source']
+
         if 'squawk' in flight:
             notification['squawk'] = flight['squawk']
+
+        if 'operator' in flight:
+            notification['operator'] = flight['operator']
 
         notification['rule'] = {}
 
         notification['rule']['name'] = matchedRule['name']
         notification['rule']['description'] = matchedRule['description']
         notification['rule']['identifier'] = matchedRule['identifier']
+
+        logger.debug("Flight " + flight['_id'] + " matched rule: " + matchedRule['name'])
 
         mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification))
 
