@@ -249,9 +249,6 @@ def storeMessageLocal(data):
 
             if parseCallsignResponse is not None:
 
-                #Delete repetitive data
-                del parseCallsignResponse['callsign']
-
                 #There is operator data, store it
                 flight['operator'] = parseCallsignResponse
 
@@ -295,10 +292,10 @@ def parseCallsign(callsign, registration):
 
     returnValue = {}
 
-    returnValue['callsign'] = callsign
-    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
+    returnValue['callsign'] = getOperatorResponse['callsign']
     returnValue['flight_number'] = callsign[3:]
-    returnValue['operator'] = getOperatorResponse['name']
+    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
+    returnValue['name'] = getOperatorResponse['name']
     returnValue['phonic'] = getOperatorResponse['callsign'] + " " + str(returnValue['flight_number'])
     returnValue['country'] = getOperatorResponse['country']
 
