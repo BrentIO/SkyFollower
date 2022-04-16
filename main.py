@@ -296,7 +296,6 @@ def parseCallsign(callsign, registration):
     returnValue['flight_number'] = callsign[3:]
     returnValue['airline_designator'] = getOperatorResponse['airline_designator']
     returnValue['name'] = getOperatorResponse['name']
-    returnValue['phonic'] = getOperatorResponse['callsign'] + " " + str(returnValue['flight_number'])
     returnValue['country'] = getOperatorResponse['country']
 
     return returnValue
