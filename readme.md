@@ -374,6 +374,16 @@ You may also find all of these examples in the rules.example.json file.
 ```
 
 
+## Recommended Home Assistant Configuration
+Home Assistant will store all of the sensor data changes, which is repetitive with MongoDB and not recommended.  Add this to your `configuration.yaml` file to filter out storage of SkyFollower events:
+```
+recorder:
+  exclude:
+    entity_globs:
+      - sensor.skyfollower_*
+```
+
+
 ## FAQ
 - Can I run this on Raspberry Pi?  Yes, but...
   - There will be changes needed to the installation above, but it should work.
