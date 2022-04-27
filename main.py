@@ -163,7 +163,7 @@ def storeMessageLocal(data):
         flight['total_messages'] = 0
         flight['matched_rules'] = []
 
-        logger.debug("New aircraft added to localDb _id:" + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
+        logger.debug("Aircraft Added to localDb _id: " + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
         stats.increment_flights_count()
 
         #Get the aircraft data
@@ -414,7 +414,7 @@ def storeMessageRemote(threadState = True):
                         if flight['aircraft']['military'] == False:
                             del flight['aircraft']['military']
 
-                logger.debug("Inserting into MongoDB " + flight['_id'] + " " + flight['aircraft']['icao_hex'])
+                logger.debug("Persisted to MongoDB _id: " + flight['_id'] + " ICAO HEX: " + flight['aircraft']['icao_hex'])
 
                 adsbDBCollection.insert_one(flight)
 
@@ -494,7 +494,7 @@ def checkFlightOfInterest(flight):
         notification['rule']['description'] = matchedRule['description']
         notification['rule']['identifier'] = matchedRule['identifier']
 
-        logger.debug("Flight " + flight['_id'] + " matched rule: " + matchedRule['name'])
+        logger.debug("Rule Matched \"" +  matchedRule['name'] + "\" for _id: " + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
 
         mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification))
 
