@@ -403,7 +403,8 @@ def storeMessageRemote(threadState = True):
                 flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
 
                 #Delete data we do not want to persist
-                del flight['matched_rules']
+                if settings['log_level'] != "debug":
+                    del flight['matched_rules']
 
                 if 'aircraft' in flight:
                     
