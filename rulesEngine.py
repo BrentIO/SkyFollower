@@ -870,23 +870,24 @@ class rulesEngine():
             return False
 
         if condition['value'] < 0:
-            #Descending
+            
+            #Condition is Descending
             if condition['operator'] == "minimum":
-                if flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                if flight['velocities'][theLength-1]['vertical_speed'] < 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
                     return True
 
             if condition['operator'] == "maximum":
-                if flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                if flight['velocities'][theLength-1]['vertical_speed'] < 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
                     return True
 
         else:
-            #Climbing or level
+            #Condition is Climbing or level
             if condition['operator'] == "minimum":
-                if flight['velocities'][theLength-1]['vertical_speed'] > 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                if flight['velocities'][theLength-1]['vertical_speed'] >= 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
                     return True
 
             if condition['operator'] == "maximum":
-                if flight['velocities'][theLength-1]['vertical_speed'] > 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                if flight['velocities'][theLength-1]['vertical_speed'] >= 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
                     return True
 
 
