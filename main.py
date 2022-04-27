@@ -583,8 +583,6 @@ def exitApp(exitCode=None):
 
 def setLogLevel(logLevel):
 
-    logLevel = logLevel.lower()
-
     if logLevel == "debug":
         logger.setLevel(logging.DEBUG)
         logger.debug("Logging set to DEBUG.")
@@ -645,7 +643,11 @@ def setup():
             settings = json.load(settingsFile)
 
         if "log_level" in settings:
-            setLogLevel(settings['log_level'])
+            settings['log_level'] = settings['log_level'].lower()
+        else:
+            settings['log_level'] = "info"
+
+        setLogLevel(settings['log_level'])
 
         if "files" not in settings:
             raise Exception ("files object is missing from settings.json")
