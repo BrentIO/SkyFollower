@@ -272,17 +272,21 @@ def storeMessageLocal(data):
 
 def parseCallsign(callsign, registration):
 
-    #If the callsign is empty, return the registration
+    #If the callsign is empty, return nothing
     if callsign == "":
         return None
 
-    #If the callsign and registration are the same, just return the registration
+    #If the callsign and registration are the same, return nothing
     if callsign == registration:
         return None
 
-    #Callsigns are 3 letter designators followed by numbers
-    if re.match("^[A-Z][A-Z][A-Z][0-9]+$",callsign) is None:
+    #If the callsign appears to be invalid, return nothing
+    if callsign == "00000000":
         return None
+
+    #Callsigns are 3 letter designators followed by numbers
+    #if re.match("^[A-Z][A-Z][A-Z][0-9]+$",callsign) is None:       # Some European flights have appended letters to the end of the callsign
+        #return None
 
     #Valid callsign received, parse to get the operator and flight number
     getOperatorResponse = getOperator(callsign[0:3])
