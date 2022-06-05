@@ -151,7 +151,7 @@ def storeMessageLocal(data):
     stats.increment_message_count()
 
     Record = Query()
-    result = localDb.search(Record.icao_hex == data['icao_hex'])
+    result = localDb.search((Record.icao_hex == data['icao_hex']) & (Record.last_message > datetime.now().timestamp() - settings['flight_ttl_seconds']))
 
     flight = {}
 
