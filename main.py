@@ -437,7 +437,7 @@ def storeMessageRemote(threadState = True):
 
                 try:
                     
-                    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "/errors/")
+                    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "errors")
 
                     if not os.path.exists(directory):
                         os.makedirs(directory)
