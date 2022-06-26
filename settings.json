@@ -33,7 +33,7 @@
         "port": 1883,
         "username": "my_username",
         "password": "my_clear_text_password",
-        "topic": "SkyFollower"
+        "topic": "SkyFollower/"
     },
     "files": {
         "areas": "./areas.geojson",
