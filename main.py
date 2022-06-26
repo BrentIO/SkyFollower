@@ -244,13 +244,28 @@ def storeMessageLocal(data):
             #Store the callsign, note only the first callsign received will be used
             flight['callsign'] = data['callsign']
 
-            #See if there is operator data in the callsign
-            parseCallsignResponse = parseCallsign(flight['callsign'], flight['aircraft']['registration'])
+            #Check for valid callsigns
+            if flight['callsign'] != "" and flight['callsign'] != flight['aircraft']['registration'] and flight['callsign'] != "00000000":
 
-            if parseCallsignResponse is not None:
+                #See if there is operator data in the callsign
+                parseCallsignResponse = parseCallsign(flight['callsign'], flight['aircraft']['registration'])
 
-                #There is operator data, store it
-                flight['operator'] = parseCallsignResponse
+                if parseCallsignResponse is not None:
+
+                    #There is operator data, store it
+                    flight['operator'] = parseCallsignResponse
+
+                #Get the flight information
+                flightInfoResponse = getFlightInfo(flight['callsign'])
+
+                if flightInfoResponse is not None:
+
+                    if "origin" in flightInfoResponse:
+                        flight['origin'] = flightInfoResponse['origin']
+
+                    if "destination" in flightInfoResponse:
+                        flight['destination'] = flightInfoResponse['destination']
+
 
     if "adsb_version" in data:
 
@@ -303,6 +318,31 @@ def parseCallsign(callsign, registration):
     returnValue['country'] = getOperatorResponse['country']
 
     return returnValue
+
+
+def getFlightInfo(ident):
+
+    if settings['flights']['enabled'] != True:
+        return None
+
+    try:
+
+        r = requests.get(settings['flights']['uri'].replace("$IDENT$", ident), headers={'x-api-key': settings['flights']['x-api-key']})
+
+        if r.status_code == 200:
+            return r.json()
+
+        if r.status_code == 404:
+            logger.debug("Unable to get flight info for " + str(ident) +"; service returned " + str(r.status_code))
+            return None
+        
+        logger.info("Unable to get flight info for " + str(ident) +"; service returned " + str(r.status_code))
+        return None
+
+    except Exception as ex:
+        logger.warning("Error getting flight info.")
+        logger.error(ex)
+        return None
 
 
 def parseAircraftCategory(category):
@@ -837,6 +877,30 @@ def setup():
 
             if "x-api-key" not in settings['operators']:
                 raise Exception ("Missing operators -> x-api-key in settings.json")
+
+        if 'flights' not in settings:
+            logger.info("flights is not declared in the settings file; Retrieving flight info will be disabled.")
+
+            settings['flights'] = {}
+
+            settings['flights']['enabled'] = False
+
+        else:
+
+            if 'enabled' not in settings['flights']:
+                settings['flights']['enabled'] = False
+
+            if settings['flights']['enabled'] == False:
+                logger.info("Flights is disabled in the settings file; Retrieving flight info will be disabled.")
+
+            if "uri" not in settings['flights']:
+                raise Exception ("Missing flights -> uri in settings.json")
+
+            if "$IDENT$" not in settings['flights']['uri']:
+                raise Exception ("Missing $IDENT$ text in flights -> uri in settings.json")
+
+            if "x-api-key" not in settings['flights']:
+                raise Exception ("flights operators -> x-api-key in settings.json")
 
         if 'home_assistant' not in settings:
             logger.info("home_assistant is not declared in the settings file; Home Assistant will be disabled.")
