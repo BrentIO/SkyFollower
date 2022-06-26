@@ -97,6 +97,10 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `operators -> enabled` | false | Controls if retrieving operator data is enabled or disabled.|
 | `operators -> uri` | http://localhost:8480/operator/$CALLSIGN$ | The URL of the webserver where the operators microservice runs.  Note, $CALLSIGN$ will subsitute the ICAO callsign of the aircraft, for example `DAL`. |
 | `operators -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
+| `flights` | If this object is ommitted, retrieving flight data will be disabled.  Useful for identifying aircraft origin and destination information.  For example, querying for ident `DAL1` would return a a flight from KJFK to EGLL.|
+| `flights -> enabled` | false | Controls if retrieving flight data is enabled or disabled.|
+| `flights -> uri` | http://localhost:8480/flight/$IDENT$ | The URL of the webserver where the flights microservice runs.  Note, $IDENT$ will subsitute the identity of the aircraft, for example `DAL1`.\n  An optional parameter `?airport_icao=` can be provided to further refine query results based on the focused airport.  For example, adding `?airport_icao=KATL` would return flights that only originate or depart from `KATL`, which is useful when flight number might be used for multiple segments of a flight. |
+| `flights -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `mqtt` |  If this object is omitted, MQTT will be disabled.|
 | `mqtt -> enabled` | false | Controls if MQTT is enabled or disabled.|
 | `mqtt -> uri` | my.mqtt.server.lan | IP address or domain name of your MQTT broker. |

@@ -22,6 +22,9 @@
         "uri": "http://localhost:8480/operator/$CALLSIGN$",
         "x-api-key": "some_secret_key"
     },
+    "flights": {
+        "enabled": false,
+        "uri": "http://localhost:8480/flight/$IDENT$",
         "x-api-key": "some_secret_key"
     },
     "mqtt": {
@@ -39,5 +42,5 @@
     "home_assistant":{
         "enabled" : false,
         "discovery_prefix" : "homeassistant"
-    }
+    },
 }
