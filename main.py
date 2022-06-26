@@ -866,7 +866,7 @@ def setup():
                 logger.info("Operators is disabled in the settings file; Retrieving operators will be disabled.")
 
             if "uri" not in settings['operators']:
-                raise Exception ("Missing registration -> uri in settings.json")
+                raise Exception ("Missing operators -> uri in settings.json")
 
             if "$CALLSIGN$" not in settings['operators']['uri']:
                 raise Exception ("Missing $CALLSIGN$ text in operators -> uri in settings.json")
