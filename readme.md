@@ -45,9 +45,9 @@ Using apt, install the prerequisite packages, if you don't already have them ins
 sudo apt-get install -y python3 python3-pip libgeos-dev
 ```
 
-Python also requires a number of packages that must be installed to use SkyFollower:
+Python also requires a number of packages that must be installed to use SkyFollower, note version 2.11 is recommended (pip default is 2.9):
 ```
-sudo pip3 install tinydb pyModeS pymongo requests paho-mqtt shapely watchdog schedule
+sudo pip3 install tinydb pyModeS==2.11 pymongo requests paho-mqtt shapely watchdog schedule
 ```
 
 ### Aircraft Registration and Operator Information
