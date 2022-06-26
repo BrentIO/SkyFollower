@@ -250,7 +250,7 @@ def storeMessageLocal(data):
             if flight['callsign'] != "" and flight['callsign'] != flight['aircraft']['registration'] and flight['callsign'] != "00000000":
 
                 #See if there is operator data in the callsign
-                parseCallsignResponse = parseCallsign(flight['callsign'], flight['aircraft']['registration'])
+                parseCallsignResponse = parseCallsign(flight['callsign'])
 
                 if parseCallsignResponse is not None:
 
