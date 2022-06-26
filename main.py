@@ -81,6 +81,8 @@ def messageProcessor(messages):
         
         try:
 
+            logger.debug(json.dumps({"message" : msg, "crc" : pms.common.crc(msg) }))
+
             #Object to store data
             data = {}
 
@@ -143,7 +145,7 @@ def messageProcessor(messages):
             storeMessageLocal(data)
 
         except Exception as ex:
-            logger.warning("Exception while processing message " + str(msg) + " : " + str(ex))
+            logger.error("Exception while processing message [" + str(msg) + "] : " + str(ex))
         
 
 def storeMessageLocal(data):
