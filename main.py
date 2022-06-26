@@ -455,6 +455,14 @@ def storeMessageRemote(threadState = True):
                         if flight['aircraft']['military'] == False:
                             del flight['aircraft']['military']
 
+                if 'origin' in flight:
+                    if 'icao_code' in flight['origin']:
+                        flight['origin'] = flight['origin']['icao_code']
+
+                if 'destination' in flight:
+                    if 'icao_code' in flight['destination']:
+                        flight['destination'] = flight['destination']['icao_code']
+
                 logger.debug("Persisted to MongoDB _id: " + flight['_id'] + " ICAO HEX: " + flight['aircraft']['icao_hex'])
 
                 adsbDBCollection.insert_one(flight)
@@ -528,6 +536,12 @@ def checkFlightOfInterest(flight):
 
         if 'operator' in flight:
             notification['operator'] = flight['operator']
+
+        if 'origin' in flight:
+            notification['origin'] = flight['origin']
+
+        if 'destination' in flight:
+            notification['destination'] = flight['destination']
 
         notification['rule'] = {}
 
