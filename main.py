@@ -285,23 +285,7 @@ def storeMessageLocal(data):
     localDb.upsert(flight, Record.icao == data['icao_hex'])
 
 
-def parseCallsign(callsign, registration):
-
-    #If the callsign is empty, return nothing
-    if callsign == "":
-        return None
-
-    #If the callsign and registration are the same, return nothing
-    if callsign == registration:
-        return None
-
-    #If the callsign appears to be invalid, return nothing
-    if callsign == "00000000":
-        return None
-
-    #Callsigns are 3 letter designators followed by numbers
-    #if re.match("^[A-Z][A-Z][A-Z][0-9]+$",callsign) is None:       # Some European flights have appended letters to the end of the callsign
-        #return None
+def parseCallsign(callsign):
 
     #Valid callsign received, parse to get the operator and flight number
     getOperatorResponse = getOperator(callsign[0:3])
@@ -311,10 +295,10 @@ def parseCallsign(callsign, registration):
 
     returnValue = {}
 
-    returnValue['callsign'] = getOperatorResponse['callsign']
-    returnValue['flight_number'] = callsign[3:]
-    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
+    returnValue['airline_designator'] = getOperatorResponse['designator']
     returnValue['name'] = getOperatorResponse['name']
+    returnValue['callsign'] = getOperatorResponse['callsign']
+    returnValue['flight_number'] = callsign[3:] 
     returnValue['country'] = getOperatorResponse['country']
 
     return returnValue
@@ -383,6 +367,11 @@ def getRegistration(icao_hex):
         if r.status_code == 200:
             return json.loads(r.text)
 
+        if r.status_code == 404:
+            logger.debug("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
+            stats.increment_registration_unknown_count()
+            return None
+
         logger.info("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
         stats.increment_registration_unknown_count()
         return None
@@ -403,7 +392,12 @@ def getOperator(callsign):
         r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
 
         if r.status_code == 200:
-            return json.loads(r.text)
+            return r.json()
+
+        if r.status_code == 404:
+            logger.debug("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+            stats.increment_operator_unknown_count()
+            return None
         
         logger.info("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
         stats.increment_operator_unknown_count()
