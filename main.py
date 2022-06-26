@@ -297,7 +297,7 @@ def parseCallsign(callsign):
 
     returnValue = {}
 
-    returnValue['airline_designator'] = getOperatorResponse['designator']
+    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
     returnValue['name'] = getOperatorResponse['name']
     returnValue['callsign'] = getOperatorResponse['callsign']
     returnValue['flight_number'] = callsign[3:] 
