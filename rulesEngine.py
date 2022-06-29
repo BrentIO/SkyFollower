@@ -84,9 +84,9 @@ class rulesEngine():
                     else:
                         break   
 
-                if condition['type'] == "callsign":
+                if condition['type'] == "ident":
                     
-                    if self.callsign_validateData(condition, flight) == True:
+                    if self.ident_validateData(condition, flight) == True:
 
                         conditions_met = conditions_met + 1
                     else:
@@ -325,7 +325,7 @@ class rulesEngine():
                             'aircraft_type_designator',
                             'altitude',
                             'area',
-                            'callsign',
+                            'ident',
                             'date',
                             'heading',
                             'military',
@@ -360,8 +360,8 @@ class rulesEngine():
                     if condition['type'] == "area":
                         condition = self.area_validateCondition(condition)
 
-                    if condition['type'] == "callsign":
-                        condition = self.callsign_validateCondition(condition)
+                    if condition['type'] == "ident":
+                        condition = self.ident_validateCondition(condition)
 
                     if condition['type'] == "date":
                         condition = self.date_validateCondition(condition)
@@ -629,7 +629,7 @@ class rulesEngine():
         return False
 
 
-    def callsign_validateCondition(self, condition):
+    def ident_validateCondition(self, condition):
 
         if condition['operator'] != "equals":
             raise self.operatorShouldBeEqualsException(condition)
@@ -639,12 +639,12 @@ class rulesEngine():
         return condition
 
 
-    def callsign_validateData(self, condition, flight):
+    def ident_validateData(self, condition, flight):
         
-        if "callsign" not in flight:
+        if "ident" not in flight:
             return False
 
-        if flight['callsign'] == condition['value']:
+        if flight['ident'] == condition['value']:
             return True
 
         return False
