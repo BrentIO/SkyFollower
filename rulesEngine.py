@@ -25,11 +25,11 @@ class rulesEngine():
 
     def evaluate(self, flight):
 
-        matchedRules = []
+        matchedRules = flight['matched_rules']
 
         for rule in self.observed_rules:
 
-            if rule['identifier'] in flight['matched_rules']:
+            if rule['identifier'] in matchedRules:
                 continue
 
             conditions_met = 0
