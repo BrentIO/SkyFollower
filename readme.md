@@ -95,7 +95,7 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `registration -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `operators` | If this object is ommitted, retrieving operator data will be disabled.  Useful for converting aircraft callsigns to operators.  For example, querying for `DAL` would return an object for Delta Air Lines.|
 | `operators -> enabled` | false | Controls if retrieving operator data is enabled or disabled.|
-| `operators -> uri` | http://localhost:8480/operator/$CALLSIGN$ | The URL of the webserver where the operators microservice runs.  Note, $CALLSIGN$ will subsitute the ICAO callsign of the aircraft, for example `DAL`. |
+| `operators -> uri` | http://localhost:8480/operator/$IDENT$ | The URL of the webserver where the operators microservice runs.  Note, $IDENT$ will subsitute the identity/callsign of the aircraft, for example `DAL2`. |
 | `operators -> x-api-key` | some_secret_key | The value of the x-api-key header that should be sent for authenticating the request to the service.|
 | `flights` | If this object is ommitted, retrieving flight data will be disabled.  Useful for identifying aircraft origin and destination information.  For example, querying for ident `DAL1` would return a a flight from KJFK to EGLL.|
 | `flights -> enabled` | false | Controls if retrieving flight data is enabled or disabled.|
@@ -262,7 +262,7 @@ The structure of a condition is consistent across each condition type.  Values a
 | `aircraft_type_designator` | Any | `equals` | ICAO type designator for the aircraft |
 | `altitude` | Any positive integer | `minimum`, `maximum` | Aircraft altitude MSL |
 | `area` | Any | `equals` | Name of the feature collection in the geoJSON file |
-| `callsign` | Any | `equals` | Flight ICAO callsign |
+| `ident` | Any | `equals` | Flight Identity |
 | `date` | ISO-8601 date format YYYY-mm-dd | `equals`, `minimum`, `maximum` | Date in GMT |
 | `heading` | Tuple  | `equals` | Aircraft ground track in degrees, where the first value is the minimum heading and the second value is the maximum heading.  Legal vales are `0` to `359`, inclusive
 | `military` | Boolean | `equals` | If the aircraft is marked as known military |
@@ -349,7 +349,7 @@ You may also find all of these examples in the rules.example.json file.
   "enabled" : true,
   "conditions": [
       {
-          "type": "callsign",
+          "type": "ident",
           "value": "DAL2",
           "operator": "equals"
       },
