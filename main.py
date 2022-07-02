@@ -5,7 +5,6 @@ import os
 import logging
 import logging.handlers as handlers
 import json
-from queue import Empty
 import sys
 #from turtle import done
 #from tinydb import TinyDB, Query                    #pip3 install tinydb
@@ -76,7 +75,7 @@ class ADSBClient(TcpClient):
 
 
 def messageProcessor(messages):
-    
+
     for msg, ts in messages:
         
         try:
@@ -145,7 +144,7 @@ def messageProcessor(messages):
             storeMessageLocal(data)
 
         except Exception as ex:
-            logger.error("Exception while processing message [" + str(msg) + "] : " + str(ex))
+            logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(msg) + "] : " + str(ex))
         
 
 def storeMessageLocal(data):
@@ -264,8 +263,7 @@ def storeMessageLocal(data):
 
                     if "destination" in flightInfoResponse:
                         flight['destination'] = flightInfoResponse['destination']
-
-
+    
     if "adsb_version" in data:
 
         if 'aircraft' not in flight:
@@ -279,6 +277,7 @@ def storeMessageLocal(data):
     if interestResult != []:
         for matchedRule in interestResult:
             flight['matched_rules'].append(matchedRule['identifier'])
+
 
     #Commit to the local database
     #localDb.upsert(flight, Record.icao == data['icao_hex'])
