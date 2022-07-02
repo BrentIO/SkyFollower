@@ -6,9 +6,6 @@ import logging
 import logging.handlers as handlers
 import json
 import sys
-#from turtle import done
-#from tinydb import TinyDB, Query                    #pip3 install tinydb
-#from tinydb.storages import MemoryStorage
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
 from pymongo import MongoClient                    #pip3 install pymongo
@@ -936,13 +933,10 @@ def setup():
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
             logger.debug("Using memory for localDb.")
-            #localDb = TinyDB(storage=MemoryStorage)
 
         else:
             settings['local_database_mode'] = "disk"
             logger.debug("Using disk for localDb.")
-            #settings['database_file'] = os.path.join(filePath, applicationName + ".tinydb")
-            #localDb = TinyDB(settings['database_file'])
 
     except Exception as ex:
         logger.error(ex)
