@@ -118,7 +118,7 @@ def messageProcessor(messages):
                     continue
 
                 if 1 <= typeCode <= 4:
-                    data['callsign'] = pms.adsb.callsign(msg).replace("_","")
+                    data['ident'] = pms.adsb.callsign(msg).replace("_","")
                     data['category'] = pms.adsb.category(msg)                    
 
                 if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
@@ -233,27 +233,27 @@ def storeMessageLocal(data):
                 
             flight['aircraft']['wake_turbulence_category'] = parseAircraftCategoryResponse
 
-    if "callsign" in data:
+    if "ident" in data:
 
-        #If the callsign is currently empty and the incoming data is not empty
-        if 'callsign' not in flight and data['callsign'] != "" and 'registration' in flight['aircraft']:
+        #If the ident is currently empty and the incoming data is not empty
+        if flight['ident'] == "" and data['ident'] != "" and 'registration' in flight['aircraft']:
 
-            #Store the callsign, note only the first callsign received will be used
-            flight['callsign'] = data['callsign']
+            #Store the ident, note only the first ident received will be used
+            flight['ident'] = data['ident']
 
-            #Check for valid callsigns
-            if flight['callsign'] != "" and flight['callsign'] != flight['aircraft']['registration'] and flight['callsign'] != "00000000":
+            #Check for valid idents
+            if flight['ident'] != flight['aircraft']['registration'] and flight['ident'] != "00000000":
 
-                #See if there is operator data in the callsign
-                parseCallsignResponse = parseCallsign(flight['callsign'])
+                #See if there is operator data in the ident
+                parseIdentResponse = parseIdent(flight['ident'])
 
-                if parseCallsignResponse is not None:
+                if parseIdentResponse is not None:
 
                     #There is operator data, store it
-                    flight['operator'] = parseCallsignResponse
+                    flight['operator'] = parseIdentResponse
 
                 #Get the flight information
-                flightInfoResponse = getFlightInfo(flight['callsign'])
+                flightInfoResponse = getFlightInfo(flight['ident'])
 
                 if flightInfoResponse is not None:
 
@@ -295,7 +295,6 @@ def parseCallsign(callsign):
     returnValue['airline_designator'] = getOperatorResponse['airline_designator']
     returnValue['name'] = getOperatorResponse['name']
     returnValue['callsign'] = getOperatorResponse['callsign']
-    returnValue['flight_number'] = callsign[3:] 
     returnValue['country'] = getOperatorResponse['country']
 
     return returnValue
@@ -379,24 +378,24 @@ def getRegistration(icao_hex):
         return None
 
 
-def getOperator(callsign):
+def getOperator(ident):
 
     if settings['operators']['enabled'] != True:
         return None
 
     try:
 
-        r = requests.get(settings['operators']['uri'].replace("$CALLSIGN$", callsign), headers={'x-api-key': settings['operators']['x-api-key']})
+        r = requests.get(settings['operators']['uri'].replace("$IDENT$", ident), headers={'x-api-key': settings['operators']['x-api-key']})
 
         if r.status_code == 200:
             return r.json()
 
         if r.status_code == 404:
-            logger.debug("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+            logger.debug("Unable to get operator details for " + str(ident) +"; getOperator returned " + str(r.status_code))
             stats.increment_operator_unknown_count()
             return None
         
-        logger.info("Unable to get operator details for " + str(callsign) +"; getOperator returned " + str(r.status_code))
+        logger.info("Unable to get operator details for " + str(ident) +"; getOperator returned " + str(r.status_code))
         stats.increment_operator_unknown_count()
         return None
 
@@ -877,8 +876,8 @@ def setup():
             if "uri" not in settings['operators']:
                 raise Exception ("Missing operators -> uri in settings.json")
 
-            if "$CALLSIGN$" not in settings['operators']['uri']:
-                raise Exception ("Missing $CALLSIGN$ text in operators -> uri in settings.json")
+            if "$IDENT$" not in settings['operators']['uri']:
+                raise Exception ("Missing $IDENT$ text in operators -> uri in settings.json")
 
             if "x-api-key" not in settings['operators']:
                 raise Exception ("Missing operators -> x-api-key in settings.json")
