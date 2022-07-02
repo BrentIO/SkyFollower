@@ -419,9 +419,10 @@ def storeMessageRemote(threadState = True):
 
         if len(stale_flights) > 0:
 
-            mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
-            adsbDB = mongoDBClient[settings['mongoDb']['database']]
-            adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
+            if settings['mongoDb']['enabled'] == True:
+                mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
+                adsbDB = mongoDBClient[settings['mongoDb']['database']]
+                adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
 
             #An array will be returned, cycle through each flight
             for flight in stale_flights:
@@ -455,15 +456,16 @@ def storeMessageRemote(threadState = True):
 
                 logger.debug("Persisted to MongoDB _id: " + flight['_id'] + " ICAO HEX: " + flight['aircraft']['icao_hex'])
 
-                adsbDBCollection.insert_one(flight)
+                if settings['mongoDb']['enabled'] == True:
+                    adsbDBCollection.insert_one(flight)
 
                 countOfMigrated = countOfMigrated + 1
 
                 localDb.remove(Record.icao_hex == icao_hex)
-            
-            mongoDBClient.close()
 
-            logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
+            if settings['mongoDb']['enabled'] == True:
+                mongoDBClient.close()
+                logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
 
         else:
             logger.debug("No records ready to be migrated to MongoDB.")
