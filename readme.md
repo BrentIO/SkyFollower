@@ -14,6 +14,7 @@ If the service exits, the in-memory data is persisted to MongoDB immediately.
 
 ## Prerequisites
 SkyFollower can run on pretty much any operating system that runs Python 3, but this document will be focused exclusively on explaining how to do so under Ubuntu 20.04 (Focal Fossa).
+> Python 3.10.5 is recommended.  Versions of Python prior to 3.10 have known issues with performance.
 
 ### MongoDB
 MongoDB is a document-based datastore and is perfect for operations like tracking historical aircraft movement.  It is recommended, but not required, for MongoDB to be installed on the same system as SkyFollower.

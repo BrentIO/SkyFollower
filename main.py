@@ -690,6 +690,13 @@ def setup():
 
         setLogLevel(settings['log_level'])
 
+        logger.info(applicationName + " application started.")
+        logger.debug("CPU Count: " + str(multiprocessing.cpu_count()))
+        logger.debug("Python Version: " + str(sys.version))
+
+        if sys.version_info.major == 3 and sys.version_info.minor < 10:
+            logger.warning("Current Python Version " + str(sys.version_info.major) + "." + str(sys.version_info.minor) + " is below the recommended 3.10.  See readme for further information.")
+        
         if "files" not in settings:
             raise Exception ("files object is missing from settings.json")
 
