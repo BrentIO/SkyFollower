@@ -86,6 +86,8 @@ def messageProcessor(messages):
 
             data['timestamp'] = ts
 
+            stats.set_message_handling_high_water_mark(int((datetime.now().timestamp() - data['timestamp'])*1000))
+
             #Get the download format
             data['downlink_format'] = pms.df(msg)
 
@@ -1060,6 +1062,18 @@ class statistics():
         self.count_operator_unknown_lifetime = 0
         self.count_registration_unknown_today = 0
         self.count_registration_unknown_lifetime = 0
+        self.message_handling_high_water_mark_ms = 0
+        self.message_queue_depth = 0
+
+    def set_message_handling_high_water_mark(self, value):
+        if value > self.message_handling_high_water_mark_ms:
+            self.message_handling_high_water_mark_ms = value
+
+
+    def set_message_queue_depth(self, value):
+        if value > self.message_queue_depth:
+            self.message_queue_depth = value
+
 
     def list(self):
 
@@ -1074,9 +1088,12 @@ class statistics():
             {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Total","value" : self.count_operator_unknown_lifetime, "type" : "count"},
             {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
             {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Total","value" : self.count_registration_unknown_lifetime, "type" : "count"},
+            {"name": "message_handling_high_water_mark_ms", "description": "Message Processing Delay High Water Mark", "value" : self.message_handling_high_water_mark_ms, "type" : "time"},
+            {"name": "message_queue_depth", "description": "Message Processing Queue Depth High Water Mark", "value" : self.message_queue_depth, "type" : "queue"},
             {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
             {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
         ]
+
 
     def reset_today(self):
         self.count_flights_today = 0
@@ -1089,6 +1106,11 @@ class statistics():
     def reset_hour(self):
         self.count_flights_hour = 0
         self.count_messages_hour = 0
+            
+
+    def reset_on_publish(self):
+        self.message_handling_high_water_mark_ms = 0
+        self.message_queue_depth = 0
 
 
     def increment_flights_count(self):
@@ -1122,6 +1144,9 @@ class statistics():
 
         for stat in self.list():
             mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+
+        #Reset the statistics
+        self.reset_on_publish()
  
 
 class autoDiscovery():
@@ -1168,7 +1193,6 @@ class autoDiscovery():
 
             topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_rule_"+ rule['identifier'] + "/config"
             self.__publish__(topic, "")
-
 
 
     def stats(self):
@@ -1220,6 +1244,18 @@ class autoDiscovery():
             if stat['type'] == "count":
                 payload['icon'] = "mdi:broadcast"
                 payload['state_class'] = "total_increasing"
+
+            if stat['type'] == "queue":
+                payload['icon'] = "mdi:tray-full"
+                payload['state_class'] = "measurement"
+
+            if stat['type'] == "time":
+                payload['unit_of_measurement'] = "ms"
+                payload['icon'] = "mdi:clock"
+                payload['state_class'] = "measurement"
+
+            if stat['type'] == "measurement":
+                payload['state_class'] = "measurement"
 
             topic = settings['mqtt']['topic_home_assistant_autodiscovery'] + "sensor/" + applicationName + "_" + stat['name'] +"/config"
 
