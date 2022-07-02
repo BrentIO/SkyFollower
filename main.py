@@ -7,8 +7,9 @@ import logging.handlers as handlers
 import json
 from queue import Empty
 import sys
-from tinydb import TinyDB, Query                    #pip3 install tinydb
-from tinydb.storages import MemoryStorage
+#from turtle import done
+#from tinydb import TinyDB, Query                    #pip3 install tinydb
+#from tinydb.storages import MemoryStorage
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
 from pymongo import MongoClient, errors                    #pip3 install pymongo
@@ -152,8 +153,6 @@ def storeMessageLocal(data):
 
     stats.increment_message_count()
 
-    Record = Query()
-    result = localDb.search((Record.icao_hex == data['icao_hex']) & (Record.last_message > datetime.now().timestamp() - settings['flight_ttl_seconds']))
 
     flight = {}
 
@@ -165,7 +164,6 @@ def storeMessageLocal(data):
         flight['total_messages'] = 0
         flight['matched_rules'] = []
 
-        logger.debug("Aircraft Added to localDb _id: " + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
         stats.increment_flights_count()
 
         #Get the aircraft data
@@ -284,7 +282,7 @@ def storeMessageLocal(data):
             flight['matched_rules'].append(matchedRule['identifier'])
 
     #Commit to the local database
-    localDb.upsert(flight, Record.icao == data['icao_hex'])
+    #localDb.upsert(flight, Record.icao == data['icao_hex'])
 
 
 def parseCallsign(callsign):
@@ -936,13 +934,13 @@ def setup():
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
             logger.debug("Using memory for localDb.")
-            localDb = TinyDB(storage=MemoryStorage)
+            #localDb = TinyDB(storage=MemoryStorage)
 
         else:
             settings['local_database_mode'] = "disk"
             logger.debug("Using disk for localDb.")
-            settings['database_file'] = os.path.join(filePath, applicationName + ".tinydb")
-            localDb = TinyDB(settings['database_file'])
+            #settings['database_file'] = os.path.join(filePath, applicationName + ".tinydb")
+            #localDb = TinyDB(settings['database_file'])
 
     except Exception as ex:
         logger.error(ex)
