@@ -8,6 +8,7 @@
     },
     "mongoDb": {
         "uri": "localhost",
+        "enabled": true,
         "port": 27017,
         "database": "SkyFollower",
         "collection": "flights"

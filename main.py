@@ -818,6 +818,10 @@ def setup():
         if "mongoDb" not in settings:
             raise Exception ("mongoDb object is missing from settings.json")
 
+        if "enabled" not in settings['mongoDb']:
+            settings['mongoDb']['enabled'] = True
+            logger.info("mongoDb -> enabled is missing in the settings file; MongoDB persistence will be enabled.")
+            
         if "uri" not in settings['mongoDb']:
             raise Exception ("Missing mongoDb -> uri in settings.json")
 
