@@ -661,7 +661,6 @@ def setup():
     global rulesEngine
     global stats
 
-    #Define some constants
     applicationName = "SkyFollower"
     settings = {}
 
@@ -671,7 +670,6 @@ def setup():
 
         filePath = os.path.dirname(os.path.realpath(__file__))
 
-        #Setup the logger, 10MB maximum log size
         logger = logging.getLogger(applicationName)
         formatter = logging.Formatter('%(asctime)s [%(levelname)s] - %(message)s')
         logHandler = handlers.RotatingFileHandler(os.path.join(filePath, 'events.log'), maxBytes=10485760, backupCount=1)
@@ -679,13 +677,9 @@ def setup():
         logger.addHandler(logHandler)
         logger.setLevel(logging.INFO)
 
-        logger.info(applicationName + " application started.")
-
-        #Make sure the settings file exists
         if os.path.exists(os.path.join(filePath, 'settings.json')) == False:
             raise Exception("Settings file does not exist.  Expected file " + os.path.join(filePath, 'settings.json'))
 
-        #Settings file exists, read it in and verify its contents
         with open(os.path.join(filePath, 'settings.json')) as settingsFile:
             settings = json.load(settingsFile)
 
@@ -806,7 +800,6 @@ def setup():
             settings['mqtt']['topic_rule'] = str(os.path.join(settings['mqtt']['topic'], "rule/"))
             settings['mqtt']['topic_statistics'] = str(os.path.join(settings['mqtt']['topic'], "statistic/"))
 
-            #Create MQTT Client
             mqttClient = paho.mqtt.client.Client()
 
         if 'local_database_mode' not in settings:
@@ -953,7 +946,7 @@ def run_scheduled_tasks():
         time.sleep(1)
 
 
-def main():
+def main():  
 
     try:
 
@@ -1020,12 +1013,6 @@ def main():
         logger.error(ex)
         exitApp(1)
         
-    finally:
-        if observer:
-            if observer.is_alive():
-                observer.stop()
-                observer.join()
-
 
 class fileChanged(PatternMatchingEventHandler):
 
