@@ -22,6 +22,8 @@ from rulesEngine import rulesEngine as skyFollowerRE
 from watchdog.observers import Observer             #pip3 install watchdog
 from watchdog.events import PatternMatchingEventHandler
 import schedule
+import queue
+import multiprocessing
 
 
 def handle_interrupt(signal, frame):
@@ -31,44 +33,39 @@ def handle_interrupt(signal, frame):
 class sigKill(Exception):
     pass
 
+
+class StoppableThread(threading.Thread):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
     
 class ADSBClient(TcpClient):
 
     connected = False
-   
+
     def __init__(self):
         super(ADSBClient, self).__init__(settings['adsb']['uri'], settings['adsb']['port'], settings['adsb']['type'])
 
-        threadStatusCheck = threading.Thread(target=self.checkIfAlive)
-        threadStatusCheck.start()
-
-
-    def setConnected(self):
-        if self.connected == False:
-            self.connected = True
-            logger.info("ADS-B client connected to " + settings['adsb']['uri'] + ".")
-
-
-    def checkIfAlive(self):
-
-        try:
-
-            #Timeout
-            time.sleep(30)
-        
-            if self.connected == False:
-                raise Exception("No data received from " + settings['adsb']['uri'] + " before timeout.")                
-
-        except Exception as ex:
-            logger.critical(ex)
-            logger.critical("Error; Exiting with code 2")
-            os._exit(2)
-
-
     def handle_messages(self, messages):
-        self.setConnected()
-        threadMessageProcessor = threading.Thread(target=messageProcessor, args=(messages,))
-        threadMessageProcessor.start()
+        self.connected = True
+        messageQueue.put(messages)
+        stats.set_message_queue_depth(messageQueue.qsize())
+
+
+def messageQueueReader():
+
+    while not threading.current_thread().stopped():
+        messages = messageQueue.get()
+        messageProcessor(messages)
+        messageQueue.task_done()
 
 
 def messageProcessor(messages):
@@ -660,6 +657,7 @@ def setup():
     global mqttClient
     global rulesEngine
     global stats
+    global messageQueue
 
     applicationName = "SkyFollower"
     settings = {}
@@ -930,6 +928,10 @@ def setup():
         else:
             settings['local_database_mode'] = "disk"
             logger.debug("Using disk for localDb.")
+        #Setup the message queue
+        messageQueue = queue.Queue()
+
+        stats.message_queue = messageQueue
 
     except Exception as ex:
         logger.error(ex)
@@ -964,46 +966,62 @@ def main():
             #Connect to MQTT
             mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
 
-        # run new client, change the host, port, and rawtype if needed
+        threadsMessageQueueReader = []
+        for i in range(multiprocessing.cpu_count()):
+            worker = StoppableThread(target=messageQueueReader, daemon=True, name="Worker_" + str(i))
+            threadsMessageQueueReader.append(worker)
+            worker.start()
+
         adsb_client = ADSBClient()
-
-        schedule.every().hour.at("00:30").do(stats.reset_hour)
-        schedule.every().day.at("00:00").do(stats.reset_today)
-        schedule.every(30).seconds.do(stats.publish)
-
-        #Remote storage thread
-        schedule.every(10).seconds.do(storeMessageRemote)
         
-        scheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks)
+        threadADSBClient = Thread(name="ADSB Client", target=adsb_client.run, daemon=True)
+        threadADSBClient.start()
+        timeStartADSBClient = datetime.now()
+
+        while adsb_client.connected == False:
+            if (datetime.now() - timeStartADSBClient).seconds > 30:
+                raise Exception("No data received from " + settings['adsb']['uri'] + " before timeout.")
+            time.sleep(1)
 
         #Start the threads
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_start()
 
-        scheduler.start()
+        schedule.every().hour.at("00:30").do(stats.reset_hour)
+        schedule.every().day.at("00:00").do(stats.reset_today)
+        schedule.every(30).seconds.do(stats.publish)
+        schedule.every(10).seconds.do(storeMessageRemote)
+        threadScheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks, daemon=True)
+        threadScheduler.start()
 
         observer = Observer()
-        event_handler = fileChanged()
-        observer.schedule(event_handler, path=os.path.dirname(settings['files']['areas']))
-        observer.schedule(event_handler, path=os.path.dirname(settings['files']['rules']))
+        file_changed_event_handler = fileChanged()
+        observer.schedule(file_changed_event_handler, path=os.path.dirname(settings['files']['areas']))
+        observer.schedule(file_changed_event_handler, path=os.path.dirname(settings['files']['rules']))
         observer.start()
 
-        adsb_client.run() #Blocking, must be last        
+        #Run forever
+        threadADSBClient.join()
 
-        exitApp(0)
+        #Exit with an error code
+        exitApp(2)
 
     except (sigKill, KeyboardInterrupt):
+
+        logger.info("Shutdown was requested.")
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
-        if scheduler:            
-            if scheduler.is_alive():
-                scheduler.alive = False
-                scheduler.join()
-     
-        storeMessageRemote(False)
+        if adsb_client.connected:
+            adsb_client.stop()
 
+        for worker in threadsMessageQueueReader:
+            if worker.is_alive() == True:
+                worker.stop()
+
+        storeMessageRemote(False)
+     
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_stop()
 
