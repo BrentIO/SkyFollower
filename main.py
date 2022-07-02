@@ -470,33 +470,6 @@ def storeMessageRemote(threadState = True):
         else:
             logger.debug("No records ready to be migrated to MongoDB.")
 
-    except errors.DuplicateKeyError as dke:
-
-        if 'keyValue' in dke.details:
-            if '_id' in dke.details['keyValue']:
-
-                try:
-                    
-                    directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), "errors")
-
-                    if not os.path.exists(directory):
-                        os.makedirs(directory)
-
-                    fileName = os.path.join(directory, "dke_" + str(datetime.utcnow().isoformat()).replace(":", "-") + ".json")
-
-                    flight['error'] = "pymongo.errors.DuplicateKeyError"
-
-                    with open(fileName, 'w') as outfile:
-                        json.dump(flight, outfile, default=jsonDefaultConverter)
-
-                    localDb.remove(Record._id == dke.details['keyValue']['_id'])
-
-                    logger.critical("Duplicate key error occurred.  Data was written to the disk as file " + fileName +".")
-
-                except Exception as ex:
-                    logger.critical("Duplicate key error failed when attempting to write to disk.  Data was lost.  The duplicate _id=" + str(dke.details['keyValue']['_id']))
-                    logger.critical(ex)
-
     except Exception as ex:
         logger.error("Error migrating data to MongoDB.")
         logger.error(ex)
