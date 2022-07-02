@@ -20,7 +20,6 @@ from datetime import datetime, timedelta
 import threading
 from threading import Thread, current_thread
 import requests
-import re
 import paho.mqtt.client                             #pip3 install paho-mqtt
 import signal
 from rulesEngine import rulesEngine as skyFollowerRE
@@ -81,8 +80,6 @@ def messageProcessor(messages):
     for msg, ts in messages:
         
         try:
-
-            logger.debug(json.dumps({"message" : msg, "crc" : pms.common.crc(msg) }))
 
             #Object to store data
             data = {}
