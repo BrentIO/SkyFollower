@@ -87,11 +87,11 @@ def messageProcessor(messages):
             #Get the download format
             data['downlink_format'] = pms.df(msg)
 
-            if data['downlink_format'] not in (0, 11, 16, 4, 20, 5, 21, 17):
+            if data['downlink_format'] not in [0, 11, 16, 4, 20, 5, 21, 17]:
                 logger.debug("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
             
             #Throw away certain DF's (0 & 16 are ACAS, 11 is all-call)
-            if data['downlink_format'] == 0 or data['downlink_format'] == 11 or data['downlink_format'] == 16:
+            if data['downlink_format'] in [0, 11, 16]:
                 continue
             
             data['icao_hex'] = pms.adsb.icao(msg)
@@ -100,10 +100,10 @@ def messageProcessor(messages):
             if data['icao_hex'] == None:
                 continue
 
-            if data['downlink_format'] == 4 or data['downlink_format'] == 20:
+            if data['downlink_format'] in [4, 20]:
                 data['altitude'] = pms.common.altcode(msg)
 
-            if data['downlink_format'] == 5 or data['downlink_format'] == 21:
+            if data['downlink_format'] in [5, 21]:
                 data['squawk'] = pms.common.idcode(msg)
 
             if data['downlink_format'] == 17:
@@ -112,7 +112,7 @@ def messageProcessor(messages):
                 data['messageType'] = typeCode
 
                 #Throw away TC 28 and 29...not yet supported
-                if typeCode == 28 or typeCode == 29:
+                if typeCode in [28, 29]:
                     continue
 
                 if 1 <= typeCode <= 4:
