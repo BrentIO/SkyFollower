@@ -12,7 +12,7 @@ import sys
 #from tinydb.storages import MemoryStorage
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
-from pymongo import MongoClient, errors                    #pip3 install pymongo
+from pymongo import MongoClient                    #pip3 install pymongo
 import uuid
 import time
 import datetime
@@ -23,7 +23,7 @@ import requests
 import paho.mqtt.client                             #pip3 install paho-mqtt
 import signal
 from rulesEngine import rulesEngine as skyFollowerRE
-from watchdog.observers import Observer
+from watchdog.observers import Observer             #pip3 install watchdog
 from watchdog.events import PatternMatchingEventHandler
 import schedule
 
