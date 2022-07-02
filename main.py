@@ -283,10 +283,11 @@ def storeMessageLocal(data):
     #localDb.upsert(flight, Record.icao == data['icao_hex'])
 
 
-def parseCallsign(callsign):
 
-    #Valid callsign received, parse to get the operator and flight number
-    getOperatorResponse = getOperator(callsign[0:3])
+def parseIdent(ident):
+
+    #Valid ident received, parse to get the operator and flight number
+    getOperatorResponse = getOperator(ident[0:3])
 
     if getOperatorResponse == None:
         return None
