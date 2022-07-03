@@ -806,8 +806,6 @@ class Flight():
         parameters = (self.icao_hex, self.first_message, self.last_message, self.total_messages, json.dumps(self.aircraft), self.ident, json.dumps(self.operator), self.squawk, json.dumps(self.origin), json.dumps(self.destination), json.dumps(self.matched_rules))
         sqliteCur.execute(sqlStatement, parameters)
 
-        logger.debug("Aircraft Added to localDb ICAO HEX: " + self.icao_hex)
-
 
     def persist(self):
         """Persists the data to the remote data store."""
@@ -1285,11 +1283,11 @@ class statistics():
     def publish(self):
 
         ## Publishes the current value of each statistic tracked, if MQTT is connected
-
         if not mqttClient.is_connected():
             return
 
         for stat in self.list():
+            logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
             mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
 
         #Reset the statistics
