@@ -20,7 +20,7 @@
     },
     "operators": {
         "enabled": false,
-        "uri": "http://localhost:8480/operator/$CALLSIGN$",
+        "uri": "http://localhost:8480/operator/$IDENT$",
         "x-api-key": "some_secret_key"
     },
     "flights": {
