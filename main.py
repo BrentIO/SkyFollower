@@ -684,7 +684,8 @@ def main():
             if worker.is_alive() == True:
                 worker.stop()
 
-        Flight.persistStaleFlights(True)
+        flight = Flight()
+        flight.persistStaleFlights(True)
      
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_stop()
