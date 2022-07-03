@@ -6,6 +6,7 @@ import logging
 import logging.handlers as handlers
 import json
 import sys
+import sqlite3
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
 from pymongo import MongoClient                    #pip3 install pymongo
@@ -134,392 +135,45 @@ def messageProcessor(messages):
                 if typeCode == 31:
                     data['adsb_version'] = pms.adsb.version(msg)
 
-            #Process the message for storage in the local database
-            storeMessageLocal(data)
+            stats.increment_message_count()
+
+            flight = Flight()
+            flight.setIcao_hex(data['icao_hex'])
+
+            if not flight.exists:
+
+                stats.increment_flights_count()
+
+                flight.first_message = data['timestamp']
+            
+            flight.last_message = data['timestamp']
+            flight.total_messages = flight.total_messages + 1
+
+            if "latitude" in data and "longitude" in data and "altitude" in data:
+                flight.addPosition(Position(data['timestamp'], data['latitude'], data['longitude'], data['altitude']))
+
+            if "velocity" in data and "heading" in data and "vertical_speed" in data:
+                flight.addVelocity(Velocity(data['timestamp'], data['velocity'], data['heading'], data['vertical_speed']))
+
+            if "squawk" in data:
+                flight.setSquawk(data['squawk'])
+
+            if "category" in data:
+                flight.setCategory(data['category'])
+
+            if "ident" in data:
+                flight.setIdent(data['ident'])
+
+            if "adsb_version" in data:
+                flight.setAdsbVersion(data['adsb_version'])
+
+            flight.evaluateRules()
+
+            flight.saveLocal()
 
         except Exception as ex:
             logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(msg) + "] : " + str(ex))
-        
-
-def storeMessageLocal(data):
-
-    stats.increment_message_count()
-
-
-    flight = {}
-
-    if len(result) == 0:
-        flight['icao_hex'] = data['icao_hex']
-        flight['first_message'] = data['timestamp']
-        flight['_id'] = str(uuid.uuid4())
-        flight['last_message'] = 0
-        flight['total_messages'] = 0
-        flight['matched_rules'] = []
-
-        stats.increment_flights_count()
-
-        #Get the aircraft data
-        aircraftData = getRegistration(flight['icao_hex'])
-
-        #If the registration was returned, store the data
-        if aircraftData is None:
-            flight['aircraft'] = {}
-            flight['aircraft']['icao_hex'] = flight['icao_hex']
-        else:
-            flight['aircraft'] = aircraftData
-        
-    else:
-        flight = result[0]
-
-    #Set the last message to now
-    flight['last_message'] = data['timestamp']
-
-    #Increment the number of messages received
-    flight['total_messages'] = flight['total_messages'] + 1
-
-    #Check message for position reports
-    if "latitude" in data and "longitude" in data and "altitude" in data:
-        positionReport = {}
-        positionReport['timestamp'] = datetime.utcfromtimestamp(data['timestamp'])
-
-        if "latitude" in data:
-            positionReport['latitude'] = data['latitude']
-
-        if "longitude" in data:
-            positionReport['longitude'] = data['longitude']
-
-        if "altitude" in data:
-            positionReport['altitude'] = data['altitude']
-
-        if 'positions' not in flight:
-            flight['positions'] = []
-
-        flight['positions'].append(positionReport)
-
-    #Check message for velocity reports
-    if "velocity" in data or "heading" in data or "vertical_speed" in data:
-        velocityReport = {}
-        velocityReport['timestamp'] = datetime.utcfromtimestamp(data['timestamp'])
-
-        if "velocity" in data:
-            velocityReport['velocity'] = data['velocity']
-
-        if "heading" in data:
-            velocityReport['heading'] = data['heading']
-
-        if "vertical_speed" in data:
-            velocityReport['vertical_speed'] = data['vertical_speed']
-
-        if 'velocities' not in flight:
-            flight['velocities'] = []
-
-        flight['velocities'].append(velocityReport)
-
-    if "squawk" in data:
-        flight['squawk'] = data['squawk']
-
-    if "category" in data:
-        
-        parseAircraftCategoryResponse = parseAircraftCategory(data['category'])
-
-        if parseAircraftCategoryResponse is not None:
-            if 'aircraft' not in flight:
-                flight['aircraft'] = {}
-                
-            flight['aircraft']['wake_turbulence_category'] = parseAircraftCategoryResponse
-
-    if "ident" in data:
-
-        #If the ident is currently empty and the incoming data is not empty
-        if flight['ident'] == "" and data['ident'] != "" and 'registration' in flight['aircraft']:
-
-            #Store the ident, note only the first ident received will be used
-            flight['ident'] = data['ident']
-
-            #Check for valid idents
-            if flight['ident'] != flight['aircraft']['registration'] and flight['ident'] != "00000000":
-
-                #See if there is operator data in the ident
-                parseIdentResponse = parseIdent(flight['ident'])
-
-                if parseIdentResponse is not None:
-
-                    #There is operator data, store it
-                    flight['operator'] = parseIdentResponse
-
-                #Get the flight information
-                flightInfoResponse = getFlightInfo(flight['ident'])
-
-                if flightInfoResponse is not None:
-
-                    if "origin" in flightInfoResponse:
-                        flight['origin'] = flightInfoResponse['origin']
-
-                    if "destination" in flightInfoResponse:
-                        flight['destination'] = flightInfoResponse['destination']
-    
-    if "adsb_version" in data:
-
-        if 'aircraft' not in flight:
-            flight['aircraft'] = {}
-
-        flight['aircraft']['adsb_version'] = data['adsb_version']
-
-    #Check if the flight is of interest
-    interestResult = checkFlightOfInterest(flight)
-
-    if interestResult != []:
-        for matchedRule in interestResult:
-            flight['matched_rules'].append(matchedRule['identifier'])
-
-
-    #Commit to the local database
-    #localDb.upsert(flight, Record.icao == data['icao_hex'])
-
-
-
-def parseIdent(ident):
-
-    #Valid ident received, parse to get the operator and flight number
-    getOperatorResponse = getOperator(ident[0:3])
-
-    if getOperatorResponse == None:
-        return None
-
-    returnValue = {}
-
-    returnValue['airline_designator'] = getOperatorResponse['airline_designator']
-    returnValue['name'] = getOperatorResponse['name']
-    returnValue['callsign'] = getOperatorResponse['callsign']
-    returnValue['country'] = getOperatorResponse['country']
-
-    return returnValue
-
-
-def getFlightInfo(ident):
-
-    if settings['flights']['enabled'] != True:
-        return None
-
-    try:
-
-        r = requests.get(settings['flights']['uri'].replace("$IDENT$", ident), headers={'x-api-key': settings['flights']['x-api-key']})
-
-        if r.status_code == 200:
-            return r.json()
-
-        if r.status_code == 404:
-            logger.debug("Unable to get flight info for " + str(ident) +"; service returned " + str(r.status_code))
-            return None
-        
-        logger.info("Unable to get flight info for " + str(ident) +"; service returned " + str(r.status_code))
-        return None
-
-    except Exception as ex:
-        logger.warning("Error getting flight info.")
-        logger.error(ex)
-        return None
-
-
-def parseAircraftCategory(category):
-
-    if category == 1:
-        return "Light"
-
-    if category == 2:
-        return "Medium 1"
-
-    if category == 3:
-        return "Medium 2"
-
-    if category == 4:
-        return "High Vortex Aircraft"
-
-    if category == 5:
-        return "Heavy"
-
-    if category == 6:
-        return "High Performance"
-
-    if category == 7:
-        return "Rotorcraft"
-
-    return None
-
-
-def getRegistration(icao_hex):
-
-    if settings['registration']['enabled'] != True:
-        return None
-
-    try:
-
-        r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", icao_hex), headers={'x-api-key': settings['registration']['x-api-key']})
-
-        if r.status_code == 200:
-            return json.loads(r.text)
-
-        if r.status_code == 404:
-            logger.debug("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
-            stats.increment_registration_unknown_count()
-            return None
-
-        logger.info("Unable to get registration details for " + str(icao_hex) +"; getRegistration returned " + str(r.status_code))
-        stats.increment_registration_unknown_count()
-        return None
-
-    except Exception as ex:
-        logger.warning("Error getting registration.")
-        logger.error(ex)
-        return None
-
-
-def getOperator(ident):
-
-    if settings['operators']['enabled'] != True:
-        return None
-
-    try:
-
-        r = requests.get(settings['operators']['uri'].replace("$IDENT$", ident), headers={'x-api-key': settings['operators']['x-api-key']})
-
-        if r.status_code == 200:
-            return r.json()
-
-        if r.status_code == 404:
-            logger.debug("Unable to get operator details for " + str(ident) +"; getOperator returned " + str(r.status_code))
-            stats.increment_operator_unknown_count()
-            return None
-        
-        logger.info("Unable to get operator details for " + str(ident) +"; getOperator returned " + str(r.status_code))
-        stats.increment_operator_unknown_count()
-        return None
-
-    except Exception as ex:
-        logger.warning("Error getting operator.")
-        logger.error(ex)
-        return None
-
-
-def storeMessageRemote(threadState = True):
-
-    countOfMigrated = 0
-
-    try:
-
-        Record = Query()
-
-        #Determine if we will continue to live after this round
-        if threadState:
-            stale_flights = localDb.search(Record.last_message < (datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds()))
-        else:
-            #Thread is shutting down, persist all the records regardless of their status
-            logger.info("Shutdown detected, persisting all local records to MongoDB.")
-            stale_flights = localDb.all()
-
-        if len(stale_flights) > 0:
-
-            if settings['mongoDb']['enabled'] == True:
-                mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
-                adsbDB = mongoDBClient[settings['mongoDb']['database']]
-                adsbDBCollection = adsbDB[settings['mongoDb']['collection']] 
-
-            #An array will be returned, cycle through each flight
-            for flight in stale_flights:
-
-                icao_hex = flight['icao_hex']
-
-                #Make the datestamps human-readable
-                flight['first_message'] = datetime.utcfromtimestamp(flight['first_message'])
-                flight['last_message'] = datetime.utcfromtimestamp(flight['last_message'])
-
-                #Delete data we do not want to persist
-                if settings['log_level'] != "debug":
-                    del flight['matched_rules']
-
-                if 'aircraft' in flight:
-                    
-                    #ICAO Hex will be repetitive, but only delete it if there is an aircraft object
-                    del flight['icao_hex']
-
-                    if 'military' in flight['aircraft']:
-                        if flight['aircraft']['military'] == False:
-                            del flight['aircraft']['military']
-
-                if 'origin' in flight:
-                    if 'icao_code' in flight['origin']:
-                        flight['origin'] = flight['origin']['icao_code']
-
-                if 'destination' in flight:
-                    if 'icao_code' in flight['destination']:
-                        flight['destination'] = flight['destination']['icao_code']
-
-                logger.debug("Persisted to MongoDB _id: " + flight['_id'] + " ICAO HEX: " + flight['aircraft']['icao_hex'])
-
-                if settings['mongoDb']['enabled'] == True:
-                    adsbDBCollection.insert_one(flight)
-
-                countOfMigrated = countOfMigrated + 1
-
-                localDb.remove(Record.icao_hex == icao_hex)
-
-            if settings['mongoDb']['enabled'] == True:
-                mongoDBClient.close()
-                logger.debug("Finished migration to MongoDB.  " + str(countOfMigrated) + " records were migrated.")
-
-        else:
-            logger.debug("No records ready to be migrated to MongoDB.")
-
-    except Exception as ex:
-        logger.error("Error migrating data to MongoDB.")
-        logger.error(ex)
-
-
-def jsonDefaultConverter(o):
-  if isinstance(o, datetime):
-      return o.__str__()
-
-
-def checkFlightOfInterest(flight):
-
-    global rulesEngine
-
-    result = rulesEngine.evaluate(flight)
-
-    for matchedRule in result:
-
-        notification = {}
-
-        if 'aircraft' in flight:
-            notification['aircraft'] = flight['aircraft']
-
-            if 'source' in notification['aircraft']:
-                del notification['aircraft']['source']
-
-        if 'squawk' in flight:
-            notification['squawk'] = flight['squawk']
-
-        if 'operator' in flight:
-            notification['operator'] = flight['operator']
-
-        if 'origin' in flight:
-            notification['origin'] = flight['origin']
-
-        if 'destination' in flight:
-            notification['destination'] = flight['destination']
-
-        notification['rule'] = {}
-
-        notification['rule']['name'] = matchedRule['name']
-        notification['rule']['description'] = matchedRule['description']
-        notification['rule']['identifier'] = matchedRule['identifier']
-
-        logger.debug("Rule Matched \"" +  matchedRule['name'] + "\" for _id: " + flight['_id'] + " ICAO HEX: " + flight['icao_hex'])
-
-        mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification))
-
-    return result
-
+          
 
 def mqtt_publishNotication(identifier, message):
 
@@ -906,10 +560,36 @@ def setup():
         #Default the local database to be memory
         if str(settings['local_database_mode']).lower() == "memory":
             logger.debug("Using memory for localDb.")
+            localDb = sqlite3.connect(":memory:", check_same_thread=False)
 
         else:
             settings['local_database_mode'] = "disk"
             logger.debug("Using disk for localDb.")
+            settings['database_file'] = os.path.join(filePath, applicationName + ".db")
+
+            #Create the localDB tables
+            if os.path.exists(settings['database_file']):
+                    
+                #Delete the old database
+                os.remove(settings['database_file'])
+
+            if os.path.exists(settings['database_file'] + "-journal"):
+                    
+                #Delete the old database
+                os.remove(settings['database_file'] + "-journal")
+
+            localDb = sqlite3.connect(settings['database_file'], check_same_thread=False)
+
+        localDb.row_factory = sqlite3.Row        
+        cursor = localDb.cursor()
+
+        #Create the temporary tables
+        cursor.execute("CREATE TABLE flights (icao_hex text NOT NULL, first_message real NOT NULL, last_message real, total_messages integer, aircraft text, ident text, operator text, squawk text, origin text, destination text, matched_rules text, PRIMARY KEY(icao_hex))")
+        cursor.execute("CREATE TABLE positions (icao_hex text, timestamp real, latitude real, longitude real, altitude integer)")
+        cursor.execute("CREATE TABLE velocities (icao_hex text, timestamp real, velocity integer, heading real, vertical_speed integer)")
+        cursor.execute("CREATE INDEX positions_icao_hex ON positions (icao_hex);")
+        cursor.execute("CREATE INDEX velocities_icao_hex ON velocities (icao_hex);")
+
         #Setup the message queue
         messageQueue = queue.Queue()
 
@@ -969,10 +649,12 @@ def main():
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_start()
 
+        flight = Flight()
+
         schedule.every().hour.at("00:30").do(stats.reset_hour)
         schedule.every().day.at("00:00").do(stats.reset_today)
         schedule.every(30).seconds.do(stats.publish)
-        schedule.every(10).seconds.do(storeMessageRemote)
+        schedule.every(10).seconds.do(flight.persistStaleFlights)
         threadScheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks, daemon=True)
         threadScheduler.start()
 
@@ -1002,7 +684,7 @@ def main():
             if worker.is_alive() == True:
                 worker.stop()
 
-        storeMessageRemote(False)
+        Flight.persistStaleFlights(True)
      
         if settings['mqtt']['enabled'] == True:
             mqttClient.loop_stop()
@@ -1012,7 +694,466 @@ def main():
     except Exception as ex:
         logger.error(ex)
         exitApp(1)
+
+
+class Flight():
+    """Flight Record"""
+
+    def __init__(self) -> None:
+        self.exists: boolean = False
+        self.icao_hex:str = ""
+        self.first_message:int = 0
+        self.last_message:int = 0
+        self.total_messages:int = 0
+        self.aircraft:dict = {}
+        self.ident:str = ""
+        self.operator:dict = {}
+        self.squawk:str = ""
+        self.origin:dict = {}
+        self.destination:dict = {}
+        self.positions:list[Position] = []
+        self.velocities:list[Velocity] = []
+        self.matched_rules:list[str] = []
+
+
+    def toDict(self) -> dict:
+
+        record = {}
+        record['icao_hex'] = self.icao_hex
+        record['first_message'] = datetime.utcfromtimestamp(self.first_message)
+        record['last_message'] = datetime.utcfromtimestamp(self.last_message)
+        record['total_messages'] = self.total_messages
+
+        if self.aircraft != {}:
+            record['aircraft'] = self.aircraft
+
+        if self.ident != "":
+            record['ident'] = self.ident
+
+        if self.operator != {}:
+            record['operator'] = self.operator
+
+        if self.squawk != "":
+            record['squawk'] = self.squawk
+
+        if "icao_code" in self.origin:
+            record['origin'] = self.origin['icao_code']
+
+        if "icao_code" in self.destination:
+            record['destination'] = self.destination['icao_code']          
+
+        if len(self.matched_rules) > 0 and settings['log_level'] == "debug":
+            record['matched_rules'] = self.matched_rules
+
+        if len(self.positions) > 0:
+            record['positions'] = []
+
+            for position in self.positions:
+                record['positions'].append(position.toDict())
+
+        if len(self.velocities) > 0:
+            record['velocities'] = []
+
+            for velocity in self.velocities:
+                record['velocities'].append(velocity.toDict())
+
+        return record
+
+
+    def get(self, limit_position:bool = True, limit_velocity:bool = True):
+        """Retrieves the given ICAO hex from the local database.
+        If no records are found, False is returned.
+        If records are returned, True is returned and the object is populated from the database.
+        """
+
+        sqliteCur = localDb.cursor()
+
+        sqliteCur.execute("SELECT * FROM flights WHERE icao_hex='" + self.icao_hex + "';")
+        result = sqliteCur.fetchall()
+
+        if len(result) == 0:
+            self.exists = False
+            return
+
+        self.exists = True
+        self.icao_hex = result[0]['icao_hex']
+        self.first_message = result[0]['first_message']
+        self.last_message = result[0]['last_message']
+        self.total_messages = result[0]['total_messages']
+        self.aircraft = json.loads(result[0]['aircraft'])
+        self.ident = result[0]['ident']
+        self.operator = json.loads(result[0]['operator'])
+        self.squawk = result[0]['squawk']
+        self.origin = json.loads(result[0]['origin'])
+        self.destination = json.loads(result[0]['destination'])
+        self.matched_rules = json.loads(result[0]['matched_rules'])
+        self.positions = []
+        self.velocities = []
+
+        self._getPositions(limit_position)
+        self._getVelocities(limit_velocity)
+        self._getAircraft()
         
+        return True
+
+
+    def saveLocal(self):
+       
+        """Saves the flight data to the localDb."""
+        sqliteCur = localDb.cursor()
+        sqlStatement = "REPLACE INTO flights (icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, origin, destination, matched_rules) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        parameters = (self.icao_hex, self.first_message, self.last_message, self.total_messages, json.dumps(self.aircraft), self.ident, json.dumps(self.operator), self.squawk, json.dumps(self.origin), json.dumps(self.destination), json.dumps(self.matched_rules))
+        sqliteCur.execute(sqlStatement, parameters)
+
+        logger.debug("Aircraft Added to localDb ICAO HEX: " + self.icao_hex)
+
+
+    def persist(self):
+        """Persists the data to the remote data store."""
+
+        if settings['mongoDb']['enabled'] == False:
+            return
+
+        mongoDBClient = MongoClient(host=settings['mongoDb']['uri'], port=settings['mongoDb']['port'])
+        adsbDB = mongoDBClient[settings['mongoDb']['database']]
+        adsbDBCollection = adsbDB[settings['mongoDb']['collection']]
+
+        record = self.toDict()
+        record['_id'] = str(uuid.uuid4())
+        
+        adsbDBCollection.insert_one(record)
+        logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['icao_hex'])
+        
+
+    def delete(self):
+        """Deletes the object from the localDb."""
+
+        sqliteCur = localDb.cursor()
+        sqliteCur.execute("DELETE FROM flights WHERE icao_hex ='" + self.icao_hex + "'")
+        sqliteCur.execute("DELETE FROM positions WHERE icao_hex ='" + self.icao_hex + "'")
+        sqliteCur.execute("DELETE FROM velocities WHERE icao_hex ='" + self.icao_hex + "'")
+
+
+    def _getPositions(self, limit:bool=True):
+        """Retrieves position reports for the current aircraft.
+        If limit is True, only the last message is returned."""
+
+        sql = "SELECT * FROM positions WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
+
+        if limit:
+            sql = sql + " DESC LIMIT 1"
+
+        sqliteCur = localDb.cursor()
+        sqliteCur.execute(sql)
+        results = sqliteCur.fetchall()
+
+        for result in results:
+            self.positions.append(Position(result['timestamp'], result['latitude'], result['longitude'], result['altitude']))
+
+
+    def addPosition(self, position:'Position'):
+        
+        sqliteCur = localDb.cursor()
+        sqlStatement = "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) VALUES (?,?,?,?,?)"
+        parameters = (self.icao_hex, position.timestamp, position.latitude, position.longitude, position.altitude)
+        sqliteCur.execute(sqlStatement, parameters)
+
+        self.positions.append(position)
+
+
+    def addVelocity(self, velocity:'Velocity'):
+        
+        sqliteCur = localDb.cursor()
+        sqlStatement = "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) VALUES (?,?,?,?,?)"
+        parameters = (self.icao_hex, velocity.timestamp, velocity.velocity, velocity.heading, velocity.vertical_speed)
+        sqliteCur.execute(sqlStatement, parameters)
+
+        self.velocities.append(velocity)
+
+
+    def _getVelocities(self, limit:bool=True):
+        """Retrieves velocity reports for the current aircraft.
+        If limit is True, only the last message is returned."""
+
+        sql = "SELECT * FROM velocities WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
+
+        if limit:
+            sql = sql + " DESC LIMIT 1"
+
+        sqliteCur = localDb.cursor()
+        sqliteCur.execute(sql)
+        results = sqliteCur.fetchall()
+
+        for result in results:
+            self.velocities.append(Velocity(result['timestamp'], result['velocity'], result['heading'], result['vertical_speed']))
+
+
+    def _getAircraft(self):
+
+        if settings['registration']['enabled'] != True:
+            return
+
+        if self.aircraft != {}:
+            return
+
+        try:
+
+            r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", str(self.icao_hex)), headers={'x-api-key': settings['registration']['x-api-key']})
+
+            if r.status_code == 200:
+                self.aircraft = json.loads(r.text)
+                return 
+
+            if r.status_code == 404:
+                logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; getRegistration returned " + str(r.status_code))
+                stats.increment_registration_unknown_count()
+                return
+
+            logger.info("Unable to get registration details for " + str(self.icao_hex) +"; getRegistration returned " + str(r.status_code))
+            stats.increment_registration_unknown_count()
+            return
+
+        except Exception as ex:
+            logger.warning("Error getting registration.")
+            logger.error(ex)
+
+
+    def setIdent(self, value:str):
+
+        value = value.strip()
+        
+        if self.ident != "":
+            return
+
+        if value == "" or value == "00000000":
+            return
+
+        if "registration" in self.aircraft:
+            if self.aircraft['registration'] == value:
+                return
+        else:
+            return
+
+        self.ident = value
+
+        self._getOperator()
+        self._getFlightInfo()
+
+
+    def setIcao_hex(self, value:str, limit_position:bool = True, limit_velocity:bool = True):
+
+        value = value.strip()
+
+        if self.icao_hex != "":
+            return
+
+        self.icao_hex = value
+
+        self.get()
+
+        if not self.exists:
+
+            self.get(limit_position = limit_position, limit_velocity = limit_velocity)
+
+
+    def setCategory(self, value:int):
+
+        if value == 1:
+            self.aircraft['wake_turbulence_category'] = "Light"
+            return
+
+        if value == 2:
+            self.aircraft['wake_turbulence_category'] = "Medium 1"
+            return
+
+        if value == 3:
+            self.aircraft['wake_turbulence_category'] = "Medium 2"
+            return
+
+        if value == 4:
+            self.aircraft['wake_turbulence_category'] = "High Vortex Aircraft1"
+            return
+
+        if value == 5:
+            self.aircraft['wake_turbulence_category'] = "Heavy"
+            return
+
+        if value == 6:
+            self.aircraft['wake_turbulence_category'] = "High Performance"
+            return
+
+        if value == 7:
+            self.aircraft['wake_turbulence_category'] = "Rotorcraft"
+            return
+
+
+    def setSquawk(self, value:str):
+
+        value = value.strip()
+
+        if self.squawk != "":
+            return
+
+        self.squawk = value
+        
+
+    def setAdsbVersion(self, value:int):
+
+        if 'adsb_version' in self.aircraft:
+            return
+
+        self.aircraft['adsb_version'] = value
+
+        if self.squawk != "":
+            return
+
+        self.squawk = value
+    
+
+    def _getOperator(self):
+
+        if settings['operators']['enabled'] != True:
+            return
+
+        try:
+
+            value = self.ident[0:3]
+
+            r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
+
+            if r.status_code == 200:
+                self.operator = r.json()
+                return
+
+            if r.status_code == 404:
+                logger.debug("Unable to get operator details for " + str(value) +"; getOperator returned " + str(r.status_code))
+                stats.increment_operator_unknown_count()
+                return
+            
+            logger.info("Unable to get operator details for " + str(value) +"; getOperator returned " + str(r.status_code))
+            stats.increment_operator_unknown_count()
+            return
+
+        except Exception as ex:
+            logger.warning("Error getting operator.")
+            logger.error(ex)
+            return
+
+
+    def _getFlightInfo(self):
+        
+        if settings['flights']['enabled'] != True:
+            return
+
+        try:
+
+            r = requests.get(settings['flights']['uri'].replace("$IDENT$", self.ident), headers={'x-api-key': settings['flights']['x-api-key']})
+
+            if r.status_code == 200:
+                self.origin = r.json()['origin']
+                self.destination = r.json()['destination']
+                self.operator['flight_number'] = r.json()['flight_number']
+                return 
+
+            if r.status_code == 404:
+                logger.debug("Unable to get flight info for " + self.ident +"; service returned " + str(r.status_code))
+                return
+            
+            logger.info("Unable to get flight info for " + self.ident +"; service returned " + str(r.status_code))
+            return
+
+        except Exception as ex:
+            logger.warning("Error getting flight info.")
+            logger.error(ex)
+
+
+    def evaluateRules(self):
+
+        global rulesEngine
+
+        result = rulesEngine.evaluate(self)
+
+        for matchedRule in result:
+
+            notification = {}
+            notification = self.toDict()
+            notification['rule'] = {}
+            notification['rule']['name'] = matchedRule['name']
+            notification['rule']['description'] = matchedRule['description']
+            notification['rule']['identifier'] = matchedRule['identifier']
+            self.matched_rules.append(matchedRule['identifier'])
+            logger.debug("Rule Matched \"" +  matchedRule['name'] + "\" for ICAO HEX: " + self.icao_hex)
+
+            mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification, default=str))
+
+
+    def persistStaleFlights(self, all_flights_stale = False):
+        """Persists stale flights.  If requested, considers all flights to be stale."""
+
+        sqliteCur = localDb.cursor()
+
+        if not all_flights_stale:
+            sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
+        else:
+            logger.info("All flights will be persisted.")
+            sql = "SELECT icao_hex FROM flights"
+
+        sqliteCur.execute(sql)
+        stale_flights = sqliteCur.fetchall()
+
+        countStaleFlights = len(stale_flights)
+
+        logger.debug("Found " + str(countStaleFlights) + " stale flights to persist.")
+
+        for entry in stale_flights:
+            stale_flight = Flight()
+            stale_flight.setIcao_hex(entry['icao_hex'], limit_position=False, limit_velocity = False)
+
+            stale_flight.persist()
+
+            if settings['log_level'] != "debug":
+                stale_flight.delete()
+            
+
+class Position(dict):
+    """Position Report"""
+
+    def __init__(self, timestamp:float = None, latitude:float = None, longitude:float = None, altitude:int = None):
+        self.timestamp:float = timestamp
+        self.latitude:float = latitude
+        self.longitude:float = longitude
+        self.altitude:int = altitude
+
+
+    def toDict(self) -> dict:
+
+        return {
+            "timestamp" : datetime.utcfromtimestamp(self.timestamp), 
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "altitude": self.altitude
+        }
+
+
+class Velocity(dict):
+    """Velocity Report"""
+
+    def __init__(self, timestamp:float = None, velocity:float = None, heading:float = None, vertical_speed:int = None):
+        self.timestamp:float = timestamp
+        self.velocity:float = velocity
+        self.heading:float = heading
+        self.vertical_speed:int = vertical_speed
+        
+
+    def toDict(self) -> dict:
+
+        return {
+            "timestamp" : datetime.utcfromtimestamp(self.timestamp), 
+            "velocity": self.velocity,
+            "heading": self.heading,
+            "vertical_speed": self.vertical_speed
+        }
+       
 
 class fileChanged(PatternMatchingEventHandler):
 
