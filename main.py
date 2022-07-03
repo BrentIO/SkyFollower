@@ -1004,10 +1004,10 @@ class Flight():
 
         self.aircraft['adsb_version'] = value
 
-        if self.squawk != "":
+        if self.aircraft['adsb_version'] != "":
             return
 
-        self.squawk = value
+        self.aircraft['adsb_version'] = value
     
 
     def _getOperator(self):
