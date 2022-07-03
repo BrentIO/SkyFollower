@@ -727,6 +727,9 @@ class Flight():
 
         if self.aircraft != {}:
             record['aircraft'] = self.aircraft
+        else:
+            record['aircraft'] = {}
+            record['aircraft']['icao_hex'] = self.icao_hex
 
         if self.ident != "":
             record['ident'] = self.ident
