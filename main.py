@@ -740,11 +740,9 @@ class Flight():
         if self.squawk != "":
             record['squawk'] = self.squawk
 
-        if "icao_code" in self.origin:
-            record['origin'] = self.origin['icao_code']
+        record['origin'] = self.origin
 
-        if "icao_code" in self.destination:
-            record['destination'] = self.destination['icao_code']          
+        record['destination'] = self.destination         
 
         if len(self.matched_rules) > 0 and settings['log_level'] == "debug":
             record['matched_rules'] = self.matched_rules
@@ -824,7 +822,20 @@ class Flight():
 
         record = self.toDict()
         record['_id'] = str(uuid.uuid4())
-        
+
+        if "icao_hex" in record:
+            record.pop("icao_hex")
+
+        if "military" in record['aircraft']:
+            if record['aircraft']['military'] == False:
+                record['aircraft'].pop("military")
+
+        if "icao_code" in self.origin:
+            record['origin'] = self.origin['icao_code']
+
+        if "icao_code" in self.destination:
+            record['destination'] = self.destination['icao_code'] 
+       
         adsbDBCollection.insert_one(record)
         logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['icao_hex'])
         
