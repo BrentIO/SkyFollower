@@ -7,8 +7,8 @@
         "type": "raw"
     },
     "mongoDb": {
-        "uri": "localhost",
         "enabled": true,
+        "uri": "localhost",
         "port": 27017,
         "database": "SkyFollower",
         "collection": "flights"
