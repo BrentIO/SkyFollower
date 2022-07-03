@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-from array import array
 import json
 from nis import match
 from shapely.geometry import Polygon, Point #pip3 install shapely
@@ -29,7 +28,7 @@ class rulesEngine():
 
         for rule in self.observed_rules:
 
-            if rule['identifier'] in flight['matched_rules']:
+            if rule['identifier'] in flight.matched_rules:
                 continue
 
             conditions_met = 0
@@ -94,7 +93,7 @@ class rulesEngine():
 
                 if condition['type'] == "date":
                     
-                    if self.date_validateData(condition, flight) == True:
+                    if self.date_validateData(condition) == True:
 
                         conditions_met = conditions_met + 1
                     else:
@@ -441,10 +440,7 @@ class rulesEngine():
 
     def aircraft_icao_hex_validateData(self, condition, flight):
 
-        if "icao_hex" not in flight:
-            return False
-
-        if str(flight['icao_hex']).strip().lower() == condition['value']:
+        if flight.icao_hex.lower() == condition['value']:
             return True
 
         return False
@@ -465,28 +461,25 @@ class rulesEngine():
 
     def aircraft_powerplant_count_validateData(self, condition, flight):
 
-        if "aircraft" not in flight:
+        if "powerplant" not in flight.aircraft:
             return False
 
-        if "powerplant" not in flight['aircraft']:
-            return False
-
-        if "count" not in flight['aircraft']['powerplant']:
+        if "count" not in flight.aircraft['powerplant']:
             return False
 
         if condition['value'] == "equals":
 
-            if flight['aircraft']['powerplant']['count'] ==  condition['value']:
+            if flight.aircraft['powerplant']['count'] ==  condition['value']:
                 return True
 
         if condition['value'] == "minimum":
 
-            if flight['aircraft']['powerplant']['count'] >= condition['value']:
+            if flight.aircraft['powerplant']['count'] >= condition['value']:
                 return True
 
         if condition['value'] == "maximum":
 
-            if flight['aircraft']['powerplant']['count'] <= condition['value']:
+            if flight.aircraft['powerplant']['count'] <= condition['value']:
                 return True
 
         return False
@@ -507,13 +500,10 @@ class rulesEngine():
 
     def aircraft_registration_validateData(self, condition, flight):
         
-        if "aircraft" not in flight:
+        if "registration" not in flight.aircraft:
             return False
 
-        if "registration" not in flight['aircraft']:
-            return False
-
-        if flight['aircraft']['registration'] == condition['value']:
+        if flight.aircraft['registration'] == condition['value']:
             return True
 
         return False
@@ -534,13 +524,10 @@ class rulesEngine():
 
     def aircraft_type_designator_validateData(self, condition, flight):
         
-        if "aircraft" not in flight:
+        if "type_designator" not in flight.aircraft:
             return False
 
-        if "type_designator" not in flight['aircraft']:
-            return False
-
-        if flight['aircraft']['type_designator'] == condition['value']:
+        if flight.aircraft['type_designator'] == condition['value']:
             return True
 
         return False
@@ -563,27 +550,18 @@ class rulesEngine():
 
 
     def altitude_validateData(self, condition, flight):
-        
-        if "positions" not in flight:
-            return False
 
-        theLength = len(flight['positions'])
+        theLength = len(flight.positions)
         
         if theLength == 0:
             return False
 
-        if "altitude" not in flight['positions'][theLength-1]:
-            return False
-
-        if not flight['positions'][theLength-1]['altitude']:
-            return False
-
         if condition['operator'] == "minimum":
-            if flight['positions'][theLength-1]['altitude'] >= condition['value']:
+            if flight.positions[theLength-1].altitude >= condition['value']:
                 return True
 
         if condition['operator'] == "maximum":
-            if flight['positions'][theLength-1]['altitude'] <= condition['value']:
+            if flight.positions[theLength-1].altitude <= condition['value']:
                 return True
         
 
@@ -604,21 +582,12 @@ class rulesEngine():
         if len(self.observed_areas) == 0:
             return False
 
-        if "positions" not in flight:
-            return False
-
-        theLength = len(flight['positions'])
+        theLength = len(flight.positions)
         
         if theLength == 0:
             return False
 
-        if "latitude" not in flight['positions'][theLength-1]:
-            return False
-
-        if "longitude" not in flight['positions'][theLength-1]:
-            return False
-
-        point = Point(flight['positions'][theLength-1]['longitude'],flight['positions'][theLength-1]['latitude'])
+        point = Point(flight.positions[theLength-1].longitude,flight.positions[theLength-1].latitude)
         
         for area in self.observed_areas:
 
@@ -641,10 +610,8 @@ class rulesEngine():
 
     def ident_validateData(self, condition, flight):
         
-        if "ident" not in flight:
-            return False
 
-        if flight['ident'] == condition['value']:
+        if flight.ident == condition['value']:
             return True
 
         return False
@@ -661,7 +628,7 @@ class rulesEngine():
         return condition
 
 
-    def date_validateData(self, condition, flight):
+    def date_validateData(self, condition):
 
         if condition['operator'] == "equals":
             if datetime.today().utcnow().date() == condition['value']:
@@ -700,33 +667,23 @@ class rulesEngine():
 
     def heading_validateData(self, condition, flight):
 
-        if "velocities" not in flight:
-            return False
 
-        theLength = len(flight['velocities'])
+        theLength = len(flight.velocities)
         
         if theLength == 0:
             return False
 
-        if "heading" not in flight['velocities'][theLength-1]:
-            return False
-
-        if flight['velocities'][theLength-1]['heading'] is None:
-            return False
-
-        theHeading = flight['velocities'][theLength-1]['heading']
-
         #Check for northbound operations, which span 0
         if condition['value'][0] > condition['value'][1]:
 
-            if theHeading >= condition['value'][0] and theHeading <= 359:
+            if flight.velocities[theLength-1].heading >= condition['value'][0] and flight.velocities[theLength-1].heading <= 359:
                 return True
 
-            if theHeading >= 0 and theHeading <=condition['value'][1]:
+            if flight.velocities[theLength-1].heading >= 0 and flight.velocities[theLength-1].heading <=condition['value'][1]:
                 return True
 
         else:
-            if theHeading >= condition['value'][0] and theHeading <= condition['value'][1]:
+            if flight.velocities[theLength-1].heading >= condition['value'][0] and flight.velocities[theLength-1].heading <= condition['value'][1]:
                 return True
 
 
@@ -745,13 +702,10 @@ class rulesEngine():
 
     def military_validateData(self, condition, flight):
 
-        if "aircraft" not in flight:
+        if "military" not in flight.aircraft:
             return False
 
-        if "military" not in flight['aircraft']:
-            return False
-
-        if flight['aircraft']['military'] == condition['value']:
+        if flight.aircraft['military'] == condition['value']:
             return True
 
 
@@ -773,10 +727,7 @@ class rulesEngine():
 
     def squawk_validateData(self, condition, flight):
 
-        if "squawk" not in flight:
-            return False
-
-        if flight['squawk'] == condition['value']:
+        if flight.squawk == condition['value']:
             return True
 
 
@@ -795,13 +746,10 @@ class rulesEngine():
 
     def operator_airline_designator_validateData(self, condition, flight):
         
-        if "operator" not in flight:
+        if "airline_designator" not in flight.operator:
             return False
 
-        if "airline_designator" not in flight['operator']:
-            return False
-
-        if flight['operator']['airline_designator'] == condition['value']:
+        if flight.operator['airline_designator'] == condition['value']:
             return True
 
 
@@ -823,23 +771,17 @@ class rulesEngine():
 
     def velocity_validateData(self, condition, flight):
         
-        if "velocities" not in flight:
-            return False
-
-        theLength = len(flight['velocities'])
+        theLength = len(flight.velocities)
         
         if theLength == 0:
             return False
 
-        if "velocity" not in flight['velocities'][theLength-1]:
-            return False
-
         if condition['operator'] == "minimum":
-            if flight['velocities'][theLength-1]['velocity'] >= condition['value']:
+            if flight.velocities[theLength-1].velocity >= condition['value']:
                 return True
 
         if condition['operator'] == "maximum":
-            if flight['velocities'][theLength-1]['velocity'] <= condition['value']:
+            if flight.velocities[theLength-1].velocity <= condition['value']:
                 return True
         
 
@@ -858,36 +800,30 @@ class rulesEngine():
 
     def vertical_speed_validateData(self, condition, flight):
         
-        if "velocities" not in flight:
-            return False
-
-        theLength = len(flight['velocities'])
+        theLength = len(flight.velocities)
         
         if theLength == 0:
-            return False
-
-        if "vertical_speed" not in flight['velocities'][theLength-1]:
             return False
 
         if condition['value'] < 0:
             
             #Condition is Descending
             if condition['operator'] == "minimum":
-                if flight['velocities'][theLength-1]['vertical_speed'] < 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                if flight.velocities[theLength-1].vertical_speed < 0 and flight.velocities[theLength-1].vertical_speed <= condition['value']:
                     return True
 
             if condition['operator'] == "maximum":
-                if flight['velocities'][theLength-1]['vertical_speed'] < 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                if flight.velocities[theLength-1].vertical_speed < 0 and flight.velocities[theLength-1].vertical_speed >= condition['value']:
                     return True
 
         else:
             #Condition is Climbing or level
             if condition['operator'] == "minimum":
-                if flight['velocities'][theLength-1]['vertical_speed'] >= 0 and flight['velocities'][theLength-1]['vertical_speed'] >= condition['value']:
+                if flight.velocities[theLength-1].vertical_speed >= 0 and flight.velocities[theLength-1].vertical_speed >= condition['value']:
                     return True
 
             if condition['operator'] == "maximum":
-                if flight['velocities'][theLength-1]['vertical_speed'] >= 0 and flight['velocities'][theLength-1]['vertical_speed'] <= condition['value']:
+                if flight.velocities[theLength-1].vertical_speed >= 0 and flight.velocities[theLength-1].vertical_speed <= condition['value']:
                     return True
 
 
@@ -915,10 +851,10 @@ class rulesEngine():
 
     def wake_turbulence_category_validateData(self, condition, flight):
 
-        if "wake_turbulence_category" not in flight['aircraft']:
+        if "wake_turbulence_category" not in flight.aircraft:
             return False
 
-        if str(flight['aircraft']['wake_turbulence_category']).strip().lower() == condition['value']:
+        if str(flight.aircraft['wake_turbulence_category']).strip().lower() == condition['value']:
             return True
 
         return False
