@@ -837,7 +837,7 @@ class Flight():
             record['destination'] = self.destination['icao_code'] 
        
         adsbDBCollection.insert_one(record)
-        logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['icao_hex'])
+        logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['aircraft']['icao_hex'])
         
 
     def delete(self):
@@ -855,7 +855,7 @@ class Flight():
 
         sql = "SELECT * FROM positions WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
 
-        if limit:
+        if limit == True:
             sql = sql + " DESC LIMIT 1"
 
         sqliteCur = localDb.cursor()
@@ -892,7 +892,7 @@ class Flight():
 
         sql = "SELECT * FROM velocities WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
 
-        if limit:
+        if limit == True:
             sql = sql + " DESC LIMIT 1"
 
         sqliteCur = localDb.cursor()
@@ -1109,12 +1109,13 @@ class Flight():
             mqtt_publishNotication(notification['rule']['identifier'], json.dumps(notification, default=str))
 
 
-    def persistStaleFlights(self, all_flights_stale = False):
+    def persistStaleFlights(self, all_flights_stale:bool=False):
         """Persists stale flights.  If requested, considers all flights to be stale."""
 
         sqliteCur = localDb.cursor()
 
-        if not all_flights_stale:
+        if all_flights_stale == False:
+            logger.debug("Querying for stale flights.")
             sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
         else:
             logger.info("All flights will be persisted.")
