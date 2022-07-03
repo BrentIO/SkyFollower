@@ -701,7 +701,7 @@ class Flight():
     """Flight Record"""
 
     def __init__(self) -> None:
-        self.exists: boolean = False
+        self.exists:bool = False
         self.icao_hex:str = ""
         self.first_message:int = 0
         self.last_message:int = 0
