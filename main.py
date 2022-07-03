@@ -1077,6 +1077,13 @@ class Flight():
 
             notification = {}
             notification = self.toDict()
+
+            if "positions" in notification:
+                notification.pop("positions")
+
+            if "velocities" in notification:
+                notification.pop("velocities")
+            
             notification['rule'] = {}
             notification['rule']['name'] = matchedRule['name']
             notification['rule']['description'] = matchedRule['description']
