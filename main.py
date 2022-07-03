@@ -793,8 +793,7 @@ class Flight():
         self.velocities = []
 
         self._getPositions(limit_position)
-        self._getVelocities(limit_velocity)
-        self._getAircraft()
+        self._getVelocities(limit_velocity)    
         
         return True
 
@@ -964,11 +963,10 @@ class Flight():
 
         self.icao_hex = value
 
-        self.get()
+        self.get(limit_position = limit_position, limit_velocity = limit_velocity)
 
-        if not self.exists:
-
-            self.get(limit_position = limit_position, limit_velocity = limit_velocity)
+        if self.exists == False:
+            self._getAircraft()
 
 
     def setCategory(self, value:int):
