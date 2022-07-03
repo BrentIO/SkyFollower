@@ -693,8 +693,8 @@ def main():
         exitApp(0)
 
     except Exception as ex:
-        logger.error(ex)
-        exitApp(1)
+        logger.error("Exception of type: " + type(ex).__name__ + " in main(): " + str(ex))
+        pass
 
 
 class Flight():
