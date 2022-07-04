@@ -324,7 +324,6 @@ def setup():
         setLogLevel(settings['log_level'])
 
         logger.info(applicationName + " application started.")
-        logger.debug("CPU Count: " + str(multiprocessing.cpu_count()))
         logger.debug("Python Version: " + str(sys.version))
 
         if sys.version_info.major == 3 and sys.version_info.minor < 10:
@@ -391,6 +390,20 @@ def setup():
         if settings['latitude'] == 38.8969137 and settings['longitude'] == -77.0357096:
             raise Exception ("Configure your latitude and longitude in settings.json.")
 
+        if "queue_reader_thread_count" not in settings:
+            settings['queue_reader_thread_count'] = multiprocessing.cpu_count()
+        else:
+            if str(settings['queue_reader_thread_count']).isnumeric() != True:
+                raise Exception ("Invalid queue_reader_thread_count in settings.json")
+
+            if settings['queue_reader_thread_count'] < 1:
+                raise Exception ("Setting 'queue_reader_thread_count' cannot be less than 1.")
+
+            if settings['queue_reader_thread_count'] > multiprocessing.cpu_count():
+                logger.warning("Setting 'queue_reader_thread_count' is set to " + str(settings['queue_reader_thread_count']) + ", which is greater than the CPU count of " + str(multiprocessing.cpu_count()))
+        
+        logger.debug("Queue Reader Thread Count: " + str(settings['queue_reader_thread_count']) + " CPU Count: " + str(multiprocessing.cpu_count()))
+            
         if 'mqtt' not in settings:
             logger.info("mqtt is not declared in the settings file; MQTT will be disabled.")
 
@@ -641,10 +654,12 @@ def main():
             mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
 
         threadsMessageQueueReader = []
-        for i in range(multiprocessing.cpu_count()):
-            worker = StoppableThread(target=messageQueueReader, daemon=True, name="Worker_" + str(i))
-            threadsMessageQueueReader.append(worker)
-            worker.start()
+
+        for i in range(settings['queue_reader_thread_count']):
+            queueReaderThread = StoppableThread(target=messageQueueReader, name="MessageQueueReader_" + str(i))
+            queueReaderThread.watchdog_timer = datetime.now()
+            threadsMessageQueueReader.append(queueReaderThread)
+            queueReaderThread.start()
 
         adsb_client = ADSBClient()
         
