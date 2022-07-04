@@ -831,7 +831,7 @@ class Flight():
 
 
     def get(self, limit_position:bool = True, limit_velocity:bool = True):
-        """Retrieves the given ICAO hex from the local database.
+        """Retrieves the given ICAO HEX from the local database.
         If no records are found, False is returned.
         If records are returned, True is returned and the object is populated from the database.
         """
