@@ -994,6 +994,8 @@ class Flight():
         if self.aircraft != {}:
             return
 
+        self.aircraft['icao_hex'] = self.icao_hex
+
         try:
 
             r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", str(self.icao_hex)), headers={'x-api-key': settings['registration']['x-api-key']})
