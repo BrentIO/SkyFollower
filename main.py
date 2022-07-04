@@ -1130,7 +1130,7 @@ class Flight():
 
             stale_flight.persist()
 
-            if settings['log_level'] != "debug":
+            if settings['log_level'] != "debug" and all_flights_stale != True:
                 stale_flight.delete()
             
 
