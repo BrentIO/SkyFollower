@@ -253,12 +253,12 @@ def exitApp(exitCode=None):
 
     if exitCode == 0:
         logger.info(applicationName + " application finished successfully.")
+        sys.exit(exitCode)
 
     if exitCode != 0:
         logger.info("Error; Exiting with code " + str(exitCode))
-
-    sys.exit(exitCode)
-
+        os._exit(exitCode)  
+    
 
 def setLogLevel(logLevel):
 
