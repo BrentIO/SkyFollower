@@ -7,6 +7,7 @@ import logging.handlers as handlers
 import json
 import sys
 import sqlite3
+import traceback
 import pyModeS as pms                               #pip3 install pyModeS
 from pyModeS.extra.tcpclient import TcpClient
 from pymongo import MongoClient                    #pip3 install pymongo
@@ -621,18 +622,12 @@ def setup():
 
 def run_scheduled_tasks():
 
-    try:
+    t = current_thread()
+    t.alive = True
 
-        t = current_thread()
-        t.alive = True
-
-        while t.alive:
-            schedule.run_pending()
-            time.sleep(1)
-
-    except Exception as ex:
-        logger.error("Exception of type: " + type(ex).__name__ + " in run_scheduled_tasks(): " + str(ex))
-        pass
+    while t.alive:
+        schedule.run_pending()
+        time.sleep(1)
 
 
 def main():  
@@ -682,6 +677,10 @@ def main():
         schedule.every().day.at("00:00").do(stats.reset_today)
         schedule.every(30).seconds.do(stats.publish)
         schedule.every(10).seconds.do(flight.persistStaleFlights)
+        schedule.every(10).seconds.do(checkQueueReaderThreads, threadsMessageQueueReader)
+
+        threading.excepthook = threadExceptHook
+        
         threadScheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks, daemon=True)
         threadScheduler.start()
 
@@ -722,6 +721,29 @@ def main():
     except Exception as ex:
         logger.error("Exception of type: " + type(ex).__name__ + " in main(): " + str(ex))
         pass
+
+
+def threadExceptHook(args):
+
+    if args.exc_type == noQueueReaderThreadsAvailable:
+        logger.critical(str(args.exc_value))
+
+        if settings['mqtt']['enabled'] == True:
+            mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
+
+        flight = Flight()
+        flight.persistStaleFlights(True)
+     
+        if settings['mqtt']['enabled'] == True and mqttClient.is_connected():
+            mqttClient.loop_stop()
+
+        exitApp(4)
+
+    #Handle all other errors by writing them to the log
+    logger.critical(traceback.format_tb(args.exc_traceback))
+    logger.critical(str(args))
+
+    pass
 
 
 def checkQueueReaderThreads(threadsMessageQueueReader):
