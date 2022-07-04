@@ -1213,36 +1213,30 @@ class Flight():
     def persistStaleFlights(self, all_flights_stale:bool=False):
         """Persists stale flights.  If requested, considers all flights to be stale."""
 
-        try:
+        sqliteCur = localDb.cursor()
 
-            sqliteCur = localDb.cursor()
+        if all_flights_stale == False:
+            logger.debug("Querying for stale flights.")
+            sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
+        else:
+            logger.info("All flights will be persisted.")
+            sql = "SELECT icao_hex FROM flights"
 
-            if all_flights_stale == False:
-                logger.debug("Querying for stale flights.")
-                sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
-            else:
-                logger.info("All flights will be persisted.")
-                sql = "SELECT icao_hex FROM flights"
+        sqliteCur.execute(sql)
+        stale_flights = sqliteCur.fetchall()
 
-            sqliteCur.execute(sql)
-            stale_flights = sqliteCur.fetchall()
+        countStaleFlights = len(stale_flights)
 
-            countStaleFlights = len(stale_flights)
+        logger.debug("Found " + str(countStaleFlights) + " stale flights to persist.")
 
-            logger.debug("Found " + str(countStaleFlights) + " stale flights to persist.")
+        for entry in stale_flights:
+            stale_flight = Flight()
+            stale_flight.setIcao_hex(entry['icao_hex'], limit_position=False, limit_velocity = False)
 
-            for entry in stale_flights:
-                stale_flight = Flight()
-                stale_flight.setIcao_hex(entry['icao_hex'], limit_position=False, limit_velocity = False)
+            stale_flight.persist()
 
-                stale_flight.persist()
-
-                if settings['log_level'] != "debug" and all_flights_stale != True:
-                    stale_flight.delete()
-
-        except Exception as ex:
-            logger.error("Exception of type: " + type(ex).__name__ + " in Flight->persistStaleFlights(): " + str(ex))
-            pass
+            if all_flights_stale != True:
+                stale_flight.delete()
             
 
 class Position(dict):
