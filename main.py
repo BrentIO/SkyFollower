@@ -910,11 +910,16 @@ class Flight():
 
         if "icao_code" in self.origin:
             record['origin'] = self.origin['icao_code']
+        else:
+            record.pop('origin')
 
         if "icao_code" in self.destination:
-            record['destination'] = self.destination['icao_code'] 
+            record['destination'] = self.destination['icao_code']
+        else:
+            record.pop('destination')
        
         adsbDBCollection.insert_one(record)
+
         logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['aircraft']['icao_hex'])
         
 
@@ -1170,11 +1175,28 @@ class Flight():
             notification = {}
             notification = self.toDict()
 
+            if "icao_hex" in notification:
+                notification.pop("icao_hex")
+
             if "positions" in notification:
                 notification.pop("positions")
 
             if "velocities" in notification:
                 notification.pop("velocities")
+
+            if "operator" in notification:
+                if notification['operator'] == {}:
+                    notification.pop("operator")
+
+            if "origin" in notification:
+                if notification['origin'] == {}:
+                    notification.pop("origin")
+
+            if "destination" in notification:
+                if notification['destination'] == {}:
+                    notification.pop("destination")
+
+            
             
             notification['rule'] = {}
             notification['rule']['name'] = matchedRule['name']
