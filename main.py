@@ -843,6 +843,7 @@ class Flight():
 
         if len(result) == 0:
             self.exists = False
+            logger.debug("ICAO HEX " + self.icao_hex + " will be added to localDb.")
             return
 
         self.exists = True
@@ -985,11 +986,11 @@ class Flight():
                 return 
 
             if r.status_code == 404:
-                logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; getRegistration returned " + str(r.status_code))
+                logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
                 stats.increment_registration_unknown_count()
                 return
 
-            logger.info("Unable to get registration details for " + str(self.icao_hex) +"; getRegistration returned " + str(r.status_code))
+            logger.info("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
             stats.increment_registration_unknown_count()
             return
 
@@ -1368,13 +1369,11 @@ class statistics():
 
         try:
 
-            ## Publishes the current value of each statistic tracked, if MQTT is connected
-            if not mqttClient.is_connected():
-                return
-
             for stat in self.list():
                 logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
-                mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+
+                if mqttClient.is_connected():
+                    mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
 
             #Reset the statistics
             self.reset_on_publish()
