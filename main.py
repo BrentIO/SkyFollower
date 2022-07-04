@@ -602,12 +602,18 @@ def setup():
 
 def run_scheduled_tasks():
 
-    t = current_thread()
-    t.alive = True
+    try:
 
-    while t.alive:
-        schedule.run_pending()
-        time.sleep(1)
+        t = current_thread()
+        t.alive = True
+
+        while t.alive:
+            schedule.run_pending()
+            time.sleep(1)
+
+    except Exception as ex:
+        logger.error("Exception of type: " + type(ex).__name__ + " in run_scheduled_tasks(): " + str(ex))
+        pass
 
 
 def main():  
@@ -1108,30 +1114,36 @@ class Flight():
     def persistStaleFlights(self, all_flights_stale:bool=False):
         """Persists stale flights.  If requested, considers all flights to be stale."""
 
-        sqliteCur = localDb.cursor()
+        try:
 
-        if all_flights_stale == False:
-            logger.debug("Querying for stale flights.")
-            sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
-        else:
-            logger.info("All flights will be persisted.")
-            sql = "SELECT icao_hex FROM flights"
+            sqliteCur = localDb.cursor()
 
-        sqliteCur.execute(sql)
-        stale_flights = sqliteCur.fetchall()
+            if all_flights_stale == False:
+                logger.debug("Querying for stale flights.")
+                sql = "SELECT icao_hex FROM flights WHERE last_message < " + str(datetime.now().timestamp() - timedelta(seconds = settings['flight_ttl_seconds']).total_seconds())
+            else:
+                logger.info("All flights will be persisted.")
+                sql = "SELECT icao_hex FROM flights"
 
-        countStaleFlights = len(stale_flights)
+            sqliteCur.execute(sql)
+            stale_flights = sqliteCur.fetchall()
 
-        logger.debug("Found " + str(countStaleFlights) + " stale flights to persist.")
+            countStaleFlights = len(stale_flights)
 
-        for entry in stale_flights:
-            stale_flight = Flight()
-            stale_flight.setIcao_hex(entry['icao_hex'], limit_position=False, limit_velocity = False)
+            logger.debug("Found " + str(countStaleFlights) + " stale flights to persist.")
 
-            stale_flight.persist()
+            for entry in stale_flights:
+                stale_flight = Flight()
+                stale_flight.setIcao_hex(entry['icao_hex'], limit_position=False, limit_velocity = False)
 
-            if settings['log_level'] != "debug" and all_flights_stale != True:
-                stale_flight.delete()
+                stale_flight.persist()
+
+                if settings['log_level'] != "debug" and all_flights_stale != True:
+                    stale_flight.delete()
+
+        except Exception as ex:
+            logger.error("Exception of type: " + type(ex).__name__ + " in Flight->persistStaleFlights(): " + str(ex))
+            pass
             
 
 class Position(dict):
@@ -1241,16 +1253,26 @@ class statistics():
 
 
     def reset_today(self):
-        self.count_flights_today = 0
-        self.count_messages_today = 0
-        self.count_operator_unknown_today = 0
-        self.count_registration_unknown_today = 0
-        self.reset_hour()
+        try:
+            self.count_flights_today = 0
+            self.count_messages_today = 0
+            self.count_operator_unknown_today = 0
+            self.count_registration_unknown_today = 0
+            self.reset_hour()
+
+        except Exception as ex:
+            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->reset_today(): " + str(ex))
+            pass
 
 
     def reset_hour(self):
-        self.count_flights_hour = 0
-        self.count_messages_hour = 0
+        try:
+            self.count_flights_hour = 0
+            self.count_messages_hour = 0
+
+        except Exception as ex:
+            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->reset_hour(): " + str(ex))
+            pass
             
 
     def reset_on_publish(self):
@@ -1282,16 +1304,22 @@ class statistics():
 
     def publish(self):
 
-        ## Publishes the current value of each statistic tracked, if MQTT is connected
-        if not mqttClient.is_connected():
-            return
+        try:
 
-        for stat in self.list():
-            logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
-            mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+            ## Publishes the current value of each statistic tracked, if MQTT is connected
+            if not mqttClient.is_connected():
+                return
 
-        #Reset the statistics
-        self.reset_on_publish()
+            for stat in self.list():
+                logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
+                mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+
+            #Reset the statistics
+            self.reset_on_publish()
+
+        except Exception as ex:
+            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->publish(): " + str(ex))
+            pass
  
 
 class autoDiscovery():
