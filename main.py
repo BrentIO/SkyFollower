@@ -242,9 +242,6 @@ def mqtt_onConnect(client, userdata, flags, rc):
 
 def exitApp(exitCode=None):
 
-    #Force the log level to info
-    logger.setLevel(logging.INFO)
-
     if exitCode is None:
         exitCode = 0
 
