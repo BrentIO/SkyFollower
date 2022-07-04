@@ -696,25 +696,34 @@ def main():
         #Exit with an error code
         exitApp(2)
 
-    except (sigKill, KeyboardInterrupt):
+    except (sigKill, KeyboardInterrupt) as ex:
 
+        logger.debug("Number of active message queue reader threads at exit: " + str(checkQueueReaderThreads(threadsMessageQueueReader)))
         logger.info("Shutdown was requested.")
+
+        for job in schedule.get_jobs():
+            schedule.cancel_job(job)
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
         if adsb_client.connected == True:
             adsb_client.connected = False
+            adsb_client.stop()
 
-        for worker in threadsMessageQueueReader:
-            if worker.is_alive() == True:
-                worker.stop()
+        while checkQueueReaderThreads(threadsMessageQueueReader) > 0 and messageQueue.qsize() > 0:
+            logger.info("Waiting for the queue readers to empty the message queue.  Current queue size is " + str(messageQueue.qsize()))
+            time.sleep(1)
 
         flight = Flight()
         flight.persistStaleFlights(True)
      
-        if settings['mqtt']['enabled'] == True:
+        if settings['mqtt']['enabled'] == True and mqttClient.is_connected():
             mqttClient.loop_stop()
+
+        for messageQueueReaderThread in threadsMessageQueueReader:
+            if messageQueueReaderThread.is_alive() == True:
+                messageQueueReaderThread.stop()
 
         exitApp(0)
 
@@ -727,6 +736,9 @@ def threadExceptHook(args):
 
     if args.exc_type == noQueueReaderThreadsAvailable:
         logger.critical(str(args.exc_value))
+
+        for job in schedule.get_jobs():
+            schedule.cancel_job(job)
 
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
