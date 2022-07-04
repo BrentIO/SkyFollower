@@ -35,7 +35,13 @@ class sigKill(Exception):
     pass
 
 
+class noQueueReaderThreadsAvailable(Exception):
+    pass
+
+
 class StoppableThread(threading.Thread):
+
+    watchdog_timer = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -69,6 +75,7 @@ def messageQueueReader():
         messages = messageQueue.get()
         messageProcessor(messages)
         messageQueue.task_done()
+        threading.current_thread().watchdog_timer = datetime.now()
 
 
 def messageProcessor(messages):
@@ -703,6 +710,25 @@ def main():
     except Exception as ex:
         logger.error("Exception of type: " + type(ex).__name__ + " in main(): " + str(ex))
         pass
+
+
+def checkQueueReaderThreads(threadsMessageQueueReader):
+
+    working_threads = 0
+
+    for thread in threadsMessageQueueReader:
+        if (datetime.now() - thread.watchdog_timer).seconds < 30:
+            working_threads = working_threads + 1
+            continue
+
+    if working_threads < settings['queue_reader_thread_count']:
+        logger.critical("A queue reader thread has terminated.  Current queue reader thread count is: " + str(working_threads))
+        settings['queue_reader_thread_count'] = working_threads
+
+    if working_threads == 0:
+        raise noQueueReaderThreadsAvailable("No remaining queue reader threads to process incoming messages.")
+
+    return working_threads
 
 
 class Flight():
