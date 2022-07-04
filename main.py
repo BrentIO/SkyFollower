@@ -1068,7 +1068,7 @@ class Flight():
             return
 
         if value == 4:
-            self.aircraft['wake_turbulence_category'] = "High Vortex Aircraft1"
+            self.aircraft['wake_turbulence_category'] = "High Vortex Aircraft"
             return
 
         if value == 5:
