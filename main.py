@@ -50,15 +50,17 @@ class StoppableThread(threading.Thread):
     
 class ADSBClient(TcpClient):
 
-    connected = False
+    connected = None
 
     def __init__(self):
         super(ADSBClient, self).__init__(settings['adsb']['uri'], settings['adsb']['port'], settings['adsb']['type'])
 
     def handle_messages(self, messages):
-        self.connected = True
-        messageQueue.put(messages)
-        stats.set_message_queue_depth(messageQueue.qsize())
+
+        if self.connected in [None, True]:
+            self.connected = True
+            messageQueue.put(messages)
+            stats.set_message_queue_depth(messageQueue.qsize())
 
 
 def messageQueueReader():
@@ -683,8 +685,8 @@ def main():
         if settings['mqtt']['enabled'] == True:
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
-        if adsb_client.connected:
-            adsb_client.stop()
+        if adsb_client.connected == True:
+            adsb_client.connected = False
 
         for worker in threadsMessageQueueReader:
             if worker.is_alive() == True:
