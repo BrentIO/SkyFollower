@@ -1125,11 +1125,11 @@ class Flight():
                 return
 
             if r.status_code == 404:
-                logger.debug("Unable to get operator details for " + str(value) +"; getOperator returned " + str(r.status_code))
+                logger.debug("Unable to get operator details for " + str(value) +"; service returned " + str(r.status_code))
                 stats.increment_operator_unknown_count()
                 return
             
-            logger.info("Unable to get operator details for " + str(value) +"; getOperator returned " + str(r.status_code))
+            logger.info("Unable to get operator details for " + str(value) +"; service returned " + str(r.status_code))
             stats.increment_operator_unknown_count()
             return
 
