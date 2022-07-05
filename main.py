@@ -95,13 +95,9 @@ def messageProcessor(messages):
             #Get the download format
             data['downlink_format'] = pms.df(msg)
 
-            if data['downlink_format'] not in [0, 11, 16, 4, 20, 5, 21, 17]:
-                logger.debug("Unexpected downlink format " + str(data['downlink_format']) + " msg: " + msg)
-            
-            #Throw away certain DF's (0 & 16 are ACAS, 11 is all-call)
-            if data['downlink_format'] in [0, 11, 16]:
+            if data['downlink_format'] not in [4, 20, 5, 21, 17]:
                 continue
-            
+                        
             data['icao_hex'] = pms.adsb.icao(msg)
 
             #Ensure we have an icao_hex
