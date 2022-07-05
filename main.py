@@ -1120,11 +1120,11 @@ class Flight():
                 return
 
             if r.status_code == 404:
-                logger.debug("Unable to get operator details for " + str(value) +"; service returned " + str(r.status_code))
+                logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
                 stats.increment_operator_unknown_count()
                 return
             
-            logger.info("Unable to get operator details for " + str(value) +"; service returned " + str(r.status_code))
+            logger.info("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
             stats.increment_operator_unknown_count()
             return
 
@@ -1150,10 +1150,10 @@ class Flight():
                 return 
 
             if r.status_code == 404:
-                logger.debug("Unable to get flight info for " + self.ident +"; service returned " + str(r.status_code))
+                logger.debug("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
                 return
             
-            logger.info("Unable to get flight info for " + self.ident +"; service returned " + str(r.status_code))
+            logger.info("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
             return
 
         except Exception as ex:
