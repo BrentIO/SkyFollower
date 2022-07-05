@@ -84,6 +84,8 @@ def messageProcessor(messages):
         
         try:
 
+            stats.increment_message_count()
+
             #Object to store data
             data = {}
 
@@ -139,8 +141,6 @@ def messageProcessor(messages):
 
                 if typeCode == 31:
                     data['adsb_version'] = pms.adsb.version(msg)
-
-            stats.increment_message_count()
 
             flight = Flight()
             flight.setIcao_hex(data['icao_hex'])
@@ -1165,7 +1165,10 @@ class Flight():
 
         global rulesEngine
 
+        startTime = datetime.now()
         result = rulesEngine.evaluate(self)
+
+        stats.set_rule_evaluation_high_water_mark(int((datetime.now()-startTime).microseconds/1000))
 
         for matchedRule in result:
 
@@ -1193,8 +1196,6 @@ class Flight():
                 if notification['destination'] == {}:
                     notification.pop("destination")
 
-            
-            
             notification['rule'] = {}
             notification['rule']['name'] = matchedRule['name']
             notification['rule']['description'] = matchedRule['description']
@@ -1309,15 +1310,27 @@ class statistics():
         self.count_registration_unknown_lifetime = 0
         self.message_handling_high_water_mark_ms = 0
         self.message_queue_depth = 0
+        self.rule_evaluation_high_water_mark_ms = 0
+        self.count_messages = 0
+        self.lastPublished = datetime.now()
 
     def set_message_handling_high_water_mark(self, value):
         if value > self.message_handling_high_water_mark_ms:
             self.message_handling_high_water_mark_ms = value
 
+    def get_message_count_per_second(self):
+        if (datetime.now() - self.lastPublished).seconds > 0:
+            return int(self.count_messages / (datetime.now() - self.lastPublished).seconds)
+        else:
+            return 0
 
     def set_message_queue_depth(self, value):
         if value > self.message_queue_depth:
             self.message_queue_depth = value
+
+    def set_rule_evaluation_high_water_mark(self, value):
+        if value > self.rule_evaluation_high_water_mark_ms:
+            self.rule_evaluation_high_water_mark_ms = value
 
 
     def list(self):
@@ -1333,8 +1346,10 @@ class statistics():
             {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Total","value" : self.count_operator_unknown_lifetime, "type" : "count"},
             {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
             {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Total","value" : self.count_registration_unknown_lifetime, "type" : "count"},
-            {"name": "message_handling_high_water_mark_ms", "description": "Message Processing Delay High Water Mark", "value" : self.message_handling_high_water_mark_ms, "type" : "time"},
-            {"name": "message_queue_depth", "description": "Message Processing Queue Depth High Water Mark", "value" : self.message_queue_depth, "type" : "queue"},
+            {"name": "message_handling_high_water_mark_ms", "description": "Message Processing Delay High Water Mark", "value" : self.message_handling_high_water_mark_ms, "type" : "time_ms"},
+            {"name": "message_queue_depth", "description": "Message Queue Depth High Water Mark", "value" : self.message_queue_depth, "type" : "queue"},
+            {"name": "count_messages_second", "description": "Message Rate", "value" : self.get_message_count_per_second(), "type" : "time_per_sec"},
+            {"name": "rule_evaluation_high_water_mark_ms", "description": "Rule Evaluation Duration High Water Mark", "value" : self.rule_evaluation_high_water_mark_ms, "type" : "time_ms"},
             {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
             {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
         ]
@@ -1366,6 +1381,8 @@ class statistics():
     def reset_on_publish(self):
         self.message_handling_high_water_mark_ms = 0
         self.message_queue_depth = 0
+        self.rule_evaluation_high_water_mark_ms = 0
+        self.count_messages = 0
 
 
     def increment_flights_count(self):
@@ -1375,6 +1392,7 @@ class statistics():
 
 
     def increment_message_count(self):
+        self.count_messages = self.count_messages + 1
         self.count_messages_hour = self.count_messages_hour + 1
         self.count_messages_today = self.count_messages_today + 1
         self.count_messages_lifetime = self.count_messages_lifetime + 1
@@ -1402,6 +1420,7 @@ class statistics():
 
             #Reset the statistics
             self.reset_on_publish()
+            self.lastPublished = datetime.now()
 
         except Exception as ex:
             logger.error("Exception of type: " + type(ex).__name__ + " in statistics->publish(): " + str(ex))
@@ -1508,9 +1527,14 @@ class autoDiscovery():
                 payload['icon'] = "mdi:tray-full"
                 payload['state_class'] = "measurement"
 
-            if stat['type'] == "time":
+            if stat['type'] == "time_ms":
                 payload['unit_of_measurement'] = "ms"
                 payload['icon'] = "mdi:clock"
+                payload['state_class'] = "measurement"
+
+            if stat['type'] == "time_per_sec":
+                payload['unit_of_measurement'] = "m/s"
+                payload['icon'] = "mdi:broadcast"
                 payload['state_class'] = "measurement"
 
             if stat['type'] == "measurement":
