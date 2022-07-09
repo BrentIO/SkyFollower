@@ -15,6 +15,8 @@ import logging
 
 class rulesEngine():
 
+    evaluating_flights = []
+
     def __init__(self, logger):
         self.logger = logging.getLogger()
         self.logger = logger
