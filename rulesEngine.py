@@ -348,52 +348,67 @@ class rulesEngine():
 
                     if condition['type'] == "aircraft_icao_hex":
                         condition = self.aircraft_icao_hex_validateCondition(condition)
+                        condition['priority'] = 300
 
                     if condition['type'] == "aircraft_powerplant_count":
                         condition = self.aircraft_powerplant_count_validateCondition(condition)
+                        condition['priority'] = 50
 
                     if condition['type'] == "aircraft_registration":
                         condition = self.aircraft_registration_validateCondition(condition)
+                        condition['priority'] = 350
 
                     if condition['type'] == "aircraft_type_designator":
                         condition = self.aircraft_type_designator_validateCondition(condition)
+                        condition['priority'] = 355
 
                     if condition['type'] == "altitude":
                         condition = self.altitude_validateCondition(condition)
+                        condition['priority'] = 105
 
                     if condition['type'] == "area":
                         condition = self.area_validateCondition(condition)
+                        condition['priority'] = 1000
 
                     if condition['type'] == "ident":
                         condition = self.ident_validateCondition(condition)
+                        condition['priority'] = 305
 
                     if condition['type'] == "date":
                         condition = self.date_validateCondition(condition)
+                        condition['priority'] = 200
 
                     if condition['type'] == "heading":
                         condition = self.heading_validateCondition(condition)
+                        condition['priority'] = 150
 
                     if condition['type'] == "military":
                         condition = self.military_validateCondition(condition)
+                        condition['priority'] = 50
 
                     if condition['type'] == "operator_airline_designator":
                         condition = self.operator_airline_designator_validateCondition(condition)
+                        condition['priority'] = 360
 
                     if condition['type'] == "squawk":
                         condition = self.squawk_validateCondition(condition)
+                        condition['priority'] = 310
 
                     if condition['type'] == "velocity":
                         condition = self.velocity_validateCondition(condition)
+                        condition['priority'] = 110
 
                     if condition['type'] == "vertical_speed":
                         condition = self.vertical_speed_validateCondition(condition)
+                        condition['priority'] = 155
 
                     if condition['type'] == "wake_turbulence_category":
                         condition = self.wake_turbulence_category_validateCondition(condition)
+                        condition['priority'] = 400
                     
                     tmpConditions.append(condition)
 
-                    tmpRule['conditions'] = tmpConditions
+                    tmpRule['conditions'] = sorted(tmpConditions, key=lambda d: d['priority'])
 
                 tmpRules.append(tmpRule)
 
