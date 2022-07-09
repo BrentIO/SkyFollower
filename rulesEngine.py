@@ -221,6 +221,8 @@ class rulesEngine():
                 if tmpFeature['geometry'].is_valid == False:
                     raise Exception("Feature \"" + tmpFeature['name'] + "\" is not a valid polygon.")
 
+                tmpFeature['boundary'] = tmpFeature['geometry'].bounds
+
                 self.logger.debug("Area \"" + tmpFeature['name'] + "\" has been staged for import.")
 
                 tmpAreas.append(tmpFeature)
@@ -590,12 +592,27 @@ class rulesEngine():
         if theLength == 0:
             return False
 
+        if flight.positions[theLength-1].longitude == None or flight.positions[theLength-1].latitude == None:
+            return False
+
         point = Point(flight.positions[theLength-1].longitude,flight.positions[theLength-1].latitude)
         
         for area in self.observed_areas:
 
             if area['name'] == condition['value']:
+
+                #Coarse check if the point could be in the polgon
+                if flight.positions[theLength-1].longitude < area['boundary'][0] or \
+                    flight.positions[theLength-1].longitude > area['boundary'][2] or \
+                    flight.positions[theLength-1].latitude < area['boundary'][1] or \
+                    flight.positions[theLength-1].latitude > area['boundary'][3]:
+
+                    return False
+
+                self.logger.debug(flight.icao_hex + " may be within area " + area['name'] + ", will check point in geometry")
+
                 if point.within(area['geometry']) == True:
+                    self.logger.debug(flight.icao_hex + " calculated within area " + area['name'])
                     return True
 
         return False
