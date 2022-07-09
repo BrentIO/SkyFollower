@@ -1412,21 +1412,15 @@ class statistics():
 
     def publish(self):
 
-        try:
+        for stat in self.list():
+            logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
 
-            for stat in self.list():
-                logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
+            if mqttClient.is_connected():
+                mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
 
-                if mqttClient.is_connected():
-                    mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
-
-            #Reset the statistics
-            self.reset_on_publish()
-            self.lastPublished = datetime.now()
-
-        except Exception as ex:
-            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->publish(): " + str(ex))
-            pass
+        #Reset the statistics
+        self.reset_on_publish()
+        self.lastPublished = datetime.now()
  
 
 class autoDiscovery():
