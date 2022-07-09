@@ -576,6 +576,9 @@ class rulesEngine():
         if theLength == 0:
             return False
 
+        if flight.positions[theLength-1].altitude == None:
+            return False
+
         if condition['operator'] == "minimum":
             if flight.positions[theLength-1].altitude >= condition['value']:
                 return True
@@ -598,7 +601,7 @@ class rulesEngine():
 
 
     def area_validateData(self, condition, flight):
-        
+      
         if len(self.observed_areas) == 0:
             return False
 
@@ -708,6 +711,9 @@ class rulesEngine():
         if theLength == 0:
             return False
 
+        if flight.velocities[theLength-1].heading == None:
+            return False
+
         #Check for northbound operations, which span 0
         if condition['value'][0] > condition['value'][1]:
 
@@ -811,6 +817,9 @@ class rulesEngine():
         if theLength == 0:
             return False
 
+        if flight.velocities[theLength-1].velocity == None:
+            return False
+
         if condition['operator'] == "minimum":
             if flight.velocities[theLength-1].velocity >= condition['value']:
                 return True
@@ -838,6 +847,9 @@ class rulesEngine():
         theLength = len(flight.velocities)
         
         if theLength == 0:
+            return False
+
+        if flight.velocities[theLength-1].vertical_speed == None:
             return False
 
         if condition['value'] < 0:
