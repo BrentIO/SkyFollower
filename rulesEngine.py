@@ -38,13 +38,53 @@ class rulesEngine():
 
             for condition in rule['conditions']:
 
-                if condition['type'] == "aircraft_icao_hex":
-
-                    if self.aircraft_icao_hex_validateData(condition, flight) == True:
+                if condition['type'] == "military":
+                    
+                    if self.military_validateData(condition, flight) == True:
 
                         conditions_met = conditions_met + 1
                     else:
-                        break               
+                        break
+
+                if condition['type'] == "date":
+                    
+                    if self.date_validateData(condition) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
+
+                if condition['type'] == "altitude":
+                    
+                    if self.altitude_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
+
+                if condition['type'] == "heading":
+                
+                    if self.heading_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break 
+
+                if condition['type'] == "velocity":
+                    
+                    if self.velocity_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break   
+
+                if condition['type'] == "vertical_speed":
+                    
+                    if self.vertical_speed_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
 
                 if condition['type'] == "aircraft_powerplant_count":
                     
@@ -52,7 +92,15 @@ class rulesEngine():
 
                         conditions_met = conditions_met + 1
                     else:
-                        break   
+                        break
+
+                if condition['type'] == "aircraft_icao_hex":
+
+                    if self.aircraft_icao_hex_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break               
 
                 if condition['type'] == "aircraft_registration":
                     
@@ -70,49 +118,9 @@ class rulesEngine():
                     else:
                         break   
 
-                if condition['type'] == "altitude":
-                    
-                    if self.altitude_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
-                if condition['type'] == "area":
-                    
-                    if self.area_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
                 if condition['type'] == "ident":
                     
                     if self.ident_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
-                if condition['type'] == "date":
-                    
-                    if self.date_validateData(condition) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
-                if condition['type'] == "heading":
-                
-                    if self.heading_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
-                if condition['type'] == "military":
-                    
-                    if self.military_validateData(condition, flight) == True:
 
                         conditions_met = conditions_met + 1
                     else:
@@ -134,22 +142,6 @@ class rulesEngine():
                     else:
                         break   
 
-                if condition['type'] == "velocity":
-                    
-                    if self.velocity_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
-                if condition['type'] == "vertical_speed":
-                    
-                    if self.vertical_speed_validateData(condition, flight) == True:
-
-                        conditions_met = conditions_met + 1
-                    else:
-                        break   
-
                 if condition['type'] == "wake_turbulence_category":
 
                     if self.wake_turbulence_category_validateData(condition, flight) == True:
@@ -157,6 +149,14 @@ class rulesEngine():
                         conditions_met = conditions_met + 1
                     else:
                         break
+
+                if condition['type'] == "area":
+                    
+                    if self.area_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break 
 
             if conditions_met == len(rule['conditions']):           
                 matchedRules.append(rule)
