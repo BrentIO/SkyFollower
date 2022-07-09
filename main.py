@@ -1181,7 +1181,13 @@ class Flight():
         global rulesEngine
 
         startTime = datetime.now()
-        result = rulesEngine.evaluate(self)
+
+        result = []
+
+        if self.icao_hex not in rulesEngine.evaluating_flights:
+            rulesEngine.evaluating_flights.append(self.icao_hex)
+            result = rulesEngine.evaluate(self)
+            rulesEngine.evaluating_flights.remove(self.icao_hex)
 
         stats.set_rule_evaluation_high_water_mark(int((datetime.now()-startTime).microseconds/1000))
 
