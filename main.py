@@ -258,19 +258,15 @@ def mqtt_onConnect(client, userdata, flags, rc):
     if settings['mqtt']['enabled'] != True:
         return
 
-    try:
-        if rc != 0:
-            logger.warning("Failed to connect to MQTT.  Response code: " + str(rc) + ".")
+    if rc != 0:
+        logger.warning("Failed to connect to MQTT.  Response code: " + str(rc) + ".")
 
-        else:
-            logger.info("MQTT connected to " + settings["mqtt"]["uri"] + ".")
+    else:
+        logger.info("MQTT connected to " + settings["mqtt"]["uri"] + ".")
 
-            mqtt_publishOnline()
-            mqtt_publishAutoDiscovery()
-            stats.publish()
-
-    except Exception as ex:
-        logger.error(ex)
+        mqtt_publishOnline()
+        mqtt_publishAutoDiscovery()
+        stats.publish()
         
 
 def exitApp(exitCode=None):
@@ -680,6 +676,8 @@ def main():
             #Connect to MQTT
             mqttClient.connect_async(settings["mqtt"]["uri"], port=settings["mqtt"]["port"], keepalive=60)
 
+        threading.excepthook = threadExceptHook
+        
         threadsMessageQueueReader = []
 
         for i in range(settings['queue_reader_thread_count']):
@@ -709,9 +707,7 @@ def main():
         schedule.every(30).seconds.do(stats.publish)
         schedule.every(10).seconds.do(flight.persistStaleFlights)
         schedule.every(10).seconds.do(checkQueueReaderThreads, threadsMessageQueueReader)
-
-        threading.excepthook = threadExceptHook
-        
+       
         threadScheduler = threading.Thread(name="scheduled_tasks", target=run_scheduled_tasks, daemon=True)
         threadScheduler.start()
 
@@ -787,8 +783,6 @@ def threadExceptHook(args):
     #Handle all other errors by writing them to the log
     logger.critical(traceback.format_tb(args.exc_traceback))
     logger.critical(str(args))
-
-    pass
 
 
 def checkQueueReaderThreads(threadsMessageQueueReader):
@@ -1029,27 +1023,20 @@ class Flight():
 
         self.aircraft['icao_hex'] = self.icao_hex
 
-        try:
+        r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", str(self.icao_hex)), headers={'x-api-key': settings['registration']['x-api-key']})
 
-            r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", str(self.icao_hex)), headers={'x-api-key': settings['registration']['x-api-key']})
+        if r.status_code == 200:
+            self.aircraft = json.loads(r.text)
+            return 
 
-            if r.status_code == 200:
-                self.aircraft = json.loads(r.text)
-                return 
-
-            if r.status_code == 404:
-                logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
-                stats.increment_registration_unknown_count()
-                return
-
-            logger.info("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
+        if r.status_code == 404:
+            logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
             stats.increment_registration_unknown_count()
             return
 
-        except Exception as ex:
-            logger.warning("Error getting registration.")
-            logger.error(ex)
-
+        logger.info("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
+        stats.increment_registration_unknown_count()
+        return
 
     def setIdent(self, value:str):
 
@@ -1147,29 +1134,22 @@ class Flight():
         if settings['operators']['enabled'] != True:
             return
 
-        try:
+        value = self.ident[0:3]
 
-            value = self.ident[0:3]
+        r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
 
-            r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
+        if r.status_code == 200:
+            self.operator = r.json()
+            return
 
-            if r.status_code == 200:
-                self.operator = r.json()
-                return
-
-            if r.status_code == 404:
-                logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
-                stats.increment_operator_unknown_count()
-                return
-            
-            logger.info("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
+        if r.status_code == 404:
+            logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
             stats.increment_operator_unknown_count()
             return
-
-        except Exception as ex:
-            logger.warning("Error getting operator.")
-            logger.error(ex)
-            return
+        
+        logger.info("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
+        stats.increment_operator_unknown_count()
+        return
 
 
     def _getFlightInfo(self):
@@ -1177,26 +1157,20 @@ class Flight():
         if settings['flights']['enabled'] != True:
             return
 
-        try:
+        r = requests.get(settings['flights']['uri'].replace("$IDENT$", self.ident), headers={'x-api-key': settings['flights']['x-api-key']})
 
-            r = requests.get(settings['flights']['uri'].replace("$IDENT$", self.ident), headers={'x-api-key': settings['flights']['x-api-key']})
+        if r.status_code == 200:
+            self.origin = r.json()['origin']
+            self.destination = r.json()['destination']
+            self.operator['flight_number'] = r.json()['flight_number']
+            return 
 
-            if r.status_code == 200:
-                self.origin = r.json()['origin']
-                self.destination = r.json()['destination']
-                self.operator['flight_number'] = r.json()['flight_number']
-                return 
-
-            if r.status_code == 404:
-                logger.debug("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
-                return
-            
-            logger.info("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
+        if r.status_code == 404:
+            logger.debug("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
             return
-
-        except Exception as ex:
-            logger.warning("Error getting flight info.")
-            logger.error(ex)
+        
+        logger.info("Flight info unavailable for " + self.ident +"; service returned " + str(r.status_code))
+        return
 
 
     def evaluateRules(self):
@@ -1394,26 +1368,16 @@ class statistics():
 
 
     def reset_today(self):
-        try:
-            self.count_flights_today = 0
-            self.count_messages_today = 0
-            self.count_operator_unknown_today = 0
-            self.count_registration_unknown_today = 0
-            self.reset_hour()
-
-        except Exception as ex:
-            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->reset_today(): " + str(ex))
-            pass
+        self.count_flights_today = 0
+        self.count_messages_today = 0
+        self.count_operator_unknown_today = 0
+        self.count_registration_unknown_today = 0
+        self.reset_hour()
 
 
     def reset_hour(self):
-        try:
-            self.count_flights_hour = 0
-            self.count_messages_hour = 0
-
-        except Exception as ex:
-            logger.error("Exception of type: " + type(ex).__name__ + " in statistics->reset_hour(): " + str(ex))
-            pass
+        self.count_flights_hour = 0
+        self.count_messages_hour = 0
             
 
     def reset_on_publish(self):
