@@ -9,7 +9,6 @@ import sys
 import sqlite3
 import traceback
 import pyModeS as pms                               #pip3 install pyModeS
-from pyModeS.extra.tcpclient import TcpClient
 from pymongo import MongoClient                    #pip3 install pymongo
 import uuid
 import time
@@ -26,6 +25,7 @@ from watchdog.events import PatternMatchingEventHandler
 import schedule
 import queue
 import multiprocessing
+import socket
 
 
 def handle_interrupt(signal, frame):
@@ -37,6 +37,9 @@ class sigKill(Exception):
 
 
 class noQueueReaderThreadsAvailable(Exception):
+    pass
+
+class adsbConnectFailure(Exception):
     pass
 
 
@@ -54,130 +57,164 @@ class StoppableThread(threading.Thread):
     def stopped(self):
         return self._stop_event.is_set()
 
-    
-class ADSBClient(TcpClient):
 
-    connected = False
+class ADSBClient(StoppableThread):
 
-    def __init__(self):
-        super(ADSBClient, self).__init__(settings['adsb']['uri'], settings['adsb']['port'], settings['adsb']['type'])
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.connected = False
 
-    def handle_messages(self, messages):
+    def connect(self):
 
-        self.connected = True
-        messageQueue.put(messages)
-        stats.set_message_queue_depth(messageQueue.qsize())
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((settings['adsb']['uri'], settings['adsb']['port']))
+
+            while self.stopped() == False:
+                data = s.recv(4096)
+                self.connected = True
+                messages = []
+                msg_stop = False
+                self.current_msg = ""
+
+                for b in data:
+                    if b == 59:
+                        msg_stop = True
+                        ts = time.time()
+                        messages.append([self.current_msg, ts])
+                    if b == 42:
+                        msg_stop = False
+                        self.current_msg = ""
+
+                    if (not msg_stop) and (48 <= b <= 57 or 65 <= b <= 70 or 97 <= b <= 102):
+                        self.current_msg = self.current_msg + chr(b)
+
+                data = []
+
+                for msg in messages:
+                    stats.increment_message_count()
+                    messageQueue.put(msg)
+                    stats.set_message_queue_depth(messageQueue.qsize())
+
+            s.close()
 
 
 def messageQueueReader():
 
     while not threading.current_thread().stopped():
-        messages = messageQueue.get()
-        messageProcessor(messages)
-        messageQueue.task_done()
-        threading.current_thread().watchdog_timer = datetime.now()
 
-
-def messageProcessor(messages):
-
-    for msg, ts in messages:
-        
         try:
+            threading.current_thread().watchdog_timer = datetime.now()
+            messageProcessor(messageQueue.get())
+            messageQueue.task_done()
 
-            stats.increment_message_count()
+        except queue.Empty:
+            pass
 
-            #Object to store data
-            data = {}
 
-            data['timestamp'] = ts
+def messageProcessor(objMsg):
 
-            stats.set_message_handling_high_water_mark(int((datetime.now().timestamp() - data['timestamp'])*1000))
+    try:
 
-            #Get the download format
-            data['downlink_format'] = pms.df(msg)
+        msg = objMsg[0]
+        ts = objMsg[1]
 
-            if data['downlink_format'] not in [4, 20, 5, 21, 17]:
-                continue
-                        
-            data['icao_hex'] = pms.adsb.icao(msg)
+        #Object to store data
+        data = {}
 
-            #Ensure we have an icao_hex
-            if data['icao_hex'] == None:
-                continue
+        data['timestamp'] = ts
 
-            if data['downlink_format'] in [4, 20]:
-                data['altitude'] = pms.common.altcode(msg)
+        stats.set_message_handling_high_water_mark(int((datetime.now().timestamp() - data['timestamp'])*1000))
 
-            if data['downlink_format'] in [5, 21]:
-                data['squawk'] = pms.common.idcode(msg)
+        #Ensure the message is not corrupted
+        if pms.crc(msg) != 0:
+            return
 
-            if data['downlink_format'] == 17:
-                
-                typeCode = pms.adsb.typecode(msg)
-                data['messageType'] = typeCode
+        #Get the download format
+        data['downlink_format'] = pms.df(msg)
 
-                #Throw away TC 28 and 29...not yet supported
-                if typeCode in [28, 29]:
-                    continue
+        if data['downlink_format'] not in [4, 20, 5, 21, 17]:
+            return
+                    
+        data['icao_hex'] = pms.adsb.icao(msg)
 
-                if 1 <= typeCode <= 4:
-                    data['ident'] = pms.adsb.callsign(msg).replace("_","")
-                    data['category'] = pms.adsb.category(msg)                    
+        #Ensure we have an icao_hex
+        if data['icao_hex'] == None:
+            return
 
-                if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
-                    data['latitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[0]
-                    data['longitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[1]
-                    data['altitude'] = pms.adsb.altitude(msg)
+        if data['downlink_format'] in [4, 20]:
+            data['altitude'] = pms.common.altcode(msg)
 
-                if 5 <= typeCode <= 8:
-                    data['velocity'] = pms.adsb.velocity(msg)[0]
-                    data['heading'] = pms.adsb.velocity(msg)[1]
-                    data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+        if data['downlink_format'] in [5, 21]:
+            data['squawk'] = pms.common.idcode(msg)
 
-                if typeCode == 19:
-                    data['velocity'] = pms.adsb.velocity(msg)[0]
-                    data['heading'] = pms.adsb.velocity(msg)[1]
-                    data['vertical_speed'] = pms.adsb.velocity(msg)[2]
-
-                if typeCode == 31:
-                    data['adsb_version'] = pms.adsb.version(msg)
-
-            flight = Flight()
-            flight.setIcao_hex(data['icao_hex'])
-
-            if not flight.exists:
-
-                stats.increment_flights_count()
-
-                flight.first_message = data['timestamp']
+        if data['downlink_format'] == 17:
             
-            flight.last_message = data['timestamp']
-            flight.total_messages = flight.total_messages + 1
+            typeCode = pms.adsb.typecode(msg)
+            data['messageType'] = typeCode
 
-            if "latitude" in data and "longitude" in data and "altitude" in data:
-                flight.addPosition(Position(data['timestamp'], data['latitude'], data['longitude'], data['altitude']))
+            #Throw away TC 28 and 29...not yet supported
+            if typeCode in [28, 29]:
+                return
 
-            if "velocity" in data and "heading" in data and "vertical_speed" in data:
-                flight.addVelocity(Velocity(data['timestamp'], data['velocity'], data['heading'], data['vertical_speed']))
+            if 1 <= typeCode <= 4:
+                data['ident'] = pms.adsb.callsign(msg).replace("_","")
+                data['category'] = pms.adsb.category(msg)                    
 
-            if "squawk" in data:
-                flight.setSquawk(data['squawk'])
+            if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
+                data['latitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[0]
+                data['longitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[1]
+                data['altitude'] = pms.adsb.altitude(msg)
 
-            if "category" in data:
-                flight.setCategory(data['category'])
+            if 5 <= typeCode <= 8:
+                data['velocity'] = pms.adsb.velocity(msg)[0]
+                data['heading'] = pms.adsb.velocity(msg)[1]
+                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
 
-            if "ident" in data:
-                flight.setIdent(data['ident'])
+            if typeCode == 19:
+                data['velocity'] = pms.adsb.velocity(msg)[0]
+                data['heading'] = pms.adsb.velocity(msg)[1]
+                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
 
-            if "adsb_version" in data:
-                flight.setAdsbVersion(data['adsb_version'])
+            if typeCode == 31:
+                data['adsb_version'] = pms.adsb.version(msg)
 
-            flight.evaluateRules()
+        flight = Flight()
+        flight.setIcao_hex(data['icao_hex'])
 
-            flight.saveLocal()
+        if not flight.exists:
 
-        except Exception as ex:
-            logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(msg) + "] : " + str(ex))
+            stats.increment_flights_count()
+
+            flight.first_message = data['timestamp']
+        
+        flight.last_message = data['timestamp']
+        flight.total_messages = flight.total_messages + 1
+
+        if "latitude" in data and "longitude" in data and "altitude" in data:
+            flight.addPosition(Position(data['timestamp'], data['latitude'], data['longitude'], data['altitude']))
+
+        if "velocity" in data and "heading" in data and "vertical_speed" in data:
+            flight.addVelocity(Velocity(data['timestamp'], data['velocity'], data['heading'], data['vertical_speed']))
+
+        if "squawk" in data:
+            flight.setSquawk(data['squawk'])
+
+        if "category" in data:
+            flight.setCategory(data['category'])
+
+        if "ident" in data:
+            flight.setIdent(data['ident'])
+
+        if "adsb_version" in data:
+            flight.setAdsbVersion(data['adsb_version'])
+
+        flight.evaluateRules()
+
+        flight.saveLocal()
+
+    except Exception as ex:
+        logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(msg) + "] : " + str(ex))
+        pass
           
 
 def mqtt_publishNotication(identifier, message):
@@ -652,14 +689,13 @@ def main():
             queueReaderThread.start()
 
         adsb_client = ADSBClient()
-        
-        threadADSBClient = Thread(name="ADSB Client", target=adsb_client.run)
+        threadADSBClient = Thread(name="ADSB Client", target=adsb_client.connect)
         threadADSBClient.start()
         timeStartADSBClient = datetime.now()
 
         while adsb_client.connected == False:
             if (datetime.now() - timeStartADSBClient).seconds > 30:
-                raise Exception("No data received from " + settings['adsb']['uri'] + " before timeout.")
+                raise adsbConnectFailure("No data received from " + settings['adsb']['uri'] + " before timeout.")
             time.sleep(1)
 
         #Start the threads
@@ -691,6 +727,9 @@ def main():
         #Exit with an error code
         exitApp(2)
 
+    except adsbConnectFailure as ex:
+        exitApp(1)
+
     except (sigKill, KeyboardInterrupt) as ex:
 
         logger.debug("Number of active message queue reader threads at exit: " + str(checkQueueReaderThreads(threadsMessageQueueReader)))
@@ -703,7 +742,6 @@ def main():
             mqttClient.publish(settings["mqtt"]['topic_status'], "TERMINATING")
 
         if adsb_client.connected == True:
-            #adsb_client.connected = False
             adsb_client.stop()
 
         while checkQueueReaderThreads(threadsMessageQueueReader) > 0 and messageQueue.qsize() > 0:
