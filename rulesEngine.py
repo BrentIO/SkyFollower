@@ -23,8 +23,9 @@ class rulesEngine():
         self.observed_areas = []
         self.observed_rules = []
         self.removed_rules = []
+        
 
-    def evaluate(self, flight):
+    def evaluate(self, flight) -> list:
 
         matchedRules = []
 
