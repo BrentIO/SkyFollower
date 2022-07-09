@@ -877,7 +877,7 @@ class Flight():
 
         sqliteCur = localDb.cursor()
 
-        sqliteCur.execute("SELECT * FROM flights WHERE icao_hex='" + self.icao_hex + "';")
+        sqliteCur.execute("SELECT icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, origin, destination, matched_rules  FROM flights WHERE icao_hex='" + self.icao_hex + "'")
         result = sqliteCur.fetchall()
 
         if len(result) == 0:
@@ -963,7 +963,7 @@ class Flight():
         """Retrieves position reports for the current aircraft.
         If limit is True, only the last message is returned."""
 
-        sql = "SELECT * FROM positions WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
+        sql = "SELECT timestamp, latitude, longitude, altitude FROM positions WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
 
         if limit == True:
             sql = sql + " DESC LIMIT 1"
