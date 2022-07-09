@@ -972,6 +972,9 @@ class Flight():
         sqliteCur.execute(sql)
         results = sqliteCur.fetchall()
 
+        if results == None or len(results) < 1:
+            return
+
         for result in results:
             self.positions.append(Position(result['timestamp'], result['latitude'], result['longitude'], result['altitude']))
 
