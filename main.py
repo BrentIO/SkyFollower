@@ -383,8 +383,8 @@ def setup():
         logger.info(applicationName + " application started.")
         logger.debug("Python Version: " + str(sys.version))
 
-        if sys.version_info.major == 3 and sys.version_info.minor < 10:
-            logger.warning("Current Python Version " + str(sys.version_info.major) + "." + str(sys.version_info.minor) + " is below the recommended 3.10.  See readme for further information.")
+        #if sys.version_info.major == 3 and sys.version_info.minor < 10:
+        #    logger.warning("Current Python Version " + str(sys.version_info.major) + "." + str(sys.version_info.minor) + " is below the recommended 3.10.  See readme for further information.")
         
         if "files" not in settings:
             raise Exception ("files object is missing from settings.json")
@@ -447,19 +447,21 @@ def setup():
         if settings['latitude'] == 38.8969137 and settings['longitude'] == -77.0357096:
             raise Exception ("Configure your latitude and longitude in settings.json.")
 
-        if "queue_reader_thread_count" not in settings:
-            settings['queue_reader_thread_count'] = multiprocessing.cpu_count()
-        else:
-            if str(settings['queue_reader_thread_count']).isnumeric() != True:
-                raise Exception ("Invalid queue_reader_thread_count in settings.json")
+        settings['queue_reader_thread_count'] = 1 #Hard-coding for now, because multi-threading causes performances issues
 
-            if settings['queue_reader_thread_count'] < 1:
-                raise Exception ("Setting 'queue_reader_thread_count' cannot be less than 1.")
+        #if "queue_reader_thread_count" not in settings:
+        #    settings['queue_reader_thread_count'] = multiprocessing.cpu_count()
+        #else:
+        #    if str(settings['queue_reader_thread_count']).isnumeric() != True:
+        #        raise Exception ("Invalid queue_reader_thread_count in settings.json")
 
-            if settings['queue_reader_thread_count'] > multiprocessing.cpu_count():
-                logger.warning("Setting 'queue_reader_thread_count' is set to " + str(settings['queue_reader_thread_count']) + ", which is greater than the CPU count of " + str(multiprocessing.cpu_count()))
+        #    if settings['queue_reader_thread_count'] < 1:
+        #        raise Exception ("Setting 'queue_reader_thread_count' cannot be less than 1.")
 
-        logger.debug("Queue Reader Thread Count: " + str(settings['queue_reader_thread_count']) + " CPU Count: " + str(multiprocessing.cpu_count()))
+        #    if settings['queue_reader_thread_count'] > multiprocessing.cpu_count():
+        #        logger.warning("Setting 'queue_reader_thread_count' is set to " + str(settings['queue_reader_thread_count']) + ", which is greater than the CPU count of " + str(multiprocessing.cpu_count()))
+
+        #logger.debug("Queue Reader Thread Count: " + str(settings['queue_reader_thread_count']) + " CPU Count: " + str(multiprocessing.cpu_count()))
             
         if 'mqtt' not in settings:
             logger.info("mqtt is not declared in the settings file; MQTT will be disabled.")
