@@ -696,12 +696,12 @@ def main():
         threadsMessageQueueReader = []
 
         for i in range(settings['queue_reader_thread_count']):
-            queueReaderThread = StoppableThread(target=messageQueueReader, name="MessageQueueReader_" + str(i))
+            queueReaderThread = StoppableThread(target=messageQueueReader, name="MessageQueueReader_" + str(i), daemon=True)
             threadsMessageQueueReader.append(queueReaderThread)
             queueReaderThread.start()
 
         adsb_client = ADSBClient()
-        threadADSBClient = Thread(name="ADSB Client", target=adsb_client.connect)
+        threadADSBClient = Thread(name="ADSB Client", target=adsb_client.run, daemon=True)
         threadADSBClient.start()
 
         #Start the threads
