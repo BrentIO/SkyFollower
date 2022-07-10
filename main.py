@@ -116,24 +116,20 @@ def messageProcessor(objMsg):
 
     try:
 
-        msg = objMsg[0]
-        ts = objMsg[1]
+        handlingWaitTime = int((datetime.now().timestamp() - objMsg[1])*1000)
+        stats.set_message_handling_high_water_mark(handlingWaitTime)
 
-        #Object to store data
-        data = {}
         #Reduce message consumption as the queue gets deeper and the hardware can't keep up
         if 1000 < handlingWaitTime >= 500:      #Throttle 10%
             if random.randint(1, 10) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        data['timestamp'] = ts
         if 1500 < handlingWaitTime >= 1000:     #Throttle 14%
             if random.randint(1, 7) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        stats.set_message_handling_high_water_mark(int((datetime.now().timestamp() - data['timestamp'])*1000))
         if 2000 < handlingWaitTime >= 1500:     #Throttle 20%
             if random.randint(1, 5) == 1:
                 stats.increment_throttled_message_count()
@@ -144,32 +140,34 @@ def messageProcessor(objMsg):
                 stats.increment_throttled_message_count()
                 return
 
+        #Object to store data
+        data = {}       
 
         #Ensure the message is not corrupted
-        if pms.crc(msg) != 0:
+        if pms.crc(objMsg[0]) != 0:
             return
 
         #Get the download format
-        data['downlink_format'] = pms.df(msg)
+        data['downlink_format'] = pms.df(objMsg[0])
 
         if data['downlink_format'] not in [4, 20, 5, 21, 17]:
             return
                     
-        data['icao_hex'] = pms.adsb.icao(msg)
+        data['icao_hex'] = pms.adsb.icao(objMsg[0])
 
         #Ensure we have an icao_hex
         if data['icao_hex'] == None:
             return
 
         if data['downlink_format'] in [4, 20]:
-            data['altitude'] = pms.common.altcode(msg)
+            data['altitude'] = pms.common.altcode(objMsg[0])
 
         if data['downlink_format'] in [5, 21]:
-            data['squawk'] = pms.common.idcode(msg)
+            data['squawk'] = pms.common.idcode(objMsg[0])
 
         if data['downlink_format'] == 17:
             
-            typeCode = pms.adsb.typecode(msg)
+            typeCode = pms.adsb.typecode(objMsg[0])
             data['messageType'] = typeCode
 
             #Throw away TC 28 and 29...not yet supported
@@ -177,26 +175,26 @@ def messageProcessor(objMsg):
                 return
 
             if 1 <= typeCode <= 4:
-                data['ident'] = pms.adsb.callsign(msg).replace("_","")
-                data['category'] = pms.adsb.category(msg)                    
+                data['ident'] = pms.adsb.callsign(objMsg[0]).replace("_","")
+                data['category'] = pms.adsb.category(objMsg[0])                    
 
             if 5 <= typeCode <= 18 or 20 <= typeCode <=22:
-                data['latitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[0]
-                data['longitude'] = pms.adsb.position_with_ref(msg, settings['latitude'], settings['longitude'])[1]
-                data['altitude'] = pms.adsb.altitude(msg)
+                data['latitude'] = pms.adsb.position_with_ref(objMsg[0], settings['latitude'], settings['longitude'])[0]
+                data['longitude'] = pms.adsb.position_with_ref(objMsg[0], settings['latitude'], settings['longitude'])[1]
+                data['altitude'] = pms.adsb.altitude(objMsg[0])
 
             if 5 <= typeCode <= 8:
-                data['velocity'] = pms.adsb.velocity(msg)[0]
-                data['heading'] = pms.adsb.velocity(msg)[1]
-                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+                data['velocity'] = pms.adsb.velocity(objMsg[0])[0]
+                data['heading'] = pms.adsb.velocity(objMsg[0])[1]
+                data['vertical_speed'] = pms.adsb.velocity(objMsg[0])[2]
 
             if typeCode == 19:
-                data['velocity'] = pms.adsb.velocity(msg)[0]
-                data['heading'] = pms.adsb.velocity(msg)[1]
-                data['vertical_speed'] = pms.adsb.velocity(msg)[2]
+                data['velocity'] = pms.adsb.velocity(objMsg[0])[0]
+                data['heading'] = pms.adsb.velocity(objMsg[0])[1]
+                data['vertical_speed'] = pms.adsb.velocity(objMsg[0])[2]
 
             if typeCode == 31:
-                data['adsb_version'] = pms.adsb.version(msg)
+                data['adsb_version'] = pms.adsb.version(objMsg[0])
 
         flight = Flight()
         flight.setIcao_hex(data['icao_hex'])
@@ -205,16 +203,16 @@ def messageProcessor(objMsg):
 
             stats.increment_flights_count()
 
-            flight.first_message = data['timestamp']
+            flight.first_message = objMsg[1]
         
-        flight.last_message = data['timestamp']
+        flight.last_message = objMsg[1]
         flight.total_messages = flight.total_messages + 1
 
         if "latitude" in data and "longitude" in data and "altitude" in data:
-            flight.addPosition(Position(data['timestamp'], data['latitude'], data['longitude'], data['altitude']))
+            flight.addPosition(Position(objMsg[1], data['latitude'], data['longitude'], data['altitude']))
 
         if "velocity" in data and "heading" in data and "vertical_speed" in data:
-            flight.addVelocity(Velocity(data['timestamp'], data['velocity'], data['heading'], data['vertical_speed']))
+            flight.addVelocity(Velocity(objMsg[1], data['velocity'], data['heading'], data['vertical_speed']))
 
         if "squawk" in data:
             flight.setSquawk(data['squawk'])
@@ -233,7 +231,7 @@ def messageProcessor(objMsg):
         flight.saveLocal()
 
     except Exception as ex:
-        logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(msg) + "] : " + str(ex))
+        logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(objMsg[0]) + "] : " + str(ex))
         pass
           
 
