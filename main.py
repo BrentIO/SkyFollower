@@ -46,8 +46,6 @@ class adsbConnectFailure(Exception):
 
 class StoppableThread(threading.Thread):
 
-    watchdog_timer = None
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._stop_event = threading.Event()
@@ -101,10 +99,9 @@ class ADSBClient(StoppableThread):
 
 def messageQueueReader():
 
-    while not threading.current_thread().stopped():
+    while threading.current_thread().stopped() == False:
 
         try:
-            threading.current_thread().watchdog_timer = datetime.now()
             messageProcessor(messageQueue.get())
             messageQueue.task_done()
 
@@ -448,7 +445,7 @@ def setup():
 
             if settings['queue_reader_thread_count'] > multiprocessing.cpu_count():
                 logger.warning("Setting 'queue_reader_thread_count' is set to " + str(settings['queue_reader_thread_count']) + ", which is greater than the CPU count of " + str(multiprocessing.cpu_count()))
-        
+
         logger.debug("Queue Reader Thread Count: " + str(settings['queue_reader_thread_count']) + " CPU Count: " + str(multiprocessing.cpu_count()))
             
         if 'mqtt' not in settings:
@@ -700,19 +697,12 @@ def main():
 
         for i in range(settings['queue_reader_thread_count']):
             queueReaderThread = StoppableThread(target=messageQueueReader, name="MessageQueueReader_" + str(i))
-            queueReaderThread.watchdog_timer = datetime.now()
             threadsMessageQueueReader.append(queueReaderThread)
             queueReaderThread.start()
 
         adsb_client = ADSBClient()
         threadADSBClient = Thread(name="ADSB Client", target=adsb_client.connect)
         threadADSBClient.start()
-        timeStartADSBClient = datetime.now()
-
-        while adsb_client.connected == False:
-            if (datetime.now() - timeStartADSBClient).seconds > 30:
-                raise adsbConnectFailure("No data received from " + settings['adsb']['uri'] + " before timeout.")
-            time.sleep(1)
 
         #Start the threads
         if settings['mqtt']['enabled'] == True:
@@ -808,7 +798,8 @@ def checkQueueReaderThreads(threadsMessageQueueReader):
     working_threads = 0
 
     for thread in threadsMessageQueueReader:
-        if (datetime.now() - thread.watchdog_timer).seconds < 30:
+
+        if thread.is_alive():
             working_threads = working_threads + 1
             continue
 
