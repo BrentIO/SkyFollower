@@ -583,14 +583,16 @@ class rulesEngine():
     def matched_rules_validateData(self, condition, flight):
 
         if condition['operator'] == "in_list":
-            for matched_rule in flight.matched_rules:
-                if matched_rule in condition['value']:
+            for condition_rule in condition['value']:
+                if condition_rule in flight.matched_rules:
                     return True
+            return False
 
         if condition['operator'] == "not_in_list":
-            for matched_rule in flight.matched_rules:
-                if matched_rule in condition['value']:
+            for condition_rule in condition['value']:
+                if condition_rule in flight.matched_rules:
                     return False
+            return True
         
 
     def altitude_validateCondition(self, condition):
