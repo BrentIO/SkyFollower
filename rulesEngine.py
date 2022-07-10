@@ -118,6 +118,14 @@ class rulesEngine():
                     else:
                         break   
 
+                if condition['type'] == "matched_rules":
+                    
+                    if self.matched_rules_validateData(condition, flight) == True:
+
+                        conditions_met = conditions_met + 1
+                    else:
+                        break
+
                 if condition['type'] == "ident":
                     
                     if self.ident_validateData(condition, flight) == True:
