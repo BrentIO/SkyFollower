@@ -120,10 +120,29 @@ def messageProcessor(objMsg):
 
         #Object to store data
         data = {}
+        #Reduce message consumption as the queue gets deeper and the hardware can't keep up
+        if 1000 < handlingWaitTime >= 500:      #Throttle 10%
+            if random.randint(1, 10) == 1:
+                stats.increment_throttled_message_count()
+                return
 
         data['timestamp'] = ts
+        if 1500 < handlingWaitTime >= 1000:     #Throttle 14%
+            if random.randint(1, 7) == 1:
+                stats.increment_throttled_message_count()
+                return
 
         stats.set_message_handling_high_water_mark(int((datetime.now().timestamp() - data['timestamp'])*1000))
+        if 2000 < handlingWaitTime >= 1500:     #Throttle 20%
+            if random.randint(1, 5) == 1:
+                stats.increment_throttled_message_count()
+                return
+
+        if handlingWaitTime >= 2000:            #Throttle 33%
+            if random.randint(1, 3) == 1:
+                stats.increment_throttled_message_count()
+                return
+
 
         #Ensure the message is not corrupted
         if pms.crc(msg) != 0:
@@ -1334,6 +1353,7 @@ class statistics():
         self.rule_evaluation_high_water_mark_ms = 0
         self.count_messages = 0
         self.lastPublished = datetime.now()
+        self.count_messages_throttled = 0
 
     def set_message_handling_high_water_mark(self, value):
         if value > self.message_handling_high_water_mark_ms:
@@ -1351,7 +1371,7 @@ class statistics():
 
     def set_rule_evaluation_high_water_mark(self, value):
         if value > self.rule_evaluation_high_water_mark_ms:
-            self.rule_evaluation_high_water_mark_ms = value
+            self.rule_evaluation_high_water_mark_ms = value       
 
 
     def list(self):
@@ -1363,6 +1383,7 @@ class statistics():
             {"name": "count_messages_hour", "description": "Message Count Last Hour","value" : self.count_messages_hour, "type" : "count"},
             {"name": "count_messages_today", "description": "Message Count Today","value" : self.count_messages_today, "type" : "count"},
             {"name": "count_messages_lifetime", "description": "Message Count Total","value" : self.count_messages_lifetime, "type" : "count"},
+            {"name": "count_messages_throttled", "description": "Messages Throttled to Improve Performance","value" : self.count_messages_throttled, "type" : "count"},
             {"name": "count_operator_unknown_today", "description": "Operator Unknown Count Today","value" : self.count_operator_unknown_today, "type" : "count"},
             {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Total","value" : self.count_operator_unknown_lifetime, "type" : "count"},
             {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
@@ -1394,6 +1415,7 @@ class statistics():
         self.message_queue_depth = 0
         self.rule_evaluation_high_water_mark_ms = 0
         self.count_messages = 0
+        self.count_messages_throttled = 0
 
 
     def increment_flights_count(self):
@@ -1407,6 +1429,10 @@ class statistics():
         self.count_messages_hour = self.count_messages_hour + 1
         self.count_messages_today = self.count_messages_today + 1
         self.count_messages_lifetime = self.count_messages_lifetime + 1
+
+
+    def increment_throttled_message_count(self):
+        self.count_messages_throttled = self.count_messages_throttled + 1
 
 
     def increment_operator_unknown_count(self):
