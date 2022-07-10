@@ -62,15 +62,21 @@ class ADSBClient(StoppableThread):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.connected = False
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-    def connect(self):
+    def run(self):
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((settings['adsb']['uri'], settings['adsb']['port']))
+        try:
 
-            while self.stopped() == False:
-                data = s.recv(4096)
-                self.connected = True
+            self.socket.connect((settings['adsb']['uri'], settings['adsb']['port']))
+            self.connected = True
+
+            while self.connected == True:
+
+                if self.stopped() != False:
+                    break
+
+                data = self.socket.recv(4096)
                 messages = []
                 msg_stop = False
                 self.current_msg = ""
@@ -94,7 +100,14 @@ class ADSBClient(StoppableThread):
                     messageQueue.put(msg)
                     stats.set_message_queue_depth(messageQueue.qsize())
 
-            s.close()
+            self.socket.close()
+            logger.debug("ADS-B socket closed.")
+
+        except ConnectionRefusedError as ex:
+            logger.error("Connection to ADS-B Receiver " + settings['adsb']['uri'] + ":" +  str(settings['adsb']['port']) + " was refused.")
+
+        except Exception as ex:
+            logger.error("Exception in adsbClient of type: " + type(ex).__name__ + ": " + str(ex))
 
 
 def messageQueueReader():
@@ -732,7 +745,7 @@ def main():
         exitApp(2)
 
     except adsbConnectFailure as ex:
-        exitApp(1)
+        exitApp(3)
 
     except (sigKill, KeyboardInterrupt) as ex:
 
