@@ -337,10 +337,11 @@ class rulesEngine():
                             'squawk',
                             'velocity',
                             'vertical_speed',
-                            'wake_turbulence_category']:
+                            'wake_turbulence_category',
+                            'matched_rules']:
                         raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown type \"" + str(condition['type']) + "\".")
 
-                    if str(condition['operator']).lower() not in ['equals','minimum','maximum']:
+                    if str(condition['operator']).lower() not in ['equals','minimum','maximum', 'in_list', 'not_in_list']:
                         raise self.ruleCheckException("Rule " + tmpRule['identifier'] +  " condition " + str(len(tmpConditions)) + " contains unknown operator \"" + str(condition['operator']) + "\".")
 
                     condition['operator'] = str(condition['operator']).lower()
@@ -361,6 +362,10 @@ class rulesEngine():
                     if condition['type'] == "aircraft_type_designator":
                         condition = self.aircraft_type_designator_validateCondition(condition)
                         condition['priority'] = 355
+
+                    if condition['type'] == "matched_rules":
+                        condition = self.matched_rules_validateCondition(condition)
+                        condition['priority'] = 360
 
                     if condition['type'] == "altitude":
                         condition = self.altitude_validateCondition(condition)
@@ -551,6 +556,33 @@ class rulesEngine():
             return True
 
         return False
+
+
+    def matched_rules_validateCondition(self, condition):
+        
+        if condition['operator']  not in ["in_list", "not_in_list"]:
+            raise self.operatorShouldBeInListOrNotInListException(condition)
+
+        if not isinstance(condition['value'], list):
+            raise self.valueNotList(condition)
+
+        if len(condition['value']) < 1:
+            raise self.emptyList(condition)
+
+        return condition
+
+
+    def matched_rules_validateData(self, condition, flight):
+
+        if condition['operator'] == "in_list":
+            for matched_rule in flight.matched_rules:
+                if matched_rule in condition['value']:
+                    return True
+
+        if condition['operator'] == "not_in_list":
+            for matched_rule in flight.matched_rules:
+                if matched_rule in condition['value']:
+                    return False
         
 
     def altitude_validateCondition(self, condition):
@@ -914,6 +946,13 @@ class rulesEngine():
             super().__init__(self.message)
 
 
+    class operatorShouldBeInListOrNotInListException(Exception):
+
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" operator must be either \"in_list\" or \"not_in_list\", but \"" + condition['operator'] + "\" was specified."
+            super().__init__(self.message)
+
+
     class operatorShouldNotBeEqualsException(Exception):
 
         def __init__(self, condition):
@@ -925,6 +964,13 @@ class rulesEngine():
 
         def __init__(self, condition):
             self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" is not numeric."
+            super().__init__(self.message)
+
+    
+    class valueNotList(Exception):
+
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" is not a list."
             super().__init__(self.message)
 
 
@@ -946,6 +992,13 @@ class rulesEngine():
 
         def __init__(self, condition, minimum):
             self.message = "Condition type \"" + condition['type'] + "\" value \"" + str(condition['value']).strip() + "\" must be exactly " + str(minimum) + " characters."
+            super().__init__(self.message)
+
+
+    class emptyList(Exception):
+
+        def __init__(self, condition):
+            self.message = "Condition type \"" + condition['type'] + "\" must have a list with at least 1 element."
             super().__init__(self.message)
 
 
