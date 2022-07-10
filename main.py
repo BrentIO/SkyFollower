@@ -412,8 +412,8 @@ def setup():
         if "type" not in settings['adsb']:
             raise Exception ("Missing adsb -> type in settings.json")
 
-        if settings['adsb']['type'].lower() not in ['beast','raw']:
-            raise Exception ("Unknown adsb -> type in settings.json.  Valid values are beast | raw")
+        if settings['adsb']['type'].lower() not in ['raw']:
+            raise Exception ("Unknown adsb -> type in settings.json.  Valid values are raw")
 
         if "flight_ttl_seconds" not in settings:
             logger.debug("Setting 'flight_ttl_seconds' not declared in the settings file; Defaulting to 300 seconds.")

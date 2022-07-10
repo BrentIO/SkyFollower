@@ -2,7 +2,7 @@
 Track, store, and alert on aircraft movement from an ADS-B locally.
 
 ## What Does it Do?
-SkyFollower reads data from your ADS-B output using either Beast or raw message output, enriches that data by calling an [external web service](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information) for aircraft registration and operator information, and sends notifications about tracked aircraft movements using a rules-based engine.  All of the output is stored in MongoDB for any other use you might have in a simple, easy-to-query format.
+SkyFollower reads data from your ADS-B output using the raw message output, enriches that data by calling an [external web service](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information) for aircraft registration and operator information, and sends notifications about tracked aircraft movements using a rules-based engine.  All of the output is stored in MongoDB for any other use you might have in a simple, easy-to-query format.
 
 If you're using [Home Assistant](https://www.home-assistant.io/) for home automation, it can also raise events that can be used to drive other actions in your home automation, like announcing an aircraft passing overhead.
 
@@ -85,8 +85,8 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `flight_ttl_seconds` | 300 | The number of seconds after loss of signal until the flight will be concluded and the data persisted to MongoDB.  Configuring this option too low will cause fragmentation of data for long overhead flights with short losses of signal; too high will cause erroneous data where two flights are merged into one long flight, such as a quick turn on an aircraft at a nearby airport. Any positive integer is allowed.|
 | `local_database_mode` | memory | Determines if the cached database is stored in memory or disk.  Options are `disk` or `memory`.  If using disk, be mindful that this will cause significant writes, and is intended for debugging purposes only.|
 | `queue_reader_thread_count` | Number of System CPU's | Overrides the number of queue reader threads, which read ADS-B messages from the source and into SkyFollower.  Configuring below 1 is not permitted, and a warning will be issued if you exceed the number of system CPU's. The number of required threads is heavily dependent the message arrival rates.  Additional factors which can influence the required number of worker threads includes the speed of response from AROI, the number (and overall complexity) of rules, and the number of geometries. A good rule of thumb is that you should have a minimum of 1 thread per 150 messages/second you receive.|
-| `adsb -> port` | 30002 | The port of your ADS-B receiver where the data can be found.  Use `30002` when setting the `adsb -> type` to `raw`.  Use `30005` when setting the `adsb -> type` to `beast`.|
-| `adsb -> type` | raw | The data format your ADS-B receiver is sending to SkyFollower.  Use `raw` when setting the `adsb -> port` to `30002`.  Use `beast` when setting the `adsb -> port` to `30005`.|
+| `adsb -> port` | 30002 | The port of your ADS-B receiver where the data can be found.  Use `30002` when setting the `adsb -> type` to `raw`. |
+| `adsb -> type` | raw | The data format your ADS-B receiver is sending to SkyFollower.  Use `raw` when setting the `adsb -> port` to `30002`.  |
 | `mongoDb -> uri` | localhost | URL for the MongoDB server.  You should only need to change this if you are not running SkyFollower and MongoDB on the same device.|
 | `mongoDb -> port`| 27017 | Port for your MongoDB server.  You should only need to change this if you did a custom installation of MongoDB and specifically changed the port binding.|
 | `mongoDb -> database`| SkyFollower | Name of the MongoDB database to store the flight data.|
@@ -396,7 +396,7 @@ recorder:
   - MongoDB will do a _lot_ of file I/O operations, so if you're running this from an SD card, expect the SD card to die pretty quickly.  If you run MongoDB on a separate computer with an SSD/NVMe/traditional hard drive, your experience will be much better and it should be fine.
   - Data is stored in memory while SkyFollower is actively tracking the aircraft.  If you receive a lot of traffic with your receiver, this may also saturate the limited memory in a Raspberry Pi and cause issues for SkyFollower or other applications.
 - What ADS-B receivers is this compatible with?
-  - Most ADS-B receivers will output either a `Beast` or `raw` format, including FlightAware's SkyAware and PlaneFinder's PlaneFinderClient.  Running this software does not interfere with those services and can live happily beside them.
+  - Most ADS-B receivers will output a `raw` format, including FlightAware's SkyAware and PlaneFinder's PlaneFinderClient.  Running this software does not interfere with those services and can live happily beside them.
 - Do I need to know about database management to make this work?
   - No, but you might want to learn how to query MongoDB to add additional features or get information that interests you.
 - How do you differentiate between a loss of signal and a different flight?
