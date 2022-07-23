@@ -1562,10 +1562,8 @@ class autoDiscovery():
                 payload['icon'] = "mdi:broadcast"
                 payload['state_class'] = "total_increasing"
                 payload['value_template'] = "{% set val = value | int(0) %} "\
-                        "{% if val < 100000 %} "\
+                        "{% if val < 1000000 %} "\
                         "{{val}} "\
-                        "{% elif val >= 100000 and val < 1000000 %} "\
-                        "{{(val/1000) | round(2)}}K "\
                         "{% elif val > 1000000 and val < 1000000000 %} "\
                         "{{(val/1000000) | round(2)}}M "\
                         "{% elif val > 1000000000 and val < 1000000000000 %} "\
