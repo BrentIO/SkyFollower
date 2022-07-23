@@ -151,9 +151,12 @@ def messageProcessor(objMsg):
                 return
 
         #Object to store data
-        data = {}       
+        data = {}
 
-        #Ensure the message is not corrupted
+        #Ensure the message appears to be valid and is not corrupted
+        if len(objMsg[0]) < 14:
+            return  
+
         if pms.crc(objMsg[0]) != 0:
             return
 
