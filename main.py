@@ -130,13 +130,13 @@ def messageProcessor(objMsg):
         stats.set_message_handling_high_water_mark(handlingWaitTime)
 
         #Reduce message consumption as the queue gets deeper and the hardware can't keep up
-        if 1000 < handlingWaitTime >= 500:      #Throttle 10%
-            if random.randint(1, 10) == 1:
+        if 1000 < handlingWaitTime >= 850:      #Throttle 5%
+            if random.randint(1, 20) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        if 1500 < handlingWaitTime >= 1000:     #Throttle 14%
-            if random.randint(1, 7) == 1:
+        if 1500 < handlingWaitTime >= 1000:     #Throttle 10%
+            if random.randint(1, 10) == 1:
                 stats.increment_throttled_message_count()
                 return
 
