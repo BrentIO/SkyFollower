@@ -1561,6 +1561,18 @@ class autoDiscovery():
             if stat['type'] == "count":
                 payload['icon'] = "mdi:broadcast"
                 payload['state_class'] = "total_increasing"
+                payload['value_template'] = "{% set val = value | int(0) %} "\
+                        "{% if val < 100000 %} "\
+                        "{{val}} "\
+                        "{% elif val >= 100000 and val < 1000000 %} "\
+                        "{{(val/1000) | round(2)}}K "\
+                        "{% elif val > 1000000 and val < 1000000000 %} "\
+                        "{{(val/1000000) | round(2)}}M "\
+                        "{% elif val > 1000000000 and val < 1000000000000 %} "\
+                        "{{(val/1000000000) | round(2)}}B "\
+                        "{% elif val > 1000000000000 %} "\
+                        "{{(val/1000000000000) | round(2)}}T "\
+                        "{% endif %}"
 
             if stat['type'] == "queue":
                 payload['icon'] = "mdi:tray-full"
