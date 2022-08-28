@@ -1071,7 +1071,7 @@ class Flight():
     def setIdent(self, value:str):
 
         value = value.strip()
-        
+       
         if self.ident != "":
             return
 
@@ -1081,8 +1081,6 @@ class Flight():
         if "registration" in self.aircraft:
             if self.aircraft['registration'] == value:
                 return
-        else:
-            return
 
         self.ident = value
 
