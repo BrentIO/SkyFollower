@@ -473,7 +473,7 @@ class rulesEngine():
 
     def aircraft_icao_hex_validateData(self, condition, flight):
 
-        if flight.icao_hex.lower() == condition['value']:
+        if flight.icao_hex.upper() == condition['value']:
             return True
 
         return False
