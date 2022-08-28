@@ -636,7 +636,7 @@ class rulesEngine():
             raise self.operatorShouldBeEqualsException(condition)
 
         for area in self.observed_areas:
-            if str(condition['value']).strip().lower() == str(area['name']).lower():
+            if str(condition['value']).strip().upper() == str(area['name']).upper():
                 return condition
 
         raise Exception("Area \"" + str(condition['value']).strip() + "\" not found in areas file.")
@@ -689,9 +689,8 @@ class rulesEngine():
 
 
     def ident_validateData(self, condition, flight):
-        
 
-        if flight.ident == condition['value']:
+        if str(flight.ident).strip().upper() == str(condition['value']).strip().upper():
             return True
 
         return False
