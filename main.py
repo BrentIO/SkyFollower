@@ -972,6 +972,9 @@ class Flight():
             record['destination'] = self.destination['icao_code']
         else:
             record.pop('destination')
+
+        if "source" in self.operator:
+            record['operator'].pop("source")
        
         adsbDBCollection.insert_one(record)
 
