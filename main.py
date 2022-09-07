@@ -1079,7 +1079,7 @@ class Flight():
             return
 
         if "registration" in self.aircraft:
-            if self.aircraft['registration'] == value:
+            if self.aircraft['registration'].replace("-", "") == value.replace("-", ""):
                 return
 
         self.ident = value
