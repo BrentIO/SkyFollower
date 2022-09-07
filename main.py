@@ -1082,6 +1082,10 @@ class Flight():
             if self.aircraft['registration'].replace("-", "") == value.replace("-", ""):
                 return
 
+        if 'military' in self.aircraft:
+            if self.aircraft['military'] == True:
+                return
+
         self.ident = value
 
         self._getOperator()
