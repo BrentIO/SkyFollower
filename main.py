@@ -27,6 +27,7 @@ import queue
 import multiprocessing
 import socket
 import random
+import re
 
 
 def handle_interrupt(signal, frame):
@@ -1078,18 +1079,22 @@ class Flight():
         if value == "" or value == "00000000":
             return
 
+        self.ident = value
+        self._getFlightInfo()
+
+        #Filter US-based registration numbers
+        if bool(re.match("^N[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", value)):
+            return
+
         if "registration" in self.aircraft:
             if self.aircraft['registration'].replace("-", "") == value.replace("-", ""):
                 return
 
         if 'military' in self.aircraft:
             if self.aircraft['military'] == True:
-                return
-
-        self.ident = value
+                return       
 
         self._getOperator()
-        self._getFlightInfo()
 
 
     def setIcao_hex(self, value:str, limit_position:bool = True, limit_velocity:bool = True):
