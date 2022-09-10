@@ -1155,7 +1155,6 @@ class Flight():
         if settings['operators']['enabled'] != True:
             return
 
-        value = self.ident[0:3]
         if "registration" in self.aircraft:
             if self.aircraft['registration'].replace("-", "") == self.ident.replace("-", ""):
                 return
@@ -1168,6 +1167,21 @@ class Flight():
             if self.aircraft['military'] == True:
                 logger.debug("aircraft is military " + str(self.ident))
                 return
+
+        value = []
+
+        #Get the identifier from the value (VIR41HK) becomes [VIR,,HK]
+        value = ";".join(re.split("[^a-zA-Z]", self.ident))
+
+        value = value.split(";")[0] #Retrieves the first instance (VIR)
+
+        if value == []:
+            logger.debug("value is empty " + str(self.ident))
+            return
+
+        if len(value) < 2:
+            logger.debug("value length is less than 2 " + str(self.ident))
+            return
 
         r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
 
