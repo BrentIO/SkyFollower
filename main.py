@@ -161,7 +161,7 @@ def messageProcessor(objMsg):
         #Get the download format
         data['downlink_format'] = pms.df(objMsg[0])
 
-        if data['downlink_format'] not in [4, 20, 5, 21, 17]:
+        if data['downlink_format'] not in [5, 21, 17]:
             return
                     
         data['icao_hex'] = pms.adsb.icao(objMsg[0])
@@ -169,9 +169,6 @@ def messageProcessor(objMsg):
         #Ensure we have an icao_hex
         if data['icao_hex'] == None:
             return
-
-        if data['downlink_format'] in [4, 20]:
-            data['altitude'] = pms.common.altcode(objMsg[0])
 
         if data['downlink_format'] in [5, 21]:
             data['squawk'] = pms.common.idcode(objMsg[0])
