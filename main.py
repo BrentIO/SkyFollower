@@ -1187,7 +1187,7 @@ class Flight():
             stats.increment_operator_unknown_count()
             return
         
-        logger.info("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
+        logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
         stats.increment_operator_unknown_count()
         return
 
