@@ -158,9 +158,6 @@ def messageProcessor(objMsg):
         if len(objMsg[0]) < 14:
             return  
 
-        if pms.crc(objMsg[0]) != 0:
-            return
-
         #Get the download format
         data['downlink_format'] = pms.df(objMsg[0])
 
