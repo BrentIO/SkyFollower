@@ -1084,19 +1084,6 @@ class Flight():
 
         self.ident = value
         self._getFlightInfo()
-
-        #Filter US-based registration numbers
-        if bool(re.match("^N[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", value)):
-            return
-
-        if "registration" in self.aircraft:
-            if self.aircraft['registration'].replace("-", "") == value.replace("-", ""):
-                return
-
-        if 'military' in self.aircraft:
-            if self.aircraft['military'] == True:
-                return       
-
         self._getOperator()
 
 
@@ -1175,6 +1162,18 @@ class Flight():
             return
 
         value = self.ident[0:3]
+        if "registration" in self.aircraft:
+            if self.aircraft['registration'].replace("-", "") == self.ident.replace("-", ""):
+                return
+
+        #Filter US-based registration numbers
+        if bool(re.match("^N[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", self.ident)):
+            return
+
+        if 'military' in self.aircraft:
+            if self.aircraft['military'] == True:
+                logger.debug("aircraft is military " + str(self.ident))
+                return
 
         r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
 
