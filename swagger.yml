@@ -1,0 +1,740 @@
+openapi: 3.0.3
+info:
+  title: SkyFollower
+  description: View and map flight data
+  version: 1.0.0
+servers:
+  - url: 'http://{domain}:{port}'
+    variables:
+      domain:
+        default: my.web.server.lan
+        description: Domain or IP address of the microservice
+      port:
+        default: "8481"
+        description: Port the microservice is listening
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Tile Management
+  - name: Mapping
+  - name: Flight Information
+  - name: Webhook
+
+paths:
+
+  /tiles:
+    post:
+      tags:
+       - Tile Management
+      description: Downloads a tile for offline use for the specified provider, asynchonously.  If a webhook is provided, the webhook will be called when the download is complete.
+      summary: Download a tile for offline use
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/tile'
+            examples:
+              Tile 150nm from Washington DC using Stamen.TonerBackground at zoom level 12:
+                $ref: '#/components/examples/tile_request'
+      responses:
+        202:
+          description: Accepted
+        400:
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+        401:
+          description: Unauthorized
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+  
+    get:
+      tags:
+       - Tile Management
+      description: Retrieves a list of tiles that have been downloaded for offline use
+      summary: List tiles that have been downloaded
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/tile'
+              examples:
+                One tile in Washington, DC and one in London:
+                  $ref: '#/components/examples/tile_response'
+        401:
+          description: Unauthorized
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /tiles/{filename}:
+    delete:
+      tags:
+       - Tile Management
+      description: Deletes the downloaded tile by filename
+      summary: Delete a downloaded tile by filename
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/filename'
+      responses:
+        204:
+          description: No Content
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /maps:
+    post:
+      tags:
+       - Mapping
+      description: Requests a new map to be created based on the query parameters provided, asynchonously.  If a webhook is provided, the webhook will be called when the map is complete.
+      summary: Create a new map from a query
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/map_query'
+            examples:
+              Registration and Airline Operator:
+                $ref: '#/components/examples/query_N659DL'
+              Airline Operations with Average Altitude below FL180:
+                $ref: '#/components/examples/query_airline_ops_below_Fl180'
+      responses:
+        202:
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  map_id:            
+                    $ref: '#/components/schemas/map_id'
+        400:
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+        401:
+          description: Unauthorized
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+    get:
+      tags:
+       - Mapping
+      description: Retrieves a list of maps that have been created
+      summary: List maps that have been created
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/map'
+              examples:
+                Two Maps:
+                  $ref: '#/components/examples/two_maps'
+        401:
+          description: Unauthorized
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /maps/{map_id}:
+    get:
+      tags:
+       - Mapping
+      description: Retrieve information for the specified map
+      summary: Retrieve information for the specified map
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/map_id'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/map'
+              examples:
+                Registration and Airline Operator:
+                  $ref: '#/components/examples/get_map_response'
+                  
+        400:
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+    delete:
+      tags:
+       - Mapping
+      description: Delete the specified map
+      summary: Delete the specified map
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/map_id'
+      responses:
+        204:
+          description: No Content
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /maps/{map_id}/{format}:
+    get:
+      tags:
+       - Mapping
+      description: Retrieve the specified map by requested format
+      summary: Retrieve the specified map by format
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/map_id'
+        - $ref: '#/components/parameters/format'
+      responses:
+        200:
+          description: OK
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: Content MIME type
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+            application/postscript:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /flight/{flight_id}/map/{provider}/{format}:
+    get:
+      tags:
+       - Mapping
+       - Flight Information
+      description: Retrieve a map for the specified flight by requsted format
+      summary: Create a map for the specified flight
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/flight_id'
+        - $ref: '#/components/parameters/provider'
+        - $ref: '#/components/parameters/format'
+      responses:
+        200:
+          description: OK
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: Content MIME type
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/svg+xml:
+              schema:
+                type: string
+                format: binary
+            application/postscript:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+        401:
+          description: Unauthorized
+        404:
+          description: Not Found
+        500:
+          description: Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/error_message'
+
+  /webhook:
+    post:
+      servers:
+      - url: 'http://{your_domain}:{port}/{path}'
+        variables:
+          domain:
+            default: your.web.server.lan
+            description: Domain or IP address of the webhook listener
+          port:
+            default: "80"
+            description: Port the webhook is listening
+          path:
+            default: ""
+            description: Path of the listener
+      tags:
+       - Webhook
+      description: When an asynchronous event occurs and a webhook notification is requested, the body below will be sent as a POST.  If specified, headers will be sent.  No other authoization message is supported.  The response is ignored and not retried.
+      summary: Describes the payload sent in a webhook message
+      parameters:
+        - in: header
+          name: Authorization
+          schema:
+            type: string
+          example:
+              my_secret_key!123
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/webhook_event'
+            examples:
+                Complete:
+                  $ref: '#/components/examples/webhook_event_complete'
+                Failed:
+                  $ref: '#/components/examples/webhook_event_failed'
+      responses:
+        204:
+          description: No Content
+
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  schemas:
+    error_message:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Message describing the error condition
+          example: Unexpected Error
+
+    latitude:
+      type: number
+      format: float
+
+    longitude:
+      type: number
+      format: float
+
+    distance:
+      type: number
+      format: integer
+      description: Distance from the specified latitude/longitude in nautical miles
+
+    zoom:
+      type: number
+      format: integer
+      minimum: 1
+      maximum: 20
+      description: The amount of zoom requested on the tile where 1 is an image of the globe and 20 is fully zoomed-in
+
+    provider:
+      description: Selected Enumeration of Contextily Providers
+      type: string
+      default: "OpenStreetMap.Mapnik"
+      enum: [ "Esri.WorldImagery",
+              "Esri.WorldPhysical",
+              "Esri.WorldShadedRelief",
+              "MtbMap",
+              "OpenStreetMap.Mapnik",
+              "Stamen.Terrain", 
+              "Stamen.Toner",
+              "Stamen.TonerBackground",
+              "Stamen.TonerLite",
+              "Stamen.Watercolor", 
+              "CartoDB.Positron",
+              "CartoDB.PositronNoLabels",
+              "CartoDB.DarkMatter",
+              "CartoDB.DarkMatterNoLabels" ]
+
+    filename:
+      description: File name of the title
+      type: string
+      readOnly: true
+
+    tile:
+      type: object
+      properties:
+        latitude:
+          $ref: '#/components/schemas/latitude'
+        longitude:
+          $ref: '#/components/schemas/longitude'
+        distance:
+          $ref: '#/components/schemas/distance'
+        zoom:
+          $ref: '#/components/schemas/zoom'
+        provider:
+          $ref: '#/components/schemas/provider'
+        filename:
+          $ref: '#/components/schemas/filename'
+        webhook:
+          $ref: '#/components/schemas/webhook_request'
+      required:
+        - latitude
+        - longitude
+        - distance
+        - provider
+
+    flight_id:
+      description: Unique identifier for a single flight
+      type: string
+      format: uuid
+      example: 069fd84a-18df-4c0c-b1a9-5d07919ff8c8
+
+    map_id:
+      description: Unique identifier for a map
+      type: string
+      format: uuid
+      example: 07d7bc86-658e-406d-903f-f9db6d5614bd
+
+    webhook_request:
+      writeOnly: true
+      description: Optional webhook call-back, executed as a POST operation
+      type: object
+      properties:
+        uri:
+          type: string
+          description: URI of your server where SkyFollower will POST the payload
+        headers:
+          description: Headers that will be prefixed to the request
+          type: array
+          items:
+            $ref: '#/components/schemas/header'
+      required:
+        - uri
+
+    header:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+
+    map_query:
+      type: object
+      properties:
+        start_date:
+          type: string
+          format: date-time
+          description: Start date for querying any flights, UTC.
+        end_date:
+          type: string
+          format: date-time
+          description: End date for querying any flights, up to but not including this date/time, UTC.
+        provider:
+          $ref: '#/components/schemas/provider'
+        formats:
+          type: array
+          description: Requested output formats
+          items:
+            $ref: '#/components/schemas/format'
+        query:
+          type: object
+          description: Query object to be executed
+        webhook:
+          $ref: '#/components/schemas/webhook_request'
+      required:
+        - query
+
+    map:
+      type: object
+      properties:
+        map_id:
+          $ref: '#/components/schemas/map_id'
+        created_date:
+          type: string
+          format: date-time
+          description: Date and time this map was created, UTC.
+        start_date:
+          type: string
+          format: date-time
+          description: Search start date used in the query based on the last message received from the aircraft, UTC.
+        end_date:
+          type: string
+          format: date-time
+          description: Search end date used in the query based on the last message received from the aircraft, up to but not including this date/time, UTC.
+        provider:
+          $ref: '#/components/schemas/provider'
+        query:
+          type: object
+          description: Query object to be executed
+        links:
+          type: array
+          description: Links to the stored map
+          items:
+            type: object
+            properties:
+              format:
+                $ref: '#/components/schemas/format'
+              uri:
+                $ref: '#/components/schemas/uri'
+
+    format:
+      type: string
+      enum: ["png","svg","eps","pdf","html"]
+
+    uri:
+      type: string
+      format: uri
+
+    webhook_event:
+      type: object
+      properties:
+        map_id:
+          $ref: '#/components/schemas/map_id'
+        status:
+          type: string
+          enum: ["COMPLETE", "FAILED"]
+        reference:
+          type: string
+          format: uri
+        links:
+          type: array
+          description: Links to the stored map
+          items:
+            type: object
+            properties:
+              format:
+                $ref: '#/components/schemas/format'
+              uri:
+                $ref: '#/components/schemas/uri'
+
+
+  examples:
+
+    tile_request:
+      value:
+        latitude: 38.8969137
+        longitude: -77.0357096
+        distance: 150
+        zoom: 12
+        provider: Stamen.TonerBackground
+        webhook:
+          uri: http://client.website.com:4940/webhook/event
+          headers: 
+            - key: Authorization
+              value: my_secret_key!123
+
+    tile_response:
+      value:
+        - latitude: 38.8969137
+          longitude: -77.0357096
+          distance: 150
+          zoom: 12
+          provider: Stamen.TonerBackground
+          filename: Stamen_TonerBackground12
+        - latitude: 51.5014
+          longitude: -0.1419
+          distance: 75
+          zoom: 7
+          provider: Esri.WorldShadedRelief
+          filename: Esri_WorldShadedRelief7
+
+    webhook_request:
+      value:
+        uri: http://client.website.com:4940/webhook/event
+        headers: 
+          - key: Authorization
+            value: my_secret_key!123
+
+    webhook_event_complete:
+      value:
+        map_id: 07d7bc86-658e-406d-903f-f9db6d5614bd
+        status: COMPLETE
+        reference: http://my.web.server.lan:8481/maps/07d7bc86-658e-406d-903f-f9db6d5614bd
+        links:
+          - format: pdf
+            uri: http://my.web.server.lan:8481/maps/07d7bc86-658e-406d-903f-f9db6d5614bd/pdf
+          - format: html
+            uri: http://my.web.server.lan:8481/maps/07d7bc86-658e-406d-903f-f9db6d5614bd/html
+
+    webhook_event_failed:
+      value:
+        map_id: 07d7bc86-658e-406d-903f-f9db6d5614bd
+        status: FAILED
+        reference: http://my.web.server.lan:8481/maps/07d7bc86-658e-406d-903f-f9db6d5614bd
+
+    query_N659DL:
+      value:
+        start_date: 2022-09-01T13:10:00Z
+        end_date: 2022-09-03T13:10:00Z
+        provider: CartoDB.DarkMatterNoLabels
+        formats:
+          - png
+          - html
+        query: {"aircraft.registration": "N659DL", "operator.airline_designator": "DAL"}
+        webhook:
+          uri: http://client.website.com:4940/webhook/event
+          headers: 
+            - key: Authorization
+              value: my_secret_key!123
+
+    query_airline_ops_below_Fl180:
+      value:
+        start_date: 2022-09-01T13:10:00Z
+        end_date: 2022-09-03T13:10:00Z
+        provider: CartoDB.DarkMatterNoLabels
+        formats:
+          - pdf
+        query: {"operator.airline_designator":{ "$exists": True },  "$expr": { "$lt": [{"$avg": "$positions.altitude"},18000]}}
+        webhook:
+          uri: http://client.website.com:4940/webhook/event
+          headers: 
+            - key: Authorization
+              value: my_secret_key!123
+
+    get_map_response:
+      value:
+        start_date: 2022-09-01T13:10:00Z
+        end_date: 2022-09-03T13:10:00Z
+        provider: CartoDB.DarkMatterNoLabels
+        formats:
+          - png
+          - html
+        query: {"aircraft.registration": "N659DL", "operator.airline_designator": "DAL"}
+
+    two_maps:
+      value:
+        - start_date: 2022-09-01T13:10:00Z
+          end_date: 2022-09-03T13:10:00Z
+          provider: CartoDB.DarkMatterNoLabels
+          formats:
+            - png
+            - html
+          query: {"aircraft.registration": "N659DL", "operator.airline_designator": "DAL"}
+        - start_date: 2022-09-01T13:10:00Z
+          end_date: 2022-09-03T13:10:00Z
+          provider: CartoDB.DarkMatterNoLabels
+          formats:
+            - pdf
+          query: {"operator.airline_designator":{ "$exists": True },  "$expr": { "$lt": [{"$avg": "$positions.altitude"},18000]}}
+
+  parameters:
+    filename:
+      in: path
+      name: filename
+      example: Stamen_TonerBackground12
+      required: true
+      schema:
+        $ref: '#/components/schemas/filename'
+
+    flight_id:
+      in: path
+      name: flight_id
+      required: true
+      schema:
+        $ref: '#/components/schemas/flight_id'
+
+    map_id:
+      in: path
+      name: map_id
+      required: true
+      schema:
+        $ref: '#/components/schemas/map_id'
+
+    format:
+      in: path
+      name: format
+      required: true
+      schema:
+        $ref: '#/components/schemas/format'
+
+    provider:
+      in: path
+      name: provider
+      required: true
+      schema:
+        $ref: '#/components/schemas/provider'
