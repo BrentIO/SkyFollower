@@ -28,7 +28,7 @@ paths:
     post:
       tags:
        - Tile Management
-      description: Downloads a tile for offline use for the specified provider, asynchonously.  If a webhook is provided, the webhook will be called when the download is complete.
+      description: Downloads a tile for offline use for the specified provider, asynchonously.
       summary: Download a tile for offline use
       security:
         - ApiKeyAuth: []
@@ -602,11 +602,6 @@ components:
         distance: 150
         zoom: 12
         provider: Stamen.TonerBackground
-        webhook:
-          uri: http://client.website.com:4940/webhook/event
-          headers: 
-            - key: Authorization
-              value: my_secret_key!123
 
     tile_response:
       value:
