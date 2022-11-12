@@ -1159,8 +1159,12 @@ class Flight():
             if self.aircraft['registration'].replace("-", "") == self.ident.replace("-", ""):
                 return
 
-        #Filter US-based registration numbers
-        if bool(re.match("^N[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", self.ident)):
+        #Filter US-based registration numbers, even those with historical (NC123AB, NX, NR, NL) markings
+        if bool(re.match("^N[C,X,R,L]?[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", self.ident)):
+            return
+
+        #Filter modern US-based registration numbers with air ambulance (LN123AB) or air taxi (TN123AB) prefix appended
+        if bool(re.match("^[L,T]?N[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$", self.ident)):
             return
 
         if 'military' in self.aircraft:
