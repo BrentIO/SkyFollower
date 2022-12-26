@@ -1,17 +1,19 @@
 # SkyFollower
 Track, store, and alert on aircraft movement from an ADS-B locally.
 
+---
 ## What Does it Do?
 SkyFollower reads data from your ADS-B output using the raw message output, enriches that data by calling an [external web service](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information) for aircraft registration and operator information, and sends notifications about tracked aircraft movements using a rules-based engine.  All of the output is stored in MongoDB for any other use you might have in a simple, easy-to-query format.
 
 If you're using [Home Assistant](https://www.home-assistant.io/) for home automation, it can also raise events that can be used to drive other actions in your home automation, like announcing an aircraft passing overhead.
 
+---
 ## How does it Work?
 As your ADS-B receiver publishes data, SkyFollower reads that data into a local in-memory database.  As messages are received from the aircraft, a profile of the flight is built using the in-memory data until a loss of signal occurs with the tracked aircraft for a period of time at which point the flight is considered completed.  Completed flights are persisted to MongoDB.
 
 If the service exits, the in-memory data is persisted to MongoDB immediately.
 
-
+---
 ## Prerequisites
 SkyFollower can run on pretty much any operating system that runs Python 3, but this document will be focused exclusively on explaining how to do so under Ubuntu 20.04 (Focal Fossa).
 
@@ -48,19 +50,20 @@ sudo apt-get install -y python3 python3-pip libgeos-dev
 
 Python also requires a number of packages that must be installed to use SkyFollower, note version 2.11 is recommended (pip default is 2.9):
 ```
-sudo pip3 install pyModeS==2.11 pymongo requests paho-mqtt shapely watchdog schedule
+sudo pip3 install pyModeS==2.11 pymongo requests paho-mqtt shapely watchdog schedule boto3
 ```
 
 ### Aircraft Registration and Operator Information
 This step is optional, but SkyFollower can retrieve aircraft registration and operator information to enrich your data. This can be helpful if you want to trigger alerts about specific operators or registration numbers.  To do so, download and configure the [Aircraft Registration and Operator Information](https://github.com/BrentIO/Aircraft-Registration-and-Operator-Information).
 
+---
 ## Download and Install SkyFollower
 Clone SkyFollower from GitHub:
 ```
 sudo git clone https://github.com/BrentIO/SkyFollower.git /etc/P5Software/SkyFollower
 ```
 
-
+---
 ## Required Configuration
 You *must* configure these settings in the settings.json file.
 
@@ -116,10 +119,16 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `home_assistant` | If this object is omitted, Home Assistant will be disabled.|
 | `home_assistant -> enabled` | false | Controls if Home Assistant integration is enabled or disabled.|
 | `home_assistant -> discovery_prefix` | homeassistant | The prefix that Home Assistant is listening to for auto discovery messages.  By default, Home Assistant is listening for auto discovery on the `homeassistant` MQTT topic and all child topics. |
+| `s3_migration` |  If this object is omitted, S3 migration will be disabled.  Requires MonogDB to also be enabled, configured, and functional.|
+| `s3_migration -> enabled` |  false | Controls if migrating to S3 is enabled or disabled.|
+| `s3_migration -> bucket_name` |  YOUR-BUCKET-NAME-HERE | The name of your S3 bucket where migrated flights will be stored.|
+| `s3_migration -> key` |   | AWS S3 API key.|
+| `s3_migration -> secret` |   | Secret for your AWS S3 API key.|
+| `s3_migration -> migrate_days` |  90 | Number of days the detailed position and velocity data will be retained in MongoDB before being migrated to S3.|
+| `s3_migration -> purge_days` |  30 | Number of days recalled data will be retained in MongoDB before being purged from MongoDB.|
+| `s3_migration -> document_limit` |  100 | The number of documents (flights) to return at a given time when executing the migration.  This minimizes memory consumption by not returning the entire document set and you likely shouldn't need to change it unless you're running this on a computer with very little RAM.|
 
-
-
-
+---
 ## Service Installation
 
 Copy the service file to the systemctl directory
@@ -141,7 +150,7 @@ Start the service
 ```
 sudo systemctl start SkyFollower.service
 ```
-
+---
 ## Areas
 An area is a simple GeoJSON polygon of an interesting area.  The feature must include a property called `name` to be permitted.  A great tool to define your GeoJSON can be found at [https://geojson.io](https://geojson.io).  You can include geometries other than polygons, but SkyFollower will ignore anything that is not a polygon.
 
@@ -230,7 +239,7 @@ Below is an example which will be used in the next section, note that a `name` p
     ]
 }
 ```
-
+---
 ## Rules
 SkyFollower will optionally raise an event via MQTT based on a configured rule being met.
 
@@ -379,7 +388,7 @@ You may also find all of these examples in the rules.example.json file.
 }
 ```
 
-
+---
 ## Recommended Home Assistant Configuration
 Home Assistant will store all of the sensor data changes, which is repetitive with MongoDB and not recommended.  Add this to your `configuration.yaml` file to filter out storage of SkyFollower events:
 ```
@@ -388,8 +397,52 @@ recorder:
     entity_globs:
       - sensor.skyfollower_*
 ```
+---
+## MongoDB to S3 Migration
+_Use of this feature is optional_
 
+> **This Service <span style="color:red">Costs Real Money</span>**<br>  Amazon AWS S3 is a commercial service which provides access to store and recall data for a *fee* in the cloud.  The use of this service is optional, and could cost you ***significant*** amounts of money.  *By using this feature you agree not to hold the author(s) of this application responsible for any cost incurred by you, for any reason, including misconfiguration or defect.*
 
+SkyFollower can store data for an infinite period of time if given adequate disk space, but detailed data is likely not needed forever.  Instead, the `position` and `velocities` data ("P&V data") can be removed from MongoDB to significantly reduce disk space usage.  In fact, if you choose not to use this feature, you'll need to manually purge your databse of old flight documents.
+
+When the document is migrated to S3, it is stored in its entirety.  Upon successful posting to S3, the P&V data is deleted from MongoDB; all other data remains as a partial MongoDB document.
+
+The migration script performs these key actions:
+- Copies documents to S3 in their entirety where the `last_message` date is greater than now() +  `s3_migration -> migrate_days` days where the `migrated` field is null
+- Deletes the P&V data from the MongoDB document and adds a `migrated` datestamp
+- Purges the P&V data for MongoDB documents which have an `expires` field greater than now() + `s3_migration -> purge_days`.
+
+Data stored in S3 is stringified into a JSON object and gzip'ped to minimize bandwidth and storage costs.  The output file is named as the `_id` of the MongoDB document.  For example, a document with an `_id` of `25e3836d-f00b-4e0e-aea0-ae19596928f1` will result in a filename of `25e3836d-f00b-4e0e-aea0-ae19596928f1.gz` in S3.
+
+### Executing the migration
+To begin the migration to S3, execute the following command:
+```
+sudo python3 /etc/P5Software/SkyFollower/migrate-s3.py
+```
+
+You can add this script to crontab, and set it to execute each day at 05:30:
+
+`sudo crontab -e`
+
+```
+30 5 * * * python3 /etc/P5Software/SkyFollower/migrate-s3.py
+```
+
+### Recalling migrated data from S3
+SkyFollower supports recalling data from S3 and re-populating the P&V data into the existing MongoDB document, which may be useful for drawing historical maps or other data analysis.  The recalled data will only populate the position and velocity fields into the partial MongoDB document.
+
+The P&V data is retained in MongoDB only for a period of `s3_migration -> purge_days`, which is calculated and stored in the MongoDB document in the `expires` field, which indicates the earliest date and time the P&V data will be purged from MongoDB by the migrate-s3 script.
+
+The document is not re-migrated to S3 after the `expires` field elapses, and no data in S3 is modified.
+
+### Example S3 Permissions
+An example permission configuration is provided in the file `s3-bucket-policy-example.json`, which you can update with your bucket name and provide the SkyFollower user access within the AWS IAM permissions tool.
+
+> **Important Note**
+> 
+> Be sure to include the `*` at the end of your bucket name, such as `"Resource": "arn:aws:s3:::YOUR-BUCKET-NAME-HERE*"`
+
+---
 ## FAQ
 - Can I run this on Raspberry Pi?  Yes, but...
   - There will be changes needed to the installation above, but it should work.
