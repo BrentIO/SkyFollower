@@ -22,7 +22,7 @@
         {
             "Effect": "Allow",
             "Action": "s3:*",
-            "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME-HERE"
+            "Resource": "arn:aws:s3:::YOUR-BUCKET-NAME-HERE*"
         }
     ]
 }
