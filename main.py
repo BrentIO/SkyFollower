@@ -1132,6 +1132,10 @@ class Flight():
         value = value.strip()
 
         if self.squawk != "":
+
+            if value in ['7500','7600','7700','7777']:
+                self.squawk = value
+                
             return
 
         self.squawk = value
