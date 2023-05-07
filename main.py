@@ -983,7 +983,7 @@ class Flight():
        
         adsbDBCollection.insert_one(record)
 
-        logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + record['aircraft']['icao_hex'])
+        logger.debug("Persisted record _id: " + record['_id'] + " ICAO HEX: " + str(record['aircraft']['icao_hex']))
         
 
     def delete(self):
