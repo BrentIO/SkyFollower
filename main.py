@@ -29,6 +29,8 @@ import socket
 import random
 import re
 
+version = "2023.08.01"
+
 
 def handle_interrupt(signal, frame):
     raise sigKill("SIGKILL Requested")
@@ -1519,7 +1521,8 @@ class autoDiscovery():
         self.device = {
                 "ids" : applicationName,
                 "name": applicationName,
-                "manufacturer" : "P5Software, LLC"
+                "manufacturer" : "P5Software, LLC",
+                "model" : version
             }
 
 
@@ -1647,7 +1650,7 @@ class autoDiscovery():
             "payload_available" : "ONLINE",
             "payload_not_available" : "OFFLINE",
             "state_topic" : settings['mqtt']['topic_status'],
-            "name" : applicationName + " Application Status",
+            "name" : "Application Status",
             "unique_id" : applicationName + "_status",
             "icon" : "mdi:lan-connect",
             "device" : self.device
