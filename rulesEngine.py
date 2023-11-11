@@ -809,7 +809,7 @@ class rulesEngine():
 
     def squawk_validateData(self, condition, flight):
 
-        if flight.squawk == condition['value']:
+        if str(flight.squawk) == str(condition['value']):
             return True
 
 

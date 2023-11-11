@@ -918,7 +918,7 @@ class Flight():
             record['operator'] = self.operator
 
         if self.squawk != "":
-            record['squawk'] = self.squawk
+            record['squawk'] = str(self.squawk)
 
         if self.broadcast != "":
             record['broadcast'] = self.broadcast
@@ -969,7 +969,7 @@ class Flight():
         self.aircraft = json.loads(result[0]['aircraft'])
         self.ident = result[0]['ident']
         self.operator = json.loads(result[0]['operator'])
-        self.squawk = result[0]['squawk']
+        self.squawk = str(result[0]['squawk'])
         self.broadcast = result[0]['broadcast']
         self.origin = json.loads(result[0]['origin'])
         self.destination = json.loads(result[0]['destination'])
@@ -1184,16 +1184,16 @@ class Flight():
 
     def setSquawk(self, value:str):
 
-        value = value.strip()
+        value = str(value).strip()
 
         if self.squawk != "":
 
-            if value in ['7500','7600','7700','7777']:
-                self.squawk = value
+            if str(value) in ['7500','7600','7700','7777']:
+                self.squawk = str(value)
                 
             return
 
-        self.squawk = value
+        self.squawk = str(value)
         
 
     def setAdsbVersion(self, value:int):
