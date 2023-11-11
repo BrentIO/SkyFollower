@@ -127,6 +127,8 @@ The settings.json file contains all of the user-configurable settings for SkyFol
 | `s3_migration -> migrate_days` |  90 | Number of days the detailed position and velocity data will be retained in MongoDB before being migrated to S3.|
 | `s3_migration -> purge_days` |  30 | Number of days recalled data will be retained in MongoDB before being purged from MongoDB.|
 | `s3_migration -> document_limit` |  100 | The number of documents (flights) to return at a given time when executing the migration.  This minimizes memory consumption by not returning the entire document set and you likely shouldn't need to change it unless you're running this on a computer with very little RAM.|
+| `throttle` | If this object is omitted, the default throttling settings will be used.|
+| `throttle -> waiting_times` | [850,1000,1500,2000] | Array, with length of 4, containing the number of milliseconds delayed in processing before throttling will occur as an integer.  The values must be incrementally sequential.|
 
 ---
 ## Service Installation

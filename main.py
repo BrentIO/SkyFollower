@@ -133,22 +133,22 @@ def messageProcessor(objMsg):
         stats.set_message_handling_high_water_mark(handlingWaitTime)
 
         #Reduce message consumption as the queue gets deeper and the hardware can't keep up
-        if 1000 < handlingWaitTime >= 850:      #Throttle 5%
+        if settings['throttle']['waiting_times'][1] < handlingWaitTime >= settings['throttle']['waiting_times'][0]:      #Throttle 5%
             if random.randint(1, 20) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        if 1500 < handlingWaitTime >= 1000:     #Throttle 10%
+        if settings['throttle']['waiting_times'][2] < handlingWaitTime >= settings['throttle']['waiting_times'][1]:     #Throttle 10%
             if random.randint(1, 10) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        if 2000 < handlingWaitTime >= 1500:     #Throttle 20%
+        if settings['throttle']['waiting_times'][3] < handlingWaitTime >= settings['throttle']['waiting_times'][2]:     #Throttle 20%
             if random.randint(1, 5) == 1:
                 stats.increment_throttled_message_count()
                 return
 
-        if handlingWaitTime >= 2000:            #Throttle 33%
+        if handlingWaitTime >= settings['throttle']['waiting_times'][3]:            #Throttle 33%
             if random.randint(1, 3) == 1:
                 stats.increment_throttled_message_count()
                 return
@@ -673,6 +673,48 @@ def setup():
         cursor.execute("CREATE TABLE velocities (icao_hex text, timestamp real, velocity integer, heading real, vertical_speed integer)")
         cursor.execute("CREATE INDEX positions_icao_hex ON positions (icao_hex);")
         cursor.execute("CREATE INDEX velocities_icao_hex ON velocities (icao_hex);")
+
+        throttle_defaults = [850,1000,1500,2000]
+
+        if 'throttle' not in settings:
+            logger.info("throttle is not declared in the settings file; defaults will be used.")
+            settings['throttle'] = {}
+            settings['throttle']['waiting_times'] = throttle_defaults
+
+        if type(settings['throttle']) is not dict:
+            logger.info("throttle is declared in the settings file but is not dictionary; defaults will be used.")
+            settings['throttle'] = {}
+            settings['throttle']['waiting_times'] = throttle_defaults
+
+        if 'waiting_times' not in settings['throttle']:
+            logger.info("throttle -> waiting_times is not declared in the settings file; defaults will be used.")
+            settings['throttle']['waiting_times'] = throttle_defaults
+
+        if type(settings['throttle']['waiting_times']) is not list:
+            logger.info("throttle -> waiting_times is declared in the settings file but is not list; defaults will be used.")
+            settings['throttle']['waiting_times'] = throttle_defaults
+
+        if len(settings['throttle']['waiting_times']) < 4:
+            logger.info("throttle -> waiting_times does not have enough entries; defaults will be used.")
+            settings['throttle']['waiting_times'] = throttle_defaults
+
+        for i in range(len(settings['throttle']['waiting_times'])):
+
+            if str(settings['throttle']['waiting_times'][i]).isnumeric() == False:
+                logger.info("throttle -> waiting_times are not sequential; defaults will be used.")
+                settings['throttle']['waiting_times'] = throttle_defaults
+                break
+
+            if i == 0:
+                continue
+
+            if settings['throttle']['waiting_times'][i] < settings['throttle']['waiting_times'][i-1]:
+                logger.info("throttle -> waiting_times are not sequential; defaults will be used.")
+                settings['throttle']['waiting_times'] = throttle_defaults
+
+                break
+
+        logger.debug("throttle -> waiting_times: " + str(settings['throttle']['waiting_times']))
 
         #Setup the message queue
         messageQueue = queue.Queue()
