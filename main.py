@@ -668,7 +668,7 @@ def setup():
         cursor = localDb.cursor()
 
         #Create the temporary tables
-        cursor.execute("CREATE TABLE flights (icao_hex text NOT NULL, first_message real NOT NULL, last_message real, total_messages integer, aircraft text, ident text, broadcast text, operator text, squawk text, origin text, destination text, matched_rules text, PRIMARY KEY(icao_hex))")
+        cursor.execute("CREATE TABLE flights (icao_hex text NOT NULL, first_message real NOT NULL, last_message real, total_messages integer, aircraft text, ident text, broadcast text, operator text, squawk text, squawk_count integer, origin text, destination text, matched_rules text, PRIMARY KEY(icao_hex))")
         cursor.execute("CREATE TABLE positions (icao_hex text, timestamp real, latitude real, longitude real, altitude integer)")
         cursor.execute("CREATE TABLE velocities (icao_hex text, timestamp real, velocity integer, heading real, vertical_speed integer)")
         cursor.execute("CREATE INDEX positions_icao_hex ON positions (icao_hex);")
@@ -889,6 +889,7 @@ class Flight():
         self.ident:str = ""
         self.operator:dict = {}
         self.squawk:str = ""
+        self.squawk_count:int = 0
         self.broadcast:str = ""
         self.origin:dict = {}
         self.destination:dict = {}
@@ -953,7 +954,7 @@ class Flight():
 
         sqliteCur = localDb.cursor()
 
-        sqliteCur.execute("SELECT icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, broadcast, origin, destination, matched_rules  FROM flights WHERE icao_hex='" + self.icao_hex + "'")
+        sqliteCur.execute("SELECT icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, squawk_count, broadcast, origin, destination, matched_rules  FROM flights WHERE icao_hex='" + self.icao_hex + "'")
         result = sqliteCur.fetchall()
 
         if len(result) == 0:
@@ -970,6 +971,7 @@ class Flight():
         self.ident = result[0]['ident']
         self.operator = json.loads(result[0]['operator'])
         self.squawk = str(result[0]['squawk'])
+        self.squawk_count = str(result[0]['squawk_count'])
         self.broadcast = result[0]['broadcast']
         self.origin = json.loads(result[0]['origin'])
         self.destination = json.loads(result[0]['destination'])
@@ -987,8 +989,8 @@ class Flight():
        
         """Saves the flight data to the localDb."""
         sqliteCur = localDb.cursor()
-        sqlStatement = "REPLACE INTO flights (icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, broadcast, origin, destination, matched_rules) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
-        parameters = (self.icao_hex, self.first_message, self.last_message, self.total_messages, json.dumps(self.aircraft), self.ident, json.dumps(self.operator), self.squawk, self.broadcast, json.dumps(self.origin), json.dumps(self.destination), json.dumps(self.matched_rules))
+        sqlStatement = "REPLACE INTO flights (icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, squawk_count, broadcast, origin, destination, matched_rules) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        parameters = (self.icao_hex, self.first_message, self.last_message, self.total_messages, json.dumps(self.aircraft), self.ident, json.dumps(self.operator), self.squawk, self.squawk_count, self.broadcast, json.dumps(self.origin), json.dumps(self.destination), json.dumps(self.matched_rules))
         sqliteCur.execute(sqlStatement, parameters)
 
 
@@ -1189,10 +1191,12 @@ class Flight():
         if self.squawk != "":
 
             if str(value) in ['7500','7600','7700','7777']:
-                self.squawk = str(value)
-                
+                self.squawk_count = self.squawk_count + 1
+                if self.squawk_count >= 3:
+                    self.squawk = str(value)
             return
 
+        self.squawk_count = 0
         self.squawk = str(value)
         
 
