@@ -43,5 +43,5 @@
     "home_assistant":{
         "enabled" : false,
         "discovery_prefix" : "homeassistant"
-    },
+    }
 }
