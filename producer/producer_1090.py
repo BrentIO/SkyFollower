@@ -5,7 +5,6 @@ import time
 import threading
 from collections import deque
 import logging
-import logging.handlers as handlers
 import sys
 import os
 
@@ -15,6 +14,8 @@ TCP_PORT = int(os.getenv("TCP_PORT", "30002"))
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "skyfollower.adsb1090raw")
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # In-memory message queue for storing messages if RabbitMQ is disconnected
 message_queue = deque()
@@ -109,7 +110,25 @@ def setup():
     streamHandler.setFormatter(formatter)   
 
     logger.addHandler(streamHandler)
-    logger.setLevel(logging.INFO)
+
+    if LOG_LEVEL not in ['INFO', 'WARNING', 'ERROR', 'CRITICAL', 'DEBUG']:
+        LOG_LEVEL = "INFO"
+
+    if LOG_LEVEL == "INFO":
+        logger.setLevel(logging.INFO)
+
+    if LOG_LEVEL == "WARNING":
+        logger.setLevel(logging.WARNING)
+
+    if LOG_LEVEL == "ERROR":
+        logger.setLevel(logging.ERROR)
+
+    if LOG_LEVEL == "CRITICAL":
+        logger.setLevel(logging.CRITICAL)
+
+    if LOG_LEVEL == "DEBUG":
+        logger.setLevel(logging.DEBUG)
+
     logger.info("Application started.")
 
 
