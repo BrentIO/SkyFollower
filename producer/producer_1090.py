@@ -20,6 +20,7 @@ RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "skyfollower.adsb1090raw")
 message_queue = deque()
 message_event = threading.Event()  # Event to trigger async processing
 
+
 def rabbitmq_connect():
     connection = None
     channel = None
@@ -36,6 +37,7 @@ def rabbitmq_connect():
             logger.critical("Channel error. Reinitializing connection.")
             time.sleep(10)
     return connection, channel
+
 
 def send_to_rabbitmq():
     global message_queue
@@ -66,6 +68,7 @@ def send_to_rabbitmq():
         if not message_queue:
             message_event.clear()
 
+
 def handle_tcp_messages(sock_file):
     global message_queue
     for line in sock_file:
@@ -76,6 +79,7 @@ def handle_tcp_messages(sock_file):
         message_queue.append(payload)
         logger.debug(f"Received message: {payload['data']}")
         message_event.set()
+
 
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -90,6 +94,7 @@ def main():
         logger.info("\nShutting down...")
     finally:
         sock.close()
+
 
 def setup():
     
@@ -106,6 +111,7 @@ def setup():
     logger.addHandler(streamHandler)
     logger.setLevel(logging.INFO)
     logger.info("Application started.")
+
 
 if __name__ == "__main__":
     setup()
