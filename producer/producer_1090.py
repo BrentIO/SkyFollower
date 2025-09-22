@@ -15,8 +15,6 @@ TCP_PORT = int(os.getenv("TCP_PORT", "30002"))
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "skyfollower.adsb1090raw")
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
 # In-memory message queue for storing messages if RabbitMQ is disconnected
 message_queue = deque()
 message_event = threading.Event()  # Event to trigger async processing
@@ -111,23 +109,29 @@ def setup():
 
     logger.addHandler(streamHandler)
 
-    if LOG_LEVEL not in ['INFO', 'WARNING', 'ERROR', 'CRITICAL', 'DEBUG']:
-        LOG_LEVEL = "INFO"
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    if LOG_LEVEL == "INFO":
+    if log_level not in ["INFO", "WARNING", "ERROR", "CRITICAL", "DEBUG"]:
+        log_level = "INFO"
+
+    if log_level == "INFO":
         logger.setLevel(logging.INFO)
 
-    if LOG_LEVEL == "WARNING":
+    if log_level == "WARNING":
         logger.setLevel(logging.WARNING)
+        logger.log(logging.WARNING, f"Set log level to {log_level}")
 
-    if LOG_LEVEL == "ERROR":
+    if log_level == "ERROR":
         logger.setLevel(logging.ERROR)
+        logger.log(logging.ERROR, f"Set log level to {log_level}")
 
-    if LOG_LEVEL == "CRITICAL":
+    if log_level == "CRITICAL":
         logger.setLevel(logging.CRITICAL)
+        logger.log(logging.CRITICAL, f"Set log level to {log_level}")
 
-    if LOG_LEVEL == "DEBUG":
+    if log_level == "DEBUG":
         logger.setLevel(logging.DEBUG)
+        logger.log(logging.DEBUG, f"Set log level to {log_level}")
 
     logger.info("Application started.")
 

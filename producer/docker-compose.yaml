@@ -7,5 +7,4 @@ services:
       - RABBITMQ_QUEUE=skyfollower.1090
       - TCP_HOST=localhost
       - TCP_PORT=30002
-      - LOG_LEVEL=INFO
     restart: unless-stopped
