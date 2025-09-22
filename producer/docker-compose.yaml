@@ -1,0 +1,10 @@
+services:
+  skyfollower-producer1090:
+    image: brentio/skyfollower-producer-1090:latest
+    container_name: skyfollower-producer1090
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_QUEUE=skyfollower.1090
+      - TCP_HOST=localhost
+      - TCP_PORT=30002
+    restart: unless-stopped
