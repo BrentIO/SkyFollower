@@ -18,10 +18,17 @@ You should install RabbitMQ on a separate system.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-curl -fsSL https://get.docker.com | sh
+sudo apt install -y git
+```
+
+Get Docker from their website:
+```bash
+curl -sSL https://get.docker.com | sh
+```
+
+Make curent user part of the docker group:
+```bash
 sudo usermod -aG docker $USER
-newgrp docker
-sudo apt install -y docker-compose git
 ```
 
 Verify:
@@ -47,55 +54,27 @@ sudo chmod -R g+w /opt/SkyFollower
 
 ## Deploy the Project
 
-1. **Download or copy the project files**  
-   Clone from GitHub (see section below):
+1. **Clone from GitHub:**
    ```bash
    git clone https://github.com/BrentIO/SkyFollower.git
-   cd /opt/SkyFollower/producer
    ```
 
-Create the docker compose yaml:
-```bash
-nano /opt/SkyFollower/docker-compose.yaml
-```
+2. **Modify the docker compose yaml as necssary:**
+   ```bash
+   nano /opt/SkyFollower/docker-compose.yaml
+   ```
 
-2. **Start the containers**
+3. **Start the containers**
    ```bash
    docker compose up -d
    ```
 
----
-
-## Environment Variables
-
-You can override defaults in `docker-compose.yaml`:
-
-- `RABBITMQ_HOST` (default `rabbitmq`)
-- `RABBITMQ_QUEUE` (default `skyfollower.1090`)
-- `TCP_HOST` (default `localhost`)
-- `TCP_PORT` (default `30002`)
-
-Example run with overrides:
-
-```bash
-RABBITMQ_HOST=192.168.1.50 TCP_HOST=feed.example.com docker-compose up -d
-```
+4. **Monitor logs**
+   ```bash
+   docker logs -f skyfollower-producer1090
+   ```
 
 ---
-
-
-
-
-
-## Updating
-
-To update your containerized service:
-
-```bash
-git pull   # if using GitHub
-docker-compose down
-docker-compose up -d --build
-```
 
 ## Component Diagram
 ```plantuml
@@ -198,7 +177,6 @@ localQueueRader1090 -left[hidden]- queue1090
 
 ```
 
-
 ## Sequence Diagram
 
 ```plantuml
@@ -297,9 +275,7 @@ end
 @enduml
 
 ```
-
-
-To build the image:
+# Build the image from scratch
 ```bash
 docker buildx build --platform=linux/amd64,linux/arm64/v8 --push -t brentio/skyfollower-producer-1090:latest .
 ```
