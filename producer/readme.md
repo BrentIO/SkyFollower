@@ -56,12 +56,17 @@ sudo chmod -R g+w /opt/SkyFollower
 
 1. **Clone from GitHub:**
    ```bash
-   git clone https://github.com/BrentIO/SkyFollower.git
+   git clone https://github.com/BrentIO/SkyFollower.git /opt/SkyFollower
    ```
 
 2. **Modify the docker compose yaml as necssary:**
    ```bash
-   nano /opt/SkyFollower/docker-compose.yaml
+   nano /opt/SkyFollower/producer/docker-compose.yaml
+   ```
+
+3.  **Change to the directory**
+   ```bash
+   cd /opt/SkyFollower/producer
    ```
 
 3. **Start the containers**
