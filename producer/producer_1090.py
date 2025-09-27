@@ -11,9 +11,8 @@ import os
 # --- Configuration from ENV vars (with defaults) ---
 TCP_HOST = os.getenv("TCP_HOST", "localhost")
 TCP_PORT = int(os.getenv("TCP_PORT", "30002"))
-
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "skyfollower.adsb1090raw")
+RABBITMQ_QUEUE = os.getenv("RABBITMQ_QUEUE", "skyfollower.1090")
 
 # In-memory message queue for storing messages if RabbitMQ is disconnected
 message_queue = deque()
