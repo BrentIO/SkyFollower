@@ -276,6 +276,19 @@ end
 
 ```
 # Build the image from scratch
+
+Enable QEMU emulation
+```bash
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+```
+
+Create a Buildx Builder Instance
+```bash
+docker buildx create --name mybuilder --use
+docker buildx inspect --bootstrap
+```
+
+Build the images
 ```bash
 docker buildx build --platform=linux/amd64,linux/arm64/v8 --push -t brentio/skyfollower-producer-1090:latest .
 ```
