@@ -137,8 +137,6 @@ def setup():
         logger.setLevel(logging.DEBUG)
         logger.log(logging.DEBUG, f"Set log level to {log_level}")
 
-
-
     if COUNT_PROCS_CONSUMER_1090 < 1:
         logger.error("COUNT_PROCS_CONSUMER_1090 must be >= 1")
         sys.exit(-1)
