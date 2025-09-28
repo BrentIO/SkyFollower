@@ -98,7 +98,7 @@ def setup():
     
     global logger
 
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger()
     formatter = logging.Formatter(
         '%(asctime)s [%(levelname)s] - %(message)s'
