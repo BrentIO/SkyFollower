@@ -9,11 +9,13 @@ import sys
 import redis
 from redis.commands.json.path import Path
 import redis.exceptions
+import re
 
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", 5672)
 RABBITMQ_QUEUE_ROOT = os.getenv("RABBITMQ_QUEUE", "skyfollower.1090")
+RABBITMQ_QUEUE_PERSIST = os.getenv("RABBITMQ_QUEUE_PERSIST", "skyfollower.persist")
 LATITUDE = float(os.getenv("LATITUDE", 0))
 LONGITUDE = float(os.getenv("LONGITUDE", 0))
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -25,11 +27,24 @@ RABBITMQ_QUEUE = f"{RABBITMQ_QUEUE_ROOT}.{ID_PROC_CONSUMER_1090}"
 
 redisClient = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 
+
+lastStatOutput = 0
+
+
 def callback(ch, method, properties, body):
 
+    global lastStatOutput
+
     try:
+        stats.increment_message_count()
         message = json.loads(body.decode("utf-8"))
         messageProcessor(message)
+
+        currentTime = int(time.time() * 1000)
+
+        if currentTime - lastStatOutput > 10000:
+            stats.publish()
+            lastStatOutput = currentTime
 
     except Exception as e:
         logger.error(f"Failed to process message: {e}")
@@ -108,35 +123,49 @@ def messageProcessor(raw_message:dict):
             if typeCode == 31:
                 data['adsb_version'] = pms.adsb.version(message)
 
-
-        if redisClient.json().set(f"flight:info:{str(data['icao_hex']).upper()}", Path.root_path(), {"first_message": data['time'], "last_message": data['time']}, nx=True) == True:
-            redisClient.json().set(f"flight:velocities:{str(data['icao_hex']).upper()}", Path.root_path(), [], nx=True)
-            redisClient.json().set(f"flight:positions:{str(data['icao_hex']).upper()}", Path.root_path(), [], nx=True)
+        flight = Flight(data['icao_hex'],data['time'])
 
         if all(key in data for key in ['velocity', 'heading', 'vertical_speed']):
-            redisClient.json().arrappend(f"flight:velocities:{str(data['icao_hex']).upper()}", Path.root_path(), {"time": data['time'], "velocity": data['velocity'], "heading": data['heading'], "vertical_speed": data['vertical_speed']})
+            flight.addVelocity(Velocity(timestamp=data['time'],velocity=data['velocity'],heading=data['heading'],vertical_speed=data['vertical_speed']))
 
         if all(key in data for key in ['latitude', 'longitude', 'altitude']):
-            redisClient.json().arrappend(f"flight:positions:{str(data['icao_hex']).upper()}", Path.root_path(), {"time": data['time'], "latitude": data['latitude'], "longitude": data['longitude'], "altitude": data['altitude']})
+            flight.addPosition(Position(timestamp=data['time'],latitude=data['latitude'],longitude=data['longitude'],altitude=data['altitude']))
+
+        if "squawk" in data:
+            flight.setSquawk(data['squawk'])
+
+        if "category" in data:
+            flight.setCategory(data['category'])
+
+        if "ident" in data:
+            flight.setIdent(data['ident'])
+
+        if "adsb_version" in data:
+            flight.setAdsbVersion(data['adsb_version'])
+
+        if "broadcast" in data:
+            flight.setBroadcast(data['broadcast'])
+
+        flight.evaluateRules()
+        flight.saveLocal()
 
 
     except redis.exceptions.RedisError as redisError:
-        print("Redis Error " + str(redisError) )
+        print(f"Redis Error {redisError}")
         
 
     except Exception as ex:
-        logger.error("Exception of type: " + type(ex).__name__ + " while processing message [" + str(message) + "] : " + str(ex))
+        logger.error(f"Exception of type: {type(ex).__name__} while processing message [{message}] : {ex}")
         pass
 
 
 class Flight():
     """Flight Record"""
 
-    def __init__(self) -> None:
-        self.exists:bool = False
-        self.icao_hex:str = ""
-        self.first_message:int = 0
-        self.last_message:int = 0
+    def __init__(self, icao_hex, message_time) -> None:
+        self.icao_hex:str = str(icao_hex).upper().strip()
+        self.first_message:int = message_time
+        self.last_message:int = message_time
         self.total_messages:int = 0
         self.aircraft:dict = {}
         self.ident:str = ""
@@ -150,13 +179,28 @@ class Flight():
         self.velocities:list[Velocity] = []
         self.matched_rules:list[str] = []
 
+        if self.icao_hex == "":
+            raise Exception("ICAO Hex is empty")
+        
+        if redisClient.json().set(f"flight:info:{self.icao_hex}", Path.root_path(), {"first_message": self.first_message, "last_message": self.last_message, "total_messages": self.total_messages}, nx=True) == True:
+            #Key does not exist in Redis
+            redisClient.json().set(f"flight:velocities:{self.icao_hex}", Path.root_path(), [], nx=True)
+            redisClient.json().set(f"flight:positions:{self.icao_hex}", Path.root_path(), [], nx=True)
+
+            self._getAircraft()
+
+        else:
+            #Key exists in Redis
+            self.get()
+            self.last_message = message_time
+            self.total_messages = self.total_messages + 1
+
 
     def toDict(self) -> dict:
 
         record = {}
-        record['icao_hex'] = self.icao_hex
-        record['first_message'] = datetime.utcfromtimestamp(self.first_message)
-        record['last_message'] = datetime.utcfromtimestamp(self.last_message)
+        record['first_message'] = self.first_message
+        record['last_message'] = self.last_message
         record['total_messages'] = self.total_messages
 
         if self.aircraft != {}:
@@ -177,78 +221,70 @@ class Flight():
         if self.broadcast != "":
             record['broadcast'] = self.broadcast
 
-        record['origin'] = self.origin
+        if self.origin != {}:
+            record['origin'] = self.origin
 
-        record['destination'] = self.destination         
+        if self.destination != {}:
+            record['destination'] = self.destination         
 
-        if len(self.matched_rules) > 0 and settings['log_level'] == "debug":
+        if len(self.matched_rules) > 0:
             record['matched_rules'] = self.matched_rules
-
-        if len(self.positions) > 0:
-            record['positions'] = []
-
-            for position in self.positions:
-                record['positions'].append(position.toDict())
-
-        if len(self.velocities) > 0:
-            record['velocities'] = []
-
-            for velocity in self.velocities:
-                record['velocities'].append(velocity.toDict())
 
         return record
 
 
     def get(self, limit_position:bool = True, limit_velocity:bool = True):
+        
         """Retrieves the given ICAO HEX from the local database.
         If no records are found, False is returned.
         If records are returned, True is returned and the object is populated from the database.
         """
 
-        sqliteCur = localDb.cursor()
+        result = redisClient.json().get(f"flight:info:{self.icao_hex}")
 
-        sqliteCur.execute("SELECT icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, squawk_count, broadcast, origin, destination, matched_rules  FROM flights WHERE icao_hex='" + self.icao_hex + "'")
-        result = sqliteCur.fetchall()
+        self.first_message = result['first_message']
+        self.last_message = result['last_message']
+        self.total_messages = result['total_messages']
 
-        if len(result) == 0:
-            self.exists = False
-            logger.debug("ICAO HEX " + self.icao_hex + " will be added to localDb.")
-            return
 
-        self.exists = True
-        self.icao_hex = result[0]['icao_hex']
-        self.first_message = result[0]['first_message']
-        self.last_message = result[0]['last_message']
-        self.total_messages = result[0]['total_messages']
-        self.aircraft = json.loads(result[0]['aircraft'])
-        self.ident = result[0]['ident']
-        self.operator = json.loads(result[0]['operator'])
-        self.squawk = str(result[0]['squawk'])
-        self.squawk_count = str(result[0]['squawk_count'])
-        self.broadcast = result[0]['broadcast']
-        self.origin = json.loads(result[0]['origin'])
-        self.destination = json.loads(result[0]['destination'])
-        self.matched_rules = json.loads(result[0]['matched_rules'])
-        self.positions = []
-        self.velocities = []
+        if "aircraft" in result:
+            self.aircraft = result['aircraft']
 
-        self._getPositions(limit_position)
-        self._getVelocities(limit_velocity)    
-        
-        return True
+        if "ident" in result:
+            self.ident = result['ident']
+
+        if "operator" in result:
+            self.operator = result['operator']
+
+        if "squawk" in result:
+            self.squawk = str(result['squawk'])
+
+        if "squawk_count" in result:
+            self.squawk_count = str(result['squawk_count'])
+
+        if "broadcast" in result:
+            self.broadcast = result['broadcast']
+
+        if "origin" in result:
+            self.origin = result['origin']
+
+        if "destination" in result:
+            self.destination = result['destination']
+
+        if "matched_rules" in result:
+            self.matched_rules = result['matched_rules']
+
+        #self._getPositions(limit_position)
+        #self._getVelocities(limit_velocity)    
 
 
     def saveLocal(self):
-       
-        """Saves the flight data to the localDb."""
-        sqliteCur = localDb.cursor()
-        sqlStatement = "REPLACE INTO flights (icao_hex, first_message, last_message, total_messages, aircraft, ident, operator, squawk, squawk_count, broadcast, origin, destination, matched_rules) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        parameters = (self.icao_hex, self.first_message, self.last_message, self.total_messages, json.dumps(self.aircraft), self.ident, json.dumps(self.operator), self.squawk, self.squawk_count, self.broadcast, json.dumps(self.origin), json.dumps(self.destination), json.dumps(self.matched_rules))
-        sqliteCur.execute(sqlStatement, parameters)
+        redisClient.json().set(f"flight:info:{self.icao_hex}", Path.root_path(), self.toDict())
 
 
     def persist(self):
         """Persists the data to the remote data store."""
+        return
 
         if settings['mongoDb']['enabled'] == False:
             return
@@ -287,6 +323,7 @@ class Flight():
 
     def delete(self):
         """Deletes the object from the localDb."""
+        return
 
         sqliteCur = localDb.cursor()
         sqliteCur.execute("DELETE FROM flights WHERE icao_hex ='" + self.icao_hex + "'")
@@ -297,6 +334,7 @@ class Flight():
     def _getPositions(self, limit:bool=True):
         """Retrieves position reports for the current aircraft.
         If limit is True, only the last message is returned."""
+        return
 
         sql = "SELECT timestamp, latitude, longitude, altitude FROM positions WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
 
@@ -315,28 +353,17 @@ class Flight():
 
 
     def addPosition(self, position:'Position'):
-        
-        sqliteCur = localDb.cursor()
-        sqlStatement = "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) VALUES (?,?,?,?,?)"
-        parameters = (self.icao_hex, position.timestamp, position.latitude, position.longitude, position.altitude)
-        sqliteCur.execute(sqlStatement, parameters)
-
-        self.positions.append(position)
+        redisClient.json().arrappend(f"flight:positions:{self.icao_hex}", Path.root_path(), {"time": position.timestamp, "latitude": position.latitude, "longitude": position.longitude, "altitude": position.altitude})
 
 
-    def addVelocity(self, velocity:'Velocity'):
-        
-        sqliteCur = localDb.cursor()
-        sqlStatement = "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) VALUES (?,?,?,?,?)"
-        parameters = (self.icao_hex, velocity.timestamp, velocity.velocity, velocity.heading, velocity.vertical_speed)
-        sqliteCur.execute(sqlStatement, parameters)
-
-        self.velocities.append(velocity)
+    def addVelocity(self, velocity:'Velocity'): 
+        redisClient.json().arrappend(f"flight:velocities:{self.icao_hex}", Path.root_path(), {"time": velocity.timestamp, "velocity": velocity.velocity, "heading": velocity.heading, "vertical_speed": velocity.vertical_speed})
 
 
     def _getVelocities(self, limit:bool=True):
         """Retrieves velocity reports for the current aircraft.
         If limit is True, only the last message is returned."""
+        return
 
         sql = "SELECT * FROM velocities WHERE icao_hex='" + self.icao_hex + "' ORDER BY timestamp"
 
@@ -352,26 +379,17 @@ class Flight():
 
 
     def _getAircraft(self):
-
-        if self.aircraft != {}:
+        
+        if self.icao_hex == "":
             return
+        
+        result = redisClient.json().get(f"aircraft:icao_hex:{self.icao_hex}")
 
-        self.aircraft['icao_hex'] = self.icao_hex
-
-        r = requests.get(settings['registration']['uri'].replace("$ICAO_HEX$", str(self.icao_hex)), headers={'x-api-key': settings['registration']['x-api-key']})
-
-        if r.status_code == 200:
-            self.aircraft = json.loads(r.text)
-            return 
-
-        if r.status_code == 404:
-            logger.debug("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
+        if result != None:
+            self.aircraft = result
+        else:
             stats.increment_registration_unknown_count()
-            return
 
-        logger.info("Unable to get registration details for " + str(self.icao_hex) +"; _getAircraft returned " + str(r.status_code))
-        stats.increment_registration_unknown_count()
-        return
 
     def setIdent(self, value:str):
 
@@ -388,50 +406,29 @@ class Flight():
         self._getOperator()
 
 
-    def setIcao_hex(self, value:str, limit_position:bool = True, limit_velocity:bool = True):
-
-        value = value.strip()
-
-        if self.icao_hex != "":
-            return
-
-        self.icao_hex = value
-
-        self.get(limit_position = limit_position, limit_velocity = limit_velocity)
-
-        if self.exists == False:
-            self._getAircraft()
-
-
     def setCategory(self, value:int):
 
-        if value == 1:
-            self.aircraft['wake_turbulence_category'] = "Light"
-            return
+        match value:
+            case 1:
+                self.aircraft['wake_turbulence_category'] = "Light"
 
-        if value == 2:
-            self.aircraft['wake_turbulence_category'] = "Medium 1"
-            return
+            case 2:
+                self.aircraft['wake_turbulence_category'] = "Medium 1"
 
-        if value == 3:
-            self.aircraft['wake_turbulence_category'] = "Medium 2"
-            return
+            case 3:
+                self.aircraft['wake_turbulence_category'] = "Medium 2"
 
-        if value == 4:
-            self.aircraft['wake_turbulence_category'] = "High Vortex Aircraft"
-            return
+            case 4:
+                self.aircraft['wake_turbulence_category'] = "High Vortex Aircraft"
 
-        if value == 5:
-            self.aircraft['wake_turbulence_category'] = "Heavy"
-            return
+            case 5:
+                self.aircraft['wake_turbulence_category'] = "Heavy"
 
-        if value == 6:
-            self.aircraft['wake_turbulence_category'] = "High Performance"
-            return
+            case 6:
+                self.aircraft['wake_turbulence_category'] = "High Performance"
 
-        if value == 7:
-            self.aircraft['wake_turbulence_category'] = "Rotorcraft"
-            return
+            case 7:
+                self.aircraft['wake_turbulence_category'] = "Rotorcraft"
 
 
     def setSquawk(self, value:str):
@@ -475,9 +472,6 @@ class Flight():
 
     def _getOperator(self):
 
-        if settings['operators']['enabled'] != True:
-            return
-
         if "registration" in self.aircraft:
             if self.aircraft['registration'].replace("-", "") == self.ident.replace("-", ""):
                 return
@@ -509,24 +503,17 @@ class Flight():
         if len(value) < 2:
             logger.debug("value length is less than 2 " + str(self.ident))
             return
-
-        r = requests.get(settings['operators']['uri'].replace("$IDENT$", value), headers={'x-api-key': settings['operators']['x-api-key']})
-
-        if r.status_code == 200:
-            self.operator = r.json()
-            return
-
-        if r.status_code == 404:
-            logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
-            stats.increment_operator_unknown_count()
-            return
         
-        logger.debug("Operator details unavailable for " + str(value) +"; service returned " + str(r.status_code))
-        stats.increment_operator_unknown_count()
-        return
+        result = redisClient.json().get(f"operators:{value}")
+
+        if result != None:
+            self.operator = result
+        else:
+            stats.increment_operator_unknown_count()
 
 
     def _getFlightInfo(self):
+        return
         
         if settings['flights']['enabled'] != True:
             return
@@ -548,6 +535,7 @@ class Flight():
 
 
     def evaluateRules(self):
+        return
 
         global rulesEngine
 
@@ -600,6 +588,7 @@ class Flight():
 
     def persistStaleFlights(self, all_flights_stale:bool=False):
         """Persists stale flights.  If requested, considers all flights to be stale."""
+        return
 
         sqliteCur = localDb.cursor()
 
@@ -665,17 +654,142 @@ class Velocity(dict):
             "heading": self.heading,
             "vertical_speed": self.vertical_speed
         }
-       
 
 
+class statistics():
+
+    def __init__(self):
+        self.count_flights_hour = 0
+        self.count_flights_today = 0
+        self.count_flights_lifetime = 0
+        self.count_messages_hour = 0
+        self.count_messages_today = 0
+        self.count_messages_lifetime = 0
+        self.time_start = int(time.time())
+        self.count_operator_unknown_today = 0
+        self.count_operator_unknown_lifetime = 0
+        self.count_registration_unknown_today = 0
+        self.count_registration_unknown_lifetime = 0
+        self.message_handling_high_water_mark_ms = 0
+        self.message_queue_depth = 0
+        self.rule_evaluation_high_water_mark_ms = 0
+        self.count_messages = 0
+        self.lastPublished = time.time()
+        self.count_messages_throttled = 0
+
+    def set_message_handling_high_water_mark(self, value):
+        if value > self.message_handling_high_water_mark_ms:
+            self.message_handling_high_water_mark_ms = value
+
+    def get_message_count_per_second(self):
+        if (time.time() - self.lastPublished) > 0:
+            return int(self.count_messages / (time.time() - self.lastPublished))
+        else:
+            return 0
+
+    def set_message_queue_depth(self, value):
+        if value > self.message_queue_depth:
+            self.message_queue_depth = value
+
+    def set_rule_evaluation_high_water_mark(self, value):
+        if value > self.rule_evaluation_high_water_mark_ms:
+            self.rule_evaluation_high_water_mark_ms = value       
 
 
+    def list(self):
 
+        return [
+            {"name": "count_flights_hour", "description": "Flight Count Last Hour", "value" : self.count_flights_hour, "type" : "count"},
+            {"name": "count_flights_today", "description": "Flight Count Today","value" : self.count_flights_today, "type" : "count"},
+            {"name": "count_flights_lifetime", "description": "Flight Count Total","value" : self.count_flights_lifetime, "type" : "count"},
+            {"name": "count_messages_hour", "description": "Message Count Last Hour","value" : self.count_messages_hour, "type" : "count"},
+            {"name": "count_messages_today", "description": "Message Count Today","value" : self.count_messages_today, "type" : "count"},
+            {"name": "count_messages_lifetime", "description": "Message Count Total","value" : self.count_messages_lifetime, "type" : "count"},
+            {"name": "count_messages_throttled", "description": "Messages Throttled to Improve Performance","value" : self.count_messages_throttled, "type" : "count"},
+            {"name": "count_operator_unknown_today", "description": "Operator Unknown Count Today","value" : self.count_operator_unknown_today, "type" : "count"},
+            {"name": "count_operator_unknown_lifetime", "description": "Operator Unknown Count Total","value" : self.count_operator_unknown_lifetime, "type" : "count"},
+            {"name": "count_registration_unknown_today", "description": "Registration Unknown Count Today","value" : self.count_registration_unknown_today, "type" : "count"},
+            {"name": "count_registration_unknown_lifetime", "description": "Registration Unknown Count Total","value" : self.count_registration_unknown_lifetime, "type" : "count"},
+            {"name": "message_handling_high_water_mark_ms", "description": "Message Processing Delay High Water Mark", "value" : self.message_handling_high_water_mark_ms, "type" : "time_ms"},
+            {"name": "message_queue_depth", "description": "Message Queue Depth High Water Mark", "value" : self.message_queue_depth, "type" : "queue"},
+            {"name": "count_messages_second", "description": "Message Rate", "value" : self.get_message_count_per_second(), "type" : "time_per_sec"},
+            {"name": "rule_evaluation_high_water_mark_ms", "description": "Rule Evaluation Duration High Water Mark", "value" : self.rule_evaluation_high_water_mark_ms, "type" : "time_ms"},
+            {"name": "time_start", "description": "Start Time","value" : self.time_start, "type" : "timestamp"},
+            {"name": "uptime", "description": "Uptime","value" : int(time.time() - self.time_start), "type" : "uptime"}
+        ]
+
+
+    def reset_today(self):
+        self.count_flights_today = 0
+        self.count_messages_today = 0
+        self.count_operator_unknown_today = 0
+        self.count_registration_unknown_today = 0
+        self.reset_hour()
+
+
+    def reset_hour(self):
+        self.count_flights_hour = 0
+        self.count_messages_hour = 0
+            
+
+    def reset_on_publish(self):
+        self.message_handling_high_water_mark_ms = 0
+        self.message_queue_depth = 0
+        self.rule_evaluation_high_water_mark_ms = 0
+        self.count_messages = 0
+        self.count_messages_throttled = 0
+
+
+    def increment_flights_count(self):
+        self.count_flights_hour = self.count_flights_hour + 1
+        self.count_flights_today = self.count_flights_today + 1
+        self.count_flights_lifetime = self.count_flights_lifetime + 1
+
+
+    def increment_message_count(self):
+        self.count_messages = self.count_messages + 1
+        self.count_messages_hour = self.count_messages_hour + 1
+        self.count_messages_today = self.count_messages_today + 1
+        self.count_messages_lifetime = self.count_messages_lifetime + 1
+
+
+    def increment_throttled_message_count(self):
+        self.count_messages_throttled = self.count_messages_throttled + 1
+
+
+    def increment_operator_unknown_count(self):
+        self.count_operator_unknown_today = self.count_operator_unknown_today + 1
+        self.count_operator_unknown_lifetime = self.count_operator_unknown_lifetime + 1
+
+
+    def increment_registration_unknown_count(self):
+        self.count_registration_unknown_today = self.count_registration_unknown_today + 1
+        self.count_registration_unknown_lifetime = self.count_registration_unknown_lifetime + 1
+
+
+    def publish(self):
+        print(("---------------------------------------------------------------------------------------------------------------------------------------"))
+
+        print(json.dumps(self.list(), indent=4))
+
+        #for stat in self.list():
+        #    logger.debug("Statistic: " + stat['name'] + ": " + str(stat['value']))
+
+            #if mqttClient.is_connected():
+            #    mqttClient.publish(settings["mqtt"]["topic_statistics"] + stat['name'], stat['value'])
+
+        #Reset the statistics
+        self.reset_on_publish()
+        self.lastPublished = time.time()
 
 
 def setup():
 
     global logger
+    global stats
+    global lastStatOutput
+
+    lastStatOutput = 0
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger()
@@ -712,6 +826,8 @@ def setup():
         logger.log(logging.DEBUG, f"Set log level to {log_level}")
 
     logger.info("Application started.")
+
+    stats = statistics()
 
 
 if __name__ == "__main__":
