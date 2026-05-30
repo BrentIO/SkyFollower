@@ -1,0 +1,1089 @@
+#!/usr/bin/env python3
+"""
+SkyFollower Message Processor
+
+Consumes raw ADS-B/UAT messages from a RabbitMQ queue, maintains per-aircraft
+flight state in SQLite (in-memory), enriches with Redis lookups, runs the
+rules engine, publishes MQTT notifications, and hands completed flights to the
+archive queue.
+
+One container = one processor instance.  PROCESSOR_ID is set via the
+environment variable of the same name.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import logging.handlers
+import os
+import re
+import signal
+import sqlite3
+import sys
+import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
+from typing import Optional
+
+import paho.mqtt.client as mqtt
+import pika
+import pyModeS as pms
+import redis as redis_lib
+
+from processor.rules_engine import RulesEngine
+from shared.models import (
+    AircraftRecord,
+    CompletedFlight,
+    FlightEnrichment,
+    InboundMessage,
+    OperatorRecord,
+    Position,
+    Velocity,
+    generate_flight_id,
+)
+from shared.redis_keys import (
+    config_areas_version_key,
+    config_rules_version_key,
+    flight_key,
+    icao_hex_key,
+    metrics_aircraft_type_misses_key,
+    metrics_registration_misses_key,
+    operator_key,
+    processor_heartbeat_key,
+    registration_key,
+)
+
+logger = logging.getLogger("processor")
+
+# ---------------------------------------------------------------------------
+# US registration regex (skip operator lookup for tail numbers)
+# ---------------------------------------------------------------------------
+_US_REG_RE = re.compile(
+    r"^[LT]?N[CXR]?[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$"
+)
+
+
+# ---------------------------------------------------------------------------
+# SQLite schema (in-memory)
+# ---------------------------------------------------------------------------
+_SCHEMA = """
+CREATE TABLE flights (
+    icao_hex      TEXT PRIMARY KEY,
+    first_message REAL NOT NULL,
+    last_message  REAL,
+    total_messages INTEGER,
+    aircraft      TEXT,
+    ident         TEXT,
+    operator      TEXT,
+    squawk        TEXT,
+    origin        TEXT,
+    destination   TEXT,
+    matched_rules TEXT,
+    source        TEXT
+);
+CREATE TABLE positions (
+    icao_hex  TEXT,
+    timestamp REAL,
+    latitude  REAL,
+    longitude REAL,
+    altitude  INTEGER
+);
+CREATE TABLE velocities (
+    icao_hex      TEXT,
+    timestamp     REAL,
+    velocity      REAL,
+    heading       REAL,
+    vertical_speed INTEGER
+);
+CREATE INDEX positions_icao_hex  ON positions  (icao_hex);
+CREATE INDEX velocities_icao_hex ON velocities (icao_hex);
+"""
+
+# ---------------------------------------------------------------------------
+# Message rate tracker (30-second rolling window)
+# ---------------------------------------------------------------------------
+
+class _RateTracker:
+    def __init__(self, window: int = 30) -> None:
+        self._window = window
+        self._timestamps: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def record(self) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._timestamps.append(now)
+            cutoff = now - self._window
+            while self._timestamps and self._timestamps[0] < cutoff:
+                self._timestamps.popleft()
+
+    def rate(self) -> float:
+        now = time.monotonic()
+        with self._lock:
+            cutoff = now - self._window
+            while self._timestamps and self._timestamps[0] < cutoff:
+                self._timestamps.popleft()
+            return len(self._timestamps) / self._window
+
+
+# ---------------------------------------------------------------------------
+# Processing time tracker (rolling average)
+# ---------------------------------------------------------------------------
+
+class _TimeTracker:
+    def __init__(self) -> None:
+        self._total_ms = 0.0
+        self._count = 0
+        self._hwm_ms = 0
+        self._lock = threading.Lock()
+
+    def record(self, ms: float) -> None:
+        with self._lock:
+            self._total_ms += ms
+            self._count += 1
+
+    def record_hwm(self, ms: float) -> None:
+        with self._lock:
+            if ms > self._hwm_ms:
+                self._hwm_ms = ms
+
+    def avg_ms(self) -> float:
+        with self._lock:
+            if self._count == 0:
+                return 0.0
+            return self._total_ms / self._count
+
+    def hwm_ms_and_reset(self) -> int:
+        with self._lock:
+            v = self._hwm_ms
+            self._hwm_ms = 0
+            return v
+
+    def reset(self) -> None:
+        with self._lock:
+            self._total_ms = 0.0
+            self._count = 0
+
+
+# ---------------------------------------------------------------------------
+# Flight — wraps SQLite state
+# ---------------------------------------------------------------------------
+
+class Flight:
+    """
+    In-memory view of one aircraft's active flight.  Reads from / writes to
+    the shared SQLite connection.
+    """
+
+    __slots__ = (
+        "icao_hex", "first_message", "last_message", "total_messages",
+        "aircraft", "ident", "operator", "squawk", "origin", "destination",
+        "matched_rules", "source", "positions", "velocities", "_db",
+    )
+
+    def __init__(self, db: sqlite3.Connection) -> None:
+        self._db = db
+        self.icao_hex: str = ""
+        self.first_message: float = 0.0
+        self.last_message: float = 0.0
+        self.total_messages: int = 0
+        self.aircraft: dict = {}
+        self.ident: str = ""
+        self.operator: dict = {}
+        self.squawk: str = ""
+        self.origin: Optional[str] = None
+        self.destination: Optional[str] = None
+        self.matched_rules: list[str] = []
+        self.source: str = ""
+        self.positions: list[Position] = []
+        self.velocities: list[Velocity] = []
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def load(self, icao_hex: str, limit: bool = True) -> bool:
+        """Load flight from SQLite. Returns True if found."""
+        self.icao_hex = icao_hex.upper()
+        cur = self._db.cursor()
+        cur.execute(
+            "SELECT icao_hex, first_message, last_message, total_messages, "
+            "aircraft, ident, operator, squawk, origin, destination, "
+            "matched_rules, source FROM flights WHERE icao_hex=?",
+            (self.icao_hex,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False
+
+        self.first_message = row["first_message"]
+        self.last_message = row["last_message"]
+        self.total_messages = row["total_messages"]
+        self.aircraft = json.loads(row["aircraft"] or "{}")
+        self.ident = row["ident"] or ""
+        self.operator = json.loads(row["operator"] or "{}")
+        self.squawk = row["squawk"] or ""
+        self.origin = row["origin"]
+        self.destination = row["destination"]
+        self.matched_rules = json.loads(row["matched_rules"] or "[]")
+        self.source = row["source"] or ""
+
+        self._load_positions(limit=limit)
+        self._load_velocities(limit=limit)
+        return True
+
+    def _load_positions(self, limit: bool) -> None:
+        sql = ("SELECT timestamp, latitude, longitude, altitude "
+               "FROM positions WHERE icao_hex=? ORDER BY timestamp")
+        if limit:
+            sql += " DESC LIMIT 1"
+        cur = self._db.cursor()
+        cur.execute(sql, (self.icao_hex,))
+        self.positions = [
+            Position(timestamp=r["timestamp"], latitude=r["latitude"],
+                     longitude=r["longitude"], altitude=r["altitude"])
+            for r in cur.fetchall()
+        ]
+
+    def _load_velocities(self, limit: bool) -> None:
+        sql = ("SELECT timestamp, velocity, heading, vertical_speed "
+               "FROM velocities WHERE icao_hex=? ORDER BY timestamp")
+        if limit:
+            sql += " DESC LIMIT 1"
+        cur = self._db.cursor()
+        cur.execute(sql, (self.icao_hex,))
+        self.velocities = [
+            Velocity(timestamp=r["timestamp"], velocity=r["velocity"],
+                     heading=r["heading"], vertical_speed=r["vertical_speed"])
+            for r in cur.fetchall()
+        ]
+
+    def save(self) -> None:
+        cur = self._db.cursor()
+        cur.execute(
+            "REPLACE INTO flights (icao_hex, first_message, last_message, "
+            "total_messages, aircraft, ident, operator, squawk, origin, "
+            "destination, matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                self.icao_hex, self.first_message, self.last_message,
+                self.total_messages, json.dumps(self.aircraft), self.ident,
+                json.dumps(self.operator), self.squawk,
+                self.origin, self.destination,
+                json.dumps(self.matched_rules), self.source,
+            ),
+        )
+
+    def delete(self) -> None:
+        cur = self._db.cursor()
+        cur.execute("DELETE FROM flights   WHERE icao_hex=?", (self.icao_hex,))
+        cur.execute("DELETE FROM positions WHERE icao_hex=?", (self.icao_hex,))
+        cur.execute("DELETE FROM velocities WHERE icao_hex=?", (self.icao_hex,))
+
+    def add_position(self, pos: Position) -> None:
+        cur = self._db.cursor()
+        cur.execute(
+            "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) "
+            "VALUES (?,?,?,?,?)",
+            (self.icao_hex, pos.timestamp, pos.latitude, pos.longitude, pos.altitude),
+        )
+        self.positions.append(pos)
+
+    def add_velocity(self, vel: Velocity) -> None:
+        cur = self._db.cursor()
+        cur.execute(
+            "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) "
+            "VALUES (?,?,?,?,?)",
+            (self.icao_hex, vel.timestamp, vel.velocity, vel.heading, vel.vertical_speed),
+        )
+        self.velocities.append(vel)
+
+    # ------------------------------------------------------------------
+    # Serialisation to CompletedFlight (for archive queue)
+    # ------------------------------------------------------------------
+
+    def to_completed_flight(self, load_all: bool = False) -> CompletedFlight:
+        """Reload all positions/velocities then build a CompletedFlight record."""
+        if load_all:
+            self._load_positions(limit=False)
+            self._load_velocities(limit=False)
+
+        # Build aircraft dict — ensure icao_hex is present
+        aircraft = dict(self.aircraft)
+        if "icao_hex" not in aircraft:
+            aircraft["icao_hex"] = self.icao_hex
+
+        # Strip military=False (legacy behaviour)
+        if aircraft.get("military") is False:
+            aircraft.pop("military")
+
+        # Operator without source key
+        operator: Optional[dict] = None
+        if self.operator:
+            operator = {k: v for k, v in self.operator.items() if k != "source"}
+
+        return CompletedFlight(**{
+            "_id": generate_flight_id(),
+            "first_message": datetime.fromtimestamp(self.first_message, tz=timezone.utc),
+            "last_message": datetime.fromtimestamp(self.last_message, tz=timezone.utc),
+            "total_messages": self.total_messages,
+            "source": self.source or "1090",
+            "aircraft": aircraft,
+            "ident": self.ident or None,
+            "operator": operator,
+            "squawk": self.squawk or None,
+            "origin": self.origin,
+            "destination": self.destination,
+            "matched_rules": self.matched_rules,
+            "positions": [p.to_dict() for p in self.positions],
+            "velocities": [v.to_dict() for v in self.velocities],
+        })
+
+
+# ---------------------------------------------------------------------------
+# Local archive fallback queue
+# ---------------------------------------------------------------------------
+
+class _ArchiveFallbackQueue:
+    """SQLite-backed fallback for completed flights when RabbitMQ is offline."""
+
+    def __init__(self, path: str) -> None:
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS queue "
+            "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, queued_at REAL)"
+        )
+        self._conn.commit()
+        self._lock = threading.Lock()
+
+    def put(self, payload: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO queue (payload, queued_at) VALUES (?,?)",
+                (payload, time.time()),
+            )
+            self._conn.commit()
+
+    def drain(self, publish_fn) -> None:
+        """Drain all queued items oldest-first via publish_fn(payload)."""
+        while True:
+            with self._lock:
+                cur = self._conn.execute(
+                    "SELECT id, payload FROM queue ORDER BY id ASC LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row is None:
+                    break
+                row_id, payload = row
+            try:
+                publish_fn(payload)
+                with self._lock:
+                    self._conn.execute("DELETE FROM queue WHERE id=?", (row_id,))
+                    self._conn.commit()
+            except Exception:
+                break  # RabbitMQ went away again; stop draining
+
+    def depth(self) -> int:
+        with self._lock:
+            cur = self._conn.execute("SELECT COUNT(*) FROM queue")
+            return cur.fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# Processor
+# ---------------------------------------------------------------------------
+
+class Processor:
+
+    def __init__(self, config: dict, processor_id: int) -> None:
+        self._cfg = config
+        self._id = processor_id
+        self._queue_name = f"adsb-{processor_id}"
+        self._started_at = datetime.now(timezone.utc).isoformat()
+        self._shutdown = threading.Event()
+
+        # SQLite in-memory active store
+        self._db = sqlite3.connect(":memory:", check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        self._db.executescript(_SCHEMA)
+
+        # Archive fallback
+        data_dir = config.get("data_dir", "/app/data")
+        os.makedirs(data_dir, exist_ok=True)
+        self._fallback = _ArchiveFallbackQueue(os.path.join(data_dir, "archive.db"))
+
+        # Metrics
+        self._rate = _RateTracker()
+        self._processing_time = _TimeTracker()
+        self._rules_time = _TimeTracker()
+        self._db_lock = threading.Lock()
+
+        # Redis
+        rc = config["redis"]
+        self._redis = redis_lib.Redis(
+            host=rc["host"], port=rc.get("port", 6379),
+            decode_responses=True,
+        )
+
+        # Rules engine
+        self._rules_engine = RulesEngine(self._redis)
+
+        # MQTT
+        self._mqtt: Optional[mqtt.Client] = None
+        self._mqtt_connected = False
+
+        # RabbitMQ
+        self._rmq_connection: Optional[pika.BlockingConnection] = None
+        self._rmq_channel = None
+        self._rmq_connected = False
+
+    # ------------------------------------------------------------------
+    # Startup
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        self._setup_logging()
+        self._claim_processor_id()
+        self._connect_mqtt()
+        self._rules_engine.reload_if_changed()
+
+        # Background threads
+        threading.Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat").start()
+        threading.Thread(target=self._eviction_loop, daemon=True, name="eviction").start()
+        threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
+        threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
+
+        self._consume_loop()
+
+    def _setup_logging(self) -> None:
+        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
+        h = logging.StreamHandler(sys.stdout)
+        h.setFormatter(fmt)
+        logging.getLogger().addHandler(h)
+        logging.getLogger().setLevel(
+            logging.DEBUG if self._cfg.get("log_level", "info") == "debug"
+            else logging.INFO
+        )
+
+    def _claim_processor_id(self) -> None:
+        """Prevent two processors with the same ID running simultaneously."""
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        key = processor_heartbeat_key(self._id)
+        claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
+        if not claimed:
+            logger.critical(
+                "PROCESSOR_ID %d is already running on another instance. Exiting.", self._id
+            )
+            sys.exit(1)
+        logger.info("Processor %d claimed.", self._id)
+
+    # ------------------------------------------------------------------
+    # RabbitMQ
+    # ------------------------------------------------------------------
+
+    def _rmq_params(self) -> pika.ConnectionParameters:
+        rc = self._cfg["rabbitmq"]
+        creds = pika.PlainCredentials(rc["username"], rc["password"])
+        return pika.ConnectionParameters(
+            host=rc["host"], port=rc.get("port", 5672),
+            credentials=creds, heartbeat=60,
+        )
+
+    def _consume_loop(self) -> None:
+        """Main loop: connect to RabbitMQ and consume messages until shutdown."""
+        while not self._shutdown.is_set():
+            try:
+                logger.info("Connecting to RabbitMQ (queue: %s)…", self._queue_name)
+                self._rmq_connection = pika.BlockingConnection(self._rmq_params())
+                self._rmq_channel = self._rmq_connection.channel()
+                self._rmq_channel.queue_declare(queue=self._queue_name, durable=True)
+                self._rmq_channel.basic_qos(prefetch_count=1)
+                self._rmq_channel.basic_consume(
+                    queue=self._queue_name,
+                    on_message_callback=self._on_message,
+                )
+                self._rmq_connected = True
+                logger.info("RabbitMQ connected, consuming from %s.", self._queue_name)
+
+                # Drain fallback queue now that we're connected
+                threading.Thread(
+                    target=self._drain_fallback, daemon=True, name="drain-fallback"
+                ).start()
+
+                self._rmq_channel.start_consuming()
+
+            except pika.exceptions.AMQPConnectionError as exc:
+                self._rmq_connected = False
+                logger.warning("RabbitMQ unavailable: %s. Retrying in 10s…", exc)
+                time.sleep(10)
+            except Exception as exc:
+                self._rmq_connected = False
+                logger.error("RabbitMQ error: %s. Retrying in 10s…", exc)
+                time.sleep(10)
+
+    def _on_message(self, ch, method, props, body: bytes) -> None:
+        try:
+            msg = InboundMessage.model_validate_json(body)
+        except Exception as exc:
+            logger.debug("Unparseable message: %s", exc)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        t_start = time.monotonic()
+        self._rate.record()
+        self._process(msg)
+        elapsed_ms = (time.monotonic() - t_start) * 1000
+        self._processing_time.record(elapsed_ms)
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    # ------------------------------------------------------------------
+    # ADS-B decoding + flight state update
+    # ------------------------------------------------------------------
+
+    def _process(self, msg: InboundMessage) -> None:
+        raw = msg.raw
+        if len(raw) < 14:
+            return
+
+        try:
+            df = pms.df(raw)
+        except Exception:
+            return
+
+        if df not in (5, 17, 21):
+            return
+
+        data: dict = {"icao_hex": msg.icao_hex}
+
+        if df in (5, 21):
+            try:
+                data["squawk"] = pms.common.idcode(raw)
+            except Exception:
+                pass
+
+        if df == 17:
+            try:
+                tc = pms.adsb.typecode(raw)
+            except Exception:
+                return
+
+            if tc in (28, 29):
+                return
+
+            if 1 <= tc <= 4:
+                try:
+                    ident = pms.adsb.callsign(raw)
+                    if ident:
+                        data["ident"] = ident.replace("_", "").strip()
+                except Exception:
+                    pass
+                try:
+                    data["category"] = pms.adsb.category(raw)
+                except Exception:
+                    pass
+
+            if (5 <= tc <= 22) and tc not in (19,):
+                try:
+                    home_lat = self._cfg.get("home_latitude")
+                    home_lon = self._cfg.get("home_longitude")
+                    if home_lat is not None and home_lon is not None:
+                        lat, lon = pms.adsb.position_with_ref(raw, home_lat, home_lon)
+                    else:
+                        lat, lon = None, None
+                    alt = pms.adsb.altitude(raw)
+                    if lat is not None:
+                        data["latitude"] = lat
+                        data["longitude"] = lon
+                    data["altitude"] = alt
+                except Exception:
+                    pass
+
+            if tc in (5, 6, 7, 8) or tc == 19:
+                try:
+                    vel, hdg, vs, _ = pms.adsb.velocity(raw)
+                    data["velocity"] = vel
+                    data["heading"] = hdg
+                    data["vertical_speed"] = vs
+                except Exception:
+                    pass
+
+            if tc == 31:
+                try:
+                    data["adsb_version"] = pms.adsb.version(raw)
+                except Exception:
+                    pass
+
+        with self._db_lock:
+            self._update_flight(data, msg)
+
+    def _update_flight(self, data: dict, msg: InboundMessage) -> None:
+        flight = Flight(self._db)
+        exists = flight.load(data["icao_hex"])
+
+        if not exists:
+            flight.icao_hex = data["icao_hex"].upper()
+            flight.first_message = msg.received_at
+            flight.source = msg.source
+            self._enrich_aircraft(flight)
+
+        flight.last_message = msg.received_at
+        flight.total_messages += 1
+
+        if "latitude" in data and "longitude" in data:
+            flight.add_position(Position(
+                timestamp=msg.received_at,
+                latitude=data["latitude"],
+                longitude=data["longitude"],
+                altitude=data.get("altitude"),
+            ))
+
+        if "velocity" in data:
+            flight.add_velocity(Velocity(
+                timestamp=msg.received_at,
+                velocity=data.get("velocity"),
+                heading=data.get("heading"),
+                vertical_speed=data.get("vertical_speed"),
+            ))
+
+        if "squawk" in data and not flight.squawk:
+            flight.squawk = str(data["squawk"])
+
+        if "category" in data:
+            wtc = _category_to_wtc(data["category"])
+            if wtc:
+                flight.aircraft.setdefault("wake_turbulence_category", wtc)
+
+        if "ident" in data and not flight.ident:
+            ident = data["ident"]
+            if ident and ident != "00000000":
+                flight.ident = ident
+                self._enrich_operator(flight)
+                self._enrich_flight(flight)
+
+        if "adsb_version" in data:
+            flight.aircraft.setdefault("adsb_version", data["adsb_version"])
+
+        # Rules evaluation
+        t_rules = time.monotonic()
+        matched = self._rules_engine.evaluate(flight)
+        rules_ms = (time.monotonic() - t_rules) * 1000
+        self._rules_time.record_hwm(rules_ms)
+
+        for rule in matched:
+            flight.matched_rules.append(rule["identifier"])
+            self._publish_rule_notification(flight, rule)
+
+        flight.save()
+
+    # ------------------------------------------------------------------
+    # Enrichment
+    # ------------------------------------------------------------------
+
+    def _enrich_aircraft(self, flight: Flight) -> None:
+        try:
+            raw = self._redis.get(icao_hex_key(flight.icao_hex))
+            if raw:
+                flight.aircraft = json.loads(raw)
+                # Write registration reverse-index if not already set
+                reg = flight.aircraft.get("registration")
+                if reg:
+                    self._redis.set(
+                        registration_key(reg), flight.icao_hex,
+                        nx=True, ex=14 * 86400,
+                    )
+            else:
+                self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
+                self._redis.incr(metrics_registration_misses_key(self._id, "today"))
+                self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
+                if not flight.aircraft:
+                    flight.aircraft = {"icao_hex": flight.icao_hex}
+        except Exception as exc:
+            logger.debug("Redis enrichment (aircraft) error: %s", exc)
+            if not flight.aircraft:
+                flight.aircraft = {"icao_hex": flight.icao_hex}
+
+    def _enrich_operator(self, flight: Flight) -> None:
+        ident = flight.ident
+
+        # Skip US tail numbers
+        if _US_REG_RE.match(ident):
+            return
+
+        # Skip military aircraft
+        if flight.aircraft.get("military"):
+            return
+
+        # Skip if ident matches registration
+        reg = flight.aircraft.get("registration", "")
+        if reg and reg.replace("-", "") == ident.replace("-", ""):
+            return
+
+        # Extract ICAO airline prefix (letters before first digit)
+        prefix = re.split(r"[^a-zA-Z]", ident)[0]
+        if len(prefix) < 2:
+            return
+
+        try:
+            raw = self._redis.get(operator_key(prefix))
+            if raw:
+                flight.operator = json.loads(raw)
+            else:
+                self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
+                self._redis.incr(metrics_registration_misses_key(self._id, "today"))
+                self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
+        except Exception as exc:
+            logger.debug("Redis enrichment (operator) error: %s", exc)
+
+    def _enrich_flight(self, flight: Flight) -> None:
+        try:
+            raw = self._redis.get(flight_key(flight.ident))
+            if raw:
+                info = FlightEnrichment.model_validate_json(raw)
+                if info.origin:
+                    flight.origin = info.origin.get("icao_code")
+                if info.destination:
+                    flight.destination = info.destination.get("icao_code")
+                if info.flight_number and flight.operator:
+                    flight.operator["flight_number"] = info.flight_number
+        except Exception as exc:
+            logger.debug("Redis enrichment (flight) error: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Stale flight eviction
+    # ------------------------------------------------------------------
+
+    def _eviction_loop(self) -> None:
+        while not self._shutdown.is_set():
+            time.sleep(10)
+            self._evict_stale(all_flights=False)
+
+    def _evict_stale(self, all_flights: bool = False) -> None:
+        ttl = self._cfg.get("flight_ttl_seconds", 300)
+        with self._db_lock:
+            if all_flights:
+                sql = "SELECT icao_hex FROM flights"
+            else:
+                cutoff = time.time() - ttl
+                sql = f"SELECT icao_hex FROM flights WHERE last_message < {cutoff}"
+            cur = self._db.cursor()
+            cur.execute(sql)
+            stale = [row[0] for row in cur.fetchall()]
+
+        for icao_hex in stale:
+            with self._db_lock:
+                flight = Flight(self._db)
+                if not flight.load(icao_hex, limit=False):
+                    continue
+                completed = flight.to_completed_flight(load_all=False)
+                if not all_flights:
+                    flight.delete()
+
+            self._archive(completed)
+
+    def _archive(self, flight: CompletedFlight) -> None:
+        payload = flight.model_dump_json(by_alias=True)
+        try:
+            if self._rmq_connected and self._rmq_channel:
+                self._rmq_channel.basic_publish(
+                    exchange="",
+                    routing_key="archive",
+                    body=payload.encode(),
+                    properties=pika.BasicProperties(delivery_mode=2),
+                )
+            else:
+                raise pika.exceptions.AMQPConnectionError("not connected")
+        except Exception:
+            self._fallback.put(payload)
+
+    def _drain_fallback(self) -> None:
+        def publish(payload: str) -> None:
+            self._rmq_channel.basic_publish(
+                exchange="",
+                routing_key="archive",
+                body=payload.encode(),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+        self._fallback.drain(publish)
+
+    # ------------------------------------------------------------------
+    # MQTT
+    # ------------------------------------------------------------------
+
+    def _connect_mqtt(self) -> None:
+        mc = self._cfg.get("mqtt")
+        if not mc:
+            return
+        self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        lwtopic = f"SkyFollower/processor/{self._id}/status"
+        self._mqtt.will_set(lwtopic, "OFFLINE", retain=True)
+        self._mqtt.on_connect = self._on_mqtt_connect
+        self._mqtt.on_disconnect = self._on_mqtt_disconnect
+        try:
+            self._mqtt.connect_async(mc["host"], port=mc.get("port", 1883), keepalive=60)
+            self._mqtt.loop_start()
+        except Exception as exc:
+            logger.warning("MQTT connect failed: %s", exc)
+
+    def _on_mqtt_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        self._mqtt_connected = True
+        client.publish(f"SkyFollower/processor/{self._id}/status", "ONLINE", retain=True)
+        client.publish(
+            f"SkyFollower/processor/{self._id}/statistic/started_at",
+            self._started_at, retain=True,
+        )
+        self._publish_ha_autodiscovery()
+        logger.info("MQTT connected.")
+
+    def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
+        self._mqtt_connected = False
+
+    def _mqtt_publish(self, topic: str, value) -> None:
+        if self._mqtt and self._mqtt_connected:
+            self._mqtt.publish(topic, str(value))
+
+    def _publish_rule_notification(self, flight: Flight, rule: dict) -> None:
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        notification = flight.to_completed_flight().model_dump(by_alias=True, mode="json")
+        notification.pop("positions", None)
+        notification.pop("velocities", None)
+        notification.pop("_id", None)
+        if not notification.get("operator"):
+            notification.pop("operator", None)
+        if not notification.get("origin"):
+            notification.pop("origin", None)
+        if not notification.get("destination"):
+            notification.pop("destination", None)
+        notification["rule"] = {
+            "name": rule.get("name", ""),
+            "description": rule.get("description", ""),
+            "identifier": rule["identifier"],
+        }
+        self._mqtt.publish(
+            f"SkyFollower/rule/{rule['identifier']}",
+            json.dumps(notification, default=str),
+        )
+
+    # ------------------------------------------------------------------
+    # Telemetry
+    # ------------------------------------------------------------------
+
+    def _telemetry_loop(self) -> None:
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        while not self._shutdown.is_set():
+            time.sleep(interval)
+            self._publish_telemetry()
+
+    def _publish_telemetry(self) -> None:
+        pid = self._id
+        base = f"SkyFollower/processor/{pid}/statistic"
+
+        with self._db_lock:
+            cur = self._db.cursor()
+            cur.execute("SELECT COUNT(*) FROM flights")
+            active = cur.fetchone()[0]
+
+        hwm = self._rules_time.hwm_ms_and_reset()
+        avg = self._processing_time.avg_ms()
+        self._processing_time.reset()
+
+        stats = {
+            "messages_per_second": round(self._rate.rate(), 2),
+            "avg_processing_time_ms": round(avg, 1),
+            "rules_engine_hwm_ms": hwm,
+            "local_archive_queue_depth": self._fallback.depth(),
+            "active_flights": active,
+            "registration_misses_hour": self._redis_counter(
+                metrics_registration_misses_key(pid, "hour")
+            ),
+            "registration_misses_today": self._redis_counter(
+                metrics_registration_misses_key(pid, "today")
+            ),
+            "aircraft_type_misses_hour": self._redis_counter(
+                metrics_aircraft_type_misses_key(pid, "hour")
+            ),
+            "aircraft_type_misses_today": self._redis_counter(
+                metrics_aircraft_type_misses_key(pid, "today")
+            ),
+        }
+
+        # RabbitMQ queue depth via management API (best-effort)
+        try:
+            stats["rabbitmq_input_queue_depth"] = self._rmq_queue_depth()
+        except Exception:
+            stats["rabbitmq_input_queue_depth"] = -1
+
+        for name, value in stats.items():
+            self._mqtt_publish(f"{base}/{name}", value)
+
+        # Refresh heartbeat
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        try:
+            self._redis.expire(processor_heartbeat_key(self._id), int(interval * 2))
+        except Exception:
+            pass
+
+    def _redis_counter(self, key: str) -> int:
+        try:
+            v = self._redis.get(key)
+            return int(v) if v else 0
+        except Exception:
+            return 0
+
+    def _rmq_queue_depth(self) -> int:
+        """Best-effort queue depth via passive declare."""
+        if not self._rmq_channel:
+            return -1
+        result = self._rmq_channel.queue_declare(
+            queue=self._queue_name, durable=True, passive=True
+        )
+        return result.method.message_count
+
+    # ------------------------------------------------------------------
+    # Config polling
+    # ------------------------------------------------------------------
+
+    def _config_poll_loop(self) -> None:
+        while not self._shutdown.is_set():
+            time.sleep(5)
+            try:
+                self._rules_engine.reload_if_changed()
+            except Exception as exc:
+                logger.debug("Config poll error: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Heartbeat (keeps Redis NX key alive)
+    # ------------------------------------------------------------------
+
+    def _heartbeat_loop(self) -> None:
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        while not self._shutdown.is_set():
+            time.sleep(interval)
+            try:
+                self._redis.expire(processor_heartbeat_key(self._id), int(interval * 2))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # HA autodiscovery
+    # ------------------------------------------------------------------
+
+    def _publish_ha_autodiscovery(self) -> None:
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        pid = self._id
+        device = {
+            "ids": f"SkyFollower_processor_{pid}",
+            "name": f"SkyFollower Processor {pid}",
+            "manufacturer": "P5Software, LLC",
+        }
+        availability = {
+            "availability_topic": f"SkyFollower/processor/{pid}/status",
+            "payload_available": "ONLINE",
+            "payload_not_available": "OFFLINE",
+        }
+        stats = [
+            ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
+            ("avg_processing_time_ms", "Avg Processing Time", "mdi:clock", "measurement", "ms"),
+            ("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
+            ("rabbitmq_input_queue_depth", "RabbitMQ Queue Depth", "mdi:tray-full", "measurement", None),
+            ("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement", None),
+            ("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing", None),
+            ("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing", None),
+            ("aircraft_type_misses_hour", "Aircraft Type Misses (Hour)", "mdi:broadcast", "total_increasing", None),
+            ("aircraft_type_misses_today", "Aircraft Type Misses (Today)", "mdi:broadcast", "total_increasing", None),
+            ("active_flights", "Active Flights", "mdi:airplane", "measurement", None),
+        ]
+        for name, desc, icon, state_class, unit in stats:
+            payload = {
+                **availability,
+                "state_topic": f"SkyFollower/processor/{pid}/statistic/{name}",
+                "name": desc,
+                "unique_id": f"SkyFollower_processor_{pid}_{name}",
+                "object_id": f"SkyFollower_processor_{pid}_{name}",
+                "device": device,
+                "icon": icon,
+                "state_class": state_class,
+            }
+            if unit:
+                payload["unit_of_measurement"] = unit
+            self._mqtt.publish(
+                f"homeassistant/sensor/SkyFollower_processor_{pid}_{name}/config",
+                json.dumps(payload),
+                retain=True,
+            )
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+
+    def shutdown(self) -> None:
+        logger.info("Shutdown requested — persisting active flights…")
+        self._shutdown.set()
+        self._evict_stale(all_flights=True)
+        if self._rmq_channel:
+            try:
+                self._rmq_channel.stop_consuming()
+            except Exception:
+                pass
+        if self._mqtt:
+            self._mqtt.publish(
+                f"SkyFollower/processor/{self._id}/status", "OFFLINE", retain=True
+            )
+            self._mqtt.loop_stop()
+        logger.info("Shutdown complete.")
+
+
+# ---------------------------------------------------------------------------
+# ADS-B category → wake turbulence category
+# ---------------------------------------------------------------------------
+
+def _category_to_wtc(category: int) -> Optional[str]:
+    return {
+        1: "Light",
+        2: "Medium 1",
+        3: "Medium 2",
+        4: "High Vortex Aircraft",
+        5: "Heavy",
+        6: "High Performance",
+        7: "Rotorcraft",
+    }.get(category)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _load_config() -> dict:
+    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def main() -> None:
+    processor_id_str = os.environ.get("PROCESSOR_ID")
+    if processor_id_str is None:
+        print("PROCESSOR_ID environment variable is required.", file=sys.stderr)
+        sys.exit(1)
+    try:
+        processor_id = int(processor_id_str)
+    except ValueError:
+        print(f"PROCESSOR_ID must be an integer, got: {processor_id_str!r}", file=sys.stderr)
+        sys.exit(1)
+
+    config = _load_config()
+    processor = Processor(config, processor_id)
+
+    def _handle_signal(sig, frame):
+        processor.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    processor.start()
+
+
+if __name__ == "__main__":
+    main()
