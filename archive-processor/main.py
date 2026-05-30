@@ -504,20 +504,13 @@ class ArchiveProcessor:
     def _on_mqtt_connect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = True
         client.publish("SkyFollower/archive/status", "ONLINE", retain=True)
-        client.publish(
-            "SkyFollower/archive/statistic/started_at",
-            self._started_at,
-            retain=True,
-        )
         self._publish_ha_autodiscovery()
+        # Publish initial stats immediately so HA gets started_at without delay
+        self._publish_telemetry()
         logger.info("MQTT connected.")
 
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
-
-    def _mqtt_publish(self, topic: str, value) -> None:
-        if self._mqtt and self._mqtt_connected:
-            self._mqtt.publish(topic, str(value))
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -536,16 +529,19 @@ class ArchiveProcessor:
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        stats = [
-            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None),
-            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None),
-            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None),
-            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
+        stats_topic = "SkyFollower/archive/statistics"
+        sensors = [
+            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_hour }}"),
+            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_today }}"),
+            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, "{{ value_json.s3_connected }}"),
+            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_queue_depth }}"),
+            ("started_at", "Archive Started At", "mdi:clock", None, None, "{{ value_json.started_at }}"),
         ]
-        for name, desc, icon, state_class, unit in stats:
+        for name, desc, icon, state_class, unit, tmpl in sensors:
             payload: dict = {
                 **availability,
-                "state_topic": f"SkyFollower/archive/statistic/{name}",
+                "state_topic": stats_topic,
+                "value_template": tmpl,
                 "name": desc,
                 "unique_id": f"SkyFollower_archive_{name}",
                 "object_id": f"SkyFollower_archive_{name}",
@@ -573,24 +569,29 @@ class ArchiveProcessor:
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:
-        base = "SkyFollower/archive/statistic"
+        if not (self._mqtt and self._mqtt_connected):
+            return
 
         with self._s3_lock:
             s3_connected = self._s3_connected
 
-        stats = {
+        payload = {
             "flights_archived_hour": self._redis_counter(
                 metrics_flights_archived_key("hour")
             ),
             "flights_archived_today": self._redis_counter(
                 metrics_flights_archived_key("today")
             ),
-            "s3_connected": "true" if s3_connected else "false",
+            "s3_connected": s3_connected,
             "local_queue_depth": self._fallback.depth(),
+            "started_at": self._started_at,
         }
 
-        for name, value in stats.items():
-            self._mqtt_publish(f"{base}/{name}", value)
+        self._mqtt.publish(
+            "SkyFollower/archive/statistics",
+            json.dumps(payload),
+            retain=True,
+        )
 
     def _redis_counter(self, key: str) -> int:
         try:
