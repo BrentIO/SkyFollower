@@ -1,0 +1,6 @@
+pydantic>=2.0
+uuid7>=0.1.0
+pyModeS>=2.11
+redis>=5.0
+paho-mqtt>=2.0
+shapely>=2.0
