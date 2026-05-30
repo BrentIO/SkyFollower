@@ -1,0 +1,515 @@
+asyncapi: '2.6.0'
+info:
+  title: SkyFollower
+  version: '1.0.0'
+  description: >
+    ADS-B aircraft tracking and alerting system. All statistic values are
+    plain scalar strings. All timestamps are UTC ISO-8601.
+
+servers:
+  mqtt:
+    url: mqtt://localhost:1883
+    protocol: mqtt
+    description: >
+      MQTT broker. Replace host/port with your broker's address.
+      TLS and authentication are deployment-specific runtime concerns.
+
+channels:
+
+  # ---------------------------------------------------------------------------
+  # Status channels (LWT pattern)
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/receiver/status:
+    description: >
+      Receiver component liveness. Published ONLINE on connect and OFFLINE via
+      Last Will and Testament (LWT) when the connection drops. Both messages
+      are retained.
+    publish:
+      operationId: receiverStatus
+      summary: Receiver online / offline status
+      message:
+        $ref: '#/components/messages/StatusMessage'
+
+  SkyFollower/processor/{processor_id}/status:
+    description: >
+      Per-processor liveness. Published ONLINE on connect and OFFLINE via LWT.
+      Both messages are retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    publish:
+      operationId: processorStatus
+      summary: Processor online / offline status
+      message:
+        $ref: '#/components/messages/StatusMessage'
+
+  SkyFollower/archive/status:
+    description: >
+      Archive component liveness. Published ONLINE on connect and OFFLINE via
+      LWT. Both messages are retained.
+    publish:
+      operationId: archiveStatus
+      summary: Archive online / offline status
+      message:
+        $ref: '#/components/messages/StatusMessage'
+
+  # ---------------------------------------------------------------------------
+  # Rule notification
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/rule/{identifier}:
+    description: >
+      Published by the processor when a rule matches a tracked flight. The
+      identifier in the topic matches the rule's identifier field. Not retained.
+    parameters:
+      identifier:
+        $ref: '#/components/parameters/RuleIdentifier'
+    publish:
+      operationId: ruleNotification
+      summary: Rule match notification for a tracked flight
+      message:
+        $ref: '#/components/messages/FlightRuleNotificationMessage'
+
+  # ---------------------------------------------------------------------------
+  # Receiver statistics
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/receiver/statistic/{name}:
+    description: >
+      Per-statistic telemetry published by the receiver component on a
+      configurable interval. All values are plain strings. The started_at
+      statistic is published once on MQTT connect and is retained; all other
+      statistics are not retained.
+    parameters:
+      name:
+        description: Statistic name
+        schema:
+          type: string
+          enum:
+            - messages_1090_per_second
+            - messages_978_per_second
+            - local_queue_depth
+            - rabbitmq_connected
+            - started_at
+    publish:
+      operationId: receiverStatistic
+      summary: Receiver telemetry statistic
+      message:
+        oneOf:
+          - $ref: '#/components/messages/FloatStringMessage'
+          - $ref: '#/components/messages/IntegerStringMessage'
+          - $ref: '#/components/messages/BoolStringMessage'
+          - $ref: '#/components/messages/TimestampStringMessage'
+
+  # ---------------------------------------------------------------------------
+  # Processor statistics
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/processor/{processor_id}/statistic/{name}:
+    description: >
+      Per-statistic telemetry published by a processor instance on a
+      configurable interval. All values are plain strings. The started_at
+      statistic is published once on MQTT connect and is retained; all other
+      statistics are not retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+      name:
+        description: Statistic name
+        schema:
+          type: string
+          enum:
+            - messages_per_second
+            - avg_processing_time_ms
+            - rules_engine_hwm_ms
+            - rabbitmq_input_queue_depth
+            - local_archive_queue_depth
+            - registration_misses_hour
+            - registration_misses_today
+            - aircraft_type_misses_hour
+            - aircraft_type_misses_today
+            - active_flights
+            - started_at
+    publish:
+      operationId: processorStatistic
+      summary: Processor telemetry statistic
+      message:
+        oneOf:
+          - $ref: '#/components/messages/FloatStringMessage'
+          - $ref: '#/components/messages/IntegerStringMessage'
+          - $ref: '#/components/messages/TimestampStringMessage'
+
+  # ---------------------------------------------------------------------------
+  # Archive statistics
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/archive/statistic/{name}:
+    description: >
+      Per-statistic telemetry published by the archive component on a
+      configurable interval. All values are plain strings. The started_at
+      statistic is published once on MQTT connect and is retained; all other
+      statistics are not retained.
+    parameters:
+      name:
+        description: Statistic name
+        schema:
+          type: string
+          enum:
+            - flights_archived_hour
+            - flights_archived_today
+            - s3_connected
+            - local_queue_depth
+            - started_at
+    publish:
+      operationId: archiveStatistic
+      summary: Archive telemetry statistic
+      message:
+        oneOf:
+          - $ref: '#/components/messages/IntegerStringMessage'
+          - $ref: '#/components/messages/BoolStringMessage'
+          - $ref: '#/components/messages/TimestampStringMessage'
+
+  # ---------------------------------------------------------------------------
+  # Runner statistics
+  # ---------------------------------------------------------------------------
+
+  SkyFollower/runner/{runner_name}/statistic/{name}:
+    description: >
+      Per-statistic telemetry published by a data runner after each run
+      completes. All values are plain strings.
+    parameters:
+      runner_name:
+        $ref: '#/components/parameters/RunnerName'
+      name:
+        description: Statistic name
+        schema:
+          type: string
+          enum:
+            - records_imported
+            - last_run_at
+            - last_run_status
+    publish:
+      operationId: runnerStatistic
+      summary: Data runner completion statistic
+      message:
+        oneOf:
+          - $ref: '#/components/messages/IntegerStringMessage'
+          - $ref: '#/components/messages/TimestampStringMessage'
+          - $ref: '#/components/messages/RunnerStatusStringMessage'
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # Messages
+  # ---------------------------------------------------------------------------
+
+  messages:
+    StatusMessage:
+      name: StatusMessage
+      title: Component status
+      summary: LWT-pattern ONLINE / OFFLINE indicator, retained
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/StatusPayload'
+
+    FlightRuleNotificationMessage:
+      name: FlightRuleNotificationMessage
+      title: Rule match notification
+      summary: JSON snapshot of a flight at the moment a rule matched
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/FlightRuleNotification'
+
+    FloatStringMessage:
+      name: FloatStringMessage
+      title: Float statistic
+      summary: Numeric float encoded as a plain string
+      contentType: text/plain
+      payload:
+        type: string
+        description: Float value encoded as a string, e.g. "12.34"
+        example: "12.34"
+
+    IntegerStringMessage:
+      name: IntegerStringMessage
+      title: Integer statistic
+      summary: Numeric integer encoded as a plain string
+      contentType: text/plain
+      payload:
+        type: string
+        description: Integer value encoded as a string, e.g. "42"
+        example: "42"
+
+    BoolStringMessage:
+      name: BoolStringMessage
+      title: Boolean statistic
+      summary: Boolean encoded as the plain string "true" or "false"
+      contentType: text/plain
+      payload:
+        type: string
+        enum:
+          - "true"
+          - "false"
+
+    TimestampStringMessage:
+      name: TimestampStringMessage
+      title: Timestamp statistic
+      summary: UTC ISO-8601 datetime encoded as a plain string, retained
+      contentType: text/plain
+      payload:
+        type: string
+        format: date-time
+        description: >
+          UTC ISO-8601 timestamp, e.g. "2024-01-15T12:00:00+00:00".
+          The started_at statistic is published once on MQTT connect and
+          is retained; it is not republished on subsequent telemetry intervals.
+        example: "2024-01-15T12:00:00+00:00"
+
+    RunnerStatusStringMessage:
+      name: RunnerStatusStringMessage
+      title: Runner status statistic
+      summary: Data runner last-run outcome as a plain string
+      contentType: text/plain
+      payload:
+        type: string
+        enum:
+          - "success"
+          - "failure"
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+
+  schemas:
+    StatusPayload:
+      type: string
+      enum:
+        - ONLINE
+        - OFFLINE
+      description: >
+        Component liveness indicator. ONLINE is published on connect;
+        OFFLINE is sent as the Last Will and Testament (LWT) when the
+        connection is lost. Both messages are retained.
+
+    AircraftInfo:
+      type: object
+      description: >
+        Aircraft registration and type enrichment fields. All fields are
+        optional; only those known at the time of rule evaluation are present.
+        Must include icao_hex.
+      required:
+        - icao_hex
+      properties:
+        icao_hex:
+          type: string
+          description: 6-character ICAO 24-bit address in upper-case hex, e.g. "A1B2C3"
+          example: "A1B2C3"
+        registration:
+          type: string
+          description: Aircraft registration / tail number, e.g. "N12345"
+          example: "N12345"
+        type_designator:
+          type: string
+          description: ICAO type code, e.g. "B763"
+          example: "B763"
+        manufacturer:
+          type: string
+          description: Aircraft manufacturer name
+          example: "Boeing"
+        model:
+          type: string
+          description: Aircraft model name
+          example: "737-800"
+        wake_turbulence_category:
+          type: string
+          description: >
+            Wake turbulence category derived from ADS-B emitter category or
+            registration data.
+          example: "Heavy"
+        military:
+          type: boolean
+          description: >
+            True if the aircraft is military. Omitted (not serialised) when
+            false (legacy behaviour).
+        operator:
+          type: string
+          description: Operator or owner name from the registration database
+          example: "Delta Air Lines"
+        airline_code:
+          type: string
+          description: ICAO airline code
+          example: "DAL"
+        serial_number:
+          type: string
+          description: Manufacturer serial number
+        year_built:
+          type: string
+          description: Year of manufacture, e.g. "2005"
+          example: "2005"
+        is_private_operator:
+          type: boolean
+          description: True if the operator is a private (non-commercial) entity
+        source:
+          type: string
+          description: Data runner that wrote this registration record
+          example: "us-faa"
+
+    FlightRuleNotification:
+      type: object
+      description: >
+        Snapshot of a flight's state at the moment a rule matched. Excludes
+        positions and velocities (those are omitted before publishing).
+        The _id field is also omitted. Optional fields (operator, origin,
+        destination) are omitted when not populated.
+      required:
+        - aircraft
+        - first_message
+        - last_message
+        - total_messages
+        - source
+        - matched_rules
+        - rule
+      properties:
+        aircraft:
+          $ref: '#/components/schemas/AircraftInfo'
+        ident:
+          type: string
+          description: Flight identifier / callsign, e.g. "DAL123"
+          example: "DAL123"
+        operator:
+          type: object
+          description: >
+            Airline operator enrichment fields. Omitted when not populated.
+            The source key is stripped before publishing.
+          properties:
+            airline_designator:
+              type: string
+              description: ICAO airline designator, e.g. "DAL"
+              example: "DAL"
+            name:
+              type: string
+              description: Airline name
+              example: "Delta Air Lines"
+            callsign:
+              type: string
+              description: Radio telephony callsign
+              example: "DELTA"
+            country:
+              type: string
+              description: Country of registration
+              example: "United States"
+            iata:
+              type: string
+              description: IATA airline code
+              example: "DL"
+            flight_number:
+              type: string
+              description: >
+                Flight number appended during enrichment when a FlightAware
+                route record is available, e.g. "DL123"
+              example: "DL123"
+        squawk:
+          type: string
+          description: Mode-A transponder squawk code, e.g. "1200"
+          example: "1200"
+        origin:
+          type: string
+          description: >
+            ICAO code of the departure airport. Omitted when not known.
+          example: "KATL"
+        destination:
+          type: string
+          description: >
+            ICAO code of the arrival airport. Omitted when not known.
+          example: "KLAX"
+        source:
+          type: string
+          enum:
+            - "1090"
+            - "978"
+            - "mlat"
+          description: ADS-B reception source
+        first_message:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of the first message seen for this flight
+          example: "2024-01-15T10:00:00+00:00"
+        last_message:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of the most recent message seen
+          example: "2024-01-15T10:45:00+00:00"
+        total_messages:
+          type: integer
+          description: Total number of raw ADS-B messages processed for this flight
+          example: 3842
+        matched_rules:
+          type: array
+          items:
+            type: string
+          description: >
+            List of rule identifier strings that have matched this flight so far,
+            including the rule that triggered this notification.
+          example:
+            - "military-aircraft"
+        rule:
+          type: object
+          description: The rule that triggered this notification
+          required:
+            - name
+            - description
+            - identifier
+          properties:
+            name:
+              type: string
+              description: Human-readable rule name
+              example: "Military Aircraft"
+            description:
+              type: string
+              description: Human-readable rule description
+              example: "Matches any aircraft with military=true"
+            identifier:
+              type: string
+              description: >
+                Unique rule identifier. Also appears as the last segment of
+                the MQTT topic, e.g. SkyFollower/rule/military-aircraft
+              example: "military-aircraft"
+
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+
+  parameters:
+    ProcessorId:
+      description: >
+        Integer processor instance identifier, set via the PROCESSOR_ID
+        environment variable. Used to distinguish multiple processor containers
+        running simultaneously.
+      schema:
+        type: integer
+        minimum: 0
+        example: 1
+
+    RuleIdentifier:
+      description: >
+        Unique rule identifier string. Must match the identifier field of a
+        configured rule. Used as the final segment of the rule notification
+        topic.
+      schema:
+        type: string
+        example: "military-aircraft"
+
+    RunnerName:
+      description: >
+        Data runner name. Identifies which background import job published
+        the statistic.
+      schema:
+        type: string
+        enum:
+          - mictronics
+          - us-faa
+          - ca-transport-canada
+          - ourairports
+          - flightaware
+        example: "us-faa"
