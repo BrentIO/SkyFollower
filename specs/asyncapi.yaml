@@ -1,4 +1,4 @@
-asyncapi: '3.0.0'
+asyncapi: '3.1.0'
 info:
   title: SkyFollower
   version: '1.0.0'
@@ -542,32 +542,19 @@ components:
         Integer receiver instance identifier. Set via the RECEIVER_ID
         environment variable (default 0). Allows multiple receiver
         containers to coexist on the same broker.
-      schema:
-        type: integer
-        minimum: 0
-        example: 0
 
     ProcessorId:
       description: >
         Integer processor instance identifier. Set via the PROCESSOR_ID
         environment variable. Used to distinguish multiple processor
         containers running simultaneously.
-      schema:
-        type: integer
-        minimum: 0
-        example: 0
 
     RuleIdentifier:
       description: >
         Unique rule identifier string matching the identifier field of the
         triggered rule. Also the final segment of the rule notification topic.
-      schema:
-        type: string
-        example: military-aircraft
 
     RunnerName:
-      description: Data runner name identifying which import job published statistics.
-      schema:
-        type: string
-        enum: [mictronics, us-faa, ca-transport-canada, ourairports, flightaware]
-        example: us-faa
+      description: >
+        Data runner name identifying which import job published statistics.
+        One of: mictronics, us-faa, ca-transport-canada, ourairports, flightaware.
