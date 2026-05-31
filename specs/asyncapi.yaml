@@ -408,8 +408,8 @@ components:
       type: object
       description: >
         Airport metadata as stored in Redis by the ourairports data runner.
-        Included in flight notifications as origin and destination objects so
-        consuming systems have phonic names available for announcements.
+        Matches the legacy AROI airport shape. Included in flight notifications
+        so consuming systems have phonic names available for announcements.
       required: [icao_code]
       properties:
         icao_code:
@@ -418,28 +418,20 @@ components:
         name:
           type: string
           example: Hartsfield-Jackson Atlanta International Airport
+        city:
+          type: string
+          example: Atlanta
+        region:
+          type: string
+          description: ISO 3166-2 region code
+          example: US-GA
+        country:
+          type: string
+          example: US
         phonic:
           type: string
           description: Voice-friendly spoken name for announcements
           example: Atlanta Hartsfield-Jackson
-        latitude:
-          type: number
-          example: 33.6367
-        longitude:
-          type: number
-          example: -84.4281
-        altitude_feet:
-          type: integer
-          example: 1026
-        country:
-          type: string
-          example: US
-        municipality:
-          type: string
-          example: Atlanta
-        type:
-          type: string
-          example: large_airport
 
     AircraftInfo:
       type: object
