@@ -262,11 +262,11 @@ components:
       properties:
         messages_1090_per_second:
           type: number
-          description: Rolling 30-second average of 1090 MHz messages received
+          description: Average 1090 MHz message rate since last report (messages received ÷ elapsed seconds)
           example: 12.4
         messages_978_per_second:
           type: number
-          description: Rolling 30-second average of 978 MHz UAT messages received; 0.0 if no UAT source configured
+          description: Average 978 MHz UAT message rate since last report; 0.0 if no UAT source configured
           example: 0.0
         local_queue_depth:
           type: integer
@@ -286,11 +286,11 @@ components:
       type: object
       description: >
         Processor telemetry snapshot. Published with retain=true every
-        telemetry_interval_seconds. rules_engine_hwm_ms resets after each
-        publish. started_at never changes after startup.
+        telemetry_interval_seconds. HWM fields reset after each publish.
+        started_at never changes after startup.
       required:
         - messages_per_second
-        - avg_processing_time_ms
+        - processing_time_hwm_ms
         - rules_engine_hwm_ms
         - rabbitmq_input_queue_depth
         - local_archive_queue_depth
@@ -303,11 +303,11 @@ components:
       properties:
         messages_per_second:
           type: number
-          description: Rolling 30-second average message processing rate
+          description: Average message processing rate since last report (messages received ÷ elapsed seconds)
           example: 45.1
-        avg_processing_time_ms:
+        processing_time_hwm_ms:
           type: number
-          description: Average end-to-end processing time per message since last publish
+          description: End-to-end message processing time high-water mark since last publish; resets on publish
           example: 12.3
         rules_engine_hwm_ms:
           type: integer
