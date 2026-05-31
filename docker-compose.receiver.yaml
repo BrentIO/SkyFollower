@@ -6,6 +6,8 @@ services:
     volumes:
       - ./config/receiver/settings.json:/app/settings.json:ro
       - receiver-queue:/app/data
+    environment:
+      RECEIVER_ID: "0"
 
 volumes:
   receiver-queue:

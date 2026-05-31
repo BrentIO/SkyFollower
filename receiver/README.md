@@ -57,6 +57,15 @@ Example with two sources:
 | `host` | string | — | MQTT broker hostname or IP. |
 | `port` | integer | `1883` | MQTT broker port. |
 
+## `RECEIVER_ID` Environment Variable
+
+`RECEIVER_ID` is an optional integer environment variable (default `0`). It distinguishes multiple receiver containers publishing to the same MQTT broker and is included in every MQTT topic published by the receiver.
+
+```yaml
+environment:
+  RECEIVER_ID: "0"
+```
+
 ## Routing
 
 Each incoming message is routed to a durable RabbitMQ queue named
@@ -99,11 +108,12 @@ All topics use the root `SkyFollower`.
 | `rabbitmq_connected` | boolean | `true` when an active RabbitMQ connection is held |
 | `started_at` | string | UTC ISO-8601 timestamp of process start |
 
-Rates are computed as messages received since last report ÷ elapsed seconds. Telemetry is published
-every `telemetry_interval_seconds`.
+All statistics are published as a single retained JSON payload. Telemetry is published every `telemetry_interval_seconds`.
 
 Home Assistant autodiscovery payloads are published to
-`homeassistant/sensor/SkyFollower_receiver_{name}/config` on MQTT connect.
+`homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect.
+Each sensor uses `state_topic: SkyFollower/receiver/{receiver_id}/statistics` with a
+`value_template` to extract its field.
 
 ## Adding or Changing readsb Sources
 
