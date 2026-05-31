@@ -66,8 +66,8 @@ environment:
 |-------------|---------|
 | `processor:{ID}:heartbeat` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
-| `metrics:processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result |
-| `metrics:processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result |
+| `metrics:processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
+| `metrics:processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
 
 ## MQTT Topics Published
 
