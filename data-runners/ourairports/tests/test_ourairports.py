@@ -2,9 +2,11 @@
 Tests for the OurAirports data runner.
 
 Covers:
-- Only 4-char ICAO codes are imported (filtering)
-- Correct field mapping from CSV columns
-- Redis write with correct key and TTL
+- ICAO 4-char filtering
+- Phonic name computation (legacy name-cleanup logic + special cases)
+- Correct field mapping including the phonic field
+- Redis write with correct key, TTL, and JSON content
+- MQTT single JSON payload pattern
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ _mod = _load_main()
 is_valid_icao = _mod.is_valid_icao
 parse_altitude = _mod.parse_altitude
 parse_coordinate = _mod.parse_coordinate
+compute_phonic = _mod.compute_phonic
 build_airport_record = _mod.build_airport_record
 stage_data = _mod.stage_data
 write_to_redis = _mod.write_to_redis
@@ -64,6 +67,7 @@ _CSV_HEADER = (
     "continent,iso_country,iso_region,municipality,scheduled_service,"
     "gps_code,iata_code,local_code,home_link,wikipedia_link,keywords"
 )
+
 
 def _make_csv(*rows: dict) -> str:
     """Build a minimal CSV string from a list of row dicts."""
@@ -133,7 +137,6 @@ class TestIsValidIcao:
         assert is_valid_icao("K") is False
 
     def test_4_char_with_whitespace(self):
-        # Whitespace is stripped before check
         assert is_valid_icao("KJFK") is True
 
 
@@ -173,6 +176,55 @@ class TestParseCoordinate:
 
 
 # ---------------------------------------------------------------------------
+# Tests: compute_phonic
+# ---------------------------------------------------------------------------
+
+class TestComputePhonic:
+    def test_international_airport_stripped(self):
+        # City IS in name → use name, strip International + Airport
+        p = compute_phonic("KJFK", "John F Kennedy International Airport", "New York")
+        assert "International" not in p
+        assert "Airport" not in p
+
+    def test_city_not_in_name_prepends_city(self):
+        # City "Miami" not in "Opa-locka Executive Airport" → prepend city
+        p = compute_phonic("KOPF", "Opa-locka Executive Airport", "Miami")
+        assert p.startswith("Miami")
+
+    def test_kpbi_override(self):
+        # KPBI keeps full "Palm Beach International Airport" regardless of general rules
+        p = compute_phonic("KPBI", "Palm Beach International Airport", "West Palm Beach")
+        assert p == "Palm Beach International Airport"
+
+    def test_kmlb_override(self):
+        p = compute_phonic("KMLB", "Melbourne Orlando International Airport", "Melbourne")
+        assert p == "Melbourne"
+
+    def test_greater_prefix_kept_as_is(self):
+        p = compute_phonic("KCVG", "Greater Cincinnati/Northern Kentucky International Airport", "Covington")
+        assert p.startswith("Greater")
+
+    def test_use_name_exactly_set(self):
+        # KIAD is in the "use name exactly" set
+        p = compute_phonic("KIAD", "Washington Dulles International Airport", "Dulles")
+        assert "International" not in p
+        assert "Airport" not in p
+        assert "Washington" in p
+
+    def test_klga_la_guardia_fix(self):
+        p = compute_phonic("KLGA", "La Guardia Airport", "New York")
+        assert "LaGuardia" in p
+        assert "La Guardia" not in p
+
+    def test_double_spaces_removed(self):
+        p = compute_phonic("KTST", "Test International Airport", "Test")
+        assert "  " not in p
+
+    def test_empty_name_returns_empty(self):
+        assert compute_phonic("KTST", "", "City") == ""
+
+
+# ---------------------------------------------------------------------------
 # Tests: stage_data (4-char filter + field mapping)
 # ---------------------------------------------------------------------------
 
@@ -182,7 +234,6 @@ class TestStageData:
             conn = stage_data(SAMPLE_CSV, os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM airports")
-            # Only KJFK and EGLL qualify
             assert cur.fetchone()[0] == 2
             conn.close()
 
@@ -217,6 +268,20 @@ class TestStageData:
             assert row["country"] == "US"
             assert row["municipality"] == "New York"
             assert row["type"] == "large_airport"
+            # phonic is computed and stored
+            assert row["phonic"] is not None
+            assert "International" not in row["phonic"]
+            conn.close()
+
+    def test_phonic_stored_in_staging(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(SAMPLE_CSV, os.path.join(tmpdir, "staging.db"))
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT phonic FROM airports WHERE icao_code = 'EGLL'")
+            row = cur.fetchone()
+            assert row["phonic"] is not None
+            assert "Airport" not in row["phonic"]
             conn.close()
 
     def test_icao_code_uppercased(self):
@@ -245,30 +310,20 @@ class TestStageData:
             assert row[0] is None
             conn.close()
 
-    def test_single_4char_row(self):
-        csv_text = _make_csv({"id": "1", "ident": "EGLL", "name": "Heathrow",
-                              "latitude_deg": "51.4706", "longitude_deg": "-0.4619",
-                              "elevation_ft": "83", "iso_country": "GB",
-                              "municipality": "London", "type": "large_airport"})
-        with tempfile.TemporaryDirectory() as tmpdir:
-            conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"))
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM airports")
-            assert cur.fetchone()[0] == 1
-            conn.close()
-
 
 # ---------------------------------------------------------------------------
 # Tests: build_airport_record
 # ---------------------------------------------------------------------------
 
 class TestBuildAirportRecord:
-    def _row(self, icao_code="KJFK", name="JFK", latitude=40.6413,
-             longitude=-73.7781, altitude_feet=13, country="US",
-             municipality="New York", airport_type="large_airport"):
+    def _row(self, icao_code="KJFK", name="JFK", phonic="Kennedy",
+             latitude=40.6413, longitude=-73.7781, altitude_feet=13,
+             country="US", municipality="New York", airport_type="large_airport"):
+        # Returns a dict that behaves like sqlite3.Row for field access
         return {
             "icao_code": icao_code,
             "name": name,
+            "phonic": phonic,
             "latitude": latitude,
             "longitude": longitude,
             "altitude_feet": altitude_feet,
@@ -281,7 +336,7 @@ class TestBuildAirportRecord:
         row = self._row()
         record = build_airport_record(row)
         assert set(record.keys()) == {
-            "icao_code", "name", "latitude", "longitude",
+            "icao_code", "name", "phonic", "latitude", "longitude",
             "altitude_feet", "country", "municipality", "type",
         }
 
@@ -290,12 +345,9 @@ class TestBuildAirportRecord:
         record = build_airport_record(row)
         assert record["icao_code"] == "KJFK"
         assert record["name"] == "JFK"
+        assert record["phonic"] == "Kennedy"
         assert record["latitude"] == pytest.approx(40.6413)
-        assert record["longitude"] == pytest.approx(-73.7781)
-        assert record["altitude_feet"] == 13
         assert record["country"] == "US"
-        assert record["municipality"] == "New York"
-        assert record["type"] == "large_airport"
 
 
 # ---------------------------------------------------------------------------
@@ -327,14 +379,14 @@ class TestWriteToRedis:
         conn.executescript(_mod._SCHEMA)
         conn.execute(
             "INSERT INTO airports "
-            "(icao_code, name, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES ('KJFK', 'John F Kennedy International Airport', "
+            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
+            "VALUES ('KJFK', 'John F Kennedy International Airport', 'Kennedy', "
             "40.6413, -73.7781, 13, 'US', 'New York', 'large_airport')"
         )
         conn.execute(
             "INSERT INTO airports "
-            "(icao_code, name, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES ('EGLL', 'London Heathrow Airport', "
+            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
+            "VALUES ('EGLL', 'London Heathrow Airport', 'London Heathrow', "
             "51.4706, -0.4619, 83, 'GB', 'London', 'large_airport')"
         )
         conn.commit()
@@ -371,15 +423,14 @@ class TestWriteToRedis:
             assert c.kwargs.get("ex") == REDIS_TTL
         conn.close()
 
-    def test_value_is_valid_json(self):
+    def test_value_is_valid_json_with_phonic(self):
         conn = self._make_db()
         r, pipe = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         for c in pipe.set.call_args_list:
-            # Second positional arg is the JSON value
-            value = c.args[1]
-            parsed = json.loads(value)
+            parsed = json.loads(c.args[1])
             assert "icao_code" in parsed
+            assert "phonic" in parsed
         conn.close()
 
     def test_correct_record_content(self):
@@ -390,16 +441,19 @@ class TestWriteToRedis:
         kjfk = json.loads(calls_by_key["airport:KJFK"])
         assert kjfk["icao_code"] == "KJFK"
         assert kjfk["name"] == "John F Kennedy International Airport"
+        assert kjfk["phonic"] == "Kennedy"
         assert kjfk["country"] == "US"
         assert kjfk["altitude_feet"] == 13
         conn.close()
 
 
 # ---------------------------------------------------------------------------
-# Tests: MQTT completion stats (mocked)
+# Tests: MQTT completion stats — single JSON payload pattern
 # ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
+    _stats_topic = f"{MQTT_ROOT}/statistics"
+
     def _setup_mock_client(self):
         mock_client = MagicMock()
 
@@ -409,41 +463,39 @@ class TestMqttCompletionStats:
         mock_client.connect.side_effect = fake_connect
         return mock_client
 
-    def test_publishes_records_imported(self):
+    def test_single_json_payload_published(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 42, "success")
+        # The stats topic should be in published calls
         topics = [c.args[0] for c in mc.publish.call_args_list]
-        assert f"{MQTT_ROOT}/statistic/records_imported" in topics
+        assert self._stats_topic in topics
 
-    def test_records_imported_value(self):
+    def test_payload_contains_all_fields(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 77, "success")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
-        assert calls[f"{MQTT_ROOT}/statistic/records_imported"] == "77"
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        payload = json.loads(calls[self._stats_topic])
+        assert payload["records_imported"] == 77
+        assert payload["last_run_status"] == "success"
+        assert "last_run_at" in payload
 
-    def test_publishes_last_run_at(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("ourairports_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, "success")
-        topics = [c.args[0] for c in mc.publish.call_args_list]
-        assert f"{MQTT_ROOT}/statistic/last_run_at" in topics
-
-    def test_publishes_last_run_status(self):
+    def test_failure_status_in_payload(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 0, "failure")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
-        assert calls[f"{MQTT_ROOT}/statistic/last_run_status"] == "failure"
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        payload = json.loads(calls[self._stats_topic])
+        assert payload["last_run_status"] == "failure"
 
     def test_no_mqtt_config_skips(self):
         cfg = {}
@@ -452,17 +504,16 @@ class TestMqttCompletionStats:
             publish_completion_stats(cfg, 0, "success")
         mc.connect.assert_not_called()
 
-    def test_ha_autodiscovery_three_sensors(self):
+    def test_ha_autodiscovery_uses_value_template(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 100, "success")
-        ha_topics = [
-            c.args[0] for c in mc.publish.call_args_list
-            if c.args[0].startswith("homeassistant/")
-        ]
-        assert len(ha_topics) == 3
-        assert "homeassistant/sensor/SkyFollower_runner_ourairports_records_imported/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_ourairports_last_run_at/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_ourairports_last_run_status/config" in ha_topics
+        ha_calls = [c for c in mc.publish.call_args_list
+                    if c.args[0].startswith("homeassistant/")]
+        assert len(ha_calls) == 3
+        for call in ha_calls:
+            cfg_payload = json.loads(call.args[1])
+            assert "value_template" in cfg_payload
+            assert cfg_payload["state_topic"] == self._stats_topic

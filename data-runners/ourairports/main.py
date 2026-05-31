@@ -3,8 +3,9 @@
 SkyFollower OurAirports Data Runner
 
 Downloads the OurAirports airports CSV, filters to 4-character ICAO codes,
-stages records in local SQLite, writes airport enrichment data to Redis with
-a 14-day TTL, publishes MQTT completion stats, then exits.
+computes a voice-friendly phonic name for each airport, stages records in
+local SQLite, writes airport enrichment data to Redis with a 14-day TTL,
+publishes MQTT completion stats, then exits.
 
 Data source: https://davidmegginson.github.io/ourairports-data/airports.csv
 """
@@ -42,6 +43,7 @@ _SCHEMA = """
 CREATE TABLE airports (
     icao_code    TEXT PRIMARY KEY,
     name         TEXT,
+    phonic       TEXT,
     latitude     REAL,
     longitude    REAL,
     altitude_feet INTEGER,
@@ -50,6 +52,97 @@ CREATE TABLE airports (
     type         TEXT
 );
 """
+
+# ---------------------------------------------------------------------------
+# Phonic name computation
+# Ported from the legacy ourairports-airports.py airport.set_phonic() method.
+# The phonic is a voice-friendly spoken version of the airport name used for
+# overhead announcements — city noise and "International Airport" are stripped.
+# ---------------------------------------------------------------------------
+
+# Airports where the exact name (minus "International Airport") is used as-is.
+_USE_NAME_EXACTLY = frozenset({
+    "KIAD", "KDFW", "KRDU", "KCVG", "CYUL", "KEWR", "KPIE", "KROC", "MMUN",
+})
+
+# Airports with fully overridden phonic names.
+_PHONIC_OVERRIDES = {
+    "KMLB": "Melbourne",
+    "KPBI": "Palm Beach International Airport",
+}
+
+
+def _remove_international_airport(text: str) -> str:
+    """Strip 'International' and 'Airport' and collapse extra spaces."""
+    text = text.replace("International", "").replace("Airport", "")
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text.strip()
+
+
+def compute_phonic(icao_code: str, name: str, municipality: str) -> str:
+    """
+    Compute a voice-friendly phonic name for an airport.
+
+    Rules (matching legacy set_phonic logic):
+    1. Direct override for specific ICAO codes.
+    2. Names starting with "Greater": keep exact name.
+    3. A set of known codes that use their name exactly (minus Int'l Airport).
+    4. Names containing " of ": keep exact name (minus Int'l Airport).
+    5. Special fixup for KLGA.
+    6. If city name not in airport name: prepend city.
+    7. If phonic ends with city: move city to front.
+    8. Strip trailing "/" or "-" artifacts.
+    9. Replace "/" and "-" with spaces; normalise whitespace.
+    10. Remove "International" and "Airport".
+    """
+    if not name:
+        return ""
+
+    city = (municipality or "").strip()
+
+    # 1. Hard overrides
+    if icao_code in _PHONIC_OVERRIDES:
+        return _PHONIC_OVERRIDES[icao_code]
+
+    # 2. "Greater …" airports keep their exact name
+    if name.lower().startswith("greater"):
+        return name
+
+    # 3. Known codes use name exactly (minus International / Airport)
+    if icao_code in _USE_NAME_EXACTLY:
+        return _remove_international_airport(name)
+
+    # 4. Names with " of " keep exact name (minus International / Airport)
+    if " of " in name:
+        return _remove_international_airport(name)
+
+    # 5. KLGA: fix spacing
+    phonic = name
+    if city and city.replace("/", " ").replace("-", " ") not in name:
+        phonic = f"{city} {name}"
+
+    phonic = _remove_international_airport(phonic)
+
+    if icao_code == "KLGA":
+        phonic = phonic.replace("La Guardia", "LaGuardia")
+        return phonic
+
+    # 6. If phonic ends with city name, move city to the front
+    if city and phonic.endswith(city):
+        inner = name.replace(city, "").strip()
+        phonic = f"{city} {inner}"
+        phonic = _remove_international_airport(phonic)
+
+    # 7. Strip trailing "/" or "-" (city-name-after-slash artifacts)
+    if phonic.endswith("/") or phonic.endswith("-"):
+        phonic = _remove_international_airport(name)
+
+    # 8. Normalise separators and whitespace
+    phonic = phonic.replace("/", " ").replace("-", " ")
+    while "  " in phonic:
+        phonic = phonic.replace("  ", " ")
+    return phonic.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -121,19 +214,21 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
             skipped += 1
             continue
 
+        icao = ident.upper()
         airport_type = row.get("type", "").strip() or None
         name = row.get("name", "").strip() or None
+        municipality = row.get("municipality", "").strip() or None
         latitude = parse_coordinate(row.get("latitude_deg", ""))
         longitude = parse_coordinate(row.get("longitude_deg", ""))
         altitude_feet = parse_altitude(row.get("elevation_ft", ""))
         country = row.get("iso_country", "").strip() or None
-        municipality = row.get("municipality", "").strip() or None
+        phonic = compute_phonic(icao, name or "", municipality or "") or None
 
         cur.execute(
             "INSERT OR REPLACE INTO airports "
-            "(icao_code, name, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (ident.upper(), name, latitude, longitude, altitude_feet, country, municipality, airport_type),
+            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (icao, name, phonic, latitude, longitude, altitude_feet, country, municipality, airport_type),
         )
         count += 1
 
@@ -153,6 +248,7 @@ def build_airport_record(row: sqlite3.Row) -> dict:
     return {
         "icao_code": row["icao_code"],
         "name": row["name"],
+        "phonic": row["phonic"],
         "latitude": row["latitude"],
         "longitude": row["longitude"],
         "altitude_feet": row["altitude_feet"],
@@ -170,7 +266,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     """Write all staged airport records to Redis. Returns count of records written."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT icao_code, name, latitude, longitude, altitude_feet, "
+        "SELECT icao_code, name, phonic, latitude, longitude, altitude_feet, "
         "country, municipality, type FROM airports"
     )
     rows = cur.fetchall()
@@ -202,13 +298,19 @@ def publish_completion_stats(
     records_imported: int,
     status: str,
 ) -> None:
-    """Publish completion statistics to MQTT and HA autodiscovery."""
+    """Publish completion statistics as a single JSON payload to MQTT."""
     mc = cfg.get("mqtt")
     if not mc:
         logger.info("No MQTT config; skipping stats publish.")
         return
 
     run_at = datetime.now(timezone.utc).isoformat()
+    stats_payload = {
+        "records_imported": records_imported,
+        "last_run_at": run_at,
+        "last_run_status": status,
+    }
+    stats_topic = f"{MQTT_ROOT}/statistics"
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     connected = False
@@ -233,12 +335,8 @@ def publish_completion_stats(
             client.loop_stop()
             return
 
-        base = MQTT_ROOT + "/statistic"
-        client.publish(f"{base}/records_imported", str(records_imported), retain=True)
-        client.publish(f"{base}/last_run_at", run_at, retain=True)
-        client.publish(f"{base}/last_run_status", status, retain=True)
-
-        _publish_ha_autodiscovery(client)
+        client.publish(stats_topic, json.dumps(stats_payload))
+        _publish_ha_autodiscovery(client, stats_topic)
 
         time.sleep(0.5)
         client.loop_stop()
@@ -253,20 +351,24 @@ def publish_completion_stats(
             pass
 
 
-def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
+def _publish_ha_autodiscovery(client: mqtt.Client, stats_topic: str) -> None:
     device = {
         "ids": "SkyFollower_runner_ourairports",
         "name": "SkyFollower OurAirports Runner",
         "manufacturer": "P5Software, LLC",
     }
-    stats = [
-        ("records_imported", "OurAirports Records Imported", "mdi:airport", "total_increasing", None),
-        ("last_run_at", "OurAirports Last Run At", "mdi:clock", None, None),
-        ("last_run_status", "OurAirports Last Run Status", "mdi:check-circle", None, None),
+    sensors = [
+        ("records_imported", "OurAirports Records Imported", "mdi:airport",
+         "total_increasing", None, "{{ value_json.records_imported }}"),
+        ("last_run_at", "OurAirports Last Run At", "mdi:clock",
+         None, None, "{{ value_json.last_run_at }}"),
+        ("last_run_status", "OurAirports Last Run Status", "mdi:check-circle",
+         None, None, "{{ value_json.last_run_status }}"),
     ]
-    for name, friendly_name, icon, state_class, unit in stats:
+    for name, friendly_name, icon, state_class, unit, tmpl in sensors:
         payload: dict = {
-            "state_topic": f"{MQTT_ROOT}/statistic/{name}",
+            "state_topic": stats_topic,
+            "value_template": tmpl,
             "name": friendly_name,
             "unique_id": f"SkyFollower_runner_ourairports_{name}",
             "object_id": f"SkyFollower_runner_ourairports_{name}",
