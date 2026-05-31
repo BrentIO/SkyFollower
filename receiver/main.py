@@ -574,7 +574,12 @@ def _load_config() -> dict:
 
 
 def main() -> None:
-    receiver_id = int(os.environ.get("RECEIVER_ID", "0"))
+    receiver_id_str = os.environ.get("RECEIVER_ID", "0")
+    try:
+        receiver_id = int(receiver_id_str)
+    except ValueError:
+        print(f"RECEIVER_ID must be an integer, got: {receiver_id_str!r}", file=sys.stderr)
+        sys.exit(1)
     config = _load_config()
     receiver = Receiver(config, receiver_id)
 

@@ -398,6 +398,18 @@ class TestReceiverIdAndTopics:
         r = self._make_receiver(receiver_id=3)
         assert r._id == 3
 
+    def test_main_exits_on_non_integer_receiver_id(self):
+        import os
+        with patch.dict(os.environ, {"RECEIVER_ID": "notanint"}):
+            with patch("receiver.main._load_config", return_value={
+                "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
+                "data_dir": tempfile.mkdtemp(),
+            }):
+                import receiver.main as rm
+                with pytest.raises(SystemExit) as exc_info:
+                    rm.main()
+                assert exc_info.value.code == 1
+
     def test_main_reads_receiver_id_from_env(self):
         import os
         from unittest.mock import patch, MagicMock
