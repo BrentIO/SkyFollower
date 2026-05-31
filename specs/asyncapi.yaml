@@ -1,7 +1,7 @@
 asyncapi: '3.1.0'
 info:
   title: SkyFollower
-  version: '1.0.0'
+  version: '9999.99.99'
   description: >
     ADS-B aircraft tracking and alerting system.
     Statistic values within JSON payloads use their native types (number,
