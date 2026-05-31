@@ -86,13 +86,20 @@ All topics use the root `SkyFollower`.
 
 | Topic | Payload | Retained |
 |-------|---------|----------|
-| `SkyFollower/receiver/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/receiver/statistic/started_at` | ISO 8601 UTC timestamp | Yes |
-| `SkyFollower/receiver/statistic/messages_{source}_per_second` | float (one per configured source, e.g. `messages_1090_per_second`) | No |
-| `SkyFollower/receiver/statistic/local_queue_depth` | integer | No |
-| `SkyFollower/receiver/statistic/rabbitmq_connected` | `"true"` or `"false"` | No |
+| `SkyFollower/receiver/{receiver_id}/status` | `ONLINE` or `OFFLINE` | Yes |
+| `SkyFollower/receiver/{receiver_id}/statistics` | JSON (see fields below) | Yes |
 
-Rates are computed over a 30-second rolling window. Telemetry is published
+**Statistics payload fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `messages_1090_per_second` | float | Average 1090 MHz message rate since last report |
+| `messages_978_per_second` | float | Average 978 MHz UAT message rate since last report; `0.0` if no UAT source configured |
+| `local_queue_depth` | integer | Messages queued in the local SQLite fallback (`queue.db`) |
+| `rabbitmq_connected` | boolean | `true` when an active RabbitMQ connection is held |
+| `started_at` | string | UTC ISO-8601 timestamp of process start |
+
+Rates are computed as messages received since last report ÷ elapsed seconds. Telemetry is published
 every `telemetry_interval_seconds`.
 
 Home Assistant autodiscovery payloads are published to

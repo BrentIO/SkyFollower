@@ -78,7 +78,7 @@ All topics use the root `SkyFollower`.
 | `SkyFollower/processor/{ID}/status` | `ONLINE` or `OFFLINE` | Yes |
 | `SkyFollower/processor/{ID}/statistic/started_at` | ISO 8601 UTC timestamp | Yes |
 | `SkyFollower/processor/{ID}/statistic/messages_per_second` | float | No |
-| `SkyFollower/processor/{ID}/statistic/avg_processing_time_ms` | float | No |
+| `SkyFollower/processor/{ID}/statistic/processing_time_hwm_ms` | float; resets on publish | No |
 | `SkyFollower/processor/{ID}/statistic/rules_engine_hwm_ms` | integer (resets each interval) | No |
 | `SkyFollower/processor/{ID}/statistic/rabbitmq_input_queue_depth` | integer (`-1` on error) | No |
 | `SkyFollower/processor/{ID}/statistic/local_archive_queue_depth` | integer | No |
