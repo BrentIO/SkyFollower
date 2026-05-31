@@ -176,8 +176,9 @@ class _FallbackQueue:
 
 class Receiver:
 
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: dict, receiver_id: int = 0) -> None:
         self._cfg = config
+        self._id = receiver_id
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
@@ -428,7 +429,9 @@ class Receiver:
             return
 
         self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        self._mqtt.will_set("SkyFollower/receiver/status", "OFFLINE", retain=True)
+        self._mqtt.will_set(
+            f"SkyFollower/receiver/{self._id}/status", "OFFLINE", retain=True
+        )
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
         try:
@@ -441,11 +444,8 @@ class Receiver:
         self, client, userdata, flags, reason_code, properties
     ) -> None:
         self._mqtt_connected = True
-        client.publish("SkyFollower/receiver/status", "ONLINE", retain=True)
         client.publish(
-            "SkyFollower/receiver/statistic/started_at",
-            self._started_at,
-            retain=True,
+            f"SkyFollower/receiver/{self._id}/status", "ONLINE", retain=True
         )
         self._publish_ha_autodiscovery()
         logger.info("MQTT connected.")
@@ -454,10 +454,6 @@ class Receiver:
         self, client, userdata, flags, reason_code, properties
     ) -> None:
         self._mqtt_connected = False
-
-    def _mqtt_publish(self, topic: str, value) -> None:
-        if self._mqtt and self._mqtt_connected:
-            self._mqtt.publish(topic, str(value))
 
     # ------------------------------------------------------------------
     # Telemetry
@@ -470,22 +466,23 @@ class Receiver:
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:
-        base = "SkyFollower/receiver/statistic"
+        if not (self._mqtt and self._mqtt_connected):
+            return
 
         with self._rmq_lock:
             rmq_connected = self._rmq_connected
 
-        # Build per-source message rates
-        stats: dict[str, object] = {}
+        payload: dict = {"started_at": self._started_at}
         for source, tracker in self._rates.items():
-            stat_name = f"messages_{source}_per_second"
-            stats[stat_name] = round(tracker.rate(), 2)
+            payload[f"messages_{source}_per_second"] = round(tracker.rate(), 2)
+        payload["local_queue_depth"] = self._fallback.depth()
+        payload["rabbitmq_connected"] = rmq_connected
 
-        stats["local_queue_depth"] = self._fallback.depth()
-        stats["rabbitmq_connected"] = "true" if rmq_connected else "false"
-
-        for name, value in stats.items():
-            self._mqtt_publish(f"{base}/{name}", value)
+        self._mqtt.publish(
+            f"SkyFollower/receiver/{self._id}/statistics",
+            json.dumps(payload),
+            retain=True,
+        )
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -495,40 +492,39 @@ class Receiver:
         if not (self._mqtt and self._mqtt_connected):
             return
 
+        rid = self._id
+        stats_topic = f"SkyFollower/receiver/{rid}/statistics"
         device = {
-            "ids": "SkyFollower_receiver",
-            "name": "SkyFollower Receiver",
+            "ids": f"SkyFollower_receiver_{rid}",
+            "name": f"SkyFollower Receiver {rid}",
             "manufacturer": "P5Software, LLC",
         }
         availability = {
-            "availability_topic": "SkyFollower/receiver/status",
+            "availability_topic": f"SkyFollower/receiver/{rid}/status",
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
 
-        # Build list of stat sensors from configured sources
-        stats = []
+        sensors = []
         for source in self._rates:
-            stat_name = f"messages_{source}_per_second"
-            stats.append((
-                stat_name,
-                f"Messages {source} per Second",
-                "mdi:broadcast",
-                "measurement",
-                "msg/s",
-            ))
-        stats += [
-            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
-            ("rabbitmq_connected", "RabbitMQ Connected", "mdi:rabbit", None, None),
+            field = f"messages_{source}_per_second"
+            sensors.append((field, f"Receiver {rid} — {source} Messages/sec",
+                             "mdi:broadcast", "measurement", "msg/s"))
+        sensors += [
+            ("local_queue_depth", f"Receiver {rid} — Local Queue Depth",
+             "mdi:tray-full", "measurement", None),
+            ("rabbitmq_connected", f"Receiver {rid} — RabbitMQ Connected",
+             "mdi:rabbit", None, None),
         ]
 
-        for name, desc, icon, state_class, unit in stats:
+        for field, desc, icon, state_class, unit in sensors:
             payload: dict = {
                 **availability,
-                "state_topic": f"SkyFollower/receiver/statistic/{name}",
+                "state_topic": stats_topic,
+                "value_template": f"{{{{ value_json.{field} }}}}",
                 "name": desc,
-                "unique_id": f"SkyFollower_receiver_{name}",
-                "object_id": f"SkyFollower_receiver_{name}",
+                "unique_id": f"SkyFollower_receiver_{rid}_{field}",
+                "object_id": f"SkyFollower_receiver_{rid}_{field}",
                 "device": device,
                 "icon": icon,
             }
@@ -538,7 +534,7 @@ class Receiver:
                 payload["unit_of_measurement"] = unit
 
             self._mqtt.publish(
-                f"homeassistant/sensor/SkyFollower_receiver_{name}/config",
+                f"homeassistant/sensor/SkyFollower_receiver_{rid}_{field}/config",
                 json.dumps(payload),
                 retain=True,
             )
@@ -552,7 +548,9 @@ class Receiver:
         self._shutdown.set()
 
         if self._mqtt:
-            self._mqtt.publish("SkyFollower/receiver/status", "OFFLINE", retain=True)
+            self._mqtt.publish(
+                f"SkyFollower/receiver/{self._id}/status", "OFFLINE", retain=True
+            )
             self._mqtt.loop_stop()
 
         with self._rmq_lock:
@@ -576,8 +574,9 @@ def _load_config() -> dict:
 
 
 def main() -> None:
+    receiver_id = int(os.environ.get("RECEIVER_ID", "0"))
     config = _load_config()
-    receiver = Receiver(config)
+    receiver = Receiver(config, receiver_id)
 
     def _handle_signal(sig, frame):
         receiver.shutdown()

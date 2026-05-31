@@ -131,7 +131,7 @@ class TestIcaoRoutingIntegration:
     Receiver._handle_message internals (using mocked publishing).
     """
 
-    def _make_receiver(self, processor_count: int = 4):
+    def _make_receiver(self, processor_count: int = 4, receiver_id: int = 0):
         """Build a Receiver with a stub config (no real connections)."""
         from receiver.main import Receiver
         cfg = {
@@ -141,7 +141,7 @@ class TestIcaoRoutingIntegration:
             "telemetry_interval_seconds": 30,
             "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        return Receiver(cfg, receiver_id)
 
     def test_queue_name_from_icao_modulo(self):
         """Queue is adsb-{int(icao_hex, 16) % processor_count}."""
@@ -370,3 +370,138 @@ class TestRateTracker:
             t.join()
 
         assert errors == [], f"Thread safety errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# RECEIVER_ID and MQTT topic structure
+# ---------------------------------------------------------------------------
+
+class TestReceiverIdAndTopics:
+    """Tests for RECEIVER_ID env var and resulting MQTT topic naming."""
+
+    def _make_receiver(self, receiver_id: int = 0):
+        import tempfile
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg, receiver_id)
+
+    def test_default_receiver_id_is_zero(self):
+        r = self._make_receiver()
+        assert r._id == 0
+
+    def test_receiver_id_set_correctly(self):
+        r = self._make_receiver(receiver_id=3)
+        assert r._id == 3
+
+    def test_main_reads_receiver_id_from_env(self):
+        import os
+        from unittest.mock import patch, MagicMock
+        with patch.dict(os.environ, {"RECEIVER_ID": "2"}):
+            with patch("receiver.main._load_config", return_value={
+                "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
+                "data_dir": tempfile.mkdtemp(),
+            }):
+                with patch("receiver.main.Receiver") as mock_cls:
+                    mock_cls.return_value.start = MagicMock()
+                    import receiver.main as rm
+                    rm.main()
+                    args = mock_cls.call_args
+                    assert args[0][1] == 2  # receiver_id positional arg
+
+
+# ---------------------------------------------------------------------------
+# Telemetry — single JSON payload
+# ---------------------------------------------------------------------------
+
+class TestTelemetryPayload:
+    """Tests for _publish_telemetry() single-JSON-payload behaviour."""
+
+    def _make_receiver(self, receiver_id: int = 0):
+        import tempfile
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [
+                {"host": "localhost", "port": 30002, "source": "1090"},
+                {"host": "localhost", "port": 30978, "source": "978"},
+            ],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg, receiver_id)
+
+    def test_publish_telemetry_single_publish_call(self):
+        r = self._make_receiver(receiver_id=1)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        assert mock_mqtt.publish.call_count == 1
+
+    def test_publish_telemetry_correct_topic(self):
+        r = self._make_receiver(receiver_id=2)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        topic = mock_mqtt.publish.call_args[0][0]
+        assert topic == "SkyFollower/receiver/2/statistics"
+
+    def test_publish_telemetry_retained(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        kwargs = mock_mqtt.publish.call_args[1]
+        assert kwargs.get("retain") is True
+
+    def test_publish_telemetry_payload_fields(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        import json
+        payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        assert "messages_1090_per_second" in payload
+        assert "messages_978_per_second" in payload
+        assert "local_queue_depth" in payload
+        assert "rabbitmq_connected" in payload
+        assert "started_at" in payload
+
+    def test_rabbitmq_connected_is_boolean(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        import json
+        payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        assert isinstance(payload["rabbitmq_connected"], bool)
+
+    def test_no_publish_when_mqtt_not_connected(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = False
+        r._publish_telemetry()
+        mock_mqtt.publish.assert_not_called()
+
+    def test_ha_autodiscovery_uses_value_template(self):
+        r = self._make_receiver(receiver_id=0)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        import json
+        for call in mock_mqtt.publish.call_args_list:
+            if call[0][0].startswith("homeassistant/"):
+                cfg_payload = json.loads(call[0][1])
+                assert "value_template" in cfg_payload
+                assert cfg_payload["state_topic"] == "SkyFollower/receiver/0/statistics"
