@@ -535,6 +535,7 @@ class Processor:
         self._process(msg)
         elapsed_ms = (time.monotonic() - t_start) * 1000
         self._processing_time.record(elapsed_ms)
+        self._processing_time.record_hwm(elapsed_ms)
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     # ------------------------------------------------------------------
@@ -828,19 +829,11 @@ class Processor:
     def _on_mqtt_connect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = True
         client.publish(f"SkyFollower/processor/{self._id}/status", "ONLINE", retain=True)
-        client.publish(
-            f"SkyFollower/processor/{self._id}/statistic/started_at",
-            self._started_at, retain=True,
-        )
         self._publish_ha_autodiscovery()
         logger.info("MQTT connected.")
 
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
-
-    def _mqtt_publish(self, topic: str, value) -> None:
-        if self._mqtt and self._mqtt_connected:
-            self._mqtt.publish(topic, str(value))
 
     def _publish_rule_notification(self, flight: Flight, rule: dict) -> None:
         if not (self._mqtt and self._mqtt_connected):
@@ -876,22 +869,31 @@ class Processor:
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:
+        if not (self._mqtt and self._mqtt_connected):
+            return
+
         pid = self._id
-        base = f"SkyFollower/processor/{pid}/statistic"
 
         with self._db_lock:
             cur = self._db.cursor()
             cur.execute("SELECT COUNT(*) FROM flights")
             active = cur.fetchone()[0]
 
-        hwm = self._rules_time.hwm_ms_and_reset()
-        avg = self._processing_time.avg_ms()
+        processing_hwm = self._processing_time.hwm_ms_and_reset()
         self._processing_time.reset()
+        rules_hwm = self._rules_time.hwm_ms_and_reset()
 
-        stats = {
+        try:
+            rmq_depth = self._rmq_queue_depth()
+        except Exception:
+            rmq_depth = -1
+
+        payload = {
+            "started_at": self._started_at,
             "messages_per_second": round(self._rate.rate(), 2),
-            "avg_processing_time_ms": round(avg, 1),
-            "rules_engine_hwm_ms": hwm,
+            "processing_time_hwm_ms": processing_hwm,
+            "rules_engine_hwm_ms": rules_hwm,
+            "rabbitmq_input_queue_depth": rmq_depth,
             "local_archive_queue_depth": self._fallback.depth(),
             "active_flights": active,
             "registration_misses_hour": self._redis_counter(
@@ -908,14 +910,11 @@ class Processor:
             ),
         }
 
-        # RabbitMQ queue depth via management API (best-effort)
-        try:
-            stats["rabbitmq_input_queue_depth"] = self._rmq_queue_depth()
-        except Exception:
-            stats["rabbitmq_input_queue_depth"] = -1
-
-        for name, value in stats.items():
-            self._mqtt_publish(f"{base}/{name}", value)
+        self._mqtt.publish(
+            f"SkyFollower/processor/{pid}/statistics",
+            json.dumps(payload),
+            retain=True,
+        )
 
         # Refresh heartbeat
         interval = self._cfg.get("telemetry_interval_seconds", 30)
@@ -983,9 +982,10 @@ class Processor:
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        stats = [
+        stats_topic = f"SkyFollower/processor/{pid}/statistics"
+        sensors = [
             ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
-            ("avg_processing_time_ms", "Avg Processing Time", "mdi:clock", "measurement", "ms"),
+            ("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms"),
             ("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
             ("rabbitmq_input_queue_depth", "RabbitMQ Queue Depth", "mdi:tray-full", "measurement", None),
             ("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement", None),
@@ -995,13 +995,14 @@ class Processor:
             ("aircraft_type_misses_today", "Aircraft Type Misses (Today)", "mdi:broadcast", "total_increasing", None),
             ("active_flights", "Active Flights", "mdi:airplane", "measurement", None),
         ]
-        for name, desc, icon, state_class, unit in stats:
+        for field, desc, icon, state_class, unit in sensors:
             payload = {
                 **availability,
-                "state_topic": f"SkyFollower/processor/{pid}/statistic/{name}",
+                "state_topic": stats_topic,
+                "value_template": f"{{{{ value_json.{field} }}}}",
                 "name": desc,
-                "unique_id": f"SkyFollower_processor_{pid}_{name}",
-                "object_id": f"SkyFollower_processor_{pid}_{name}",
+                "unique_id": f"SkyFollower_processor_{pid}_{field}",
+                "object_id": f"SkyFollower_processor_{pid}_{field}",
                 "device": device,
                 "icon": icon,
                 "state_class": state_class,
@@ -1009,7 +1010,7 @@ class Processor:
             if unit:
                 payload["unit_of_measurement"] = unit
             self._mqtt.publish(
-                f"homeassistant/sensor/SkyFollower_processor_{pid}_{name}/config",
+                f"homeassistant/sensor/SkyFollower_processor_{pid}_{field}/config",
                 json.dumps(payload),
                 retain=True,
             )
