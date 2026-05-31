@@ -76,22 +76,29 @@ All topics use the root `SkyFollower`.
 | Topic | Payload | Retained |
 |-------|---------|----------|
 | `SkyFollower/processor/{ID}/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/processor/{ID}/statistic/started_at` | ISO 8601 UTC timestamp | Yes |
-| `SkyFollower/processor/{ID}/statistic/messages_per_second` | float | No |
-| `SkyFollower/processor/{ID}/statistic/processing_time_hwm_ms` | float; resets on publish | No |
-| `SkyFollower/processor/{ID}/statistic/rules_engine_hwm_ms` | integer (resets each interval) | No |
-| `SkyFollower/processor/{ID}/statistic/rabbitmq_input_queue_depth` | integer (`-1` on error) | No |
-| `SkyFollower/processor/{ID}/statistic/local_archive_queue_depth` | integer | No |
-| `SkyFollower/processor/{ID}/statistic/registration_misses_hour` | integer | No |
-| `SkyFollower/processor/{ID}/statistic/registration_misses_today` | integer | No |
-| `SkyFollower/processor/{ID}/statistic/aircraft_type_misses_hour` | integer | No |
-| `SkyFollower/processor/{ID}/statistic/aircraft_type_misses_today` | integer | No |
-| `SkyFollower/processor/{ID}/statistic/active_flights` | integer | No |
+| `SkyFollower/processor/{ID}/statistics` | JSON stats payload (see fields below) | Yes |
 | `SkyFollower/rule/{IDENTIFIER}` | JSON flight snapshot (no positions/velocities) with `rule` key | No |
 
+**Statistics payload fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `started_at` | string | UTC ISO-8601 timestamp of process start |
+| `messages_per_second` | float | Rolling 30-second average message rate |
+| `processing_time_hwm_ms` | float | End-to-end processing time high-water mark since last publish; resets on publish |
+| `rules_engine_hwm_ms` | integer | Rules engine duration high-water mark since last publish; resets on publish |
+| `rabbitmq_input_queue_depth` | integer | Current input queue depth (`-1` on error) |
+| `local_archive_queue_depth` | integer | Completed flights queued in `archive.db` fallback |
+| `registration_misses_hour` | integer | Aircraft Redis cache misses this hour |
+| `registration_misses_today` | integer | Aircraft Redis cache misses today (UTC) |
+| `aircraft_type_misses_hour` | integer | Aircraft type lookup misses this hour |
+| `aircraft_type_misses_today` | integer | Aircraft type lookup misses today (UTC) |
+| `active_flights` | integer | Flights currently tracked in the in-memory store |
+
+All statistics are published as a single retained JSON payload every `telemetry_interval_seconds`.
 Home Assistant autodiscovery payloads are published to
-`homeassistant/sensor/SkyFollower_processor_{ID}_{name}/config` on MQTT
-connect.
+`homeassistant/sensor/SkyFollower_processor_{ID}_{field}/config` on MQTT connect,
+each using `value_template` to extract its field from the shared statistics topic.
 
 ## Fault Tolerance
 

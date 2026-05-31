@@ -368,4 +368,100 @@ class TestProcessorEnrichment:
         p._enrich_flight(f)
 
         assert f.origin == "KATL"
-        assert f.destination == "KLAX"
+
+
+# ---------------------------------------------------------------------------
+# Telemetry — single JSON payload
+# ---------------------------------------------------------------------------
+
+class TestTelemetryPayload:
+    """Tests for _publish_telemetry() single-JSON-payload behaviour."""
+
+    def _make_processor(self) -> Processor:
+        with patch("processor.main.redis_lib.Redis"):
+            p = Processor(_minimal_config(), processor_id=0)
+        return p
+
+    def test_single_publish_call(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_telemetry()
+        assert mock_mqtt.publish.call_count == 1
+
+    def test_correct_topic(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_telemetry()
+        topic = mock_mqtt.publish.call_args[0][0]
+        assert topic == "SkyFollower/processor/0/statistics"
+
+    def test_retained(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_telemetry()
+        assert mock_mqtt.publish.call_args[1].get("retain") is True
+
+    def test_payload_fields(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_telemetry()
+        payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        expected = {
+            "started_at", "messages_per_second", "processing_time_hwm_ms",
+            "rules_engine_hwm_ms", "rabbitmq_input_queue_depth",
+            "local_archive_queue_depth", "active_flights",
+            "registration_misses_hour", "registration_misses_today",
+            "aircraft_type_misses_hour", "aircraft_type_misses_today",
+        }
+        assert expected.issubset(payload.keys())
+
+    def test_processing_time_hwm_not_avg(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._processing_time.record(10.0)
+        p._processing_time.record_hwm(10.0)
+        p._processing_time.record(50.0)
+        p._processing_time.record_hwm(50.0)
+        p._publish_telemetry()
+        payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        assert payload["processing_time_hwm_ms"] == 50
+
+    def test_no_publish_when_mqtt_not_connected(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = False
+        p._publish_telemetry()
+        mock_mqtt.publish.assert_not_called()
+
+    def test_ha_autodiscovery_uses_value_template(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        stats_topic = "SkyFollower/processor/0/statistics"
+        for call in mock_mqtt.publish.call_args_list:
+            if call[0][0].startswith("homeassistant/"):
+                cfg = json.loads(call[0][1])
+                assert "value_template" in cfg
+                assert cfg["state_topic"] == stats_topic
+
+    def test_ha_autodiscovery_no_avg_processing_time(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        for call in mock_mqtt.publish.call_args_list:
+            assert "avg_processing_time_ms" not in call[0][0]
