@@ -165,6 +165,8 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
     """Parse the CSV and stage qualifying rows into a SQLite database."""
     logger.info("Opening staging database at %s", db_path)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    if os.path.exists(db_path):
+        os.remove(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)

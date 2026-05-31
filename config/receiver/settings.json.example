@@ -1,0 +1,20 @@
+{
+    "sources": [
+        { "host": "192.168.1.x", "port": 30002, "source": "1090" },
+        { "host": "192.168.1.x", "port": 30978, "source": "978" }
+    ],
+    "processor_count": 1,
+    "rabbitmq": {
+        "host": "rabbitmq",
+        "port": 5672,
+        "username": "skyfollower",
+        "password": "change_me"
+    },
+    "mqtt": {
+        "host": "192.168.1.x",
+        "port": 1883
+    },
+    "telemetry_interval_seconds": 30,
+    "data_dir": "/app/data",
+    "log_level": "info"
+}
