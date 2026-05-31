@@ -404,6 +404,43 @@ components:
           description: Outcome of the run
           example: success
 
+    AirportInfo:
+      type: object
+      description: >
+        Airport metadata as stored in Redis by the ourairports data runner.
+        Included in flight notifications as origin and destination objects so
+        consuming systems have phonic names available for announcements.
+      required: [icao_code]
+      properties:
+        icao_code:
+          type: string
+          example: KATL
+        name:
+          type: string
+          example: Hartsfield-Jackson Atlanta International Airport
+        phonic:
+          type: string
+          description: Voice-friendly spoken name for announcements
+          example: Atlanta Hartsfield-Jackson
+        latitude:
+          type: number
+          example: 33.6367
+        longitude:
+          type: number
+          example: -84.4281
+        altitude_feet:
+          type: integer
+          example: 1026
+        country:
+          type: string
+          example: US
+        municipality:
+          type: string
+          example: Atlanta
+        type:
+          type: string
+          example: large_airport
+
     AircraftInfo:
       type: object
       description: >
@@ -491,16 +528,15 @@ components:
           type: string
           example: "1200"
         origin:
-          type: string
-          description: ICAO departure airport code; omitted when unknown
-          example: KATL
+          $ref: '#/components/schemas/AirportInfo'
+          description: Departure airport; omitted when unknown
         destination:
-          type: string
-          description: ICAO arrival airport code; omitted when unknown
-          example: KLAX
+          $ref: '#/components/schemas/AirportInfo'
+          description: Arrival airport; omitted when unknown
         source:
           type: string
-          enum: ["1090", "978", "mlat"]
+          enum: ["1090", "978"]
+          description: Receive source. mlat support is tracked in issue #32
         first_message:
           type: string
           format: date-time
