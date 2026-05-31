@@ -144,41 +144,49 @@ class TestIsValidIcao:
 # ---------------------------------------------------------------------------
 
 class TestComputePhonic:
-    def test_international_airport_stripped(self):
-        # City IS in name → use name, strip International + Airport
+    def test_international_airport_always_stripped(self):
         p = compute_phonic("KJFK", "John F Kennedy International Airport", "New York")
         assert "International" not in p
         assert "Airport" not in p
 
-    def test_city_not_in_name_prepends_city(self):
-        # City "Miami" not in "Opa-locka Executive Airport" → prepend city
+    def test_airport_stripped_even_when_city_not_in_name(self):
         p = compute_phonic("KOPF", "Opa-locka Executive Airport", "Miami")
+        assert "Airport" not in p
         assert p.startswith("Miami")
 
-    def test_kpbi_override(self):
-        # KPBI keeps full "Palm Beach International Airport" regardless of general rules
-        p = compute_phonic("KPBI", "Palm Beach International Airport", "West Palm Beach")
-        assert p == "Palm Beach International Airport"
+    def test_json_override_returned_verbatim(self):
+        # Patch the module-level dict so tests don't depend on the file on disk.
+        original = _mod._PHONIC_OVERRIDES.copy()
+        _mod._PHONIC_OVERRIDES["KTST"] = "Test Verbatim"
+        try:
+            p = compute_phonic("KTST", "Test International Airport", "Test City")
+            assert p == "Test Verbatim"
+        finally:
+            _mod._PHONIC_OVERRIDES.clear()
+            _mod._PHONIC_OVERRIDES.update(original)
 
-    def test_kmlb_override(self):
-        p = compute_phonic("KMLB", "Melbourne Orlando International Airport", "Melbourne")
-        assert p == "Melbourne"
+    def test_json_override_no_stripping_applied(self):
+        # Value in JSON file is returned as-is; stripping is NOT applied.
+        original = _mod._PHONIC_OVERRIDES.copy()
+        _mod._PHONIC_OVERRIDES["KTST"] = "Keep International Airport"
+        try:
+            p = compute_phonic("KTST", "Anything International Airport", "City")
+            assert p == "Keep International Airport"
+        finally:
+            _mod._PHONIC_OVERRIDES.clear()
+            _mod._PHONIC_OVERRIDES.update(original)
 
-    def test_greater_prefix_kept_as_is(self):
+    def test_greater_prefix_stripped(self):
         p = compute_phonic("KCVG", "Greater Cincinnati/Northern Kentucky International Airport", "Covington")
         assert p.startswith("Greater")
-
-    def test_use_name_exactly_set(self):
-        # KIAD is in the "use name exactly" set
-        p = compute_phonic("KIAD", "Washington Dulles International Airport", "Dulles")
         assert "International" not in p
         assert "Airport" not in p
-        assert "Washington" in p
 
-    def test_klga_la_guardia_fix(self):
-        p = compute_phonic("KLGA", "La Guardia Airport", "New York")
-        assert "LaGuardia" in p
-        assert "La Guardia" not in p
+    def test_city_in_name_no_duplication(self):
+        p = compute_phonic("KIAD", "Washington Dulles International Airport", "Dulles")
+        assert "Dulles Dulles" not in p
+        assert "International" not in p
+        assert "Airport" not in p
 
     def test_double_spaces_removed(self):
         p = compute_phonic("KTST", "Test International Airport", "Test")

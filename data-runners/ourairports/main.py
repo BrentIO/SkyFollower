@@ -51,21 +51,20 @@ CREATE TABLE airports (
 
 # ---------------------------------------------------------------------------
 # Phonic name computation
-# Ported from the legacy ourairports-airports.py airport.set_phonic() method.
-# The phonic is a voice-friendly spoken version of the airport name used for
-# overhead announcements — city noise and "International Airport" are stripped.
 # ---------------------------------------------------------------------------
 
-# Airports where the exact name (minus "International Airport") is used as-is.
-_USE_NAME_EXACTLY = frozenset({
-    "KIAD", "KDFW", "KRDU", "KCVG", "CYUL", "KEWR", "KPIE", "KROC", "MMUN",
-})
+_OVERRIDES_PATH = os.path.join(os.path.dirname(__file__), "phonics_overrides.json")
 
-# Airports with fully overridden phonic names.
-_PHONIC_OVERRIDES = {
-    "KMLB": "Melbourne",
-    "KPBI": "Palm Beach International Airport",
-}
+
+def _load_phonics_overrides() -> dict:
+    try:
+        with open(_OVERRIDES_PATH) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+_PHONIC_OVERRIDES: dict = _load_phonics_overrides()
 
 
 def _remove_international_airport(text: str) -> str:
@@ -76,69 +75,49 @@ def _remove_international_airport(text: str) -> str:
     return text.strip()
 
 
-def compute_phonic(icao_code: str, name: str, municipality: str) -> str:
+def compute_phonic(icao_code: str, name: str, city: str) -> str:
     """
-    Compute a voice-friendly phonic name for an airport.
+    Return a voice-friendly spoken name for an airport.
 
-    Rules (matching legacy set_phonic logic):
-    1. Direct override for specific ICAO codes.
-    2. Names starting with "Greater": keep exact name.
-    3. A set of known codes that use their name exactly (minus Int'l Airport).
-    4. Names containing " of ": keep exact name (minus Int'l Airport).
-    5. Special fixup for KLGA.
-    6. If city name not in airport name: prepend city.
-    7. If phonic ends with city: move city to front.
-    8. Strip trailing "/" or "-" artifacts.
-    9. Replace "/" and "-" with spaces; normalise whitespace.
-    10. Remove "International" and "Airport".
+    If the ICAO code has an entry in phonics_overrides.json, that value is
+    returned verbatim with no further processing.
+
+    Otherwise the general algorithm applies, and "International" / "Airport"
+    are stripped from the result as a final step on every path.
     """
     if not name:
         return ""
 
-    city = (municipality or "").strip()
-
-    # 1. Hard overrides
+    # JSON override — returned exactly as written, no further processing.
     if icao_code in _PHONIC_OVERRIDES:
         return _PHONIC_OVERRIDES[icao_code]
 
-    # 2. "Greater …" airports keep their exact name
-    if name.lower().startswith("greater"):
-        return name
+    city = (city or "").strip()
 
-    # 3. Known codes use name exactly (minus International / Airport)
-    if icao_code in _USE_NAME_EXACTLY:
-        return _remove_international_airport(name)
+    # "Greater …" airports and names containing " of " use the name as-is.
+    if name.lower().startswith("greater") or " of " in name:
+        phonic = name
+    else:
+        phonic = name
+        if city and city.replace("/", " ").replace("-", " ") not in name:
+            phonic = f"{city} {name}"
 
-    # 4. Names with " of " keep exact name (minus International / Airport)
-    if " of " in name:
-        return _remove_international_airport(name)
+        # If phonic ends with city, move city to the front.
+        if city and phonic.endswith(city):
+            inner = name.replace(city, "").strip()
+            phonic = f"{city} {inner}"
 
-    # 5. KLGA: fix spacing
-    phonic = name
-    if city and city.replace("/", " ").replace("-", " ") not in name:
-        phonic = f"{city} {name}"
+        # Strip trailing "/" or "-" artifacts (city-after-slash cases).
+        if phonic.endswith("/") or phonic.endswith("-"):
+            phonic = name
 
-    phonic = _remove_international_airport(phonic)
+        # Normalise separators.
+        phonic = phonic.replace("/", " ").replace("-", " ")
+        while "  " in phonic:
+            phonic = phonic.replace("  ", " ")
 
-    if icao_code == "KLGA":
-        phonic = phonic.replace("La Guardia", "LaGuardia")
-        return phonic
-
-    # 6. If phonic ends with city name, move city to the front
-    if city and phonic.endswith(city):
-        inner = name.replace(city, "").strip()
-        phonic = f"{city} {inner}"
-        phonic = _remove_international_airport(phonic)
-
-    # 7. Strip trailing "/" or "-" (city-name-after-slash artifacts)
-    if phonic.endswith("/") or phonic.endswith("-"):
-        phonic = _remove_international_airport(name)
-
-    # 8. Normalise separators and whitespace
-    phonic = phonic.replace("/", " ").replace("-", " ")
-    while "  " in phonic:
-        phonic = phonic.replace("  ", " ")
-    return phonic.strip()
+    # Always strip "International" and "Airport" as the final step.
+    return _remove_international_airport(phonic)
 
 
 # ---------------------------------------------------------------------------
