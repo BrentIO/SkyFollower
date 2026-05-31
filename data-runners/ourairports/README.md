@@ -27,8 +27,9 @@ used by downstream systems for overhead announcements. "International" and
 
 ### Override file
 
-**Location:** `phonics_overrides.json`, co-located with `main.py` (baked into
-the container image).
+**Location (on host):** `/app/data/phonic_overrides.json` — the same
+host-mounted volume used for the staging database. The file is personal to
+your installation and is not part of the container image.
 
 **Format:**
 ```json

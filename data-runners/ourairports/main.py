@@ -53,9 +53,9 @@ CREATE TABLE airports (
 # Phonic name computation
 # ---------------------------------------------------------------------------
 
-# Optional JSON file, co-located with this script, that maps ICAO codes to
-# exact phonic strings. If a code is present, its value is returned verbatim
-# by compute_phonic() — no "International"/"Airport" stripping or any other
+# Optional host-provided JSON file that maps ICAO codes to exact phonic
+# strings. If a code is present, its value is returned verbatim by
+# compute_phonic() — no "International"/"Airport" stripping or any other
 # processing is applied. Format:
 #
 #   {
@@ -63,9 +63,10 @@ CREATE TABLE airports (
 #       ...
 #   }
 #
-# The file is loaded once at startup; adding entries requires a container
-# restart. Missing file is silently ignored (empty overrides).
-_OVERRIDES_PATH = os.path.join(os.path.dirname(__file__), "phonics_overrides.json")
+# Place the file at the path below on the host (same mounted volume as the
+# staging database). Loaded once at startup; a container restart is required
+# to pick up changes. Missing file is silently ignored (empty overrides).
+_OVERRIDES_PATH = "/app/data/phonic_overrides.json"
 
 
 def _load_phonics_overrides() -> dict:
