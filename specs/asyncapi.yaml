@@ -1,0 +1,588 @@
+asyncapi: '3.1.0'
+info:
+  title: SkyFollower
+  version: '9999.99.99'
+  description: >
+    ADS-B aircraft tracking and alerting system.
+    Statistic values within JSON payloads use their native types (number,
+    boolean, string). All timestamps are UTC ISO-8601.
+
+servers:
+  mqtt:
+    host: localhost:1883
+    protocol: mqtt
+    description: >
+      MQTT broker (e.g. Home Assistant Mosquitto). Replace host/port with
+      your broker's address. TLS and authentication are deployment-specific
+      runtime concerns.
+
+# ---------------------------------------------------------------------------
+# Channels
+# ---------------------------------------------------------------------------
+
+channels:
+
+  # ── Receiver ──────────────────────────────────────────────────────────────
+
+  receiverStatus:
+    address: 'SkyFollower/receiver/{receiver_id}/status'
+    description: >
+      Receiver liveness. Published ONLINE on connect and OFFLINE via LWT.
+      Both messages are retained. Multiple receiver instances are
+      distinguished by receiver_id.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      StatusMessage:
+        $ref: '#/components/messages/StatusMessage'
+
+  receiverStatistics:
+    address: 'SkyFollower/receiver/{receiver_id}/statistics'
+    description: >
+      All receiver telemetry as a single retained JSON payload, published
+      every telemetry_interval_seconds. Home Assistant sensors extract
+      individual fields via value_template.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverStatisticsMessage:
+        $ref: '#/components/messages/ReceiverStatisticsMessage'
+
+  # ── Processor ─────────────────────────────────────────────────────────────
+
+  processorStatus:
+    address: 'SkyFollower/processor/{processor_id}/status'
+    description: >
+      Per-processor liveness. Published ONLINE on connect and OFFLINE via
+      LWT. Both messages are retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      StatusMessage:
+        $ref: '#/components/messages/StatusMessage'
+
+  processorStatistics:
+    address: 'SkyFollower/processor/{processor_id}/statistics'
+    description: >
+      All processor telemetry as a single retained JSON payload, published
+      every telemetry_interval_seconds.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorStatisticsMessage:
+        $ref: '#/components/messages/ProcessorStatisticsMessage'
+
+  # ── Archive processor ─────────────────────────────────────────────────────
+
+  archiveStatus:
+    address: SkyFollower/archive/status
+    description: >
+      Archive processor liveness. Published ONLINE on connect and OFFLINE
+      via LWT. Both messages are retained.
+    messages:
+      StatusMessage:
+        $ref: '#/components/messages/StatusMessage'
+
+  archiveStatistics:
+    address: SkyFollower/archive/statistics
+    description: >
+      All archive processor telemetry as a single retained JSON payload,
+      published every telemetry_interval_seconds.
+    messages:
+      ArchiveStatisticsMessage:
+        $ref: '#/components/messages/ArchiveStatisticsMessage'
+
+  # ── Rule notifications ────────────────────────────────────────────────────
+
+  ruleNotification:
+    address: 'SkyFollower/rule/{identifier}'
+    description: >
+      Published by the processor when a rule matches a tracked flight. The
+      identifier in the topic matches the rule's identifier field. Not
+      retained.
+    parameters:
+      identifier:
+        $ref: '#/components/parameters/RuleIdentifier'
+    messages:
+      FlightRuleNotificationMessage:
+        $ref: '#/components/messages/FlightRuleNotificationMessage'
+
+  # ── Data runners ──────────────────────────────────────────────────────────
+
+  runnerStatistics:
+    address: 'SkyFollower/runner/{runner_name}/statistics'
+    description: >
+      Completion statistics published by a data runner after each run.
+      Not retained — published once on completion.
+    parameters:
+      runner_name:
+        $ref: '#/components/parameters/RunnerName'
+    messages:
+      RunnerStatisticsMessage:
+        $ref: '#/components/messages/RunnerStatisticsMessage'
+
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
+
+operations:
+
+  publishReceiverStatus:
+    action: send
+    channel:
+      $ref: '#/channels/receiverStatus'
+    summary: Receiver publishes its online / offline status
+
+  publishReceiverStatistics:
+    action: send
+    channel:
+      $ref: '#/channels/receiverStatistics'
+    summary: Receiver publishes all telemetry statistics as a JSON payload
+
+  publishProcessorStatus:
+    action: send
+    channel:
+      $ref: '#/channels/processorStatus'
+    summary: Processor publishes its online / offline status
+
+  publishProcessorStatistics:
+    action: send
+    channel:
+      $ref: '#/channels/processorStatistics'
+    summary: Processor publishes all telemetry statistics as a JSON payload
+
+  publishArchiveStatus:
+    action: send
+    channel:
+      $ref: '#/channels/archiveStatus'
+    summary: Archive processor publishes its online / offline status
+
+  publishArchiveStatistics:
+    action: send
+    channel:
+      $ref: '#/channels/archiveStatistics'
+    summary: Archive processor publishes all telemetry statistics as a JSON payload
+
+  publishRuleNotification:
+    action: send
+    channel:
+      $ref: '#/channels/ruleNotification'
+    summary: Processor publishes a rule match notification
+
+  publishRunnerStatistics:
+    action: send
+    channel:
+      $ref: '#/channels/runnerStatistics'
+    summary: Data runner publishes completion statistics
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # Messages
+  # ---------------------------------------------------------------------------
+
+  messages:
+
+    StatusMessage:
+      name: StatusMessage
+      title: Component status
+      summary: LWT-pattern ONLINE / OFFLINE indicator, retained
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/StatusPayload'
+
+    ReceiverStatisticsMessage:
+      name: ReceiverStatisticsMessage
+      title: Receiver statistics
+      summary: All receiver telemetry in one retained JSON payload
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ReceiverStatistics'
+
+    ProcessorStatisticsMessage:
+      name: ProcessorStatisticsMessage
+      title: Processor statistics
+      summary: All processor telemetry in one retained JSON payload
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProcessorStatistics'
+
+    ArchiveStatisticsMessage:
+      name: ArchiveStatisticsMessage
+      title: Archive processor statistics
+      summary: All archive processor telemetry in one retained JSON payload
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ArchiveStatistics'
+
+    FlightRuleNotificationMessage:
+      name: FlightRuleNotificationMessage
+      title: Rule match notification
+      summary: JSON snapshot of a flight at the moment a rule matched
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/FlightRuleNotification'
+
+    RunnerStatisticsMessage:
+      name: RunnerStatisticsMessage
+      title: Data runner completion statistics
+      summary: Completion stats published once after a data runner finishes
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/RunnerStatistics'
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+
+  schemas:
+
+    StatusPayload:
+      type: string
+      enum: [ONLINE, OFFLINE]
+      description: >
+        Component liveness indicator. ONLINE published on connect (retained);
+        OFFLINE sent as LWT when the connection drops (retained).
+
+    ReceiverStatistics:
+      type: object
+      description: >
+        Receiver telemetry snapshot. Published with retain=true every
+        telemetry_interval_seconds. started_at never changes after startup.
+      required:
+        - messages_1090_per_second
+        - messages_978_per_second
+        - local_queue_depth
+        - rabbitmq_connected
+        - started_at
+      properties:
+        messages_1090_per_second:
+          type: number
+          description: Average 1090 MHz message rate since last report (messages received ÷ elapsed seconds)
+          example: 12.4
+        messages_978_per_second:
+          type: number
+          description: Average 978 MHz UAT message rate since last report; 0.0 if no UAT source configured
+          example: 0.0
+        local_queue_depth:
+          type: integer
+          description: Number of messages queued in the local SQLite fallback (queue.db)
+          example: 0
+        rabbitmq_connected:
+          type: boolean
+          description: True when the receiver has an active RabbitMQ connection
+          example: true
+        started_at:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of process start
+          example: "2026-01-15T10:00:00+00:00"
+
+    ProcessorStatistics:
+      type: object
+      description: >
+        Processor telemetry snapshot. Published with retain=true every
+        telemetry_interval_seconds. HWM fields reset after each publish.
+        started_at never changes after startup.
+      required:
+        - messages_per_second
+        - processing_time_hwm_ms
+        - rules_engine_hwm_ms
+        - rabbitmq_input_queue_depth
+        - local_archive_queue_depth
+        - registration_misses_hour
+        - registration_misses_today
+        - aircraft_type_misses_hour
+        - aircraft_type_misses_today
+        - active_flights
+        - started_at
+      properties:
+        messages_per_second:
+          type: number
+          description: Average message processing rate since last report (messages received ÷ elapsed seconds)
+          example: 45.1
+        processing_time_hwm_ms:
+          type: number
+          description: End-to-end message processing time high-water mark since last publish; resets on publish
+          example: 12.3
+        rules_engine_hwm_ms:
+          type: integer
+          description: Rules engine duration high-water mark since last publish; resets on publish
+          example: 45
+        rabbitmq_input_queue_depth:
+          type: integer
+          description: Current depth of this processor's RabbitMQ input queue
+          example: 0
+        local_archive_queue_depth:
+          type: integer
+          description: Number of completed flights queued in the local SQLite fallback (archive.db)
+          example: 0
+        registration_misses_hour:
+          type: integer
+          description: Aircraft Redis cache misses this hour
+          example: 2
+        registration_misses_today:
+          type: integer
+          description: Aircraft Redis cache misses today (UTC)
+          example: 14
+        aircraft_type_misses_hour:
+          type: integer
+          description: Aircraft type lookup misses this hour
+          example: 0
+        aircraft_type_misses_today:
+          type: integer
+          description: Aircraft type lookup misses today (UTC)
+          example: 3
+        active_flights:
+          type: integer
+          description: Number of flights currently tracked in the in-memory SQLite store
+          example: 8
+        started_at:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of process start
+          example: "2026-01-15T10:00:00+00:00"
+
+    ArchiveStatistics:
+      type: object
+      description: >
+        Archive processor telemetry snapshot. Published with retain=true
+        every telemetry_interval_seconds.
+      required:
+        - flights_archived_hour
+        - flights_archived_today
+        - s3_connected
+        - local_queue_depth
+        - started_at
+      properties:
+        flights_archived_hour:
+          type: integer
+          description: Flights successfully written to S3 this hour
+          example: 34
+        flights_archived_today:
+          type: integer
+          description: Flights successfully written to S3 today (UTC)
+          example: 412
+        s3_connected:
+          type: boolean
+          description: True when the last S3 write attempt succeeded
+          example: true
+        local_queue_depth:
+          type: integer
+          description: Number of completed flights queued in the local SQLite fallback (archive.db)
+          example: 0
+        started_at:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of process start
+          example: "2026-01-15T10:00:00+00:00"
+
+    RunnerStatistics:
+      type: object
+      description: Published once when a data runner completes (success or failure). Not retained.
+      required:
+        - records_imported
+        - last_run_at
+        - last_run_status
+      properties:
+        records_imported:
+          type: integer
+          description: Number of records written to Redis during this run
+          example: 487203
+        last_run_at:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp when the run completed
+          example: "2026-01-15T05:12:34+00:00"
+        last_run_status:
+          type: string
+          enum: [success, failure]
+          description: Outcome of the run
+          example: success
+
+    AirportInfo:
+      type: object
+      description: >
+        Airport metadata as stored in Redis by the ourairports data runner.
+        Matches the legacy AROI airport shape. Included in flight notifications
+        so consuming systems have phonic names available for announcements.
+      required: [icao_code]
+      properties:
+        icao_code:
+          type: string
+          example: KATL
+        name:
+          type: string
+          example: Hartsfield-Jackson Atlanta International Airport
+        city:
+          type: string
+          example: Atlanta
+        region:
+          type: string
+          description: ISO 3166-2 region code
+          example: US-GA
+        country:
+          type: string
+          example: US
+        phonic:
+          type: string
+          description: Voice-friendly spoken name for announcements
+          example: Atlanta Hartsfield-Jackson
+
+    AircraftInfo:
+      type: object
+      description: >
+        Aircraft registration and type enrichment. icao_hex is always present.
+        military is omitted when false (legacy behaviour — only serialised when true).
+      required: [icao_hex]
+      properties:
+        icao_hex:
+          type: string
+          example: A1B2C3
+        registration:
+          type: string
+          example: N12345
+        type_designator:
+          type: string
+          description: ICAO type code
+          example: B763
+        manufacturer:
+          type: string
+          example: Boeing
+        model:
+          type: string
+          example: 767-332ER
+        wake_turbulence_category:
+          type: string
+          example: Heavy
+        military:
+          type: boolean
+          description: Present and true when the aircraft is military; omitted when false
+        operator:
+          type: string
+          description: Operator or owner name from the registration database
+          example: Delta Air Lines
+        airline_code:
+          type: string
+          example: DAL
+        serial_number:
+          type: string
+        year_built:
+          type: string
+          example: "2005"
+        is_private_operator:
+          type: boolean
+        source:
+          type: string
+          description: Data runner that wrote this registration record
+          example: us-faa
+
+    FlightRuleNotification:
+      type: object
+      description: >
+        Snapshot of a flight at the moment a rule matched. Excludes _id,
+        positions, and velocities. operator, origin, and destination are
+        omitted when not populated.
+      required: [aircraft, first_message, last_message, total_messages, source, matched_rules, rule]
+      properties:
+        aircraft:
+          $ref: '#/components/schemas/AircraftInfo'
+        ident:
+          type: string
+          example: DAL659
+        operator:
+          type: object
+          description: Airline operator enrichment. Omitted when empty. source key stripped.
+          properties:
+            airline_designator:
+              type: string
+              example: DAL
+            name:
+              type: string
+              example: Delta Air Lines
+            callsign:
+              type: string
+              example: DELTA
+            country:
+              type: string
+              example: United States
+            iata:
+              type: string
+              example: DL
+            flight_number:
+              type: string
+              example: DL659
+        squawk:
+          type: string
+          example: "1200"
+        origin:
+          $ref: '#/components/schemas/AirportInfo'
+          description: Departure airport; omitted when unknown
+        destination:
+          $ref: '#/components/schemas/AirportInfo'
+          description: Arrival airport; omitted when unknown
+        source:
+          type: string
+          enum: ["1090", "978"]
+          description: Receive source. mlat support is tracked in issue #32
+        first_message:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:00:00+00:00"
+        last_message:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:45:00+00:00"
+        total_messages:
+          type: integer
+          example: 3842
+        matched_rules:
+          type: array
+          items:
+            type: string
+          example: [military-aircraft]
+        rule:
+          type: object
+          required: [name, description, identifier]
+          properties:
+            name:
+              type: string
+              example: Military Aircraft
+            description:
+              type: string
+              example: Matches any aircraft with military=true
+            identifier:
+              type: string
+              example: military-aircraft
+
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+
+  parameters:
+
+    ReceiverId:
+      description: >
+        Integer receiver instance identifier. Set via the RECEIVER_ID
+        environment variable (default 0). Allows multiple receiver
+        containers to coexist on the same broker.
+
+    ProcessorId:
+      description: >
+        Integer processor instance identifier. Set via the PROCESSOR_ID
+        environment variable. Used to distinguish multiple processor
+        containers running simultaneously.
+
+    RuleIdentifier:
+      description: >
+        Unique rule identifier string matching the identifier field of the
+        triggered rule. Also the final segment of the rule notification topic.
+
+    RunnerName:
+      description: >
+        Data runner name identifying which import job published statistics.
+        One of: mictronics, us-faa, ca-transport-canada, ourairports, flightaware.
