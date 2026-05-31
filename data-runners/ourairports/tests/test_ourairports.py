@@ -47,8 +47,6 @@ def _load_main():
 _mod = _load_main()
 
 is_valid_icao = _mod.is_valid_icao
-parse_altitude = _mod.parse_altitude
-parse_coordinate = _mod.parse_coordinate
 compute_phonic = _mod.compute_phonic
 build_airport_record = _mod.build_airport_record
 stage_data = _mod.stage_data
@@ -140,40 +138,6 @@ class TestIsValidIcao:
         assert is_valid_icao("KJFK") is True
 
 
-# ---------------------------------------------------------------------------
-# Tests: parse helpers
-# ---------------------------------------------------------------------------
-
-class TestParseAltitude:
-    def test_integer(self):
-        assert parse_altitude("13") == 13
-
-    def test_float_truncated(self):
-        assert parse_altitude("83.5") == 83
-
-    def test_empty_returns_none(self):
-        assert parse_altitude("") is None
-
-    def test_whitespace_returns_none(self):
-        assert parse_altitude("   ") is None
-
-    def test_negative(self):
-        assert parse_altitude("-10") == -10
-
-
-class TestParseCoordinate:
-    def test_positive(self):
-        assert parse_coordinate("40.6413") == pytest.approx(40.6413)
-
-    def test_negative(self):
-        assert parse_coordinate("-73.7781") == pytest.approx(-73.7781)
-
-    def test_empty_returns_none(self):
-        assert parse_coordinate("") is None
-
-    def test_invalid_returns_none(self):
-        assert parse_coordinate("not_a_number") is None
-
 
 # ---------------------------------------------------------------------------
 # Tests: compute_phonic
@@ -262,13 +226,9 @@ class TestStageData:
             row = cur.fetchone()
             assert row["icao_code"] == "KJFK"
             assert row["name"] == "John F Kennedy International Airport"
-            assert row["latitude"] == pytest.approx(40.6413)
-            assert row["longitude"] == pytest.approx(-73.7781)
-            assert row["altitude_feet"] == 13
+            assert row["city"] == "New York"
+            assert row["region"] == "US-NY"
             assert row["country"] == "US"
-            assert row["municipality"] == "New York"
-            assert row["type"] == "large_airport"
-            # phonic is computed and stored
             assert row["phonic"] is not None
             assert "International" not in row["phonic"]
             conn.close()
@@ -286,9 +246,7 @@ class TestStageData:
 
     def test_icao_code_uppercased(self):
         csv_text = _make_csv({"id": "1", "ident": "kjfk", "name": "Test",
-                              "latitude_deg": "40.0", "longitude_deg": "-73.0",
-                              "elevation_ft": "10", "iso_country": "US",
-                              "municipality": "City", "type": "large_airport"})
+                              "iso_country": "US", "municipality": "City"})
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()
@@ -297,17 +255,16 @@ class TestStageData:
             assert row[0] == "KJFK"
             conn.close()
 
-    def test_empty_elevation_stored_as_null(self):
+    def test_empty_municipality_stored_as_null(self):
         csv_text = _make_csv({"id": "1", "ident": "KTST", "name": "Test",
-                              "latitude_deg": "40.0", "longitude_deg": "-73.0",
-                              "elevation_ft": "", "iso_country": "US",
-                              "municipality": "City", "type": "small_airport"})
+                              "iso_country": "US", "municipality": ""})
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"))
+            conn.row_factory = sqlite3.Row
             cur = conn.cursor()
-            cur.execute("SELECT altitude_feet FROM airports WHERE icao_code = 'KTST'")
+            cur.execute("SELECT city FROM airports WHERE icao_code = 'KTST'")
             row = cur.fetchone()
-            assert row[0] is None
+            assert row["city"] is None
             conn.close()
 
 
@@ -316,38 +273,32 @@ class TestStageData:
 # ---------------------------------------------------------------------------
 
 class TestBuildAirportRecord:
-    def _row(self, icao_code="KJFK", name="JFK", phonic="Kennedy",
-             latitude=40.6413, longitude=-73.7781, altitude_feet=13,
-             country="US", municipality="New York", airport_type="large_airport"):
+    def _row(self, icao_code="KJFK", name="JFK", city="New York",
+             region="US-NY", country="US", phonic="Kennedy"):
         # Returns a dict that behaves like sqlite3.Row for field access
         return {
             "icao_code": icao_code,
             "name": name,
-            "phonic": phonic,
-            "latitude": latitude,
-            "longitude": longitude,
-            "altitude_feet": altitude_feet,
+            "city": city,
+            "region": region,
             "country": country,
-            "municipality": municipality,
-            "type": airport_type,
+            "phonic": phonic,
         }
 
     def test_all_fields_present(self):
         row = self._row()
         record = build_airport_record(row)
-        assert set(record.keys()) == {
-            "icao_code", "name", "phonic", "latitude", "longitude",
-            "altitude_feet", "country", "municipality", "type",
-        }
+        assert set(record.keys()) == {"icao_code", "name", "city", "region", "country", "phonic"}
 
     def test_field_values(self):
         row = self._row()
         record = build_airport_record(row)
         assert record["icao_code"] == "KJFK"
         assert record["name"] == "JFK"
-        assert record["phonic"] == "Kennedy"
-        assert record["latitude"] == pytest.approx(40.6413)
+        assert record["city"] == "New York"
+        assert record["region"] == "US-NY"
         assert record["country"] == "US"
+        assert record["phonic"] == "Kennedy"
 
 
 # ---------------------------------------------------------------------------
@@ -378,16 +329,14 @@ class TestWriteToRedis:
         conn.row_factory = sqlite3.Row
         conn.executescript(_mod._SCHEMA)
         conn.execute(
-            "INSERT INTO airports "
-            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES ('KJFK', 'John F Kennedy International Airport', 'Kennedy', "
-            "40.6413, -73.7781, 13, 'US', 'New York', 'large_airport')"
+            "INSERT INTO airports (icao_code, name, city, region, country, phonic) "
+            "VALUES ('KJFK', 'John F Kennedy International Airport', "
+            "'New York', 'US-NY', 'US', 'Kennedy')"
         )
         conn.execute(
-            "INSERT INTO airports "
-            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES ('EGLL', 'London Heathrow Airport', 'London Heathrow', "
-            "51.4706, -0.4619, 83, 'GB', 'London', 'large_airport')"
+            "INSERT INTO airports (icao_code, name, city, region, country, phonic) "
+            "VALUES ('EGLL', 'London Heathrow Airport', "
+            "'London', 'GB-ENG', 'GB', 'London Heathrow')"
         )
         conn.commit()
         return conn
@@ -441,9 +390,10 @@ class TestWriteToRedis:
         kjfk = json.loads(calls_by_key["airport:KJFK"])
         assert kjfk["icao_code"] == "KJFK"
         assert kjfk["name"] == "John F Kennedy International Airport"
-        assert kjfk["phonic"] == "Kennedy"
+        assert kjfk["city"] == "New York"
+        assert kjfk["region"] == "US-NY"
         assert kjfk["country"] == "US"
-        assert kjfk["altitude_feet"] == 13
+        assert kjfk["phonic"] == "Kennedy"
         conn.close()
 
 

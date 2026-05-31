@@ -20,7 +20,6 @@ import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
-from typing import Optional
 
 import paho.mqtt.client as mqtt
 import redis as redis_lib
@@ -41,15 +40,12 @@ MQTT_ROOT = "SkyFollower/runner/ourairports"
 # ---------------------------------------------------------------------------
 _SCHEMA = """
 CREATE TABLE airports (
-    icao_code    TEXT PRIMARY KEY,
-    name         TEXT,
-    phonic       TEXT,
-    latitude     REAL,
-    longitude    REAL,
-    altitude_feet INTEGER,
-    country      TEXT,
-    municipality TEXT,
-    type         TEXT
+    icao_code TEXT PRIMARY KEY,
+    name      TEXT,
+    city      TEXT,
+    region    TEXT,
+    country   TEXT,
+    phonic    TEXT
 );
 """
 
@@ -168,27 +164,6 @@ def is_valid_icao(ident: str) -> bool:
     return len(ident.strip()) == 4
 
 
-def parse_altitude(elevation_ft: str) -> Optional[int]:
-    """Parse elevation_ft string to int, returning None if empty or invalid."""
-    val = elevation_ft.strip()
-    if not val:
-        return None
-    try:
-        return int(float(val))
-    except (ValueError, TypeError):
-        return None
-
-
-def parse_coordinate(value: str) -> Optional[float]:
-    """Parse a latitude or longitude string to float, returning None if invalid."""
-    val = value.strip()
-    if not val:
-        return None
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return None
-
 
 # ---------------------------------------------------------------------------
 # SQLite staging
@@ -215,20 +190,17 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
             continue
 
         icao = ident.upper()
-        airport_type = row.get("type", "").strip() or None
         name = row.get("name", "").strip() or None
-        municipality = row.get("municipality", "").strip() or None
-        latitude = parse_coordinate(row.get("latitude_deg", ""))
-        longitude = parse_coordinate(row.get("longitude_deg", ""))
-        altitude_feet = parse_altitude(row.get("elevation_ft", ""))
+        city = row.get("municipality", "").strip() or None
+        region = row.get("iso_region", "").strip() or None
         country = row.get("iso_country", "").strip() or None
-        phonic = compute_phonic(icao, name or "", municipality or "") or None
+        phonic = compute_phonic(icao, name or "", city or "") or None
 
         cur.execute(
             "INSERT OR REPLACE INTO airports "
-            "(icao_code, name, phonic, latitude, longitude, altitude_feet, country, municipality, type) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (icao, name, phonic, latitude, longitude, altitude_feet, country, municipality, airport_type),
+            "(icao_code, name, city, region, country, phonic) "
+            "VALUES (?,?,?,?,?,?)",
+            (icao, name, city, region, country, phonic),
         )
         count += 1
 
@@ -248,13 +220,10 @@ def build_airport_record(row: sqlite3.Row) -> dict:
     return {
         "icao_code": row["icao_code"],
         "name": row["name"],
-        "phonic": row["phonic"],
-        "latitude": row["latitude"],
-        "longitude": row["longitude"],
-        "altitude_feet": row["altitude_feet"],
+        "city": row["city"],
+        "region": row["region"],
         "country": row["country"],
-        "municipality": row["municipality"],
-        "type": row["type"],
+        "phonic": row["phonic"],
     }
 
 
@@ -266,8 +235,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     """Write all staged airport records to Redis. Returns count of records written."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT icao_code, name, phonic, latitude, longitude, altitude_feet, "
-        "country, municipality, type FROM airports"
+        "SELECT icao_code, name, city, region, country, phonic FROM airports"
     )
     rows = cur.fetchall()
     logger.info("Writing %d airport records to Redis.", len(rows))
