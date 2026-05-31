@@ -6,12 +6,6 @@ services:
     volumes:
       - ./config/receiver/settings.json:/app/settings.json:ro
       - receiver-queue:/app/data
-    networks:
-      - skyfollower
 
 volumes:
   receiver-queue:
-
-networks:
-  skyfollower:
-    driver: bridge

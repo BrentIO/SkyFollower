@@ -8,8 +8,6 @@ services:
       - processor-0-archive:/app/data
     environment:
       PROCESSOR_ID: "0"
-    networks:
-      - skyfollower
 
   # To add a second processor on this host:
   #   1. Uncomment the block below and add a processor-1-archive volume entry.
@@ -24,13 +22,7 @@ services:
   #     - processor-1-archive:/app/data
   #   environment:
   #     PROCESSOR_ID: "1"
-  #   networks:
-  #     - skyfollower
 
 volumes:
   processor-0-archive:
   # processor-1-archive:
-
-networks:
-  skyfollower:
-    driver: bridge

@@ -6,8 +6,6 @@ services:
     volumes:
       - ./config/archive/settings.json:/app/settings.json:ro
       - archive-data:/app/data
-    networks:
-      - skyfollower
 
   ui:
     image: ghcr.io/brentio/skyfollower-ui:latest
@@ -16,12 +14,6 @@ services:
       - "8080:80"
     volumes:
       - ./config/ui/settings.json:/app/settings.json:ro
-    networks:
-      - skyfollower
 
 volumes:
   archive-data:
-
-networks:
-  skyfollower:
-    driver: bridge

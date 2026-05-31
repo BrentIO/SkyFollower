@@ -15,8 +15,6 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: skyfollower
       RABBITMQ_DEFAULT_PASS: change_me
-    networks:
-      - skyfollower
 
   redis:
     image: redis:7-alpine
@@ -26,8 +24,6 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
-    networks:
-      - skyfollower
 
   # ---------------------------------------------------------------------------
   # Scheduler
@@ -46,8 +42,6 @@ services:
       - runner-us-faa
       - runner-ca-transport-canada
       - runner-flightaware
-    networks:
-      - skyfollower
 
   # ---------------------------------------------------------------------------
   # Data runners — created stopped; started on schedule by ofelia.
@@ -66,8 +60,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
   runner-mictronics:
     image: ghcr.io/brentio/skyfollower-runner-mictronics:latest
@@ -77,8 +69,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
   runner-ourairports:
     image: ghcr.io/brentio/skyfollower-runner-ourairports:latest
@@ -91,8 +81,6 @@ services:
       - ./config/runners/ourairports-data:/app/data
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
   runner-us-faa:
     image: ghcr.io/brentio/skyfollower-runner-us-faa:latest
@@ -102,8 +90,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
   runner-ca-transport-canada:
     image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada:latest
@@ -113,8 +99,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
   runner-flightaware:
     image: ghcr.io/brentio/skyfollower-runner-flightaware:latest
@@ -124,13 +108,7 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-    networks:
-      - skyfollower
 
 volumes:
   rabbitmq-data:
   redis-data:
-
-networks:
-  skyfollower:
-    driver: bridge
