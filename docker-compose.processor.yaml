@@ -1,0 +1,28 @@
+services:
+
+  processor-0:
+    image: ghcr.io/brentio/skyfollower-processor:latest
+    restart: unless-stopped
+    volumes:
+      - ./config/processor/settings.json:/app/settings.json:ro
+      - processor-0-archive:/app/data
+    environment:
+      PROCESSOR_ID: "0"
+
+  # To add a second processor on this host:
+  #   1. Uncomment the block below and add a processor-1-archive volume entry.
+  #   2. Set PROCESSOR_COUNT=2 in the receiver's settings.json.
+  #   3. Restart the receiver for new routing to take effect.
+  #
+  # processor-1:
+  #   image: ghcr.io/brentio/skyfollower-processor:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./config/processor/settings.json:/app/settings.json:ro
+  #     - processor-1-archive:/app/data
+  #   environment:
+  #     PROCESSOR_ID: "1"
+
+volumes:
+  processor-0-archive:
+  # processor-1-archive:

@@ -1,0 +1,22 @@
+{
+    "rabbitmq": {
+        "host": "rabbitmq",
+        "port": 5672,
+        "username": "skyfollower",
+        "password": "change_me"
+    },
+    "redis": {
+        "host": "redis",
+        "port": 6379
+    },
+    "mqtt": {
+        "host": "192.168.1.x",
+        "port": 1883
+    },
+    "flight_ttl_seconds": 300,
+    "telemetry_interval_seconds": 30,
+    "home_latitude": 0.0,
+    "home_longitude": 0.0,
+    "data_dir": "/app/data",
+    "log_level": "info"
+}

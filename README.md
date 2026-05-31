@@ -52,12 +52,44 @@ RTL-SDR 978  ──► readsb :30978 ──┤
 | Host C — Processor host | Flight state + rules | `processor-0` (one per host; scale by adding hosts) |
 | Host D — Archive host | Long-term storage + UI | `archive-processor`, `ui` |
 
+## Compose Files
+
+Each host runs exactly one compose file. Clone the repo on each host, populate
+the relevant `config/` settings files, then bring up the appropriate file:
+
+| File | Host | Services |
+|------|------|---------|
+| `docker-compose.receiver.yaml` | Host A — Raspberry Pi | `receiver` |
+| `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all data runners |
+| `docker-compose.processor.yaml` | Host C — Processor host | `processor-0` |
+| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`, `ui` |
+
 ## Quick Start
 
 ```bash
-cp .env.example .env          # fill in credentials
-# Place component settings files in config/ (see Configuration below)
-docker compose up -d
+# 1. Copy the example settings for each component on this host and fill in values
+#    e.g. for Host B:
+cp config/runners/settings.json.example config/runners/settings.json
+cp config/ofelia/config.ini.example config/ofelia/config.ini
+
+# Host A — receiver
+docker compose -f docker-compose.receiver.yaml up -d
+
+# Host B — central server
+docker compose -f docker-compose.server.yaml up -d
+# Create runner containers in stopped state so ofelia can schedule them:
+docker compose -f docker-compose.server.yaml --profile runners up --no-start
+
+# Host C — processor
+docker compose -f docker-compose.processor.yaml up -d
+
+# Host D — archive + UI
+docker compose -f docker-compose.archive.yaml up -d
+```
+
+To run a data runner manually (e.g. for a first-time import):
+```bash
+docker compose -f docker-compose.server.yaml run --rm runner-ourairports
 ```
 
 ## Components
@@ -81,26 +113,30 @@ docker compose up -d
 ## Configuration
 
 Each component reads its settings from `/app/settings.json` inside the
-container. The recommended pattern is to maintain a `config/{component}/`
-directory on the host and bind-mount it into the container:
+container, bind-mounted read-only from `./config/{component}/settings.json`
+on the host. Example files for every component are in `config/`:
 
-```yaml
-volumes:
-  - ./config/processor:/app
-```
+| File | Used by |
+|------|---------|
+| `config/receiver/settings.json.example` | `docker-compose.receiver.yaml` |
+| `config/processor/settings.json.example` | `docker-compose.processor.yaml` |
+| `config/archive/settings.json.example` | `docker-compose.archive.yaml` |
+| `config/ui/settings.json.example` | `docker-compose.archive.yaml` |
+| `config/runners/settings.json.example` | All runners in `docker-compose.server.yaml` |
+| `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
 
-See the component READMEs for the full list of fields:
+See the component READMEs for the full list of settings fields:
 
-- [processor/README.md](processor/README.md)
 - [receiver/README.md](receiver/README.md)
-- [shared/README.md](shared/README.md)
+- [processor/README.md](processor/README.md)
+- [data-runners/ourairports/README.md](data-runners/ourairports/README.md)
 
 ## Scaling Processors
 
 Each processor handles the subset of aircraft whose ICAO hex modulo
 `PROCESSOR_COUNT` equals the processor's ID. To add a second processor:
 
-1. Add a `processor-1` service to `docker-compose.yml` with `PROCESSOR_ID: "1"`.
+1. Uncomment the `processor-1` block in `docker-compose.processor.yaml` and its volume entry.
 2. Increment `processor_count` in the receiver's `settings.json` (e.g. `"processor_count": 2`).
 3. Restart the receiver — it will pre-declare the new queue and begin routing to it.
 
@@ -200,7 +236,7 @@ Rule notifications are published to `SkyFollower/rule/{identifier}` as JSON
 payloads containing the flight's current state. These can be consumed by Home
 Assistant automations directly.
 
-Full MQTT topic documentation is in `specs/asyncapi.yml`.
+Full MQTT topic documentation is in `specs/asyncapi.yaml`.
 
 ## Development
 
