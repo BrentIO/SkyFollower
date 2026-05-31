@@ -13,8 +13,8 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USERNAME}"
-      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD}"
+      RABBITMQ_DEFAULT_USER: skyfollower
+      RABBITMQ_DEFAULT_PASS: change_me
     networks:
       - skyfollower
 

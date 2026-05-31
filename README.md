@@ -67,10 +67,7 @@ the relevant `config/` settings files, then bring up the appropriate file:
 ## Quick Start
 
 ```bash
-# 1. Copy and fill in credentials
-cp .env.example .env
-
-# 2. Copy the example settings for each component on this host and fill in values
+# 1. Copy the example settings for each component on this host and fill in values
 #    e.g. for Host B:
 cp config/runners/settings.json.example config/runners/settings.json
 cp config/ofelia/config.ini.example config/ofelia/config.ini
