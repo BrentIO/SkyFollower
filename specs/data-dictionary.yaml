@@ -1,0 +1,899 @@
+# SkyFollower Data Dictionary
+#
+# Defines the canonical completed-flight record: field types, data sources,
+# column positions, transforms, and persistence rules.
+#
+# Merge strategy: within each field's sources list, the FIRST source that
+# provides a non-null value wins, unless merge_strategy is overridden for
+# that field.
+#
+# persisted: true  (default) — field is written to the S3 archive record.
+# persisted: false — field is used during processing only; omitted on persist.
+#
+# persist_as — overrides the persisted shape for object fields that collapse
+# to a scalar on write (e.g. origin/destination objects → ICAO code string).
+
+version: "1.0"
+description: >
+  Field-level data dictionary for SkyFollower record types. Defines sources,
+  column positions, transforms, merge priority, and persistence rules for each
+  field in every record type. Add new record types under records: as the
+  project expands.
+
+merge_strategy_default: first_wins
+
+# ── Source definitions ───────────────────────────────────────────────────────
+# Sources listed here are referenced by name throughout the fields section.
+# The order within each field's sources[] list defines priority.
+
+sources:
+
+  mictronics:
+    description: "Mictronics global aircraft database — type designators and military/interesting flags"
+    url: "https://www.mictronics.de/aircraft-database/indexedDB.php"
+    format: zip+json
+    cadence: weekly_tuesday
+    files:
+      - name: aircrafts.json
+        format: "object: icao_hex → [registration, type_designator, flags_string]"
+        notes: "flags_string is a 2-char string; [0]='1' → military, [1]='1' → interesting"
+      - name: types.json
+        format: "object: type_designator → [manufacturer_model, description, wtc_code]"
+      - name: operators.json
+        format: "object: airline_designator → [name, country, callsign]"
+
+  us-faa:
+    description: "FAA Releasable Aircraft Database — US N-number registrations"
+    url: "https://registry.faa.gov/database/ReleasableAircraft.zip"
+    format: zip+csv
+    cadence: weekly_saturday
+    notes: "Requires User-Agent: 'P5Software AROI' header; 2017+ column layout"
+    files:
+      - name: master.txt
+        format: csv
+        description: "Active N-number registrations"
+        columns:
+          0:  N-NUMBER
+          1:  SERIAL NUMBER
+          2:  MFR MDL CODE
+          3:  ENG MFR MDL CODE
+          4:  YEAR MFR
+          5:  TYPE REGISTRANT
+          6:  NAME
+          7:  STREET
+          8:  STREET2
+          9:  CITY
+          10: STATE
+          11: ZIP CODE
+          12: REGION
+          13: COUNTY
+          14: COUNTRY
+          24: "OTHER NAMES(1)"
+          25: "OTHER NAMES(2)"
+          26: "OTHER NAMES(3)"
+          27: "OTHER NAMES(4)"
+          28: "OTHER NAMES(5)"
+          33: MODE S CODE HEX
+      - name: acftref.txt
+        format: csv
+        description: "Aircraft type reference; joined via master.txt MFR MDL CODE"
+        columns:
+          0: CODE
+          1: MFG
+          2: MODEL
+          3: TYPE-ACFT
+          4: TYPE-ENG
+          5: CLASS
+          7: NO-ENG
+          8: NO-SEATS
+          9: AC-WEIGHT
+      - name: engine.txt
+        format: csv
+        description: "Engine reference; joined via master.txt ENG MFR MDL CODE"
+        columns:
+          0: CODE
+          1: MFR
+          2: MODEL
+          3: TYPE
+          4: HORSEPOWER
+          5: THRUST
+
+  ca-tc:
+    description: "Transport Canada Civil Aircraft Register — Canadian C- registrations"
+    url: "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/ReleaseAccessEN.aspx"
+    format: zip+csv
+    cadence: weekly_sunday
+    notes: "Owner data is in carsownr.txt (separate file); multiple rows per mark possible — filter ACTIVE_FLAG='A'"
+    files:
+      - name: carscurr.txt
+        format: csv
+        description: "Primary aircraft registration record; one row per mark"
+        columns:
+          0:  MARK
+          3:  COMMON_NAME
+          4:  MODEL_NAME
+          5:  MANUFACTURERS_SERIAL_NUMBER
+          7:  ID_PLATE_MANUFACTURERS_NAME
+          10: AIRCRAFT_CATEGORY_E
+          13: ENGINE_MANUF_E
+          15: ENGINE_CATEGORY_E
+          17: NUMBER_OF_ENGINES
+          18: NUMBER_OF_SEATS
+          31: DATE_MANUFACTURE_ASSEMBLY
+          42: MODE_S_TRANSPONDER_BINARY
+          46: TRIMMED_MARK
+        transforms:
+          MODE_S_TRANSPONDER_BINARY: "24-char binary string — format(int(value, 2), '06X') → ICAO hex"
+          TRIMMED_MARK: "MARK without leading spaces; prepend 'C-' to form full registration"
+          DATE_MANUFACTURE_ASSEMBLY: "YYYY/MM/DD — replace '/' with '-' for ISO 8601"
+      - name: carsownr.txt
+        format: csv
+        description: "Owner/registrant records; joined to carscurr.txt by MARK_LINK = MARK; filter ACTIVE_FLAG='A'"
+        join: "carsownr.txt[0] MARK_LINK = carscurr.txt[0] MARK"
+        columns:
+          0:  MARK_LINK
+          1:  FULL_NAME
+          2:  TRADE_NAME
+          3:  STREET_NAME
+          4:  STREET_NAME2
+          5:  CITY
+          6:  PROVINCE_OR_STATE_E
+          8:  POSTAL_CODE
+          9:  COUNTRY_E
+          11: TYPE_OF_OWNER_E
+          13: ACTIVE_FLAG
+        notes: "TYPE_OF_OWNER_E stores decoded English strings ('Individual', 'Entity') not raw codes; COUNTRY_E stores full country name (e.g. 'CANADA') not ISO code"
+
+  standing-data:
+    description: "VRS Standing Data — operators, airports, and flight routes"
+    url: "https://github.com/vradarserver/standing-data"
+    format: csv
+    cadence: weekly_tuesday
+
+  flightaware:
+    description: "FlightAware origin/destination enrichment (paid; optional)"
+    format: api
+    cadence: every_3_days
+    status: optional
+
+  processor:
+    description: "Derived in real time by the message processor from ADS-B messages"
+
+
+# ── Record definitions ─────────────────────────────────────────────────────
+# Each record type defines the fields for one Redis enrichment record or the
+# completed flight S3 archive record. Sources and merge rules apply per-record.
+
+records:
+
+  flight:
+    description: >
+      Completed flight record. Written to S3 on flight completion and used as
+      the authoritative archive document. Also defines the icao_hex:{hex} Redis
+      enrichment shape written by data runners.
+    storage: S3
+    s3_path: "flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz"
+    redis_key: "icao_hex:{icao_hex}"
+    fields:
+
+      _id:
+        type: string
+        description: "UUID-v7 unique flight identifier"
+        persisted: true
+        sources:
+          - source: processor
+            transform:
+              type: generate
+              function: uuid7
+
+      first_message:
+        type: datetime
+        description: "UTC timestamp of the first ADS-B message in this flight"
+        persisted: true
+        sources:
+          - source: processor
+
+      last_message:
+        type: datetime
+        description: "UTC timestamp of the most recent ADS-B message"
+        persisted: true
+        sources:
+          - source: processor
+
+      total_messages:
+        type: integer
+        description: "Total count of ADS-B messages received for this flight"
+        persisted: true
+        sources:
+          - source: processor
+
+      icao_hex:
+        type: string
+        description: "6-character uppercase ICAO Mode S hex identifier (e.g. A8AE7F); primary key for Redis enrichment records"
+        persisted: true
+        sources:
+          - source: processor
+            description: "Present in every ADS-B message"
+          - source: mictronics
+            file: aircrafts.json
+            description: "JSON object key; already a 6-character uppercase hex string"
+          - source: us-faa
+            file: master.txt
+            field: MODE S CODE HEX
+            position: 33
+            transform:
+              type: uppercase
+              description: "Field is hex but may be mixed case — normalise to uppercase"
+          - source: ca-tc
+            file: carscurr.txt
+            field: MODE_S_TRANSPONDER_BINARY
+            position: 42
+            transform:
+              type: binary_to_hex
+              description: "24-character binary string — format(int(value, 2), '06X') → 6-character uppercase hex"
+
+      registration:
+        type: string
+        description: "Aircraft registration mark (e.g. N659DL, C-FEGI)"
+        persisted: true
+        sources:
+          - source: us-faa
+            file: master.txt
+            field: N-NUMBER
+            position: 0
+            transform:
+              type: prefix
+              value: "N"
+              description: "Prepend 'N' to the stored number to form the full mark"
+          - source: ca-tc
+            file: carscurr.txt
+            field: TRIMMED_MARK
+            position: 46
+            transform:
+              type: prefix
+              value: "C-"
+              description: "Prepend 'C-' to the stored mark to form the full registration"
+          - source: mictronics
+            file: aircrafts.json
+            field: "values[0]"
+
+      registrant:
+        type: object
+        description: "Owner/registrant information from the national civil aircraft registry"
+        persisted: true
+        properties:
+
+          names:
+            type: "array[string]"
+            description: "Registrant name(s); primary name is first; additional DBA names follow"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                fields:
+                  - { field: NAME,            position: 6  }
+                  - { field: "OTHER NAMES(1)", position: 24 }
+                  - { field: "OTHER NAMES(2)", position: 25 }
+                  - { field: "OTHER NAMES(3)", position: 26 }
+                  - { field: "OTHER NAMES(4)", position: 27 }
+                  - { field: "OTHER NAMES(5)", position: 28 }
+                transform:
+                  type: collect_non_empty
+                  description: "Collect all non-blank name fields in column order into an array"
+              - source: ca-tc
+                file: carsownr.txt
+                fields:
+                  - { field: FULL_NAME,   position: 1 }
+                  - { field: TRADE_NAME,  position: 2 }
+                transform:
+                  type: collect_non_empty
+                  description: "Collect FULL_NAME then TRADE_NAME; filter ACTIVE_FLAG='A' rows first"
+
+          street:
+            type: "array[string]"
+            description: "Street address lines; blank lines omitted"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                fields:
+                  - { field: STREET,  position: 7 }
+                  - { field: STREET2, position: 8 }
+                transform:
+                  type: collect_non_empty
+              - source: ca-tc
+                file: carsownr.txt
+                fields:
+                  - { field: STREET_NAME,  position: 3 }
+                  - { field: STREET_NAME2, position: 4 }
+                transform:
+                  type: collect_non_empty
+
+          city:
+            type: string
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: CITY
+                position: 9
+              - source: ca-tc
+                file: carsownr.txt
+                field: CITY
+                position: 5
+
+          administrative_area:
+            type: string
+            description: "First-level country subdivision (US state, Canadian province, etc.)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: STATE
+                position: 10
+              - source: ca-tc
+                file: carsownr.txt
+                field: PROVINCE_OR_STATE_E
+                position: 6
+
+          postal_code:
+            type: string
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: ZIP CODE
+                position: 11
+              - source: ca-tc
+                file: carsownr.txt
+                field: POSTAL_CODE
+                position: 8
+
+          country:
+            type: string
+            description: "ISO 3166-1 alpha-2 country code"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: COUNTRY
+                position: 14
+                transform:
+                  type: fallback_constant
+                  value: "US"
+                  description: "Use field value if non-empty; fall back to 'US' for domestic records"
+              - source: ca-tc
+                file: carsownr.txt
+                field: COUNTRY_E
+                position: 9
+                transform:
+                  type: decode_country_name
+                  description: "Full English country name (e.g. 'CANADA') → ISO 3166-1 alpha-2 code"
+
+          type:
+            type: string
+            description: "Registrant category"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: TYPE REGISTRANT
+                position: 5
+                transform:
+                  type: decode_table
+                  values:
+                    "1": Individual
+                    "2": Partnership
+                    "3": Corporation
+                    "4": Co-Owned
+                    "5": Government
+                    "7": LLC
+                    "8": "Non-Citizen Corporation"
+                    "9": "Non-Citizen Co-Owned"
+              - source: ca-tc
+                file: carsownr.txt
+                field: TYPE_OF_OWNER_E
+                position: 11
+                transform:
+                  type: decode_table
+                  values:
+                    "Individual": Individual
+                    "Entity": Corporation
+                    "Manufacturer": Corporation
+
+      aircraft:
+        type: object
+        description: "Aircraft type and physical specification data"
+        persisted: true
+        properties:
+
+          type:
+            type: string
+            description: "Aircraft category (Airplane, Rotorcraft, Glider, etc.)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: TYPE-ACFT
+                position: 3
+                transform:
+                  type: decode_table
+                  values:
+                    "1": Glider
+                    "2": Balloon
+                    "3": "Blimp/Dirigible"
+                    "4": Airplane
+                    "5": Airplane
+                    "6": Rotorcraft
+                    "7": Weight-Shift-Control
+                    "8": Powered Parachute
+                    "9": Gyroplane
+              - source: ca-tc
+                file: carscurr.txt
+                field: AIRCRAFT_CATEGORY_E
+                position: 10
+                transform:
+                  type: decode_table
+                  values:
+                    "Aeroplane": Airplane
+                    "Helicopter": Helicopter
+                    "Glider": Glider
+                    "Balloon": Balloon
+                    "Gyroplane": Gyroplane
+
+          model:
+            type: string
+            description: "Model designation from the national registry (e.g. 757-232)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: MODEL
+                position: 2
+              - source: ca-tc
+                file: carscurr.txt
+                field: MODEL_NAME
+                position: 4
+
+          seats:
+            type: integer
+            description: "Number of seats certified"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: NO-SEATS
+                position: 8
+              - source: ca-tc
+                file: carscurr.txt
+                field: NUMBER_OF_SEATS
+                position: 18
+
+          category:
+            type: string
+            description: "Aircraft build category (Land, Sea, Amphibian)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: CLASS
+                position: 5
+                transform:
+                  type: decode_table
+                  values:
+                    "1": Land
+                    "2": Sea
+                    "3": Amphibian
+
+          manufacturer:
+            type: string
+            description: "Aircraft manufacturer name"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: MFG
+                position: 1
+              - source: ca-tc
+                file: carscurr.txt
+                field: ID_PLATE_MANUFACTURERS_NAME
+                position: 7
+              - source: mictronics
+                file: types.json
+                field: "values[0]"
+                transform:
+                  type: split_first
+                  delimiter: " "
+                  description: "Split 'Boeing 737-800' on first space; keep left part"
+
+          type_designator:
+            type: string
+            description: "ICAO 4-character aircraft type designator (e.g. B752)"
+            persisted: true
+            sources:
+              - source: mictronics
+                file: aircrafts.json
+                field: "values[1]"
+
+          manufacturer_model:
+            type: string
+            description: "Combined manufacturer + model string from Mictronics types (e.g. BOEING 757-200)"
+            persisted: true
+            sources:
+              - source: mictronics
+                file: types.json
+                field: "values[0]"
+
+          serial_number:
+            type: string
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: SERIAL NUMBER
+                position: 1
+              - source: ca-tc
+                file: carscurr.txt
+                field: MANUFACTURERS_SERIAL_NUMBER
+                position: 5
+
+          manufactured_date:
+            type: datetime
+            description: "Date of manufacture as ISO 8601 UTC datetime; FAA is year-only precision (January 1 assumed); TC is nominally full date but 99.8% of records are also January 1"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: master.txt
+                field: YEAR MFR
+                position: 4
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "FAA provides 4-digit year only — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: ca-tc
+                file: carscurr.txt
+                field: DATE_MANUFACTURE_ASSEMBLY
+                position: 31
+                precision: date
+                transform:
+                  type: format_string
+                  pattern: "{value.replace('/', '-')}T00:00:00Z"
+                  description: "TC provides YYYY/MM/DD — reformat separators and append UTC time"
+                  skip_if_empty: true
+
+          wake_turbulence_category:
+            type: string
+            description: "ICAO wake turbulence category (Light, Medium, Heavy, Super)"
+            persisted: true
+            sources:
+              - source: mictronics
+                file: types.json
+                field: "values[2]"
+                transform:
+                  type: decode_table
+                  values:
+                    "J": Super
+                    "H": Heavy
+                    "M": Medium
+                    "L": Light
+                    "M/L": "Medium/Light"
+                    "-": "Unknown/None"
+
+      powerplant:
+        type: object
+        description: "Engine and powerplant specification data"
+        persisted: true
+        properties:
+
+          count:
+            type: integer
+            description: "Number of engines installed"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: NO-ENG
+                position: 7
+              - source: ca-tc
+                file: carscurr.txt
+                field: NUMBER_OF_ENGINES
+                position: 17
+
+          type:
+            type: string
+            description: "Engine type (Reciprocating, Turbo-fan, etc.)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: acftref.txt
+                field: TYPE-ENG
+                position: 4
+                transform:
+                  type: decode_table
+                  values:
+                    "0": None
+                    "1": Piston
+                    "2": Turbo-prop
+                    "3": Turbo-shaft
+                    "4": Turbo-jet
+                    "5": Turbo-fan
+                    "6": Ramjet
+                    "7": 2 Cycle
+                    "8": 4 Cycle
+                    "9": Unknown
+                    "10": Electric
+                    "11": Rotary
+              - source: ca-tc
+                file: carscurr.txt
+                field: ENGINE_CATEGORY_E
+                position: 15
+                transform:
+                  type: decode_table
+                  values:
+                    "Piston": Piston
+                    "Turbo Fan": Turbo-fan
+                    "Turbo Prop": Turbo-prop
+                    "Turbo Shaft": Turbo-shaft
+                    "Turbo Jet": Turbo-jet
+                    "Electric": Electric
+                    "Other": Unknown
+
+          model:
+            type: string
+            description: "Engine model designation (e.g. LEAP-1B28)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: engine.txt
+                field: MODEL
+                position: 2
+                join: "master.txt[3] → engine.txt[0]"
+
+          manufacturer:
+            type: string
+            description: "Engine manufacturer name"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: engine.txt
+                field: MFR
+                position: 1
+                join: "master.txt[3] → engine.txt[0]"
+              - source: ca-tc
+                file: carscurr.txt
+                field: ENGINE_MANUF_E
+                position: 13
+
+          power_type:
+            type: string
+            description: "Power rating unit — Horsepower (piston/turbo-prop) or Thrust (jet)"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: engine.txt
+                description: "Derived from engine TYPE; piston/prop → Horsepower; jet → Thrust"
+
+          power_value:
+            type: integer
+            description: "Rated power output in horsepower or pounds of thrust"
+            persisted: true
+            sources:
+              - source: us-faa
+                file: engine.txt
+                description: "HORSEPOWER or THRUST column depending on engine type"
+
+      military:
+        type: boolean
+        description: "True if the aircraft is known to be military"
+        persisted: true
+        sources:
+          - source: mictronics
+            file: aircrafts.json
+            field: "values[2]"
+            transform:
+              type: string_index_equals
+              index: 0
+              equals: "1"
+              description: "flags_string[0] == '1'"
+
+      ident:
+        type: string
+        description: "Callsign/flight number broadcast by the aircraft (e.g. DAL2)"
+        persisted: true
+        sources:
+          - source: processor
+            description: "DF 17 TC 1-4 ident message"
+
+      operator:
+        type: object
+        description: "Airline operator enrichment from standing data; keyed by airline_designator"
+        persisted: true
+        properties:
+          airline_designator:
+            type: string
+            description: "3-character ICAO airline code (e.g. DAL)"
+            sources:
+              - source: standing-data
+          name:
+            type: string
+            description: "Full airline name (e.g. Delta Air Lines)"
+            sources:
+              - source: standing-data
+          callsign:
+            type: string
+            description: "RTF callsign (e.g. DELTA)"
+            sources:
+              - source: standing-data
+          country:
+            type: string
+            sources:
+              - source: standing-data
+
+      squawk:
+        type: string
+        description: "4-digit Mode A transponder squawk code (e.g. 7314)"
+        persisted: true
+        sources:
+          - source: processor
+            description: "DF 5/21 squawk message"
+
+      origin:
+        type: object
+        description: "Departure airport enrichment; full object during processing; ICAO code string on persist"
+        persisted: true
+        persist_as:
+          type: string
+          from_field: icao_code
+          description: "Only the ICAO code string (e.g. 'KMLB') is written to the S3 record"
+        properties:
+          icao_code:
+            type: string
+            description: "ICAO 4-character airport code"
+            sources:
+              - source: flightaware
+              - source: standing-data
+                file: routes
+          iata_code:
+            type: string
+            description: "IATA 3-character airport code"
+            sources:
+              - source: standing-data
+                file: airports
+          name:
+            type: string
+            sources:
+              - source: standing-data
+                file: airports
+          city:
+            type: string
+            sources:
+              - source: standing-data
+                file: airports
+          administrative_area:
+            type: string
+            description: "ISO 3166-2 subdivision code (e.g. US-FL)"
+            sources:
+              - source: standing-data
+                file: airports
+          country:
+            type: string
+            description: "ISO 3166-1 alpha-2 country code"
+            sources:
+              - source: standing-data
+                file: airports
+          phonic:
+            type: string
+            description: "Spoken/phonetic airport name for TTS notifications"
+            sources:
+              - source: standing-data
+                file: airports
+
+      destination:
+        type: object
+        description: "Arrival airport enrichment; full object during processing; ICAO code string on persist"
+        persisted: true
+        persist_as:
+          type: string
+          from_field: icao_code
+          description: "Only the ICAO code string (e.g. 'KATL') is written to the S3 record"
+        properties:
+          icao_code:
+            type: string
+            description: "ICAO 4-character airport code"
+            sources:
+              - source: flightaware
+              - source: standing-data
+                file: routes
+          iata_code:
+            type: string
+            description: "IATA 3-character airport code"
+            sources:
+              - source: standing-data
+                file: airports
+          name:
+            type: string
+            sources:
+              - source: standing-data
+                file: airports
+          city:
+            type: string
+            sources:
+              - source: standing-data
+                file: airports
+          administrative_area:
+            type: string
+            description: "ISO 3166-2 subdivision code (e.g. US-GA)"
+            sources:
+              - source: standing-data
+                file: airports
+          country:
+            type: string
+            description: "ISO 3166-1 alpha-2 country code"
+            sources:
+              - source: standing-data
+                file: airports
+          phonic:
+            type: string
+            description: "Spoken/phonetic airport name for TTS notifications"
+            sources:
+              - source: standing-data
+                file: airports
+
+      matched_rules:
+        type: "array[string]"
+        description: "Rule name identifiers that fired for this flight"
+        persisted: true
+        sources:
+          - source: processor
+
+      positions:
+        type: "array[object]"
+        description: "Time-ordered position reports"
+        persisted: true
+        properties:
+          timestamp:
+            type: datetime
+            description: "UTC timestamp of the position report"
+            sources:
+              - source: processor
+          latitude:
+            type: float
+            sources:
+              - source: processor
+          longitude:
+            type: float
+            sources:
+              - source: processor
+          altitude:
+            type: integer
+            description: "Altitude in feet MSL; null if not present in the ADS-B message"
+            sources:
+              - source: processor
+
+      velocities:
+        type: "array[object]"
+        description: "Time-ordered velocity reports"
+        persisted: true
+        properties:
+          timestamp:
+            type: datetime
+            description: "UTC timestamp of the velocity report"
+            sources:
+              - source: processor
+          velocity:
+            type: float
+            description: "Ground speed in knots"
+            sources:
+              - source: processor
+          heading:
+            type: float
+            description: "True heading in degrees (0–359)"
+            sources:
+              - source: processor
+          vertical_speed:
+            type: integer
+            description: "Vertical speed in feet per minute; negative = descending"
+            sources:
+              - source: processor

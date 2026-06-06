@@ -9,15 +9,14 @@ are always explicit and typos in key names are caught by the type checker.
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
 
+# RediSearch index over all icao_hex:{hex} JSON documents.
+# Supports registration lookup without a separate reverse-index key.
+AIRCRAFT_SEARCH_INDEX = "idx:aircraft"
+
 
 def icao_hex_key(icao_hex: str) -> str:
     """Aircraft enrichment record. icao_hex:{icao_hex}"""
     return f"icao_hex:{icao_hex.upper()}"
-
-
-def registration_key(registration: str) -> str:
-    """Reverse-lookup index: registration → icao_hex. registration:{registration}"""
-    return f"registration:{registration.upper()}"
 
 
 def operator_key(designator: str) -> str:

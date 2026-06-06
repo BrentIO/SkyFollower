@@ -28,7 +28,10 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.redis_keys import icao_hex_key, registration_key
+from redis.commands.search.field import TagField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
+
+from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
 
 logger = logging.getLogger("mictronics")
 
@@ -44,7 +47,8 @@ CREATE TABLE aircraft (
     icao_hex        TEXT PRIMARY KEY,
     registration    TEXT,
     type_designator TEXT,
-    military        INTEGER
+    military        INTEGER,
+    interesting     INTEGER
 );
 CREATE TABLE operators (
     airline_designator TEXT PRIMARY KEY,
@@ -176,25 +180,27 @@ def stage_data(
         logger.info("Staging %d aircraft.", len(aircraft_data))
         cur = conn.cursor()
         for icao_hex, values in aircraft_data.items():
-            # values: [registration, type_designator, [military_flag, interesting_flag]]
+            # values: [registration, type_designator, flags]
+            # flags is a 2-char string: flags[0]="1" → military, flags[1]="1" → interesting
             registration = str(values[0]).strip() if values[0] else None
             type_designator = str(values[1]).strip() if values[1] else None
             if type_designator == "":
                 type_designator = None
-            military = 0
-            if len(values) > 2 and isinstance(values[2], list) and len(values[2]) > 0:
-                try:
-                    military = int(values[2][0])
-                except (ValueError, TypeError):
-                    military = 0
+            military = False
+            interesting = False
+            if len(values) > 2 and values[2]:
+                flags = str(values[2])
+                military = len(flags) > 0 and flags[0] == "1"
+                interesting = len(flags) > 1 and flags[1] == "1"
             cur.execute(
                 "INSERT OR REPLACE INTO aircraft "
-                "(icao_hex, registration, type_designator, military) VALUES (?,?,?,?)",
+                "(icao_hex, registration, type_designator, military, interesting) VALUES (?,?,?,?,?)",
                 (
                     str(icao_hex).strip().upper(),
                     registration,
                     type_designator,
                     military,
+                    interesting,
                 ),
             )
         conn.commit()
@@ -213,12 +219,16 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
     icao_hex = row["icao_hex"]
     registration = row["registration"] or None
     type_designator = row["type_designator"] or None
-    military = bool(row["military"]) if row["military"] else False
+    military = bool(row["military"])
+    interesting = bool(row["interesting"])
 
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    wake_turbulence_category: Optional[str] = None
     if types_row and types_row["manufacturer_model"]:
         manufacturer, model = _split_manufacturer_model(types_row["manufacturer_model"])
+    if types_row:
+        wake_turbulence_category = types_row["wake_turbulence_category"] or None
 
     return {
         "icao_hex": icao_hex,
@@ -226,6 +236,9 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
         "type_designator": type_designator,
         "manufacturer": manufacturer,
         "model": model,
+        "wake_turbulence_category": wake_turbulence_category,
+        "military": military,
+        "interesting": interesting,
         "is_private_operator": None,
         "operator": None,
         "airline_code": None,
@@ -233,6 +246,25 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
         "year_built": None,
         "source": "mictronics",
     }
+
+
+# ---------------------------------------------------------------------------
+# Search index
+# ---------------------------------------------------------------------------
+
+def _ensure_search_index(r: redis_lib.Redis) -> None:
+    """Create the aircraft JSON search index if it does not already exist."""
+    try:
+        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+    except Exception:
+        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+            fields=[
+                TagField("$.icao_hex", as_name="icao_hex"),
+                TagField("$.registration", as_name="registration"),
+            ],
+            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +276,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT a.icao_hex, a.registration, a.type_designator, a.military,
+        SELECT a.icao_hex, a.registration, a.type_designator, a.military, a.interesting,
                t.manufacturer_model, t.wake_turbulence_category
         FROM aircraft a
         LEFT JOIN types t ON a.type_designator = t.type_designator
@@ -256,18 +288,11 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     count = 0
     pipe = r.pipeline()
     for row in rows:
-        types_row = None
-        if row["manufacturer_model"] is not None:
-            # Simulate a types row as a dict-like object
-            types_row = row
-        record = build_aircraft_record(row, types_row if row["manufacturer_model"] else None)
+        types_row = row if row["manufacturer_model"] is not None else None
+        record = build_aircraft_record(row, types_row)
         key = icao_hex_key(record["icao_hex"])
-        pipe.set(key, json.dumps(record), ex=ttl)
-
-        # Write registration reverse-index (NX — don't overwrite more-authoritative source)
-        if record["registration"]:
-            reg_key = registration_key(record["registration"])
-            pipe.set(reg_key, record["icao_hex"], nx=True, ex=ttl)
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
 
         count += 1
         if count % 10000 == 0:
@@ -422,7 +447,8 @@ def main() -> None:
         # 2. Stage in SQLite
         conn = stage_data(files, db_path)
 
-        # 3. Write to Redis
+        # 3. Ensure search index exists, then write to Redis
+        _ensure_search_index(r)
         records_imported = write_to_redis(conn, r, ttl)
         conn.close()
 
