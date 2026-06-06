@@ -64,10 +64,12 @@ MQTT_ROOT = _mod.MQTT_ROOT
 # ---------------------------------------------------------------------------
 
 SAMPLE_AIRCRAFTS = {
-    "A8AE7F": ["N659DL", "B763", [0, 0]],
-    "AA0001": ["N12345", "C172", [0, 0]],
-    "AA0002": ["MILCRAFT", "F16", [1, 0]],
-    "AA0003": ["", "", [0, 0]],
+    "A8AE7F": ["N659DL", "B763", "00"],   # not military, not interesting
+    "AA0001": ["N12345", "C172", "00"],
+    "AA0002": ["MILCRAFT", "F16", "10"],   # military, not interesting
+    "AA0003": ["", "", "00"],
+    "AA0004": ["N99999", "B763", "01"],   # not military, interesting
+    "AA0005": ["N88888", "F16", "11"],    # military and interesting
 }
 
 SAMPLE_OPERATORS = {
@@ -198,7 +200,48 @@ class TestStageData:
             conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()
             cur.execute("SELECT military FROM aircraft WHERE icao_hex = 'AA0002'")
-            assert cur.fetchone()[0] == 1
+            assert bool(cur.fetchone()[0]) is True
+            conn.close()
+
+    def test_not_military_flag(self):
+        files = _make_zip_files(
+            aircrafts=SAMPLE_AIRCRAFTS,
+            operators=SAMPLE_OPERATORS,
+            types=SAMPLE_TYPES,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute("SELECT military FROM aircraft WHERE icao_hex = 'A8AE7F'")
+            assert bool(cur.fetchone()[0]) is False
+            conn.close()
+
+    def test_interesting_flag(self):
+        files = _make_zip_files(
+            aircrafts=SAMPLE_AIRCRAFTS,
+            operators=SAMPLE_OPERATORS,
+            types=SAMPLE_TYPES,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute("SELECT interesting FROM aircraft WHERE icao_hex = 'AA0004'")
+            assert bool(cur.fetchone()[0]) is True
+            conn.close()
+
+    def test_military_and_interesting_flags(self):
+        files = _make_zip_files(
+            aircrafts=SAMPLE_AIRCRAFTS,
+            operators=SAMPLE_OPERATORS,
+            types=SAMPLE_TYPES,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute("SELECT military, interesting FROM aircraft WHERE icao_hex = 'AA0005'")
+            row = cur.fetchone()
+            assert bool(row[0]) is True
+            assert bool(row[1]) is True
             conn.close()
 
     def test_empty_type_becomes_null(self):
@@ -259,17 +302,19 @@ class TestStageData:
 # ---------------------------------------------------------------------------
 
 class TestBuildAircraftRecord:
-    def _row(self, icao_hex, registration, type_designator, military, manufacturer_model=None):
+    def _row(self, icao_hex, registration, type_designator, military, interesting=False, manufacturer_model=None):
         return {
             "icao_hex": icao_hex,
             "registration": registration,
             "type_designator": type_designator,
             "military": military,
+            "interesting": interesting,
             "manufacturer_model": manufacturer_model,
+            "wake_turbulence_category": None,
         }
 
     def test_full_record_shape(self):
-        row = self._row("A8AE7F", "N659DL", "B763", 0, "Boeing 767-332ER")
+        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
         record = build_aircraft_record(row, row)
 
         assert record["icao_hex"] == "A8AE7F"
@@ -279,9 +324,24 @@ class TestBuildAircraftRecord:
         assert record["model"] == "767-332ER"
         assert record["source"] == "mictronics"
 
+    def test_military_true(self):
+        row = self._row("AA0002", "MILCRAFT", "F16", True)
+        record = build_aircraft_record(row, None)
+        assert record["military"] is True
+
+    def test_military_false(self):
+        row = self._row("A8AE7F", "N659DL", "B763", False)
+        record = build_aircraft_record(row, None)
+        assert record["military"] is False
+
+    def test_interesting_true(self):
+        row = self._row("AA0004", "N99999", "B763", False, interesting=True)
+        record = build_aircraft_record(row, None)
+        assert record["interesting"] is True
+
     def test_null_fields_present(self):
         """Fields unavailable from Mictronics must be null, not omitted."""
-        row = self._row("A8AE7F", "N659DL", "B763", 0, "Boeing 767-332ER")
+        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
         record = build_aircraft_record(row, row)
 
         for field in ("is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
@@ -313,9 +373,9 @@ class TestRedisKeys:
         from shared.redis_keys import icao_hex_key
         assert icao_hex_key("A8AE7F") == "icao_hex:A8AE7F"
 
-    def test_registration_key_format(self):
-        from shared.redis_keys import registration_key
-        assert registration_key("n659dl") == "registration:N659DL"
+    def test_aircraft_search_index_name(self):
+        from shared.redis_keys import AIRCRAFT_SEARCH_INDEX
+        assert AIRCRAFT_SEARCH_INDEX == "idx:aircraft"
 
 
 # ---------------------------------------------------------------------------
@@ -328,12 +388,12 @@ class TestWriteToRedis:
         conn.row_factory = sqlite3.Row
         conn.executescript(_mod._SCHEMA)
         conn.execute(
-            "INSERT INTO aircraft (icao_hex, registration, type_designator, military) "
-            "VALUES ('A8AE7F', 'N659DL', 'B763', 0)"
+            "INSERT INTO aircraft (icao_hex, registration, type_designator, military, interesting) "
+            "VALUES ('A8AE7F', 'N659DL', 'B763', 0, 0)"
         )
         conn.execute(
-            "INSERT INTO aircraft (icao_hex, registration, type_designator, military) "
-            "VALUES ('AA0001', 'N12345', 'C172', 0)"
+            "INSERT INTO aircraft (icao_hex, registration, type_designator, military, interesting) "
+            "VALUES ('AA0001', 'N12345', 'C172', 0, 0)"
         )
         conn.execute(
             "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
@@ -345,49 +405,51 @@ class TestWriteToRedis:
     def _mock_redis(self):
         r = MagicMock()
         pipe = MagicMock()
+        pipe_json = MagicMock()
         r.pipeline.return_value = pipe
+        pipe.json.return_value = pipe_json
         pipe.execute.return_value = []
-        pipe.set.return_value = pipe
-        return r, pipe
+        return r, pipe, pipe_json
 
     def test_count_matches_aircraft(self):
         conn = self._make_db()
-        r, _ = self._mock_redis()
+        r, _, _ = self._mock_redis()
         assert write_to_redis(conn, r, REDIS_TTL) == 2
         conn.close()
 
-    def test_icao_hex_key_written(self):
+    def test_icao_hex_json_set_written(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        keys = [c.args[0] for c in pipe.set.call_args_list]
+        keys = [c.args[0] for c in pipe_json.set.call_args_list]
         assert "icao_hex:A8AE7F" in keys
         conn.close()
 
-    def test_registration_nx_written(self):
+    def test_json_set_uses_root_path(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        nx_keys = [c.args[0] for c in pipe.set.call_args_list if c.kwargs.get("nx")]
-        assert "registration:N659DL" in nx_keys
+        for c in pipe_json.set.call_args_list:
+            assert c.args[1] == "$"
         conn.close()
 
-    def test_all_registration_writes_use_nx(self):
-        """Every registration reverse-index write must use NX."""
+    def test_expire_called_with_correct_ttl(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, pipe, _ = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        for c in pipe.set.call_args_list:
-            if c.args[0].startswith("registration:"):
-                assert c.kwargs.get("nx") is True
+        expire_ttls = [c.args[1] for c in pipe.expire.call_args_list]
+        assert all(ttl == REDIS_TTL for ttl in expire_ttls)
         conn.close()
 
-    def test_correct_ttl(self):
+    def test_no_registration_key_written(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, pipe, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        for c in pipe.set.call_args_list:
-            assert c.kwargs.get("ex") == REDIS_TTL
+        all_keys = (
+            [c.args[0] for c in pipe.set.call_args_list]
+            + [c.args[0] for c in pipe_json.set.call_args_list]
+        )
+        assert not any(k.startswith("registration:") for k in all_keys)
         conn.close()
 
 

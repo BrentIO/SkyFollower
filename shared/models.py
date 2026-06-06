@@ -87,6 +87,7 @@ class AircraftRecord(BaseModel):
     wake_turbulence_category: Optional[str] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None
+    interesting: Optional[bool] = None
     operator: Optional[str] = None          # operator/owner name from registry
     airline_code: Optional[str] = None      # ICAO airline code
     serial_number: Optional[str] = None
