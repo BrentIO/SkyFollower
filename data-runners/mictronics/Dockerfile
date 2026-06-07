@@ -12,4 +12,6 @@ COPY data-runners/mictronics/ ./mictronics/
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 
+RUN touch /app/settings.json
+
 CMD ["python", "mictronics/main.py"]

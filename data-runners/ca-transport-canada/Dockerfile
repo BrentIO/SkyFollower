@@ -12,4 +12,6 @@ COPY data-runners/ca-transport-canada/ ./ca-transport-canada/
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 
+RUN touch /app/settings.json
+
 CMD ["python", "ca-transport-canada/main.py"]
