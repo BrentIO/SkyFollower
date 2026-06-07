@@ -168,13 +168,13 @@ sources:
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
     format: csv
     cadence: weekly_tuesday
-    notes: "UTF-8 CSV; ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; filter REGO_STATUS='Suspended' rows; all marks are 3-char suffixes — prepend 'VH-'"
+    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; filter suspendstatus='Suspended' rows; all marks are 3-char suffixes — prepend 'VH-'"
     files:
       - name: acrftreg
         format: csv
         columns:
           Mark:             3-character registration suffix (prepend VH-)
-          REGO_STATUS:      filter out Suspended records
+          suspendstatus:    filter out Suspended records
           Airframe:         aircraft category
           Manu:             aircraft manufacturer
           Model:            aircraft model designation

@@ -308,7 +308,7 @@ def download_registry(url: str) -> list[dict]:
     if response.status_code != 200:
         raise RuntimeError(f"Download failed with HTTP {response.status_code}")
     logger.info("Download complete (%d bytes).", len(response.content))
-    text = response.content.decode("utf-8", errors="replace")
+    text = response.content.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
     logger.info("Parsed %d rows.", len(rows))
@@ -322,7 +322,7 @@ def download_registry(url: str) -> list[dict]:
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Enrich existing Redis records with CASA data. Returns count of records written."""
     # Filter suspended records
-    active_rows = [row for row in rows if row.get("REGO_STATUS", "").strip().lower() != "suspended"]
+    active_rows = [row for row in rows if row.get("suspendstatus", "").strip().lower() != "suspended"]
     suspended_count = len(rows) - len(active_rows)
     if suspended_count:
         logger.info("Filtered %d suspended records; %d active rows remain.", suspended_count, len(active_rows))
