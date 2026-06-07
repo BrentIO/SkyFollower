@@ -44,6 +44,7 @@ services:
       - runner-nz-caa
       - runner-no-caa
       - runner-au-casa
+      - runner-fr-dgac
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -124,6 +125,15 @@ services:
   runner-au-casa:
     image: ghcr.io/brentio/skyfollower-runner-au-casa:latest
     container_name: skyfollower-runner-au-casa
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-fr-dgac:
+    image: ghcr.io/brentio/skyfollower-runner-fr-dgac:latest
+    container_name: skyfollower-runner-fr-dgac
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
