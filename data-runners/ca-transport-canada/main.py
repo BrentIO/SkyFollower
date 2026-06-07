@@ -388,13 +388,9 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
             "type": acft_row["aircraft_type"] or None,
             "model": acft_row["model"] or None,
             "seats": acft_row["seat_count"],
-            "category": None,
             "manufacturer": acft_row["manufacturer_name"] or None,
-            "type_designator": None,
-            "manufacturer_model": None,
             "serial_number": acft_row["serial_number"] or None,
             "manufactured_date": acft_row["manufactured_date"] or None,
-            "wake_turbulence_category": None,
         }
 
     # powerplant
@@ -403,10 +399,7 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
         powerplant = {
             "count": acft_row["engine_count"],
             "type": acft_row["engine_category"] or None,
-            "model": None,
             "manufacturer": acft_row["engine_manufacturer"] or None,
-            "power_type": None,
-            "power_value": None,
         }
 
     return {
@@ -415,8 +408,6 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
         "registrant": registrant,
         "aircraft": aircraft,
         "powerplant": powerplant,
-        "military": None,
-        "source": "ca-transport-canada",
     }
 
 

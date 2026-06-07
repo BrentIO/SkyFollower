@@ -448,8 +448,8 @@ class TestBuildAircraftRecord:
         record = build_aircraft_record(row, acft_row, eng_row)
         assert record["icao_hex"] == "A8AE7F"
         assert record["registration"] == "N659DL"
-        assert record["source"] == "us-faa"
-        assert record["military"] is None
+        assert "source" not in record
+        assert "military" not in record
 
     def test_registrant_names(self):
         row, acft_row, eng_row = self._fetch_rows("A8AE7F")
@@ -488,13 +488,14 @@ class TestBuildAircraftRecord:
         assert ac["serial_number"] == "28014"
         assert ac["manufactured_date"] == "1999-01-01T00:00:00Z"
 
-    def test_aircraft_mictronics_fields_null(self):
+    def test_aircraft_mictronics_fields_absent(self):
+        """Fields owned by mictronics must be omitted entirely from the FAA record."""
         row, acft_row, eng_row = self._fetch_rows("A8AE7F")
         record = build_aircraft_record(row, acft_row, eng_row)
         ac = record["aircraft"]
-        assert ac["type_designator"] is None
-        assert ac["manufacturer_model"] is None
-        assert ac["wake_turbulence_category"] is None
+        assert "type_designator" not in ac
+        assert "manufacturer_model" not in ac
+        assert "wake_turbulence_category" not in ac
 
     def test_powerplant_turbofan(self):
         row, acft_row, eng_row = self._fetch_rows("A8AE7F")
@@ -610,7 +611,7 @@ class TestWriteToRedis:
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
         record = calls["icao_hex:A8AE7F"]
         assert isinstance(record, dict)
-        assert record["source"] == "us-faa"
+        assert "source" not in record
         assert record["registration"] == "N659DL"
         conn.close()
 

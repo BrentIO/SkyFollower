@@ -565,8 +565,8 @@ class TestBuildAircraftRecord:
         record = build_aircraft_record(acft, owners)
         assert record["icao_hex"] == "C00001"
         assert record["registration"] == "C-GABC"
-        assert record["source"] == "ca-transport-canada"
-        assert record["military"] is None
+        assert "source" not in record
+        assert "military" not in record
         conn.close()
 
     def test_registrant_with_active_owner(self):
@@ -602,13 +602,13 @@ class TestBuildAircraftRecord:
         assert record["aircraft"]["type"] == "Airplane"
         conn.close()
 
-    def test_aircraft_category_is_null(self):
-        # aircraft.category (Land/Sea/Amphibian) is FAA-only — must be null for TC
+    def test_aircraft_category_absent(self):
+        """aircraft.category (Land/Sea/Amphibian) is FAA-only — must be omitted from TC record."""
         conn = self._make_conn()
         acft = self._fetch_acft_row("C00001", conn)
         owners = self._fetch_owner_rows("C-GABC", conn)
         record = build_aircraft_record(acft, owners)
-        assert record["aircraft"]["category"] is None
+        assert "category" not in record["aircraft"]
         conn.close()
 
     def test_aircraft_manufacturer_from_col7(self):
@@ -620,15 +620,16 @@ class TestBuildAircraftRecord:
         assert record["aircraft"]["manufacturer"] == "CESSNA AIRCRAFT CO"
         conn.close()
 
-    def test_aircraft_mictronics_fields_null(self):
+    def test_aircraft_mictronics_fields_absent(self):
+        """Fields owned by mictronics must be omitted entirely from the TC record."""
         conn = self._make_conn()
         acft = self._fetch_acft_row("C00001", conn)
         owners = self._fetch_owner_rows("C-GABC", conn)
         record = build_aircraft_record(acft, owners)
         ac = record["aircraft"]
-        assert ac["type_designator"] is None
-        assert ac["manufacturer_model"] is None
-        assert ac["wake_turbulence_category"] is None
+        assert "type_designator" not in ac
+        assert "manufacturer_model" not in ac
+        assert "wake_turbulence_category" not in ac
         conn.close()
 
     def test_powerplant_piston(self):
@@ -640,9 +641,9 @@ class TestBuildAircraftRecord:
         assert pp["count"] == 1
         assert pp["type"] == "Piston"
         assert pp["manufacturer"] == "LYCOMING"
-        assert pp["model"] is None
-        assert pp["power_type"] is None
-        assert pp["power_value"] is None
+        assert "model" not in pp
+        assert "power_type" not in pp
+        assert "power_value" not in pp
         conn.close()
 
     def test_powerplant_turbofan(self):
@@ -740,14 +741,14 @@ class TestWriteToRedis:
         assert not any(k.startswith("registration:") for k in all_keys)
         conn.close()
 
-    def test_record_source_is_ca_transport_canada(self):
+    def test_record_written_as_dict(self):
         conn = self._make_db()
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
         record = calls["icao_hex:C00001"]
         assert isinstance(record, dict)
-        assert record["source"] == "ca-transport-canada"
+        assert "source" not in record
         assert record["registration"] == "C-GABC"
         conn.close()
 

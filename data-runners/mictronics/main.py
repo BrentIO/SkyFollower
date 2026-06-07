@@ -220,32 +220,31 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
     registration = row["registration"] or None
     type_designator = row["type_designator"] or None
     military = bool(row["military"])
-    interesting = bool(row["interesting"])
 
     manufacturer: Optional[str] = None
-    model: Optional[str] = None
+    manufacturer_model: Optional[str] = None
     wake_turbulence_category: Optional[str] = None
     if types_row and types_row["manufacturer_model"]:
-        manufacturer, model = _split_manufacturer_model(types_row["manufacturer_model"])
+        manufacturer, _ = _split_manufacturer_model(types_row["manufacturer_model"])
+        manufacturer_model = types_row["manufacturer_model"]
     if types_row:
         wake_turbulence_category = types_row["wake_turbulence_category"] or None
 
-    return {
-        "icao_hex": icao_hex,
-        "registration": registration,
+    aircraft_fields = {k: v for k, v in {
         "type_designator": type_designator,
         "manufacturer": manufacturer,
-        "model": model,
+        "manufacturer_model": manufacturer_model,
         "wake_turbulence_category": wake_turbulence_category,
+    }.items() if v is not None}
+
+    record: dict = {
+        "icao_hex": icao_hex,
+        "registration": registration,
         "military": military,
-        "interesting": interesting,
-        "is_private_operator": None,
-        "operator": None,
-        "airline_code": None,
-        "serial_number": None,
-        "year_built": None,
-        "source": "mictronics",
     }
+    if aircraft_fields:
+        record["aircraft"] = aircraft_fields
+    return record
 
 
 # ---------------------------------------------------------------------------

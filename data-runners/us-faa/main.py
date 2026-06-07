@@ -383,11 +383,8 @@ def build_aircraft_record(
             "seats": acft_row["seats"] or None,
             "category": acft_row["category"] or None,
             "manufacturer": acft_row["manufacturer"] or None,
-            "type_designator": None,          # populated by mictronics
-            "manufacturer_model": None,        # populated by mictronics
             "serial_number": reg_row["serial_number"] or None,
             "manufactured_date": mfr_date,
-            "wake_turbulence_category": None,  # populated by mictronics
         }
 
     # powerplant
@@ -422,8 +419,6 @@ def build_aircraft_record(
         "registrant": registrant,
         "aircraft": aircraft,
         "powerplant": powerplant,
-        "military": None,
-        "source": "us-faa",
     }
 
 

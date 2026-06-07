@@ -319,10 +319,24 @@ class TestBuildAircraftRecord:
 
         assert record["icao_hex"] == "A8AE7F"
         assert record["registration"] == "N659DL"
-        assert record["type_designator"] == "B763"
-        assert record["manufacturer"] == "Boeing"
-        assert record["model"] == "767-332ER"
-        assert record["source"] == "mictronics"
+        assert record["military"] is False
+        assert "source" not in record
+        ac = record["aircraft"]
+        assert ac["type_designator"] == "B763"
+        assert ac["manufacturer"] == "Boeing"
+        assert ac["manufacturer_model"] == "Boeing 767-332ER"
+
+    def test_no_source_field(self):
+        row = self._row("A8AE7F", "N659DL", "B763", False)
+        record = build_aircraft_record(row, None)
+        assert "source" not in record
+
+    def test_no_unowned_fields(self):
+        """Non-data-dictionary fields must be absent from the record."""
+        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
+        record = build_aircraft_record(row, row)
+        for field in ("interesting", "is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
+            assert field not in record, f"Unexpected field: {field!r}"
 
     def test_military_true(self):
         row = self._row("AA0002", "MILCRAFT", "F16", True)
@@ -334,25 +348,19 @@ class TestBuildAircraftRecord:
         record = build_aircraft_record(row, None)
         assert record["military"] is False
 
-    def test_interesting_true(self):
-        row = self._row("AA0004", "N99999", "B763", False, interesting=True)
-        record = build_aircraft_record(row, None)
-        assert record["interesting"] is True
-
-    def test_null_fields_present(self):
-        """Fields unavailable from Mictronics must be null, not omitted."""
-        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
-        record = build_aircraft_record(row, row)
-
-        for field in ("is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
-            assert field in record, f"Missing field: {field!r}"
-            assert record[field] is None, f"Field {field!r} should be None"
-
-    def test_no_types_row(self):
+    def test_no_types_row_type_designator_in_aircraft(self):
+        """When types_row is None, aircraft still contains type_designator if set."""
         row = self._row("A8AE7F", "N659DL", "B763", 0)
         record = build_aircraft_record(row, None)
-        assert record["manufacturer"] is None
-        assert record["model"] is None
+        assert record["aircraft"]["type_designator"] == "B763"
+        assert "manufacturer" not in record["aircraft"]
+        assert "manufacturer_model" not in record["aircraft"]
+
+    def test_no_types_row_no_type_designator_omits_aircraft(self):
+        """When both types_row is None and type_designator is None, aircraft key is omitted."""
+        row = self._row("AA0003", "", None, 0)
+        record = build_aircraft_record(row, None)
+        assert "aircraft" not in record
 
     def test_empty_registration_becomes_none(self):
         row = self._row("AA0003", "", None, 0)
