@@ -144,6 +144,25 @@ sources:
           13: ACTIVE_FLAG
         notes: "TYPE_OF_OWNER_E stores decoded English strings ('Individual', 'Entity') not raw codes; COUNTRY_E stores full country name (e.g. 'CANADA') not ISO code"
 
+  nz-caa:
+    description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
+    url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
+    format: csv
+    cadence: weekly_wednesday
+    notes: "UTF-8 with BOM; single-file CSV; ~4,000 rows; Owner Address is free-text parsed into address components; 151 rows have blank Owner Address (all 'Private Owner')"
+    files:
+      - name: Aircraft-Register-for-website-.csv
+        format: csv
+        columns:
+          Model Category:    aircraft type category
+          Registration Mark: ZK-prefix registration mark
+          Manufacturer:      aircraft manufacturer name
+          Model:             aircraft model designation
+          Serial No.:        manufacturer serial number
+          Owner Name:        registered owner name
+          Owner Address:     free-text address (parsed into street/city/postal_code/country)
+          Mode S Code HEX:   6-character uppercase hex ICAO address
+
   standing-data:
     description: "VRS Standing Data — operators, airports, and flight routes"
     url: "https://github.com/vradarserver/standing-data"
@@ -231,6 +250,12 @@ records:
             transform:
               type: binary_to_hex
               description: "24-character binary string — format(int(value, 2), '06X') → 6-character uppercase hex"
+          - source: nz-caa
+            file: Aircraft-Register-for-website-.csv
+            field: Mode S Code HEX
+            transform:
+              type: uppercase
+              description: "Field is already 6-character hex — normalise to uppercase and strip whitespace"
 
       registration:
         type: string
@@ -256,6 +281,10 @@ records:
           - source: mictronics
             file: aircrafts.json
             field: "values[0]"
+          - source: nz-caa
+            file: Aircraft-Register-for-website-.csv
+            field: Registration Mark
+            description: "Full registration mark including ZK- prefix (e.g. ZK-AAC)"
 
       registrant:
         type: object
@@ -288,6 +317,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Collect FULL_NAME then TRADE_NAME; filter ACTIVE_FLAG='A' rows first"
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Owner Name
+                transform:
+                  type: wrap_array
+                  description: "Single name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -308,6 +343,12 @@ records:
                   - { field: STREET_NAME2, position: 4 }
                 transform:
                   type: collect_non_empty
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Owner Address
+                transform:
+                  type: parse_address_street
+                  description: "All comma-segments except the last two; PO Box segments treated as street lines"
 
           city:
             type: string
@@ -321,6 +362,12 @@ records:
                 file: carsownr.txt
                 field: CITY
                 position: 5
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Owner Address
+                transform:
+                  type: parse_address_city
+                  description: "Second-to-last comma-segment; extract leading word(s) before trailing 3–6 digit postal code; omitted if segment is a PO Box"
 
           administrative_area:
             type: string
@@ -348,6 +395,12 @@ records:
                 file: carsownr.txt
                 field: POSTAL_CODE
                 position: 8
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Owner Address
+                transform:
+                  type: parse_address_postal
+                  description: "Trailing 3–6 digit number from second-to-last comma-segment; omitted if segment is a PO Box"
 
           country:
             type: string
@@ -369,6 +422,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Full English country name (e.g. 'CANADA') → ISO 3166-1 alpha-2 code"
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Owner Address
+                transform:
+                  type: parse_address_country
+                  description: "Last comma-segment; mapped to ISO 3166-1 alpha-2 (e.g. 'New Zealand' → 'NZ'); falls back to raw name if unmapped"
 
           type:
             type: string
@@ -440,6 +499,24 @@ records:
                     "Glider": Glider
                     "Balloon": Balloon
                     "Gyroplane": Gyroplane
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Model Category
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Aeroplane (Aircraft)": Airplane
+                    "Amateur Built Aeroplane": Airplane
+                    "Helicopter": Helicopter
+                    "Amateur Built Helicopter": Helicopter
+                    "Microlight Class 1": Microlight
+                    "Microlight Class 2": Microlight
+                    "Glider": Glider
+                    "Power Glider": Glider
+                    "Amateur Built Glider": Glider
+                    "Gyroplane (Gyrocopter)": Gyroplane
+                    "Balloon (hot-air)": Balloon
 
           model:
             type: string
@@ -454,6 +531,9 @@ records:
                 file: carscurr.txt
                 field: MODEL_NAME
                 position: 4
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Model
 
           seats:
             type: integer
@@ -498,6 +578,9 @@ records:
                 file: carscurr.txt
                 field: ID_PLATE_MANUFACTURERS_NAME
                 position: 7
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Manufacturer
               - source: mictronics
                 file: types.json
                 field: "values[0]"
@@ -536,6 +619,9 @@ records:
                 file: carscurr.txt
                 field: MANUFACTURERS_SERIAL_NUMBER
                 position: 5
+              - source: nz-caa
+                file: Aircraft-Register-for-website-.csv
+                field: Serial No.
 
           manufactured_date:
             type: datetime

@@ -41,6 +41,7 @@ services:
       - runner-ourairports
       - runner-us-faa
       - runner-ca-transport-canada
+      - runner-nz-caa
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -94,6 +95,15 @@ services:
   runner-ca-transport-canada:
     image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada:latest
     container_name: skyfollower-runner-ca-transport-canada
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-nz-caa:
+    image: ghcr.io/brentio/skyfollower-runner-nz-caa:latest
+    container_name: skyfollower-runner-nz-caa
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
