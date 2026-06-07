@@ -57,6 +57,7 @@ _GROUP_TO_TYPE: dict[str, str] = {
     "Micro light aeroplane": "Microlight",
     "Balloon": "Balloon",
     "Rotorcraft": "Helicopter",
+    "Drones": "Drone",
 }
 
 # None value → omit powerplant.type

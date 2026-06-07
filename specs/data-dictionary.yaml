@@ -762,6 +762,7 @@ records:
                     "Micro light aeroplane": Microlight
                     "Balloon": Balloon
                     "Rotorcraft": Helicopter
+                    "Drones": Drone
               - source: au-casa
                 file: acrftreg
                 field: Airframe
