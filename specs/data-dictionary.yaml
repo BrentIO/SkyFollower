@@ -188,6 +188,30 @@ sources:
           PERSONNE_SAISISSANTE:      seizure person (dropped)
           ADRESSE_PERSONNE_SAISISSANTE: seizure person address (dropped)
 
+  nl-ilt:
+    description: "Netherlands Inspectie Leefomgeving en Transport (ILT) civil aircraft register — PH-prefix registrations"
+    url: "https://www.ilent.nl/documenten/lijsten/luchtvaart/databestanden/luchtvaartregister-data"
+    format: ods
+    cadence: weekly_thursday
+    notes: "ODS (OpenDocument Spreadsheet) parsed with odfpy; URL is date-stamped and changes monthly — runner scrapes the ILT index page to discover the current link; ~3,225 records with valid ICAO hex; row 0 = annotated headers (bracket annotations stripped), row 1 = informational text (skipped), row 2+ = data; cells may carry numbercolumnsrepeated attribute — must be expanded to avoid column misalignment; ICAO hex is published directly in X-Ponder column so no RediSearch reverse-lookup required; no owner/registrant data published; filter rows where X-Ponder is not a valid 6-char hex (covers deregistered records); EngManufacturer='Unknown' and EngModel containing 'not further defined' are omitted"
+    files:
+      - name: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+        format: ods
+        columns:
+          Flag:             registration status (rows with blank X-Ponder are deregistered; filtered by hex validity)
+          Registration:     full PH-prefix registration mark
+          Manufacturer:     aircraft manufacturer
+          Model:            aircraft model designation
+          Serial:           manufacturer serial number
+          X-Ponder:         6-character uppercase ICAO Mode S hex (direct; no lookup required)
+          Built:            4-digit year of manufacture
+          Group:            aircraft type category (decoded to canonical type)
+          ICAO-code:        ICAO 4-character type designator
+          Engines:          number of engines
+          EngKind:          engine type description (decoded to canonical type)
+          EngManufacturer:  engine manufacturer name
+          EngModel:         engine model designation
+
   au-casa:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
@@ -336,6 +360,12 @@ records:
             transform:
               type: uppercase
               description: "Extract Heksadesimal entry from the ICAO address array; normalise to uppercase"
+          - source: nl-ilt
+            file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+            field: X-Ponder
+            transform:
+              type: uppercase
+              description: "6-character hex string; normalise to uppercase and strip whitespace"
           - source: au-casa
             file: acrftreg
             description: "CASA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VH\\-XXX} against Mictronics records; enriches existing records only"
@@ -382,6 +412,10 @@ records:
               type: prefix
               value: "VH-"
               description: "Prepend 'VH-' to the 3-character mark suffix to form the full registration"
+          - source: nl-ilt
+            file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+            field: Registration
+            description: "Full registration mark including PH- prefix (e.g. PH-ABC)"
           - source: fr-dgac
             file: export.csv
             field: IMMATRICULATION
@@ -713,6 +747,21 @@ records:
                     "Amateur Built Glider": Glider
                     "Gyroplane (Gyrocopter)": Gyroplane
                     "Balloon (hot-air)": Balloon
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: Group
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Small aeroplane": Airplane
+                    "Large aeroplane": Airplane
+                    "Sailplane": Glider
+                    "Glider": Glider
+                    "MLA, MLH": Microlight
+                    "Micro light aeroplane": Microlight
+                    "Balloon": Balloon
+                    "Rotorcraft": Helicopter
               - source: au-casa
                 file: acrftreg
                 field: Airframe
@@ -749,6 +798,9 @@ records:
                 file: acrftreg
                 field: Model
                 notes: "Type column is always blank; Model column used instead"
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: Model
               - source: fr-dgac
                 file: export.csv
                 field: MODELE
@@ -805,6 +857,9 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: Manu
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: Manufacturer
               - source: fr-dgac
                 file: export.csv
                 field: CONSTRUCTEUR
@@ -824,6 +879,10 @@ records:
               - source: mictronics
                 file: aircrafts.json
                 field: "values[1]"
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: ICAO-code
+                description: "ICAO 4-character type designator (e.g. B738, TL30)"
               - source: au-casa
                 file: acrftreg
                 field: ICAOtypedesig
@@ -858,6 +917,9 @@ records:
                 field: Serienummer
               - source: au-casa
                 file: acrftreg
+                field: Serial
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Serial
               - source: fr-dgac
                 file: export.csv
@@ -896,6 +958,15 @@ records:
                   type: format_string
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "Norway provides 4-digit build year only — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: Built
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "ILT provides 4-digit build year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
               - source: au-casa
                 file: acrftreg
@@ -944,6 +1015,9 @@ records:
                 file: carscurr.txt
                 field: NUMBER_OF_ENGINES
                 position: 17
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: Engines
               - source: au-casa
                 file: acrftreg
                 field: engnum
@@ -986,6 +1060,24 @@ records:
                     "Turbo Jet": Turbo-jet
                     "Electric": Electric
                     "Other": Unknown
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: EngKind
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; 'Engine - not defined' and blank → omit; unknown values pass through unmodified"
+                  values:
+                    "Reciprocating piston-driven engine": Piston
+                    "Reciprocating piston radial engine": Piston
+                    "Piston-driven shaft (rotorcraft) engine": Piston
+                    "Reciprocating piston-driven Diesel engine": Diesel
+                    "Electrical engine": Electric
+                    "Turbofan engine": Turbo-fan
+                    "Turbine-driven shaft (rotorcraft) engine": Turbo-shaft
+                    "Turbine-driven propeller engine": Turbo-prop
+                    "Turbojet engine": Turbo-jet
+                    "Wankel engine": Rotary
+                    "Engine - not defined": ~~omit~~
               - source: au-casa
                 file: acrftreg
                 field: Engtype
@@ -1013,6 +1105,10 @@ records:
                 field: MODEL
                 position: 2
                 join: "master.txt[3] → engine.txt[0]"
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: EngModel
+                notes: "Values containing 'not further defined' are omitted"
               - source: au-casa
                 file: acrftreg
                 field: Engmodel
@@ -1031,6 +1127,10 @@ records:
                 file: carscurr.txt
                 field: ENGINE_MANUF_E
                 position: 13
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: EngManufacturer
+                notes: "Values of 'Unknown' are omitted"
               - source: au-casa
                 file: acrftreg
                 field: Engmanu
