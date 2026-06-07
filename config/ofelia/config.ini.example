@@ -10,6 +10,10 @@ container = skyfollower-runner-mictronics
 schedule = 10 6 * * 2
 container = skyfollower-runner-standing-data
 
+[job-run "runner-nz-caa"]
+schedule = 10 5 * * 3
+container = skyfollower-runner-nz-caa
+
 [job-run "runner-us-faa"]
 schedule = 10 5 * * 6
 container = skyfollower-runner-us-faa
