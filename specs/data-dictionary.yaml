@@ -144,6 +144,25 @@ sources:
           13: ACTIVE_FLAG
         notes: "TYPE_OF_OWNER_E stores decoded English strings ('Individual', 'Entity') not raw codes; COUNTRY_E stores full country name (e.g. 'CANADA') not ISO code"
 
+  no-caa:
+    description: "Norway Civil Aviation Authority (CAA) aircraft register — LN-prefix registrations"
+    url: "https://data.caa.no/nlr/norgesluftfartoyregister.json"
+    format: json
+    cadence: weekly_wednesday
+    notes: "JSON object with 'headers' and 'data' keys; ~1,038 records; owner country field uses Norwegian names for Norway/Sweden/Denmark and English names for all others; Eier(e) array may contain multiple owners — Eier/Kontakt entry used for address fields"
+    files:
+      - name: norgesluftfartoyregister.json
+        format: "object: { headers, data: [ record, ... ] }"
+        fields:
+          Registreringsmerke:               registration mark (LN- prefix)
+          Kategori:                         aircraft category (Fly, Helikopter, Seilfly, Ballong)
+          Type:                             aircraft model designation
+          Produsent:                        aircraft manufacturer/builder
+          Serienummer:                      manufacturer serial number
+          Byggeår:                          4-digit build year
+          "Eier(e)":                        "array of owner objects; each has Eier type, Navn, Gateadresse, Postnummer, Poststed, Land"
+          "ICAO 24-bits adresse":           "array of objects keyed Desimal/Binær/Oktal/Heksadesimal"
+
   nz-caa:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -256,6 +275,12 @@ records:
             transform:
               type: uppercase
               description: "Field is already 6-character hex — normalise to uppercase and strip whitespace"
+          - source: no-caa
+            file: norgesluftfartoyregister.json
+            field: "ICAO 24-bits adresse[].Heksadesimal"
+            transform:
+              type: uppercase
+              description: "Extract Heksadesimal entry from the ICAO address array; normalise to uppercase"
 
       registration:
         type: string
@@ -285,6 +310,10 @@ records:
             file: Aircraft-Register-for-website-.csv
             field: Registration Mark
             description: "Full registration mark including ZK- prefix (e.g. ZK-AAC)"
+          - source: no-caa
+            file: norgesluftfartoyregister.json
+            field: Registreringsmerke
+            description: "Full registration mark including LN- prefix (e.g. LN-ABA)"
 
       registrant:
         type: object
@@ -323,6 +352,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: "Eier(e)[].Navn"
+                transform:
+                  type: collect_ordered
+                  description: "Eier/Kontakt entry first, then all Eier entries; deduplicated"
 
           street:
             type: "array[string]"
@@ -349,6 +384,12 @@ records:
                 transform:
                   type: parse_address_street
                   description: "All comma-segments except the last two; PO Box segments treated as street lines"
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: "Eier(e)[Eier/Kontakt].Gateadresse"
+                transform:
+                  type: wrap_array
+                  description: "Single street address line from the Eier/Kontakt owner entry"
 
           city:
             type: string
@@ -368,6 +409,9 @@ records:
                 transform:
                   type: parse_address_city
                   description: "Second-to-last comma-segment; extract leading word(s) before trailing 3–6 digit postal code; omitted if segment is a PO Box"
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: "Eier(e)[Eier/Kontakt].Poststed"
 
           administrative_area:
             type: string
@@ -401,6 +445,9 @@ records:
                 transform:
                   type: parse_address_postal
                   description: "Trailing 3–6 digit number from second-to-last comma-segment; omitted if segment is a PO Box"
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: "Eier(e)[Eier/Kontakt].Postnummer"
 
           country:
             type: string
@@ -428,6 +475,12 @@ records:
                 transform:
                   type: parse_address_country
                   description: "Last comma-segment; mapped to ISO 3166-1 alpha-2 (e.g. 'New Zealand' → 'NZ'); falls back to raw name if unmapped"
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: "Eier(e)[Eier/Kontakt].Land"
+                transform:
+                  type: decode_country_name
+                  description: "Norwegian names (Norge→NO, Sverige→SE, Danmark→DK) and English names mapped to ISO 3166-1 alpha-2; falls back to raw name if unmapped"
 
           type:
             type: string
@@ -499,6 +552,17 @@ records:
                     "Glider": Glider
                     "Balloon": Balloon
                     "Gyroplane": Gyroplane
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: Kategori
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Fly": Airplane
+                    "Helikopter": Helicopter
+                    "Seilfly": Glider
+                    "Ballong": Balloon
               - source: nz-caa
                 file: Aircraft-Register-for-website-.csv
                 field: Model Category
@@ -534,6 +598,9 @@ records:
               - source: nz-caa
                 file: Aircraft-Register-for-website-.csv
                 field: Model
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: Type
 
           seats:
             type: integer
@@ -581,6 +648,9 @@ records:
               - source: nz-caa
                 file: Aircraft-Register-for-website-.csv
                 field: Manufacturer
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: Produsent
               - source: mictronics
                 file: types.json
                 field: "values[0]"
@@ -622,6 +692,9 @@ records:
               - source: nz-caa
                 file: Aircraft-Register-for-website-.csv
                 field: Serial No.
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: Serienummer
 
           manufactured_date:
             type: datetime
@@ -647,6 +720,15 @@ records:
                   type: format_string
                   pattern: "{value.replace('/', '-')}T00:00:00Z"
                   description: "TC provides YYYY/MM/DD — reformat separators and append UTC time"
+                  skip_if_empty: true
+              - source: no-caa
+                file: norgesluftfartoyregister.json
+                field: Byggeår
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "Norway provides 4-digit build year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
 
           wake_turbulence_category:
