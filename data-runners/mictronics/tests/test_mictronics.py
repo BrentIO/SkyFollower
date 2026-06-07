@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import tempfile
 import zipfile
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -319,10 +320,24 @@ class TestBuildAircraftRecord:
 
         assert record["icao_hex"] == "A8AE7F"
         assert record["registration"] == "N659DL"
-        assert record["type_designator"] == "B763"
-        assert record["manufacturer"] == "Boeing"
-        assert record["model"] == "767-332ER"
-        assert record["source"] == "mictronics"
+        assert record["military"] is False
+        assert "source" not in record
+        ac = record["aircraft"]
+        assert ac["type_designator"] == "B763"
+        assert ac["manufacturer"] == "Boeing"
+        assert ac["manufacturer_model"] == "Boeing 767-332ER"
+
+    def test_no_source_field(self):
+        row = self._row("A8AE7F", "N659DL", "B763", False)
+        record = build_aircraft_record(row, None)
+        assert "source" not in record
+
+    def test_no_unowned_fields(self):
+        """Non-data-dictionary fields must be absent from the record."""
+        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
+        record = build_aircraft_record(row, row)
+        for field in ("interesting", "is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
+            assert field not in record, f"Unexpected field: {field!r}"
 
     def test_military_true(self):
         row = self._row("AA0002", "MILCRAFT", "F16", True)
@@ -334,25 +349,19 @@ class TestBuildAircraftRecord:
         record = build_aircraft_record(row, None)
         assert record["military"] is False
 
-    def test_interesting_true(self):
-        row = self._row("AA0004", "N99999", "B763", False, interesting=True)
-        record = build_aircraft_record(row, None)
-        assert record["interesting"] is True
-
-    def test_null_fields_present(self):
-        """Fields unavailable from Mictronics must be null, not omitted."""
-        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
-        record = build_aircraft_record(row, row)
-
-        for field in ("is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
-            assert field in record, f"Missing field: {field!r}"
-            assert record[field] is None, f"Field {field!r} should be None"
-
-    def test_no_types_row(self):
+    def test_no_types_row_type_designator_in_aircraft(self):
+        """When types_row is None, aircraft still contains type_designator if set."""
         row = self._row("A8AE7F", "N659DL", "B763", 0)
         record = build_aircraft_record(row, None)
-        assert record["manufacturer"] is None
-        assert record["model"] is None
+        assert record["aircraft"]["type_designator"] == "B763"
+        assert "manufacturer" not in record["aircraft"]
+        assert "manufacturer_model" not in record["aircraft"]
+
+    def test_no_types_row_no_type_designator_omits_aircraft(self):
+        """When both types_row is None and type_designator is None, aircraft key is omitted."""
+        row = self._row("AA0003", "", None, 0)
+        record = build_aircraft_record(row, None)
+        assert "aircraft" not in record
 
     def test_empty_registration_becomes_none(self):
         row = self._row("AA0003", "", None, 0)
@@ -402,8 +411,15 @@ class TestWriteToRedis:
         conn.commit()
         return conn
 
-    def _mock_redis(self):
+    def _mock_redis(self, existing: Optional[dict] = None):
         r = MagicMock()
+        r_json = MagicMock()
+        r.json.return_value = r_json
+        r_json.mget.side_effect = lambda keys, path: [
+            [existing] if existing and k == f"icao_hex:{existing['icao_hex']}" else None
+            for k in keys
+        ]
+
         pipe = MagicMock()
         pipe_json = MagicMock()
         r.pipeline.return_value = pipe
@@ -450,6 +466,29 @@ class TestWriteToRedis:
             + [c.args[0] for c in pipe_json.set.call_args_list]
         )
         assert not any(k.startswith("registration:") for k in all_keys)
+        conn.close()
+
+    def test_merges_with_existing_record(self):
+        """Mictronics fields overwrite existing; unowned fields from other runners are preserved."""
+        conn = self._make_db()
+        existing = {
+            "icao_hex": "A8AE7F",
+            "military": True,
+            "registrant": {"names": ["DELTA AIR LINES INC"]},
+            "aircraft": {"type": "Airplane", "model": "737-800"},
+        }
+        r, _, pipe_json = self._mock_redis(existing=existing)
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["icao_hex:A8AE7F"]
+        # mictronics owns military — its value (False) overwrites the existing True
+        assert record["military"] is False
+        # registrant is not owned by mictronics — must be preserved
+        assert record["registrant"] == {"names": ["DELTA AIR LINES INC"]}
+        # aircraft sub-fields from existing (type, model) are preserved alongside mictronics fields
+        assert record["aircraft"]["type"] == "Airplane"
+        assert record["aircraft"]["model"] == "737-800"
+        assert record["aircraft"]["type_designator"] == "B763"
         conn.close()
 
 

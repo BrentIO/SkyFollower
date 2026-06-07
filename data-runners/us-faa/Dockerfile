@@ -12,4 +12,6 @@ COPY data-runners/us-faa/ ./us-faa/
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 
+RUN touch /app/settings.json
+
 CMD ["python", "us-faa/main.py"]

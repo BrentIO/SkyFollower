@@ -360,6 +360,21 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------------------
+# Record merge
+# ---------------------------------------------------------------------------
+
+def _deep_merge(base: dict, update: dict) -> dict:
+    """Merge update into base. update values win; nested dicts are merged recursively."""
+    result = dict(base)
+    for k, v in update.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Build Redis record
 # ---------------------------------------------------------------------------
 
@@ -388,13 +403,9 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
             "type": acft_row["aircraft_type"] or None,
             "model": acft_row["model"] or None,
             "seats": acft_row["seat_count"],
-            "category": None,
             "manufacturer": acft_row["manufacturer_name"] or None,
-            "type_designator": None,
-            "manufacturer_model": None,
             "serial_number": acft_row["serial_number"] or None,
             "manufactured_date": acft_row["manufactured_date"] or None,
-            "wake_turbulence_category": None,
         }
 
     # powerplant
@@ -403,10 +414,7 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
         powerplant = {
             "count": acft_row["engine_count"],
             "type": acft_row["engine_category"] or None,
-            "model": None,
             "manufacturer": acft_row["engine_manufacturer"] or None,
-            "power_type": None,
-            "power_value": None,
         }
 
     return {
@@ -415,8 +423,6 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
         "registrant": registrant,
         "aircraft": aircraft,
         "powerplant": powerplant,
-        "military": None,
-        "source": "ca-transport-canada",
     }
 
 
@@ -457,7 +463,18 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     owner_cur = conn.cursor()
 
     count = 0
-    pipe = r.pipeline()
+    batch: list[tuple[str, dict]] = []
+
+    def _flush():
+        keys = [k for k, _ in batch]
+        existing_list = r.json().mget(keys, "$")
+        pipe = r.pipeline()
+        for (key, new_record), existing_raw in zip(batch, existing_list):
+            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
+            pipe.json().set(key, "$", merged)
+            pipe.expire(key, ttl)
+        pipe.execute()
+
     for acft_row in acft_rows:
         owner_cur.execute(
             "SELECT name, trade_name, street_1, street_2, city, province, "
@@ -468,16 +485,15 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         owner_rows = owner_cur.fetchall()
         record = build_aircraft_record(acft_row, owner_rows)
         key = icao_hex_key(record["icao_hex"])
-        pipe.json().set(key, "$", record)
-        pipe.expire(key, ttl)
-
+        batch.append((key, record))
         count += 1
-        if count % 10000 == 0:
-            pipe.execute()
-            pipe = r.pipeline()
+        if len(batch) == 10000:
+            _flush()
+            batch.clear()
             logger.info("  ... %d records written.", count)
 
-    pipe.execute()
+    if batch:
+        _flush()
     logger.info("Finished writing %d records to Redis.", count)
     return count
 

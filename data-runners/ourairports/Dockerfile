@@ -12,4 +12,6 @@ COPY data-runners/ourairports/ ./ourairports/
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 
+RUN touch /app/settings.json
+
 CMD ["python", "ourairports/main.py"]
