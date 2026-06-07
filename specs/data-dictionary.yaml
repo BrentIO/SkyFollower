@@ -163,6 +163,31 @@ sources:
           "Eier(e)":                        "array of owner objects; each has Eier type, Navn, Gateadresse, Postnummer, Poststed, Land"
           "ICAO 24-bits adresse":           "array of objects keyed Desimal/Binær/Oktal/Heksadesimal"
 
+  fr-dgac:
+    description: "France Direction Générale de l'Aviation Civile (DGAC) aircraft register — F-prefix registrations"
+    url: "https://immat.aviation-civile.gouv.fr/immat/servlet/static/upload/export.csv"
+    format: csv
+    cadence: weekly_wednesday
+    notes: "UTF-8 with BOM (decode utf-8-sig); semicolon-delimited; ~43,069 rows with 40,522 unique F- registrations; co-ownership rows share IMMATRICULATION — group by registration, collect all unique PROPRIETAIRE names, use first non-blank ADRESSE_PROPRIETAIRE for address; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; GDPR blanks mean ~45% have PROPRIETAIRE and ~24% have ADRESSE_PROPRIETAIRE; country names in French"
+    files:
+      - name: export.csv
+        format: csv
+        delimiter: ";"
+        columns:
+          IMMATRICULATION:           registration mark (F- prefix already present)
+          CONSTRUCTEUR:              aircraft manufacturer
+          MODELE:                    aircraft model
+          NUMERO_SERIE:              serial number
+          AERODROME_ATTACHE:         home aerodrome name (dropped — not an ICAO code)
+          PROPRIETAIRE:              registrant name (blank for individuals per GDPR)
+          ADRESSE_PROPRIETAIRE:      free-text registrant address; country names in French
+          LOCATAIRE:                 lessee name (dropped)
+          ADRESSE_LOCATAIRE:         lessee address (dropped)
+          CREANCIER_HYPOTHEQUE:      mortgage creditor (dropped)
+          ADRESSE_CREANCIER:         creditor address (dropped)
+          PERSONNE_SAISISSANTE:      seizure person (dropped)
+          ADRESSE_PERSONNE_SAISISSANTE: seizure person address (dropped)
+
   au-casa:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
@@ -314,6 +339,9 @@ records:
           - source: au-casa
             file: acrftreg
             description: "CASA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VH\\-XXX} against Mictronics records; enriches existing records only"
+          - source: fr-dgac
+            file: export.csv
+            description: "DGAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{F\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -354,6 +382,10 @@ records:
               type: prefix
               value: "VH-"
               description: "Prepend 'VH-' to the 3-character mark suffix to form the full registration"
+          - source: fr-dgac
+            file: export.csv
+            field: IMMATRICULATION
+            description: "Full registration mark including F- prefix (e.g. F-BKDK)"
 
       registrant:
         type: object
@@ -404,6 +436,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
+              - source: fr-dgac
+                file: export.csv
+                field: PROPRIETAIRE
+                transform:
+                  type: collect_ordered
+                  description: "Rows are grouped by IMMATRICULATION (co-ownership); all unique non-blank PROPRIETAIRE values collected in order of first appearance; blank for individuals per GDPR"
 
           street:
             type: "array[string]"
@@ -443,6 +481,12 @@ records:
                   - { field: regholdadd2 }
                 transform:
                   type: collect_non_empty
+              - source: fr-dgac
+                file: export.csv
+                field: ADRESSE_PROPRIETAIRE
+                transform:
+                  type: parse_address_street
+                  description: "Everything before the 5-digit postal code; omitted if no postal code found (foreign addresses)"
 
           city:
             type: string
@@ -468,6 +512,12 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: regholdSuburb
+              - source: fr-dgac
+                file: export.csv
+                field: ADRESSE_PROPRIETAIRE
+                transform:
+                  type: parse_address_city
+                  description: "Everything after the 5-digit postal code (before country); omitted if no postal code found"
 
           administrative_area:
             type: string
@@ -486,6 +536,7 @@ records:
                 file: acrftreg
                 field: regholdState
                 description: "Australian state/territory abbreviation (NSW, VIC, QLD, SA, WA, TAS, NT, ACT); passed through as-is"
+                # fr-dgac has no administrative_area equivalent
 
           postal_code:
             type: string
@@ -511,6 +562,12 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: regholdPostcode
+              - source: fr-dgac
+                file: export.csv
+                field: ADRESSE_PROPRIETAIRE
+                transform:
+                  type: parse_address_postal
+                  description: "5-digit postal code extracted from free-text address; omitted if no 5-digit code found"
 
           country:
             type: string
@@ -550,6 +607,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Australia' → 'AU'); falls back to raw name if unmapped"
+              - source: fr-dgac
+                file: export.csv
+                field: ADRESSE_PROPRIETAIRE
+                transform:
+                  type: parse_address_country
+                  description: "French country name stripped from end of address string (multi-word names checked first); mapped to ISO 3166-1 alpha-2 (e.g. 'FRANCE'→FR, 'ETATS UNIS D\\'AMERIQUE'→US); omitted if country suffix not recognised"
 
           type:
             type: string
@@ -686,6 +749,9 @@ records:
                 file: acrftreg
                 field: Model
                 notes: "Type column is always blank; Model column used instead"
+              - source: fr-dgac
+                file: export.csv
+                field: MODELE
 
           seats:
             type: integer
@@ -739,6 +805,9 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: Manu
+              - source: fr-dgac
+                file: export.csv
+                field: CONSTRUCTEUR
               - source: mictronics
                 file: types.json
                 field: "values[0]"
@@ -790,6 +859,9 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: Serial
+              - source: fr-dgac
+                file: export.csv
+                field: NUMERO_SERIE
 
           manufactured_date:
             type: datetime
