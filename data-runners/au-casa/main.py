@@ -11,7 +11,7 @@ Important: the CASA register does not publish ICAO hex (Mode S) addresses.
 This runner can only enrich records that already exist in Redis from Mictronics.
 Schedule it AFTER the Mictronics runner.
 
-Data source: https://www.casa.gov.au/files/acrftreg
+Data source: https://services.casa.gov.au/CSV/acrftreg.csv
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
 
 logger = logging.getLogger("au-casa")
 
-DOWNLOAD_URL = "https://www.casa.gov.au/files/acrftreg"
+DOWNLOAD_URL = "https://services.casa.gov.au/CSV/acrftreg.csv"
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/au-casa"
 BATCH_SIZE = 100

@@ -165,7 +165,7 @@ sources:
 
   au-casa:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
-    url: "https://www.casa.gov.au/files/acrftreg"
+    url: "https://services.casa.gov.au/CSV/acrftreg.csv"
     format: csv
     cadence: weekly_tuesday
     notes: "UTF-8 CSV; ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; filter REGO_STATUS='Suspended' rows; all marks are 3-char suffixes — prepend 'VH-'"
