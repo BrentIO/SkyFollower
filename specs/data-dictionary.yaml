@@ -163,6 +163,36 @@ sources:
           "Eier(e)":                        "array of owner objects; each has Eier type, Navn, Gateadresse, Postnummer, Poststed, Land"
           "ICAO 24-bits adresse":           "array of objects keyed Desimal/Binær/Oktal/Heksadesimal"
 
+  au-casa:
+    description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
+    url: "https://services.casa.gov.au/CSV/acrftreg.csv"
+    format: csv
+    cadence: weekly_tuesday
+    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; filter suspendstatus='Suspended' rows; all marks are 3-char suffixes — prepend 'VH-'"
+    files:
+      - name: acrftreg
+        format: csv
+        columns:
+          Mark:             3-character registration suffix (prepend VH-)
+          suspendstatus:    filter out Suspended records
+          Airframe:         aircraft category
+          Manu:             aircraft manufacturer
+          Model:            aircraft model designation
+          Serial:           manufacturer serial number
+          Yearmanu:         4-digit year of manufacture
+          ICAOtypedesig:    ICAO 4-character type designator
+          engnum:           number of engines
+          Engmanu:          engine manufacturer
+          Engtype:          engine type
+          Engmodel:         engine model
+          regholdname:      registrant name
+          regholdadd1:      address line 1
+          regholdadd2:      address line 2
+          regholdSuburb:    city/suburb
+          regholdState:     state or territory abbreviation
+          regholdPostcode:  postal code
+          regholdCountry:   country name (full English)
+
   nz-caa:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -281,6 +311,9 @@ records:
             transform:
               type: uppercase
               description: "Extract Heksadesimal entry from the ICAO address array; normalise to uppercase"
+          - source: au-casa
+            file: acrftreg
+            description: "CASA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VH\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -314,6 +347,13 @@ records:
             file: norgesluftfartoyregister.json
             field: Registreringsmerke
             description: "Full registration mark including LN- prefix (e.g. LN-ABA)"
+          - source: au-casa
+            file: acrftreg
+            field: Mark
+            transform:
+              type: prefix
+              value: "VH-"
+              description: "Prepend 'VH-' to the 3-character mark suffix to form the full registration"
 
       registrant:
         type: object
@@ -358,6 +398,12 @@ records:
                 transform:
                   type: collect_ordered
                   description: "Eier/Kontakt entry first, then all Eier entries; deduplicated"
+              - source: au-casa
+                file: acrftreg
+                field: regholdname
+                transform:
+                  type: wrap_array
+                  description: "Single name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -390,6 +436,13 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single street address line from the Eier/Kontakt owner entry"
+              - source: au-casa
+                file: acrftreg
+                fields:
+                  - { field: regholdadd1 }
+                  - { field: regholdadd2 }
+                transform:
+                  type: collect_non_empty
 
           city:
             type: string
@@ -412,6 +465,9 @@ records:
               - source: no-caa
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Poststed"
+              - source: au-casa
+                file: acrftreg
+                field: regholdSuburb
 
           administrative_area:
             type: string
@@ -426,6 +482,10 @@ records:
                 file: carsownr.txt
                 field: PROVINCE_OR_STATE_E
                 position: 6
+              - source: au-casa
+                file: acrftreg
+                field: regholdState
+                description: "Australian state/territory abbreviation (NSW, VIC, QLD, SA, WA, TAS, NT, ACT); passed through as-is"
 
           postal_code:
             type: string
@@ -448,6 +508,9 @@ records:
               - source: no-caa
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Postnummer"
+              - source: au-casa
+                file: acrftreg
+                field: regholdPostcode
 
           country:
             type: string
@@ -481,6 +544,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Norwegian names (Norge→NO, Sverige→SE, Danmark→DK) and English names mapped to ISO 3166-1 alpha-2; falls back to raw name if unmapped"
+              - source: au-casa
+                file: acrftreg
+                field: regholdCountry
+                transform:
+                  type: decode_country_name
+                  description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Australia' → 'AU'); falls back to raw name if unmapped"
 
           type:
             type: string
@@ -581,6 +650,18 @@ records:
                     "Amateur Built Glider": Glider
                     "Gyroplane (Gyrocopter)": Gyroplane
                     "Balloon (hot-air)": Balloon
+              - source: au-casa
+                file: acrftreg
+                field: Airframe
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Power Driven Aeroplane": Airplane
+                    "Rotorcraft": Helicopter
+                    "Glider": Glider
+                    "Manned Free Balloon": Balloon
+                    "Motor-Glider": Glider
 
           model:
             type: string
@@ -601,6 +682,10 @@ records:
               - source: no-caa
                 file: norgesluftfartoyregister.json
                 field: Type
+              - source: au-casa
+                file: acrftreg
+                field: Model
+                notes: "Type column is always blank; Model column used instead"
 
           seats:
             type: integer
@@ -651,6 +736,9 @@ records:
               - source: no-caa
                 file: norgesluftfartoyregister.json
                 field: Produsent
+              - source: au-casa
+                file: acrftreg
+                field: Manu
               - source: mictronics
                 file: types.json
                 field: "values[0]"
@@ -667,6 +755,10 @@ records:
               - source: mictronics
                 file: aircrafts.json
                 field: "values[1]"
+              - source: au-casa
+                file: acrftreg
+                field: ICAOtypedesig
+                description: "ICAO 4-character type designator; populated for all CASA records"
 
           manufacturer_model:
             type: string
@@ -695,6 +787,9 @@ records:
               - source: no-caa
                 file: norgesluftfartoyregister.json
                 field: Serienummer
+              - source: au-casa
+                file: acrftreg
+                field: Serial
 
           manufactured_date:
             type: datetime
@@ -729,6 +824,15 @@ records:
                   type: format_string
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "Norway provides 4-digit build year only — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: au-casa
+                file: acrftreg
+                field: Yearmanu
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "CASA provides 4-digit manufacture year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
 
           wake_turbulence_category:
@@ -768,6 +872,9 @@ records:
                 file: carscurr.txt
                 field: NUMBER_OF_ENGINES
                 position: 17
+              - source: au-casa
+                file: acrftreg
+                field: engnum
 
           type:
             type: string
@@ -807,6 +914,22 @@ records:
                     "Turbo Jet": Turbo-jet
                     "Electric": Electric
                     "Other": Unknown
+              - source: au-casa
+                file: acrftreg
+                field: Engtype
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; 'Not Applicable' → omit; unknown values pass through unmodified"
+                  values:
+                    "Piston": Piston
+                    "Turbofan": Turbo-fan
+                    "Turboprop": Turbo-prop
+                    "Turboshaft": Turbo-shaft
+                    "Turbojet": Turbo-jet
+                    "Electric": Electric
+                    "Diesel Engine": Diesel
+                    "Rotary": Rotary
+                    "Not Applicable": ~~omit~~
 
           model:
             type: string
@@ -818,6 +941,9 @@ records:
                 field: MODEL
                 position: 2
                 join: "master.txt[3] → engine.txt[0]"
+              - source: au-casa
+                file: acrftreg
+                field: Engmodel
 
           manufacturer:
             type: string
@@ -833,6 +959,9 @@ records:
                 file: carscurr.txt
                 field: ENGINE_MANUF_E
                 position: 13
+              - source: au-casa
+                file: acrftreg
+                field: Engmanu
 
           power_type:
             type: string
