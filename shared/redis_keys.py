@@ -13,6 +13,10 @@ _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
 # Supports registration lookup without a separate reverse-index key.
 AIRCRAFT_SEARCH_INDEX = "idx:aircraft"
 
+# RediSearch index over all airport:{icao_code} JSON documents.
+# Supports lookup by ICAO code or IATA code.
+AIRPORT_SEARCH_INDEX = "idx:airport"
+
 
 def icao_hex_key(icao_hex: str) -> str:
     """Aircraft enrichment record. icao_hex:{icao_hex}"""
