@@ -261,6 +261,21 @@ sources:
           Owner Address:     free-text address (parsed into street/city/postal_code/country)
           Mode S Code HEX:   6-character uppercase hex ICAO address
 
+  bs-caa:
+    description: "Bahamas Civil Aviation Authority (CAA) aircraft register — C6-prefix registrations"
+    url: "https://caabahamas.com/registers/"
+    format: pdf
+    cadence: weekly_friday
+    notes: "PDF generated from Microsoft Excel; ~139 rows across 3 pages; URL is date-stamped and changes with each update — runner scrapes the CAA registers page to discover the current link; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; no manufacturer column (combined with model in AIRCRAFT TYPE - MAKE/MODEL); no powerplant or address data available"
+    files:
+      - name: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+        format: pdf
+        columns:
+          "AIRCRAFT REGISTRATION NUMBER": full C6-prefix registration mark
+          "REGISTERED OWNER OF AIRCRAFT": registered owner name
+          "AIRCRAFT TYPE - MAKE/MODEL":   combined make and model free-text (stored as aircraft.model)
+          "SERIAL #":                     manufacturer serial number
+
   standing-data:
     description: "VRS Standing Data — operators, airports, and flight routes"
     url: "https://github.com/vradarserver/standing-data"
@@ -372,6 +387,9 @@ records:
           - source: fr-dgac
             file: export.csv
             description: "DGAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{F\\-XXX} against Mictronics records; enriches existing records only"
+          - source: bs-caa
+            file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+            description: "Bahamas CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{C6\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -420,6 +438,10 @@ records:
             file: export.csv
             field: IMMATRICULATION
             description: "Full registration mark including F- prefix (e.g. F-BKDK)"
+          - source: bs-caa
+            file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+            field: AIRCRAFT REGISTRATION NUMBER
+            description: "Full registration mark including C6- prefix (e.g. C6-BFY)"
 
       registrant:
         type: object
@@ -476,6 +498,12 @@ records:
                 transform:
                   type: collect_ordered
                   description: "Rows are grouped by IMMATRICULATION (co-ownership); all unique non-blank PROPRIETAIRE values collected in order of first appearance; blank for individuals per GDPR"
+              - source: bs-caa
+                file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+                field: REGISTERED OWNER OF AIRCRAFT
+                transform:
+                  type: wrap_array
+                  description: "Single name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -805,6 +833,10 @@ records:
               - source: fr-dgac
                 file: export.csv
                 field: MODELE
+              - source: bs-caa
+                file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+                field: "AIRCRAFT TYPE - MAKE/MODEL"
+                description: "Combined make and model free-text field (e.g. 'B737-790', 'CIRRUS SR 22', 'DE HAVILLAND DHC-6'); no separate manufacturer column; stored as-is"
 
           seats:
             type: integer
@@ -925,6 +957,9 @@ records:
               - source: fr-dgac
                 file: export.csv
                 field: NUMERO_SERIE
+              - source: bs-caa
+                file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
+                field: "SERIAL #"
 
           manufactured_date:
             type: datetime
