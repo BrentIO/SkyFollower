@@ -347,6 +347,21 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------------------
+# Record merge
+# ---------------------------------------------------------------------------
+
+def _deep_merge(base: dict, update: dict) -> dict:
+    """Merge update into base. update values win; nested dicts are merged recursively."""
+    result = dict(base)
+    for k, v in update.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Build Redis record
 # ---------------------------------------------------------------------------
 
@@ -469,22 +484,32 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     logger.info("Writing %d registration records to Redis.", len(rows))
 
     count = 0
-    pipe = r.pipeline()
+    batch: list[tuple[str, dict]] = []
+
+    def _flush():
+        keys = [k for k, _ in batch]
+        existing_list = r.json().mget(keys, "$")
+        pipe = r.pipeline()
+        for (key, new_record), existing_raw in zip(batch, existing_list):
+            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
+            pipe.json().set(key, "$", merged)
+            pipe.expire(key, ttl)
+        pipe.execute()
+
     for row in rows:
         acft_row = row if row["manufacturer"] is not None else None
         eng_row = engines_by_code.get(row["code_engine"]) if row["code_engine"] else None
         record = build_aircraft_record(row, acft_row, eng_row)
         key = icao_hex_key(record["icao_hex"])
-        pipe.json().set(key, "$", record)
-        pipe.expire(key, ttl)
-
+        batch.append((key, record))
         count += 1
-        if count % 10000 == 0:
-            pipe.execute()
-            pipe = r.pipeline()
+        if len(batch) == 10000:
+            _flush()
+            batch.clear()
             logger.info("  ... %d records written.", count)
 
-    pipe.execute()
+    if batch:
+        _flush()
     logger.info("Finished writing %d records to Redis.", count)
     return count
 

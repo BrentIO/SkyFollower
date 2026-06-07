@@ -18,6 +18,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -681,8 +682,15 @@ class TestWriteToRedis:
         with tempfile.TemporaryDirectory() as tmpdir:
             return stage_data(_make_files(), os.path.join(tmpdir, "staging.db"))
 
-    def _mock_redis(self):
+    def _mock_redis(self, existing: Optional[dict] = None):
         r = MagicMock()
+        r_json = MagicMock()
+        r.json.return_value = r_json
+        r_json.mget.side_effect = lambda keys, path: [
+            [existing] if existing and k == f"icao_hex:{existing['icao_hex']}" else None
+            for k in keys
+        ]
+
         pipe = MagicMock()
         pipe_json = MagicMock()
         r.pipeline.return_value = pipe
@@ -750,6 +758,27 @@ class TestWriteToRedis:
         assert isinstance(record, dict)
         assert "source" not in record
         assert record["registration"] == "C-GABC"
+        conn.close()
+
+    def test_merges_with_existing_record(self):
+        """TC fields overwrite existing; unowned fields from other runners are preserved."""
+        conn = self._make_db()
+        existing = {
+            "icao_hex": "C00001",
+            "military": False,
+            "aircraft": {"type_designator": "C172", "wake_turbulence_category": "Light"},
+        }
+        r, _, pipe_json = self._mock_redis(existing=existing)
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["icao_hex:C00001"]
+        # military is mictronics-owned — preserved from existing since TC omits it
+        assert record["military"] is False
+        # mictronics aircraft fields are preserved alongside TC aircraft fields
+        assert record["aircraft"]["type_designator"] == "C172"
+        assert record["aircraft"]["wake_turbulence_category"] == "Light"
+        # TC aircraft fields are present
+        assert record["aircraft"]["type"] == "Airplane"
         conn.close()
 
 

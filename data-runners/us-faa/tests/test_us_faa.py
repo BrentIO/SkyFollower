@@ -18,6 +18,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -554,8 +555,15 @@ class TestWriteToRedis:
         with tempfile.TemporaryDirectory() as tmpdir:
             return stage_data(_make_files(), os.path.join(tmpdir, "staging.db"))
 
-    def _mock_redis(self):
+    def _mock_redis(self, existing: Optional[dict] = None):
         r = MagicMock()
+        r_json = MagicMock()
+        r.json.return_value = r_json
+        r_json.mget.side_effect = lambda keys, path: [
+            [existing] if existing and k == f"icao_hex:{existing['icao_hex']}" else None
+            for k in keys
+        ]
+
         pipe = MagicMock()
         pipe_json = MagicMock()
         r.pipeline.return_value = pipe
@@ -613,6 +621,27 @@ class TestWriteToRedis:
         assert isinstance(record, dict)
         assert "source" not in record
         assert record["registration"] == "N659DL"
+        conn.close()
+
+    def test_merges_with_existing_record(self):
+        """FAA fields overwrite existing; unowned fields from other runners are preserved."""
+        conn = self._make_db()
+        existing = {
+            "icao_hex": "A8AE7F",
+            "military": False,
+            "aircraft": {"type_designator": "B737", "wake_turbulence_category": "Medium"},
+        }
+        r, _, pipe_json = self._mock_redis(existing=existing)
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["icao_hex:A8AE7F"]
+        # military is mictronics-owned — preserved from existing since FAA omits it
+        assert record["military"] is False
+        # mictronics aircraft fields are preserved alongside FAA aircraft fields
+        assert record["aircraft"]["type_designator"] == "B737"
+        assert record["aircraft"]["wake_turbulence_category"] == "Medium"
+        # FAA aircraft fields are present
+        assert record["aircraft"]["manufacturer"] == "BOEING"
         conn.close()
 
 

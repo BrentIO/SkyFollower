@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import tempfile
 import zipfile
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -410,8 +411,15 @@ class TestWriteToRedis:
         conn.commit()
         return conn
 
-    def _mock_redis(self):
+    def _mock_redis(self, existing: Optional[dict] = None):
         r = MagicMock()
+        r_json = MagicMock()
+        r.json.return_value = r_json
+        r_json.mget.side_effect = lambda keys, path: [
+            [existing] if existing and k == f"icao_hex:{existing['icao_hex']}" else None
+            for k in keys
+        ]
+
         pipe = MagicMock()
         pipe_json = MagicMock()
         r.pipeline.return_value = pipe
@@ -458,6 +466,29 @@ class TestWriteToRedis:
             + [c.args[0] for c in pipe_json.set.call_args_list]
         )
         assert not any(k.startswith("registration:") for k in all_keys)
+        conn.close()
+
+    def test_merges_with_existing_record(self):
+        """Mictronics fields overwrite existing; unowned fields from other runners are preserved."""
+        conn = self._make_db()
+        existing = {
+            "icao_hex": "A8AE7F",
+            "military": True,
+            "registrant": {"names": ["DELTA AIR LINES INC"]},
+            "aircraft": {"type": "Airplane", "model": "737-800"},
+        }
+        r, _, pipe_json = self._mock_redis(existing=existing)
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["icao_hex:A8AE7F"]
+        # mictronics owns military — its value (False) overwrites the existing True
+        assert record["military"] is False
+        # registrant is not owned by mictronics — must be preserved
+        assert record["registrant"] == {"names": ["DELTA AIR LINES INC"]}
+        # aircraft sub-fields from existing (type, model) are preserved alongside mictronics fields
+        assert record["aircraft"]["type"] == "Airplane"
+        assert record["aircraft"]["model"] == "737-800"
+        assert record["aircraft"]["type_designator"] == "B763"
         conn.close()
 
 
