@@ -29,7 +29,7 @@ merge_strategy_default: first_wins
 sources:
 
   mictronics:
-    description: "Mictronics global aircraft database — type designators and military/interesting flags"
+    description: "Mictronics global aircraft database — type designators, military/interesting flags, and operators"
     url: "https://www.mictronics.de/aircraft-database/indexedDB.php"
     format: zip+json
     cadence: weekly_tuesday
@@ -1232,28 +1232,36 @@ records:
 
       operator:
         type: object
-        description: "Airline operator enrichment from standing data; keyed by airline_designator"
+        description: "Airline operator enrichment from Mictronics; keyed by airline_designator"
         persisted: true
         properties:
           airline_designator:
             type: string
             description: "3-character ICAO airline code (e.g. DAL)"
             sources:
-              - source: standing-data
+              - source: mictronics
+                file: operators.json
+                field: "key (airline_designator)"
           name:
             type: string
             description: "Full airline name (e.g. Delta Air Lines)"
             sources:
-              - source: standing-data
+              - source: mictronics
+                file: operators.json
+                field: "values[0]"
+          country:
+            type: string
+            sources:
+              - source: mictronics
+                file: operators.json
+                field: "values[1]"
           callsign:
             type: string
             description: "RTF callsign (e.g. DELTA)"
             sources:
-              - source: standing-data
-          country:
-            type: string
-            sources:
-              - source: standing-data
+              - source: mictronics
+                file: operators.json
+                field: "values[2]"
 
       squawk:
         type: string
