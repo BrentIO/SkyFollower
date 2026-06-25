@@ -27,9 +27,13 @@ used by downstream systems for overhead announcements. "International" and
 
 ### Override file
 
-**Location (on host):** `/app/data/phonic_overrides.json` — the same
-host-mounted volume used for the staging database. The file is personal to
-your installation and is not part of the container image.
+Create `config/runners/ourairports-data/phonic_overrides.json` on the host
+(relative to `docker-compose.server.yaml`). The directory must be created
+manually if it does not exist:
+
+```bash
+mkdir -p config/runners/ourairports-data
+```
 
 **Format:**
 ```json
@@ -39,13 +43,12 @@ your installation and is not part of the container image.
 }
 ```
 
-**Behavior:** If an airport's ICAO code has an entry in this file, that value
-is used as the phonic verbatim — no stripping or any other processing is
-applied. The general algorithm (city deduplication, separator normalisation,
-"International"/"Airport" stripping) only runs for airports not in the file.
+If an airport's ICAO code has an entry in this file, that value is used
+verbatim — no stripping or any other processing is applied. The general
+algorithm only runs for airports not in the file.
 
-The file is loaded once at container startup. Adding or changing entries
-requires a container restart. A missing file is silently ignored.
+The file is read once each time the runner starts. Changes take effect on
+the next run. A missing file is silently ignored.
 
 ### General algorithm (no override)
 
