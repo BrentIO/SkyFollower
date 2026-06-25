@@ -27,7 +27,10 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.redis_keys import airport_key
+from redis.commands.search.field import TagField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
+
+from shared.redis_keys import AIRPORT_SEARCH_INDEX, airport_key
 
 logger = logging.getLogger("ourairports")
 
@@ -40,12 +43,15 @@ MQTT_ROOT = "SkyFollower/runner/ourairports"
 # ---------------------------------------------------------------------------
 _SCHEMA = """
 CREATE TABLE airports (
-    icao_code TEXT PRIMARY KEY,
-    name      TEXT,
-    city      TEXT,
-    region    TEXT,
-    country   TEXT,
-    phonic    TEXT
+    icao_code  TEXT PRIMARY KEY,
+    iata_code  TEXT,
+    name       TEXT,
+    city       TEXT,
+    region     TEXT,
+    country    TEXT,
+    latitude   REAL,
+    longitude  REAL,
+    phonic     TEXT
 );
 """
 
@@ -184,17 +190,27 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
             continue
 
         icao = ident.upper()
+        iata_code = row.get("iata_code", "").strip() or None
         name = row.get("name", "").strip() or None
         city = row.get("municipality", "").strip() or None
         region = row.get("iso_region", "").strip() or None
         country = row.get("iso_country", "").strip() or None
         phonic = compute_phonic(icao, name or "", city or "") or None
 
+        try:
+            latitude = float(row.get("latitude_deg", "")) or None
+        except (ValueError, TypeError):
+            latitude = None
+        try:
+            longitude = float(row.get("longitude_deg", "")) or None
+        except (ValueError, TypeError):
+            longitude = None
+
         cur.execute(
             "INSERT OR REPLACE INTO airports "
-            "(icao_code, name, city, region, country, phonic) "
-            "VALUES (?,?,?,?,?,?)",
-            (icao, name, city, region, country, phonic),
+            "(icao_code, iata_code, name, city, region, country, latitude, longitude, phonic) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (icao, iata_code, name, city, region, country, latitude, longitude, phonic),
         )
         count += 1
 
@@ -211,25 +227,45 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
 
 def build_airport_record(row: sqlite3.Row) -> dict:
     """Build the airport:{icao_code} JSON record from a staged row."""
-    return {
-        "icao_code": row["icao_code"],
-        "name": row["name"],
-        "city": row["city"],
-        "region": row["region"],
-        "country": row["country"],
-        "phonic": row["phonic"],
-    }
+    record: dict = {"icao_code": row["icao_code"]}
+    if row["iata_code"]:
+        record["iata_code"] = row["iata_code"]
+    record["name"] = row["name"]
+    record["city"] = row["city"]
+    record["region"] = row["region"]
+    record["country"] = row["country"]
+    if row["latitude"] is not None:
+        record["latitude"] = row["latitude"]
+    if row["longitude"] is not None:
+        record["longitude"] = row["longitude"]
+    record["phonic"] = row["phonic"]
+    return record
 
 
 # ---------------------------------------------------------------------------
 # Write to Redis
 # ---------------------------------------------------------------------------
 
+def _ensure_search_index(r: redis_lib.Redis) -> None:
+    """Create the airport JSON search index if it does not already exist."""
+    try:
+        r.ft(AIRPORT_SEARCH_INDEX).info()
+    except Exception:
+        r.ft(AIRPORT_SEARCH_INDEX).create_index(
+            fields=[
+                TagField("$.icao_code", as_name="icao_code"),
+                TagField("$.iata_code", as_name="iata_code"),
+            ],
+            definition=IndexDefinition(prefix=["airport:"], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", AIRPORT_SEARCH_INDEX)
+
+
 def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> int:
     """Write all staged airport records to Redis. Returns count of records written."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT icao_code, name, city, region, country, phonic FROM airports"
+        "SELECT icao_code, iata_code, name, city, region, country, latitude, longitude, phonic FROM airports"
     )
     rows = cur.fetchall()
     logger.info("Writing %d airport records to Redis.", len(rows))
@@ -239,7 +275,8 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     for row in rows:
         record = build_airport_record(row)
         key = airport_key(record["icao_code"])
-        pipe.set(key, json.dumps(record), ex=ttl)
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
         count += 1
         if count % 10000 == 0:
             pipe.execute()
@@ -398,6 +435,7 @@ def main() -> None:
         conn = stage_data(csv_text, db_path)
 
         # 3. Write to Redis
+        _ensure_search_index(r)
         records_imported = write_to_redis(conn, r, ttl)
         conn.close()
 

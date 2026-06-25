@@ -276,6 +276,25 @@ sources:
           "AIRCRAFT TYPE - MAKE/MODEL":   combined make and model free-text (stored as aircraft.model)
           "SERIAL #":                     manufacturer serial number
 
+  ourairports:
+    description: "OurAirports global airport database — airport:{icao_code} Redis keys"
+    url: "https://davidmegginson.github.io/ourairports-data/airports.csv"
+    format: csv
+    cadence: weekly_monday
+    notes: "Filtered to 4-character ICAO codes only (3-char and other-length idents dropped); stored as Redis JSON via JSON.SET in airport:{icao_code} keys; RediSearch index idx:airport on icao_code and iata_code TagFields; phonic name computed algorithmically from name + municipality fields with optional host-provided phonic_overrides.json override file; iata_code omitted if blank; latitude/longitude stored as floats"
+    files:
+      - name: airports.csv
+        format: csv
+        columns:
+          ident:          4-character ICAO airport code (primary key; non-4-char rows dropped)
+          iata_code:      IATA 3-character airport code (omitted from record if blank)
+          name:           official airport name
+          municipality:   city/municipality name (stored as city)
+          iso_region:     ISO 3166-2 subdivision code (e.g. US-FL; stored as region)
+          iso_country:    ISO 3166-1 alpha-2 country code
+          latitude_deg:   decimal latitude (stored as latitude float)
+          longitude_deg:  decimal longitude (stored as longitude float)
+
   standing-data:
     description: "VRS Standing Data — operators, airports, and flight routes"
     url: "https://github.com/vradarserver/standing-data"
@@ -1264,36 +1283,42 @@ records:
             type: string
             description: "IATA 3-character airport code"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iata_code
           name:
             type: string
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: name
           city:
             type: string
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: municipality
           administrative_area:
             type: string
             description: "ISO 3166-2 subdivision code (e.g. US-FL)"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iso_region
           country:
             type: string
             description: "ISO 3166-1 alpha-2 country code"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iso_country
           phonic:
             type: string
             description: "Spoken/phonetic airport name for TTS notifications"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
       destination:
         type: object
@@ -1315,36 +1340,42 @@ records:
             type: string
             description: "IATA 3-character airport code"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iata_code
           name:
             type: string
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: name
           city:
             type: string
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: municipality
           administrative_area:
             type: string
             description: "ISO 3166-2 subdivision code (e.g. US-GA)"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iso_region
           country:
             type: string
             description: "ISO 3166-1 alpha-2 country code"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                field: iso_country
           phonic:
             type: string
             description: "Spoken/phonetic airport name for TTS notifications"
             sources:
-              - source: standing-data
-                file: airports
+              - source: ourairports
+                file: airports.csv
+                description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
       matched_rules:
         type: "array[string]"
