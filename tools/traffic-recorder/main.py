@@ -74,17 +74,27 @@ class SourceCapture(threading.Thread):
         self._output_file = output_file
         self._stop = stop_event
         self.count = 0
+        self.error: Exception | None = None
+        self.connected_event = threading.Event()
 
     def run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._connect_and_capture()
-            except Exception:
-                if not self._stop.is_set():
-                    time.sleep(2)
+        try:
+            self._connect_and_capture()
+        except Exception as exc:
+            if not self._stop.is_set():
+                self.error = exc
+                print(
+                    f"Error on {self.host}:{self.port} (source={self.source_tag}): {exc}",
+                    flush=True,
+                )
+                self._stop.set()
+        finally:
+            self.connected_event.set()
 
     def _connect_and_capture(self) -> None:
         with socket.create_connection((self.host, self.port), timeout=10) as sock:
+            print(f"Connected to {self.host}:{self.port} (source={self.source_tag})", flush=True)
+            self.connected_event.set()
             sock.settimeout(1.0)
             buf = bytearray()
             while not self._stop.is_set():
@@ -96,10 +106,11 @@ class SourceCapture(threading.Thread):
                     break
                 for raw_hex in parse_tcp_stream(data, buf):
                     try:
-                        icao_hex = pms.icao(raw_hex)
+                        decoded = pms.decode(raw_hex)
+                        icao_hex = decoded.get("icao") if decoded else None
                     except Exception:
                         continue
-                    if not icao_hex:
+                    if not icao_hex or len(icao_hex) != 6:
                         continue
                     record = {
                         "raw": raw_hex,
@@ -172,18 +183,31 @@ def main() -> None:
         output_lock = threading.Lock()
         threads = []
         for host, port, tag in sources:
+            print(f"Connecting to {host}:{port} (source={tag}) ...")
             t = SourceCapture(host, port, tag, output_lock, output_file, stop_event)
             t.start()
             threads.append(t)
-            print(f"Capturing from {host}:{port} (source={tag})")
+
+        for t in threads:
+            t.connected_event.wait(timeout=15)
+
+        if stop_event.is_set():
+            for t in threads:
+                t.join(timeout=5)
+            sys.exit(1)
 
         start = time.monotonic()
         deadline = (start + args.duration) if args.duration else None
+        print("Receiving data...")
 
         try:
             while not stop_event.is_set():
+                stop_event.wait(30)
+                if stop_event.is_set():
+                    break
+
                 elapsed = time.monotonic() - start
-                if deadline and time.monotonic() >= deadline:
+                if deadline and elapsed >= args.duration:
                     print(f"\nDuration reached ({args.duration}s). Stopping.")
                     stop_event.set()
                     break
@@ -196,7 +220,6 @@ def main() -> None:
                     f"[{int(elapsed):5d}s] {total} messages captured  ({counts})",
                     flush=True,
                 )
-                stop_event.wait(30)
         except KeyboardInterrupt:
             stop_event.set()
 
@@ -205,6 +228,10 @@ def main() -> None:
 
         total = sum(t.count for t in threads)
         elapsed = time.monotonic() - start
+        failed = [t for t in threads if t.error]
+        if failed:
+            print(f"\nCapture stopped due to connection error. {total} messages in {elapsed:.1f}s → {args.output}")
+            sys.exit(1)
         print(f"\nCapture complete: {total} messages in {elapsed:.1f}s → {args.output}")
 
 
