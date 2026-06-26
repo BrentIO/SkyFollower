@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key, operator_key
 
 logger = logging.getLogger("mictronics")
 
@@ -262,6 +262,18 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
     return record
 
 
+def build_operator_record(row: sqlite3.Row) -> dict:
+    """Build the operator:{designator} JSON record from a staged row."""
+    record: dict = {"airline_designator": row["airline_designator"]}
+    if row["name"]:
+        record["name"] = row["name"]
+    if row["country"]:
+        record["country"] = row["country"]
+    if row["callsign"]:
+        record["callsign"] = row["callsign"]
+    return record
+
+
 # ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
@@ -329,6 +341,34 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     return count
 
 
+def write_operators_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> int:
+    """Write all staged operator records to Redis. Returns count of records written."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT airline_designator, name, country, callsign FROM operators "
+        "WHERE airline_designator IS NOT NULL AND airline_designator != ''"
+    )
+    rows = cur.fetchall()
+    logger.info("Writing %d operator records to Redis.", len(rows))
+
+    count = 0
+    pipe = r.pipeline()
+    for row in rows:
+        record = build_operator_record(row)
+        key = operator_key(record["airline_designator"])
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
+        count += 1
+        if count % 10000 == 0:
+            pipe.execute()
+            pipe = r.pipeline()
+            logger.info("  ... %d operator records written.", count)
+
+    pipe.execute()
+    logger.info("Finished writing %d operator records to Redis.", count)
+    return count
+
+
 # ---------------------------------------------------------------------------
 # MQTT
 # ---------------------------------------------------------------------------
@@ -336,6 +376,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
 def publish_completion_stats(
     cfg: dict,
     records_imported: int,
+    operators_imported: int,
     status: str,
 ) -> None:
     """Publish completion statistics to MQTT and HA autodiscovery."""
@@ -372,6 +413,7 @@ def publish_completion_stats(
 
         base = MQTT_ROOT + "/statistic"
         client.publish(f"{base}/records_imported", str(records_imported), retain=True)
+        client.publish(f"{base}/operators_imported", str(operators_imported), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status, retain=True)
 
@@ -381,7 +423,10 @@ def publish_completion_stats(
         time.sleep(0.5)
         client.loop_stop()
         client.disconnect()
-        logger.info("MQTT stats published (status=%s, records=%d).", status, records_imported)
+        logger.info(
+            "MQTT stats published (status=%s, records=%d, operators=%d).",
+            status, records_imported, operators_imported,
+        )
 
     except Exception as exc:
         logger.warning("MQTT publish failed: %s", exc)
@@ -399,6 +444,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     }
     stats = [
         ("records_imported", "Mictronics Records Imported", "mdi:airplane", "total_increasing", None),
+        ("operators_imported", "Mictronics Operators Imported", "mdi:account-group", "total_increasing", None),
         ("last_run_at", "Mictronics Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Mictronics Last Run Status", "mdi:check-circle", None, None),
     ]
@@ -463,6 +509,7 @@ def main() -> None:
 
     status = "failure"
     records_imported = 0
+    operators_imported = 0
 
     try:
         # 1. Download and extract
@@ -474,10 +521,14 @@ def main() -> None:
         # 3. Ensure search index exists, then write to Redis
         _ensure_search_index(r)
         records_imported = write_to_redis(conn, r, ttl)
+        operators_imported = write_operators_to_redis(conn, r, ttl)
         conn.close()
 
         status = "success"
-        logger.info("Mictronics runner completed successfully. Records imported: %d", records_imported)
+        logger.info(
+            "Mictronics runner completed successfully. Records imported: %d, Operators imported: %d",
+            records_imported, operators_imported,
+        )
 
     except Exception as exc:
         logger.error("Mictronics runner failed: %s", exc, exc_info=True)
@@ -486,7 +537,7 @@ def main() -> None:
     finally:
         # 4. Publish MQTT stats regardless of success/failure
         try:
-            publish_completion_stats(cfg, records_imported, status)
+            publish_completion_stats(cfg, records_imported, operators_imported, status)
         except Exception as exc:
             logger.warning("Failed to publish MQTT stats: %s", exc)
 
