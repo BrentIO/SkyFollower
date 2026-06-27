@@ -39,6 +39,7 @@ _mod = _load_main()
 _normalise_header = _mod._normalise_header
 _normalise_cell = _mod._normalise_cell
 _build_record = _mod._build_record
+_nationality_to_iso = _mod._nationality_to_iso
 _deep_merge = _mod._deep_merge
 _escape_tag = _mod._escape_tag
 write_to_redis = _mod.write_to_redis
@@ -48,6 +49,7 @@ MQTT_ROOT = _mod.MQTT_ROOT
 COL_REGISTRATION = _mod.COL_REGISTRATION
 COL_OWNER = _mod.COL_OWNER
 COL_ADDRESS = _mod.COL_ADDRESS
+COL_NATIONALITY = _mod.COL_NATIONALITY
 COL_SERIES_TYPE = _mod.COL_SERIES_TYPE
 COL_SERIAL = _mod.COL_SERIAL
 
@@ -60,6 +62,7 @@ def _make_row(
     registration="VP-CAD",
     owner="Castle Air Limited",
     address="Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX United Kingdom",
+    nationality="United Kingdom",
     series_type="Leonardo S.p.A. AW139",
     serial="31475",
 ) -> dict:
@@ -67,6 +70,7 @@ def _make_row(
         COL_REGISTRATION: registration,
         COL_OWNER: owner,
         COL_ADDRESS: address,
+        COL_NATIONALITY: nationality,
         COL_SERIES_TYPE: series_type,
         COL_SERIAL: serial,
     }
@@ -151,32 +155,76 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "Leonardo S.p.A. AW139"
         assert record["aircraft"]["serial_number"] == "31475"
         assert record["registrant"]["names"] == ["Castle Air Limited"]
-        assert record["registrant"]["street"] == ["Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX United Kingdom"]
+        # Country stripped from street; stored separately
+        assert record["registrant"]["street"] == ["Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX"]
+        assert record["registrant"]["country"] == "GB"
 
     def test_combined_manufacturer_model_stored_as_model(self):
         row = _make_row(series_type="Gulfstream Aerospace Corporation G-IV")
         record = _build_record("C00002", "VP-CAI", row)
         assert record["aircraft"]["model"] == "Gulfstream Aerospace Corporation G-IV"
 
-    def test_address_stored_as_street(self):
-        row = _make_row(address="P.O. Box 309, Ugland House, Grand Cayman KY1-1104 Cayman Islands")
+    def test_address_stored_as_street_without_country(self):
+        row = _make_row(
+            address="P.O. Box 309, Ugland House, Grand Cayman KY1-1104 Cayman Islands",
+            nationality="Cayman Islands",
+        )
         record = _build_record("C00002", "VP-CAF", row)
-        assert record["registrant"]["street"] == ["P.O. Box 309, Ugland House, Grand Cayman KY1-1104 Cayman Islands"]
+        assert record["registrant"]["street"] == ["P.O. Box 309, Ugland House, Grand Cayman KY1-1104"]
+
+    def test_nationality_stored_as_iso_country(self):
+        row = _make_row(nationality="United Kingdom")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["country"] == "GB"
+
+    def test_nationality_cayman_islands(self):
+        row = _make_row(nationality="Cayman Islands")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["country"] == "KY"
+
+    def test_nationality_case_insensitive(self):
+        # "Cayman islands" (lowercase 'i') appears in the source PDF
+        row = _make_row(nationality="Cayman islands")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["country"] == "KY"
+
+    def test_nationality_irish_maps_to_ie(self):
+        row = _make_row(nationality="Irish")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["country"] == "IE"
+
+    def test_unknown_nationality_omits_country(self):
+        row = _make_row(nationality="Atlantis")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert "country" not in record.get("registrant", {})
+
+    def test_empty_nationality_omits_country(self):
+        row = _make_row(nationality="")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert "country" not in record.get("registrant", {})
+
+    def test_country_only_creates_registrant(self):
+        # Nationality alone (no owner or address) still produces a registrant block
+        row = _make_row(owner="", address="", nationality="United Kingdom")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["country"] == "GB"
+        assert "names" not in record["registrant"]
+        assert "street" not in record["registrant"]
 
     def test_empty_address_omits_street(self):
         row = _make_row(address="")
         record = _build_record("C00001", "VP-CAD", row)
         assert "street" not in record.get("registrant", {})
 
-    def test_empty_owner_omits_registrant(self):
-        row = _make_row(owner="", address="")
+    def test_all_registrant_fields_empty_omits_registrant(self):
+        row = _make_row(owner="", address="", nationality="")
         record = _build_record("C00001", "VP-CAD", row)
         assert "registrant" not in record
 
     def test_address_without_owner_still_stored(self):
-        row = _make_row(owner="", address="Grand Cayman KY1-1104 Cayman Islands")
+        row = _make_row(owner="", address="Grand Cayman KY1-1104 Cayman Islands", nationality="Cayman Islands")
         record = _build_record("C00001", "VP-CAD", row)
-        assert record["registrant"]["street"] == ["Grand Cayman KY1-1104 Cayman Islands"]
+        assert record["registrant"]["street"] == ["Grand Cayman KY1-1104"]
         assert "names" not in record["registrant"]
 
     def test_empty_series_type_omits_model(self):
@@ -203,6 +251,46 @@ class TestBuildRecord:
         row = _make_row(owner="Cayman Airways Express Limited")
         record = _build_record("C00004", "VP-CAW", row)
         assert record["registrant"]["names"] == ["Cayman Airways Express Limited"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: _nationality_to_iso
+# ---------------------------------------------------------------------------
+
+class TestNationalityToIso:
+    def test_united_kingdom(self):
+        assert _nationality_to_iso("United Kingdom") == "GB"
+
+    def test_cayman_islands(self):
+        assert _nationality_to_iso("Cayman Islands") == "KY"
+
+    def test_lowercase_cayman_islands(self):
+        assert _nationality_to_iso("cayman islands") == "KY"
+
+    def test_mixed_case_pdf_typo(self):
+        # "Cayman islands" (lowercase i) appears in actual PDF data
+        assert _nationality_to_iso("Cayman islands") == "KY"
+
+    def test_ireland(self):
+        assert _nationality_to_iso("Ireland") == "IE"
+
+    def test_irish(self):
+        assert _nationality_to_iso("Irish") == "IE"
+
+    def test_bermuda(self):
+        assert _nationality_to_iso("Bermuda") == "BM"
+
+    def test_british_virgin_islands(self):
+        assert _nationality_to_iso("British Virgin Islands") == "VG"
+
+    def test_isle_of_man(self):
+        assert _nationality_to_iso("Isle of Man") == "IM"
+
+    def test_unknown_returns_none(self):
+        assert _nationality_to_iso("Atlantis") is None
+
+    def test_empty_returns_none(self):
+        assert _nationality_to_iso("") is None
 
 
 # ---------------------------------------------------------------------------

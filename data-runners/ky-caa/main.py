@@ -54,8 +54,32 @@ BATCH_SIZE = 100
 COL_REGISTRATION = "Aircraft Registration"
 COL_OWNER = "Registered Owner"
 COL_ADDRESS = "Registered Address"
+COL_NATIONALITY = "Nationality"
 COL_SERIES_TYPE = "Series Type"
 COL_SERIAL = "Serial Number"
+
+# Nationality column values → ISO 3166-1 alpha-2.  Keys are lowercased for
+# case-insensitive matching ("Cayman islands" typo appears in the source PDF).
+_NATIONALITY_TO_ISO: dict[str, str] = {
+    "bermuda": "BM",
+    "british virgin islands": "VG",
+    "cayman islands": "KY",
+    "germany": "DE",
+    "ireland": "IE",
+    "irish": "IE",
+    "isle of man": "IM",
+    "lithuania": "LT",
+    "malaysia": "MY",
+    "malta": "MT",
+    "seychelles": "SC",
+    "singapore": "SG",
+    "united kingdom": "GB",
+}
+
+
+def _nationality_to_iso(raw: str) -> Optional[str]:
+    """Map a Nationality column value to ISO 3166-1 alpha-2, or None if unmapped."""
+    return _NATIONALITY_TO_ISO.get(raw.lower().strip())
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +166,16 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build enrichment record from a PDF row."""
     owner = row.get(COL_OWNER, "").strip() or None
     address = row.get(COL_ADDRESS, "").strip() or None
+    nationality_raw = row.get(COL_NATIONALITY, "").strip() or None
     series_type = row.get(COL_SERIES_TYPE, "").strip() or None
     serial = row.get(COL_SERIAL, "").strip() or None
+
+    # Strip the country name from the end of the address — the Nationality column
+    # always matches the country suffix of Registered Address.
+    if address and nationality_raw and address.lower().endswith(nationality_raw.lower()):
+        address = address[:-len(nationality_raw)].strip()
+
+    country_iso = _nationality_to_iso(nationality_raw) if nationality_raw else None
 
     aircraft_fields: dict = {}
     if series_type:
@@ -156,6 +188,8 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
         registrant_fields["names"] = [owner]
     if address:
         registrant_fields["street"] = [address]
+    if country_iso:
+        registrant_fields["country"] = country_iso
 
     record: dict = {"icao_hex": icao_hex, "registration": registration}
     if aircraft_fields:

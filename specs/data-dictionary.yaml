@@ -312,14 +312,15 @@ sources:
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
     format: pdf
     cadence: weekly_thursday
-    notes: "Static PDF URL (does not change with updates); ~211 rows across 10 pages; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by VP-C registration against Mictronics records; must run after Mictronics; 'Series Type' column combines manufacturer and model in a single field (stored as aircraft.model); no type designator or powerplant data available; 'Registered Address' is international free-text stored as a single-element street array without further parsing; column headers contain embedded newlines — normalised by collapsing to single space"
+    notes: "Static PDF URL (does not change with updates); ~211 rows across 10 pages; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by VP-C registration against Mictronics records; must run after Mictronics; 'Series Type' column combines manufacturer and model in a single field (stored as aircraft.model); no type designator or powerplant data available; 'Nationality' column is a clean English country name that always matches the country suffix of 'Registered Address' — used for registrant.country and to strip the suffix from the stored street; column headers contain embedded newlines — normalised by collapsing to single space; 'Cayman islands' (lowercase i) typo appears in actual PDF data and is normalised during ISO code lookup"
     files:
       - name: "Active-Aircraft-Register.pdf"
         format: pdf
         columns:
           "Aircraft Registration": full VP-C-prefix registration mark
           "Registered Owner":      registered owner name
-          "Registered Address":    international free-text address (stored as registrant.street single-element array; not parsed)
+          "Registered Address":    international free-text address; country suffix (matching Nationality column) stripped before storing as registrant.street
+          "Nationality":           clean English country name (e.g. 'United Kingdom', 'Cayman Islands'); mapped to ISO 3166-1 alpha-2 for registrant.country
           "Series Type":           combined manufacturer and model free-text (stored as aircraft.model)
           "Serial Number":         manufacturer serial number
 
@@ -712,7 +713,7 @@ records:
                 field: "Registered Address"
                 transform:
                   type: wrap_array
-                  description: "International free-text address; not parsed — stored as a single-element list"
+                  description: "International free-text address; country suffix (matching Nationality column) stripped before storing as a single-element list"
 
           city:
             type: string
@@ -888,6 +889,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "German country name on line 2 of first owner group (e.g. 'Österreich'→AT, 'Deutschland'→DE, 'Tschechische Republik'→CZ); falls back to raw name if unmapped"
+              - source: ky-caa
+                file: Active-Aircraft-Register.pdf
+                field: "Nationality"
+                transform:
+                  type: decode_country_name
+                  description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'United Kingdom'→GB, 'Cayman Islands'→KY); 'Irish' normalised to IE; case-insensitive ('Cayman islands' typo handled); omitted if unmapped"
 
           type:
             type: string
