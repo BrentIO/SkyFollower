@@ -57,12 +57,12 @@ def parse_1090_stream(data: bytes, buf: bytearray) -> list[str]:
 # 978 line parser  (-hex;rs=N;rssi=N;t=N.NNN;  — dump978-fa format)
 # ---------------------------------------------------------------------------
 
-def parse_978_line(line: str) -> tuple[str, str, float, float | None, int | None] | None:
+def parse_978_line(line: str) -> tuple[str, str, float] | None:
     """
     Parse a dump978-fa output line.
 
-    Returns (raw_hex, icao_hex, received_at, rssi, rs) or None if the line
-    should be skipped (!-preambles, blank lines, unrecognised format).
+    Returns (raw_hex, icao_hex, received_at) or None if the line should be
+    skipped (!-preambles, blank lines, unrecognised format).
 
     raw_hex preserves the leading - (downlink) or + (uplink) symbol so
     downstream processors can distinguish frame direction.
@@ -71,8 +71,6 @@ def parse_978_line(line: str) -> tuple[str, str, float, float | None, int | None
     chars [3:9] — one char for the symbol, two chars for byte 0, then the
     three ICAO bytes.
 
-    rssi: received signal strength (dBFS float).
-    rs:   Reed-Solomon errors corrected (int; absent on clean frames).
     Timestamp is taken from the t= field in the metadata.
     """
     line = line.strip()
@@ -93,27 +91,15 @@ def parse_978_line(line: str) -> tuple[str, str, float, float | None, int | None
     icao_hex = hex_payload[2:8]
 
     received_at: float = time.time()
-    rssi: float | None = None
-    rs: int | None = None
-
     for field in parts[1:]:
         if field.startswith("t="):
             try:
                 received_at = float(field[2:])
             except ValueError:
                 pass
-        elif field.startswith("rssi="):
-            try:
-                rssi = float(field[5:])
-            except ValueError:
-                pass
-        elif field.startswith("rs="):
-            try:
-                rs = int(field[3:])
-            except ValueError:
-                pass
+            break
 
-    return raw_hex, icao_hex, received_at, rssi, rs
+    return raw_hex, icao_hex, received_at
 
 
 # ---------------------------------------------------------------------------
@@ -198,27 +184,16 @@ class SourceCapture(threading.Thread):
                 raw_line, line_buf = line_buf.split(b"\n", 1)
                 result = parse_978_line(raw_line.decode("ascii", errors="ignore"))
                 if result:
-                    raw_hex, icao_hex, received_at, rssi, rs = result
-                    self._write(raw_hex, icao_hex, received_at, rssi=rssi, rs=rs)
+                    raw_hex, icao_hex, received_at = result
+                    self._write(raw_hex, icao_hex, received_at)
 
-    def _write(
-        self,
-        raw_hex: str,
-        icao_hex: str,
-        received_at: float,
-        rssi: float | None = None,
-        rs: int | None = None,
-    ) -> None:
+    def _write(self, raw_hex: str, icao_hex: str, received_at: float) -> None:
         record = {
             "raw": raw_hex,
             "icao_hex": icao_hex,
             "received_at": received_at,
             "source": self.source_tag,
         }
-        if rssi is not None:
-            record["rssi"] = rssi
-        if rs is not None:
-            record["rs"] = rs
         line = json.dumps(record, separators=(",", ":"))
         with self._output_lock:
             self._output_file.write(line + "\n")
