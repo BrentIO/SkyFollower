@@ -319,7 +319,7 @@ sources:
         columns:
           "Aircraft Registration": full VP-C-prefix registration mark
           "Registered Owner":      registered owner name
-          "Registered Address":    international free-text address; country suffix (matching Nationality column) stripped before storing as registrant.street
+          "Registered Address":    international free-text address; country suffix stripped (see Nationality column) then split on commas into registrant.street lines
           "Nationality":           clean English country name (e.g. 'United Kingdom', 'Cayman Islands'); mapped to ISO 3166-1 alpha-2 for registrant.country
           "Series Type":           combined manufacturer and model free-text (stored as aircraft.model)
           "Serial Number":         manufacturer serial number
@@ -712,8 +712,8 @@ records:
                 file: Active-Aircraft-Register.pdf
                 field: "Registered Address"
                 transform:
-                  type: wrap_array
-                  description: "International free-text address; country suffix (matching Nationality column) stripped before storing as a single-element list"
+                  type: split_comma
+                  description: "Country suffix (matching Nationality column) stripped first; remaining string split on commas, each segment trimmed and stored as a separate street line"
 
           city:
             type: string

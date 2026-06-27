@@ -183,11 +183,14 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     if serial:
         aircraft_fields["serial_number"] = serial
 
+    street_parts = [p.strip() for p in address.split(",")] if address else []
+    street_parts = [p for p in street_parts if p]
+
     registrant_fields: dict = {}
     if owner:
         registrant_fields["names"] = [owner]
-    if address:
-        registrant_fields["street"] = [address]
+    if street_parts:
+        registrant_fields["street"] = street_parts
     if country_iso:
         registrant_fields["country"] = country_iso
 

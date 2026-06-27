@@ -155,8 +155,7 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "Leonardo S.p.A. AW139"
         assert record["aircraft"]["serial_number"] == "31475"
         assert record["registrant"]["names"] == ["Castle Air Limited"]
-        # Country stripped from street; stored separately
-        assert record["registrant"]["street"] == ["Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX"]
+        assert record["registrant"]["street"] == ["Castle Air Limited", "Head Office", "Trebrown", "Liskeard", "Cornwall PL14 3PX"]
         assert record["registrant"]["country"] == "GB"
 
     def test_combined_manufacturer_model_stored_as_model(self):
@@ -170,7 +169,7 @@ class TestBuildRecord:
             nationality="Cayman Islands",
         )
         record = _build_record("C00002", "VP-CAF", row)
-        assert record["registrant"]["street"] == ["P.O. Box 309, Ugland House, Grand Cayman KY1-1104"]
+        assert record["registrant"]["street"] == ["P.O. Box 309", "Ugland House", "Grand Cayman KY1-1104"]
 
     def test_nationality_stored_as_iso_country(self):
         row = _make_row(nationality="United Kingdom")
@@ -224,7 +223,7 @@ class TestBuildRecord:
     def test_address_without_owner_still_stored(self):
         row = _make_row(owner="", address="Grand Cayman KY1-1104 Cayman Islands", nationality="Cayman Islands")
         record = _build_record("C00001", "VP-CAD", row)
-        assert record["registrant"]["street"] == ["Grand Cayman KY1-1104"]
+        assert record["registrant"]["street"] == ["Grand Cayman KY1-1104"]  # no comma in this address
         assert "names" not in record["registrant"]
 
     def test_empty_series_type_omits_model(self):
