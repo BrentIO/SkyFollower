@@ -295,6 +295,18 @@ sources:
             aircraftStatus: ["Registered"]
         description: "Full register download; response is UTF-16 BE CSV with semicolon delimiters; columns have a leading space in their names"
 
+  at-austrocontrol:
+    description: "Austria Austrocontrol aircraft register — OE-prefix registrations"
+    url: "https://www.austrocontrol.at/lfa-publish-service/v2/oenfl/luftfahrzeuge"
+    format: api
+    cadence: weekly_tuesday
+    notes: "Undocumented public REST API; no auth required; returns flat JSON array of all registered aircraft (~1,874 records); loeschung (deregistration date) is null for all returned records — API appears pre-filtered to active aircraft; no ICAO hex — icao_hex resolved via RediSearch reverse-lookup by OE-{kennzeichen} registration against Mictronics records; must run after Mictronics; all kennzeichen receive OE- prefix (alpha-only e.g. OE-ARG and digit-only e.g. OE-9522); halter (owner) is \\r\\n-delimited multiline string; groups of three lines per co-owner (name, PostalCode City, Street, country); only first owner group used"
+    endpoints:
+      bulk:
+        method: GET
+        path: "/lfa-publish-service/v2/oenfl/luftfahrzeuge?page=0&size=10000"
+        description: "Full register download; returns flat JSON array; all active registered aircraft in one page"
+
   uk-caa:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
     url: "https://ginfoapi.caa.co.uk"
@@ -596,6 +608,12 @@ records:
                 transform:
                   type: parse_address_name
                   description: "Best-effort parse of 'Name[, Canton]?, Street, PostalCode City, Switzerland'; all comma-segments before the street; 2-letter canton abbreviations filtered out; wrapped in a one-element list"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: halter
+                transform:
+                  type: parse_address_name
+                  description: "Best-effort parse; line 0 of first owner group (\\r\\n-delimited); surrounding quotes stripped; wrapped in a one-element list"
 
           street:
             type: "array[string]"
@@ -654,6 +672,12 @@ records:
                 transform:
                   type: parse_address_street
                   description: "Best-effort parse; third-from-last comma-segment (before PostalCode City and Switzerland); wrapped in a one-element list"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: halter
+                transform:
+                  type: parse_address_street
+                  description: "Best-effort parse; everything after first comma on line 1 (PostalCode City, Street) of first owner group; wrapped in a one-element list"
 
           city:
             type: string
@@ -694,6 +718,12 @@ records:
                 transform:
                   type: parse_address_city
                   description: "Best-effort parse; city portion of second-to-last comma-segment (after 4-digit postal code)"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: halter
+                transform:
+                  type: parse_address_city
+                  description: "Best-effort parse; word(s) on line 1 of first owner group after the postal code digits and before the first comma"
 
           administrative_area:
             type: string
@@ -756,6 +786,12 @@ records:
                 transform:
                   type: parse_address_postal
                   description: "Best-effort parse; leading 4-digit postal code from second-to-last comma-segment"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: halter
+                transform:
+                  type: parse_address_postal
+                  description: "Best-effort parse; leading digit sequence before first space on line 1 of first owner group"
 
           country:
             type: string
@@ -811,6 +847,12 @@ records:
                 endpoint: bulk
                 description: "Always 'CH' — all BAZL-registered aircraft are Swiss-based"
                 value: "CH"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: halter
+                transform:
+                  type: decode_country_name
+                  description: "German country name on line 2 of first owner group (e.g. 'Österreich'→AT, 'Deutschland'→DE, 'Tschechische Republik'→CZ); falls back to raw name if unmapped"
 
           type:
             type: string
@@ -981,6 +1023,18 @@ records:
                     "Ultralight (3-axis control)": Microlight
                     "Ecolight": Microlight
                     "Trike": Weight-Shift-Control
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: luftfahrzeugart
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Flugzeug": Airplane
+                    "Hubschrauber": Helicopter
+                    "Tragschrauber": Gyroplane
+                    "Eigenstartfähiger Motorsegler": Glider
+                    "Nicht eigenstartfähiger Motorsegler": Glider
 
           model:
             type: string
@@ -1022,6 +1076,9 @@ records:
                 endpoint: bulk
                 field: " Aicraft Model"
                 description: "Model designation as published (note: 'Aicraft' is a typo in the source field name)"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: baumuster
 
           seats:
             type: integer
@@ -1101,6 +1158,9 @@ records:
               - source: ch-bazl
                 endpoint: bulk
                 field: " Manufacturer"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: hersteller
 
           type_designator:
             type: string
@@ -1170,6 +1230,9 @@ records:
               - source: ch-bazl
                 endpoint: bulk
                 field: " Serial Number"
+              - source: at-austrocontrol
+                endpoint: bulk
+                field: seriennummer
 
           manufactured_date:
             type: datetime
