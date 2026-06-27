@@ -276,6 +276,25 @@ sources:
           "AIRCRAFT TYPE - MAKE/MODEL":   combined make and model free-text (stored as aircraft.model)
           "SERIAL #":                     manufacturer serial number
 
+  ch-bazl:
+    description: "Switzerland Federal Office of Civil Aviation (FOCA/BAZL) aircraft register — HB-prefix registrations"
+    url: "https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv"
+    format: api
+    cadence: weekly_tuesday
+    notes: "Undocumented public REST API; no auth required; returns UTF-16 BE encoded semicolon-delimited CSV via POST with JSON body; single bulk download of all registered aircraft (~3,100 records); 'Main Owner' address is a single unstructured string parsed best-effort (Name[, Canton]?, Street, PostalCode City, Switzerland); canton abbreviation (2-letter) stripped from name; MOPSC = Maximum Operational Passenger Seating Configuration"
+    endpoints:
+      bulk:
+        method: POST
+        path: /lfr/csv
+        body:
+          page_result_limit: 10000
+          current_page_number: 1
+          sort_list: registration
+          language: en
+          queryProperties:
+            aircraftStatus: ["Registered"]
+        description: "Full register download; response is UTF-16 BE CSV with semicolon delimiters; columns have a leading space in their names"
+
   uk-caa:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
     url: "https://ginfoapi.caa.co.uk"
@@ -432,6 +451,12 @@ records:
             transform:
               type: uppercase
               description: "Hex string normalised to uppercase"
+          - source: ch-bazl
+            endpoint: bulk
+            field: " Aircraft Address HEX"
+            transform:
+              type: uppercase
+              description: "6-character hex string normalised to uppercase"
 
       registration:
         type: string
@@ -491,6 +516,10 @@ records:
               type: prefix
               value: "G-"
               description: "Prepend 'G-' to the stored mark to form the full registration"
+          - source: ch-bazl
+            endpoint: bulk
+            field: " Registration"
+            description: "Full registration mark including HB- prefix (e.g. HB-JNA)"
 
       registrant:
         type: object
@@ -561,6 +590,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "RegisteredOwner first; TradingAs appended if non-null"
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Main Owner"
+                transform:
+                  type: parse_address_name
+                  description: "Best-effort parse of 'Name[, Canton]?, Street, PostalCode City, Switzerland'; all comma-segments before the street; 2-letter canton abbreviations filtered out; wrapped in a one-element list"
 
           street:
             type: "array[string]"
@@ -613,6 +648,12 @@ records:
                   - { field: "RegisteredAircraftOwners[0].Address2" }
                 transform:
                   type: collect_non_empty
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Main Owner"
+                transform:
+                  type: parse_address_street
+                  description: "Best-effort parse; third-from-last comma-segment (before PostalCode City and Switzerland); wrapped in a one-element list"
 
           city:
             type: string
@@ -647,6 +688,12 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].Town"
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Main Owner"
+                transform:
+                  type: parse_address_city
+                  description: "Best-effort parse; city portion of second-to-last comma-segment (after 4-digit postal code)"
 
           administrative_area:
             type: string
@@ -703,6 +750,12 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].PostCode"
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Main Owner"
+                transform:
+                  type: parse_address_postal
+                  description: "Best-effort parse; leading 4-digit postal code from second-to-last comma-segment"
 
           country:
             type: string
@@ -754,6 +807,10 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'UNITED KINGDOM' → 'GB'); falls back to raw name if unmapped"
+              - source: ch-bazl
+                endpoint: bulk
+                description: "Always 'CH' — all BAZL-registered aircraft are Swiss-based"
+                value: "CH"
 
           type:
             type: string
@@ -902,6 +959,28 @@ records:
                     "GYROPLANE": Gyroplane
                     "POWERED LIFT": "Powered Lift"
                     "TILT ROTOR": "Powered Lift"
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Aircraft Type"
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; unknown values pass through unmodified"
+                  values:
+                    "Aeroplane": Airplane
+                    "Homebuilt Airplane": Airplane
+                    "Helicopter": Helicopter
+                    "Homebuilt Helicopter": Helicopter
+                    "Glider": Glider
+                    "Powered Glider": Glider
+                    "Homebuild Glider": Glider
+                    "Balloon (Hot-air)": Balloon
+                    "Balloon (Gas)": Balloon
+                    "Airship (Hot-air)": Airship
+                    "Ultralight Gyrocopter": Gyroplane
+                    "Homebuilt Gyrocopter": Gyroplane
+                    "Ultralight (3-axis control)": Microlight
+                    "Ecolight": Microlight
+                    "Trike": Weight-Shift-Control
 
           model:
             type: string
@@ -939,6 +1018,10 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.Type
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Aicraft Model"
+                description: "Model designation as published (note: 'Aicraft' is a typo in the source field name)"
 
           seats:
             type: integer
@@ -956,6 +1039,10 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.MaximumPassengers
+              - source: ch-bazl
+                endpoint: bulk
+                field: " MOPSC"
+                description: "Maximum Operational Passenger Seating Configuration"
 
           category:
             type: string
@@ -1011,6 +1098,9 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.Manufacturer
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Manufacturer"
 
           type_designator:
             type: string
@@ -1031,6 +1121,9 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.ICAOAircraftTypeDesignator
+              - source: ch-bazl
+                endpoint: bulk
+                field: " ICAO Aircraft Type"
 
           manufacturer_model:
             type: string
@@ -1074,6 +1167,9 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.SerialNumber
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Serial Number"
 
           manufactured_date:
             type: datetime
@@ -1135,6 +1231,15 @@ records:
                   type: format_string
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "UK CAA provides 4-digit build year only — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Year of Manufacture"
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "BAZL provides 4-digit manufacture year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
 
           wake_turbulence_category:
@@ -1256,6 +1361,19 @@ records:
                     "Diesel Engine": Diesel
                     "Rotary": Rotary
                     "Not Applicable": ~~omit~~
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Engine Category"
+                transform:
+                  type: decode_table_passthrough
+                  description: "Mapped to canonical type; comma-separated multi-engine entries take first value; unknown values pass through unmodified"
+                  values:
+                    "Piston Engine": Piston
+                    "Turboshaft Engine": Turbo-shaft
+                    "Turboprop Engine": Turbo-prop
+                    "Jet Engine": Turbo-jet
+                    "Electrical Engine": Electric
+                    "Hydrogen-Electric": Hydrogen-Electric
 
           model:
             type: string
@@ -1277,6 +1395,13 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: "AircraftDetails.Engines[0].Name"
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Engine"
+                transform:
+                  type: split_first
+                  delimiter: ", "
+                  description: "Comma-separated multi-engine entries take first value (e.g. 'CFM56-5B4/3, CFM56-5B4/P' → 'CFM56-5B4/3')"
 
           manufacturer:
             type: string
