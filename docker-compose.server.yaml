@@ -32,6 +32,7 @@ services:
   ofelia:
     image: mcuadros/ofelia:latest
     restart: unless-stopped
+    profiles: ["runners"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/ofelia/config.ini:/etc/ofelia/config.ini:ro
