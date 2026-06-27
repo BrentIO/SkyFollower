@@ -527,8 +527,8 @@ components:
           description: Arrival airport; omitted when unknown
         source:
           type: string
-          enum: ["1090", "978"]
-          description: Receive source. mlat support is tracked in issue #32
+          enum: ["1090", "978", "MLAT"]
+          description: Receive source. MLAT support is tracked in issue #32
         first_message:
           type: string
           format: date-time

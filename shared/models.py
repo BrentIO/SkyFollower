@@ -17,7 +17,7 @@ class InboundMessage(BaseModel):
     raw: str
     icao_hex: str
     received_at: float  # Unix timestamp (seconds)
-    source: Literal["1090", "978", "mlat"]
+    source: Literal["1090", "978", "MLAT"]
 
     @field_validator("icao_hex")
     @classmethod
@@ -158,7 +158,7 @@ class CompletedFlight(BaseModel):
     first_message: datetime
     last_message: datetime
     total_messages: int
-    source: Literal["1090", "978", "mlat"]  # additive; not in legacy format
+    source: Literal["1090", "978", "MLAT"]  # additive; not in legacy format
     aircraft: dict                           # AircraftRecord fields; must include icao_hex
     ident: Optional[str] = None
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped
