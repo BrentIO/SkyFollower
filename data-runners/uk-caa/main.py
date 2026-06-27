@@ -48,6 +48,22 @@ MQTT_ROOT = "SkyFollower/runner/uk-caa"
 
 # Redis SCAN pattern covering UK ICAO hex range 400000-43FFFF.
 # Second hex digit 0-3 uniquely identifies the UK allocation block.
+
+# Fields written by this runner that must be removed when a 404 confirms the
+# aircraft record no longer exists in G-INFO.
+_UK_CAA_AIRCRAFT_FIELDS = [
+    "$.aircraft.type",
+    "$.aircraft.manufacturer",
+    "$.aircraft.model",
+    "$.aircraft.serial_number",
+    "$.aircraft.type_designator",
+    "$.aircraft.manufactured_date",
+    "$.aircraft.seats",
+]
+_UK_CAA_POWERPLANT_FIELDS = [
+    "$.powerplant.count",
+    "$.powerplant.model",
+]
 _UK_ICAO_SCAN_PATTERN = "icao_hex:4[0123]*"
 
 # Batch size for JSON mget calls when scanning Redis
@@ -331,10 +347,13 @@ def get_uk_registrations(r: redis_lib.Redis) -> list[tuple[str, str, Optional[in
 # G-INFO API
 # ---------------------------------------------------------------------------
 
-def _search_aircraft(session: requests.Session, icao_hex: str) -> Optional[int]:
+def _search_aircraft(session: requests.Session, icao_hex: str, expected_mark: str) -> Optional[int]:
     """
     POST /api/aircraft/search by ICAO hex address.
-    Returns AircraftID of the first match, or None if not found.
+
+    expected_mark is the registration suffix without 'G-' (e.g. 'VAHH').
+    When the API returns multiple results, filters by Mark and logs a warning.
+    Returns AircraftID of the matching result, or None if not found.
     """
     payload = {
         "AircraftType": None,
@@ -356,7 +375,28 @@ def _search_aircraft(session: requests.Session, icao_hex: str) -> Optional[int]:
     results = resp.json()
     if not results:
         return None
-    return results[0].get("AircraftID")
+
+    registered = [r for r in results if r.get("RegistrationStatus") == "R"]
+    if not registered:
+        logger.info("icao_hex=%s: all %d search result(s) have RegistrationStatus != R — skipping.",
+                    icao_hex, len(results))
+        return None
+
+    if len(registered) > 1:
+        logger.warning(
+            "Search for icao_hex=%s returned %d registered results — filtering by mark %s.",
+            icao_hex, len(registered), expected_mark,
+        )
+        matched = [r for r in registered if r.get("Mark", "").upper() == expected_mark.upper()]
+        if not matched:
+            logger.warning(
+                "No registered result matching mark %s for icao_hex=%s after filtering.",
+                expected_mark, icao_hex,
+            )
+            return None
+        registered = matched
+
+    return registered[0].get("AircraftID")
 
 
 def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Optional[dict]:
@@ -367,6 +407,31 @@ def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Option
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Stale record cleanup
+# ---------------------------------------------------------------------------
+
+def _cleanup_stale_record(r: redis_lib.Redis, icao_hex: str) -> None:
+    """
+    Remove all fields written by this runner after a 404 confirms the aircraft
+    no longer exists in G-INFO.  Parent objects (aircraft, powerplant) are
+    deleted only if no other fields remain after cleanup.
+    """
+    key = icao_hex_key(icao_hex)
+    for path in ["$.foreign_key", "$.registrant"] + _UK_CAA_AIRCRAFT_FIELDS + _UK_CAA_POWERPLANT_FIELDS:
+        try:
+            r.json().delete(key, path)
+        except Exception:
+            pass
+    for obj_path in ["$.aircraft", "$.powerplant"]:
+        try:
+            result = r.json().get(key, obj_path)
+            if result and result[0] == {}:
+                r.json().delete(key, obj_path)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +468,23 @@ def write_to_redis(
         details = None
         aircraft_id = None
         need_search = cached_fk is None
+        got_404 = False
 
         if cached_fk is not None:
             try:
                 time.sleep(request_interval)
                 details = _get_aircraft_details(session, cached_fk)
+                reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+                if reg_status != "Registered":
+                    logger.info(
+                        "%s: RegistrationDetails.Status is %r — cleaning up stale uk-caa data.",
+                        registration, reg_status,
+                    )
+                    try:
+                        _cleanup_stale_record(r, icao_hex_from_redis)
+                    except Exception as exc:
+                        logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
+                    continue
                 aircraft_details = details.get("AircraftDetails", {})
                 returned_hex = ((aircraft_details.get("ICAO24BitAircraftAddress") or {}).get("Hex") or "").strip().upper()
                 if returned_hex != icao_hex_from_redis.upper():
@@ -421,6 +498,11 @@ def write_to_redis(
                     aircraft_id = cached_fk
             except requests.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else None
+                if status == 403:
+                    logger.info("%s: details call returned 403 — retrying next run.", registration)
+                    continue
+                if status == 404:
+                    got_404 = True
                 logger.info("%s: details call failed (HTTP %s) — re-searching.", registration, status)
                 details = None
                 need_search = True
@@ -432,32 +514,71 @@ def write_to_redis(
         if need_search:
             try:
                 time.sleep(request_interval)
-                aircraft_id = _search_aircraft(session, icao_hex_from_redis)
-                if aircraft_id is None:
+                aircraft_id = _search_aircraft(session, icao_hex_from_redis, registration[2:])
+            except Exception as exc:
+                logger.warning("Search error for icao_hex=%s registration=%s: %s",
+                               icao_hex_from_redis, registration, exc)
+                errors += 1
+                continue
+
+            if aircraft_id is None:
+                not_found += 1
+                if got_404 and cached_fk is not None:
+                    logger.info(
+                        "icao_hex=%s registration=%s: 404 confirmed, no replacement found"
+                        " — cleaning up stale uk-caa data.",
+                        icao_hex_from_redis, registration,
+                    )
+                    try:
+                        _cleanup_stale_record(r, icao_hex_from_redis)
+                    except Exception as exc:
+                        logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
+                elif cached_fk is not None:
+                    try:
+                        r.json().delete(icao_hex_key(icao_hex_from_redis), '$["foreign_key"]')
+                    except Exception:
+                        pass
+                else:
                     logger.debug("No G-INFO result for %s — skipping.", registration)
-                    not_found += 1
-                    if cached_fk is not None:
-                        try:
-                            r.json().delete(icao_hex_key(icao_hex_from_redis), '$["foreign_key"]')
-                        except Exception:
-                            pass
-                    continue
+                continue
+
+            try:
                 time.sleep(request_interval)
                 details = _get_aircraft_details(session, aircraft_id)
             except requests.HTTPError as exc:
                 logger.warning(
-                    "HTTP error for icao_hex=%s registration=%s: %s",
-                    icao_hex_from_redis, registration, exc,
+                    "HTTP error fetching details for icao_hex=%s registration=%s"
+                    " (AircraftID=%d): %s — caching foreign_key for next run.",
+                    icao_hex_from_redis, registration, aircraft_id, exc,
                 )
+                try:
+                    r.json().set(icao_hex_key(icao_hex_from_redis), "$.foreign_key", aircraft_id)
+                except Exception:
+                    pass
                 errors += 1
                 continue
             except Exception as exc:
-                logger.warning("Unexpected error for %s: %s", registration, exc)
+                logger.warning("Unexpected error fetching details for icao_hex=%s registration=%s: %s",
+                               icao_hex_from_redis, registration, exc)
                 errors += 1
                 continue
 
         if details is None:
             errors += 1
+            continue
+
+        reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+        if reg_status != "Registered":
+            logger.info(
+                "%s: RegistrationDetails.Status is %r — skipping%s.",
+                registration, reg_status,
+                " and cleaning up stale uk-caa data" if cached_fk is not None else "",
+            )
+            if cached_fk is not None:
+                try:
+                    _cleanup_stale_record(r, icao_hex_from_redis)
+                except Exception as exc:
+                    logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
             continue
 
         record = _build_record(details)
