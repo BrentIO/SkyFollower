@@ -2,8 +2,9 @@
 """
 SkyFollower Traffic Recorder
 
-Connects to one or more readsb TCP sources, captures raw ADS-B messages, and
-writes them to an NDJSON file for later replay by the traffic-replayer tool.
+Connects to one or more readsb/dump978-fa TCP sources, captures raw ADS-B and
+UAT messages, and writes them to an NDJSON file for later replay by the
+traffic-replayer tool.
 
 Usage:
     python main.py --output capture.ndjson --duration 7200 \
@@ -24,7 +25,7 @@ import time
 import pyModeS as pms
 
 # ---------------------------------------------------------------------------
-# TCP stream parser (same protocol as receiver)
+# 1090 TCP stream parser  (*hex;\n  — readsb raw format)
 # ---------------------------------------------------------------------------
 
 _STAR = 0x2A
@@ -36,7 +37,7 @@ _HEX_BYTES = frozenset(
 )
 
 
-def parse_tcp_stream(data: bytes, buf: bytearray) -> list[str]:
+def parse_1090_stream(data: bytes, buf: bytearray) -> list[str]:
     messages: list[str] = []
     for byte in data:
         if byte == _STAR:
@@ -50,6 +51,47 @@ def parse_tcp_stream(data: bytes, buf: bytearray) -> list[str]:
         else:
             buf.clear()
     return messages
+
+
+# ---------------------------------------------------------------------------
+# 978 line parser  (-hex;rs=N;rssi=N;t=N.NNN;  — dump978-fa format)
+# ---------------------------------------------------------------------------
+
+def parse_978_line(line: str) -> tuple[str, str, float] | None:
+    """
+    Parse a dump978-fa output line.
+
+    Returns (raw_hex, icao_hex, received_at) or None if the line should be
+    skipped (!-preambles, blank lines, unrecognised format).
+
+    ICAO address is at bytes 1-3 of the UAT payload (hex chars [2:8]).
+    Timestamp is taken from the t= field in the metadata.
+    """
+    line = line.strip()
+    if not line or line.startswith("!"):
+        return None
+    if not line.startswith("-"):
+        return None
+
+    parts = line[1:].split(";")
+    raw_hex = parts[0].upper()
+    if len(raw_hex) < 8:
+        return None
+    if not all(c in "0123456789ABCDEF" for c in raw_hex):
+        return None
+
+    icao_hex = raw_hex[2:8]
+
+    received_at: float = time.time()
+    for field in parts[1:]:
+        if field.startswith("t="):
+            try:
+                received_at = float(field[2:])
+            except ValueError:
+                pass
+            break
+
+    return raw_hex, icao_hex, received_at
 
 
 # ---------------------------------------------------------------------------
@@ -96,33 +138,59 @@ class SourceCapture(threading.Thread):
             print(f"Connected to {self.host}:{self.port} (source={self.source_tag})", flush=True)
             self.connected_event.set()
             sock.settimeout(1.0)
-            buf = bytearray()
-            while not self._stop.is_set():
+            if self.source_tag == "978":
+                self._capture_978(sock)
+            else:
+                self._capture_1090(sock)
+
+    def _capture_1090(self, sock: socket.socket) -> None:
+        buf = bytearray()
+        while not self._stop.is_set():
+            try:
+                data = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not data:
+                break
+            for raw_hex in parse_1090_stream(data, buf):
                 try:
-                    data = sock.recv(4096)
-                except socket.timeout:
+                    decoded = pms.decode(raw_hex)
+                    icao_hex = decoded.get("icao") if decoded else None
+                except Exception:
                     continue
-                if not data:
-                    break
-                for raw_hex in parse_tcp_stream(data, buf):
-                    try:
-                        decoded = pms.decode(raw_hex)
-                        icao_hex = decoded.get("icao") if decoded else None
-                    except Exception:
-                        continue
-                    if not icao_hex or len(icao_hex) != 6:
-                        continue
-                    record = {
-                        "raw": raw_hex,
-                        "icao_hex": icao_hex.upper(),
-                        "received_at": time.time(),
-                        "source": self.source_tag,
-                    }
-                    line = json.dumps(record, separators=(",", ":"))
-                    with self._output_lock:
-                        self._output_file.write(line + "\n")
-                        self._output_file.flush()
-                    self.count += 1
+                if not icao_hex or len(icao_hex) != 6:
+                    continue
+                self._write(raw_hex, icao_hex.upper(), time.time())
+
+    def _capture_978(self, sock: socket.socket) -> None:
+        line_buf = b""
+        while not self._stop.is_set():
+            try:
+                data = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not data:
+                break
+            line_buf += data
+            while b"\n" in line_buf:
+                raw_line, line_buf = line_buf.split(b"\n", 1)
+                result = parse_978_line(raw_line.decode("ascii", errors="ignore"))
+                if result:
+                    raw_hex, icao_hex, received_at = result
+                    self._write(raw_hex, icao_hex, received_at)
+
+    def _write(self, raw_hex: str, icao_hex: str, received_at: float) -> None:
+        record = {
+            "raw": raw_hex,
+            "icao_hex": icao_hex,
+            "received_at": received_at,
+            "source": self.source_tag,
+        }
+        line = json.dumps(record, separators=(",", ":"))
+        with self._output_lock:
+            self._output_file.write(line + "\n")
+            self._output_file.flush()
+        self.count += 1
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +225,7 @@ def main() -> None:
         nargs="+",
         required=True,
         metavar="HOST:PORT:SOURCE_TAG",
-        help='One or more readsb sources, e.g. "localhost:30002:1090"',
+        help='One or more sources, e.g. "localhost:30002:1090" "localhost:30978:978"',
     )
     args = parser.parse_args()
 
@@ -212,14 +280,9 @@ def main() -> None:
                     stop_event.set()
                     break
 
-                counts = ", ".join(
-                    f"{t.source_tag}={t.count}" for t in threads
-                )
+                counts = ", ".join(f"{t.source_tag}={t.count}" for t in threads)
                 total = sum(t.count for t in threads)
-                print(
-                    f"[{int(elapsed):5d}s] {total} messages captured  ({counts})",
-                    flush=True,
-                )
+                print(f"[{int(elapsed):5d}s] {total} messages captured  ({counts})", flush=True)
         except KeyboardInterrupt:
             stop_event.set()
 
