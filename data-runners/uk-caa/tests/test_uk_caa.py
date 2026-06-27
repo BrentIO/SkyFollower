@@ -19,6 +19,8 @@ import os
 import sys
 from unittest.mock import MagicMock, call, patch
 
+import requests
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -73,6 +75,7 @@ def _make_details(
     type_designator="B789",
     aircraft_class="FIXED-WING LANDPLANE",
     year_built=2014,
+    maximum_passengers=296,
     engine_count=2,
     engine_name="ROLLS-ROYCE Trent 1000-K2",
     owner_name="VIRGIN ATLANTIC AIRWAYS LTD",
@@ -100,6 +103,7 @@ def _make_details(
             "ICAOAircraftTypeDesignator": type_designator,
             "AircraftClass": aircraft_class,
             "YearBuild": year_built,
+            "MaximumPassengers": maximum_passengers,
             "Engines": [
                 {
                     "NumberOfEngines": engine_count,
@@ -263,6 +267,15 @@ class TestBuildRecord:
         record = _build_record(_make_details(year_built=2014))
         assert record["aircraft"]["manufactured_date"] == "2014-01-01T00:00:00Z"
 
+    def test_aircraft_seats(self):
+        record = _build_record(_make_details(maximum_passengers=296))
+        assert record["aircraft"]["seats"] == 296
+
+    def test_aircraft_seats_none_when_absent(self):
+        details = _make_details()
+        details["AircraftDetails"]["MaximumPassengers"] = None
+        assert "seats" not in _build_record(details)["aircraft"]
+
     def test_powerplant_count(self):
         record = _build_record(_make_details(engine_count=2))
         assert record["powerplant"]["count"] == 2
@@ -350,13 +363,21 @@ class TestDeepMerge:
 # ---------------------------------------------------------------------------
 
 class TestGetUkRegistrations:
-    def _make_redis(self, scan_keys: list[str], reg_map: dict[str, str]) -> MagicMock:
+    def _make_redis(
+        self,
+        scan_keys: list[str],
+        reg_map: dict[str, str],
+        fk_map: dict[str, int] = None,
+    ) -> MagicMock:
         r = MagicMock()
-
         r.scan_iter.return_value = iter(scan_keys)
+        _fk_map = fk_map or {}
 
         def mget_side_effect(keys, path):
-            return [[reg_map.get(k)] if k in reg_map else None for k in keys]
+            if path == "$.registration":
+                return [[reg_map.get(k)] if k in reg_map else None for k in keys]
+            # $["foreign_key"]
+            return [[_fk_map.get(k)] if k in _fk_map else None for k in keys]
 
         r.json.return_value.mget.side_effect = mget_side_effect
         return r
@@ -367,7 +388,8 @@ class TestGetUkRegistrations:
             {"icao_hex:406B48": "G-VAHH"},
         )
         results = get_uk_registrations(r)
-        assert ("G-VAHH", "406B48") in results
+        regs = [reg for reg, _, _ in results]
+        assert "G-VAHH" in regs
 
     def test_filters_non_g_registrations(self):
         r = self._make_redis(
@@ -375,7 +397,7 @@ class TestGetUkRegistrations:
             {"icao_hex:406B48": "N12345", "icao_hex:400001": "G-ABCD"},
         )
         results = get_uk_registrations(r)
-        regs = [reg for reg, _ in results]
+        regs = [reg for reg, _, _ in results]
         assert "N12345" not in regs
         assert "G-ABCD" in regs
 
@@ -405,6 +427,23 @@ class TestGetUkRegistrations:
         get_uk_registrations(r)
         r.scan_iter.assert_called_once_with("icao_hex:4[0123]*")
 
+    def test_returns_cached_foreign_key(self):
+        r = self._make_redis(
+            ["icao_hex:406B48"],
+            {"icao_hex:406B48": "G-VAHH"},
+            fk_map={"icao_hex:406B48": 66819},
+        )
+        results = get_uk_registrations(r)
+        assert results[0][2] == 66819
+
+    def test_returns_none_foreign_key_when_absent(self):
+        r = self._make_redis(
+            ["icao_hex:406B48"],
+            {"icao_hex:406B48": "G-VAHH"},
+        )
+        results = get_uk_registrations(r)
+        assert results[0][2] is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: API helpers (mocked session)
@@ -428,25 +467,26 @@ class TestApiHelpers:
 
     def test_search_returns_aircraft_id(self):
         session = self._make_session(_SEARCH_RESULT)
-        result = _search_aircraft(session, "VAHH")
+        result = _search_aircraft(session, "406B48")
         assert result == 66819
 
     def test_search_empty_result_returns_none(self):
         session = self._make_session([])
-        result = _search_aircraft(session, "ZZZZ")
+        result = _search_aircraft(session, "406B48")
         assert result is None
 
     def test_search_posts_to_correct_url(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_aircraft(session, "VAHH")
+        _search_aircraft(session, "406B48")
         url = session.post.call_args.args[0]
         assert "/api/aircraft/search" in url
 
-    def test_search_payload_uses_registration(self):
+    def test_search_payload_uses_icao_hex(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_aircraft(session, "VAHH")
+        _search_aircraft(session, "406B48")
         payload = session.post.call_args.kwargs["json"]
-        assert payload["Registration"] == "VAHH"
+        assert payload["ICAO24BitHex"] == "406B48"
+        assert payload["Registration"] is None
         assert payload["IncludeDeregistered"] is False
 
     def test_details_gets_correct_url(self):
@@ -489,49 +529,68 @@ class TestWriteToRedis:
         session.get.return_value = details_resp
         return session
 
-    def test_successful_write_returns_count(self):
+    # ------------------------------------------------------------------
+    # Slow path (no cached foreign_key)
+    # ------------------------------------------------------------------
+
+    def test_slow_path_returns_count(self):
         r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
+            count = write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         assert count == 1
 
-    def test_json_set_called_with_correct_key(self):
+    def test_slow_path_json_set_correct_key(self):
         r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
-        r.json.return_value.set.assert_called_once()
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         key_arg = r.json.return_value.set.call_args.args[0]
         assert key_arg == "icao_hex:406B48"
 
-    def test_json_set_uses_root_path(self):
+    def test_slow_path_json_set_uses_root_path(self):
         r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
-        path_arg = r.json.return_value.set.call_args.args[1]
-        assert path_arg == "$"
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
+        assert r.json.return_value.set.call_args.args[1] == "$"
 
-    def test_expire_called_with_correct_ttl(self):
+    def test_slow_path_expire_correct_ttl(self):
         r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         r.expire.assert_called_once_with("icao_hex:406B48", REDIS_TTL)
 
-    def test_merges_with_existing_record(self):
+    def test_slow_path_merges_with_existing(self):
         existing = {"icao_hex": "406B48", "military": False, "aircraft": {"wake_turbulence_category": "Heavy"}}
         r = self._make_redis(existing=existing)
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         written = r.json.return_value.set.call_args.args[2]
         assert written["military"] is False
         assert written["aircraft"]["wake_turbulence_category"] == "Heavy"
         assert written["aircraft"]["manufacturer"] == "BOEING COMPANY"
 
-    def test_search_not_found_skips_record(self):
+    def test_slow_path_searches_by_icao_hex(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["ICAO24BitHex"] == "406B48"
+        assert payload["Registration"] is None
+
+    def test_slow_path_writes_foreign_key(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
+        written = r.json.return_value.set.call_args.args[2]
+        assert written["foreign_key"] == 66819
+
+    def test_slow_path_search_not_found_skips(self):
         r = self._make_redis()
         session = MagicMock()
         search_resp = MagicMock()
@@ -539,11 +598,11 @@ class TestWriteToRedis:
         search_resp.raise_for_status.return_value = None
         session.post.return_value = search_resp
         with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
+            count = write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         assert count == 0
         r.json.return_value.set.assert_not_called()
 
-    def test_http_error_skips_and_continues(self):
+    def test_slow_path_http_error_skips_and_continues(self):
         r = self._make_redis()
         session = MagicMock()
         search_resp = MagicMock()
@@ -563,18 +622,124 @@ class TestWriteToRedis:
 
         with patch("time.sleep"):
             count = write_to_redis(
-                [("G-VAHH", "406B48"), ("G-BCDE", "406B49")],
+                [("G-VAHH", "406B48", None), ("G-BCDE", "406B49", None)],
                 r, session, REDIS_TTL, 0.1,
             )
         assert count == 1
 
-    def test_strips_g_prefix_for_api_call(self):
+    # ------------------------------------------------------------------
+    # Fast path (cached foreign_key)
+    # ------------------------------------------------------------------
+
+    def test_fast_path_skips_search(self):
         r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
-            write_to_redis([("G-VAHH", "406B48")], r, session, REDIS_TTL, 0.1)
-        payload = session.post.call_args.kwargs["json"]
-        assert payload["Registration"] == "VAHH"
+            write_to_redis([("G-VAHH", "406B48", 66819)], r, session, REDIS_TTL, 0.1)
+        session.post.assert_not_called()
+
+    def test_fast_path_calls_details_directly(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            write_to_redis([("G-VAHH", "406B48", 66819)], r, session, REDIS_TTL, 0.1)
+        url = session.get.call_args.args[0]
+        assert "/api/aircraft/details/66819" in url
+
+    def test_fast_path_returns_count(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            count = write_to_redis([("G-VAHH", "406B48", 66819)], r, session, REDIS_TTL, 0.1)
+        assert count == 1
+
+    def test_fast_path_preserves_foreign_key(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            write_to_redis([("G-VAHH", "406B48", 66819)], r, session, REDIS_TTL, 0.1)
+        written = r.json.return_value.set.call_args.args[2]
+        assert written["foreign_key"] == 66819
+
+    def test_fast_path_hex_mismatch_falls_back_to_search(self):
+        r = self._make_redis()
+        session = MagicMock()
+
+        # Details returns a different ICAO hex (mark transferred to another aircraft)
+        details_stale = _make_details(icao_hex="407FFF")
+        details_correct = _make_details(icao_hex="406B48")
+        details_resp_stale = MagicMock()
+        details_resp_stale.json.return_value = details_stale
+        details_resp_stale.raise_for_status.return_value = None
+        details_resp_correct = MagicMock()
+        details_resp_correct.json.return_value = details_correct
+        details_resp_correct.raise_for_status.return_value = None
+
+        search_resp = MagicMock()
+        search_resp.json.return_value = _SEARCH_RESULT
+        search_resp.raise_for_status.return_value = None
+
+        session.get.side_effect = [details_resp_stale, details_resp_correct]
+        session.post.return_value = search_resp
+
+        with patch("time.sleep"):
+            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
+
+        assert count == 1
+        session.post.assert_called_once()  # search was triggered
+        written = r.json.return_value.set.call_args.args[2]
+        assert written["foreign_key"] == 66819  # updated to new AircraftID
+
+    def test_fast_path_http_error_falls_back_to_search(self):
+        r = self._make_redis()
+        session = MagicMock()
+
+        error_resp = MagicMock()
+        error_resp.status_code = 404
+        http_error = requests.HTTPError(response=error_resp)
+        details_resp_error = MagicMock()
+        details_resp_error.raise_for_status.side_effect = http_error
+
+        details_correct = _make_details(mark="VAHH", icao_hex="406B48")
+        details_resp_correct = MagicMock()
+        details_resp_correct.json.return_value = details_correct
+        details_resp_correct.raise_for_status.return_value = None
+
+        search_resp = MagicMock()
+        search_resp.json.return_value = _SEARCH_RESULT
+        search_resp.raise_for_status.return_value = None
+
+        session.get.side_effect = [details_resp_error, details_resp_correct]
+        session.post.return_value = search_resp
+
+        with patch("time.sleep"):
+            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
+
+        assert count == 1
+        session.post.assert_called_once()
+
+    def test_fast_path_stale_not_found_clears_foreign_key(self):
+        r = self._make_redis()
+        session = MagicMock()
+
+        # Details returns wrong hex, re-search finds nothing
+        details_stale = _make_details(icao_hex="407FFF")
+        details_resp_stale = MagicMock()
+        details_resp_stale.json.return_value = details_stale
+        details_resp_stale.raise_for_status.return_value = None
+
+        search_resp = MagicMock()
+        search_resp.json.return_value = []
+        search_resp.raise_for_status.return_value = None
+
+        session.get.return_value = details_resp_stale
+        session.post.return_value = search_resp
+
+        with patch("time.sleep"):
+            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
+
+        assert count == 0
+        r.json.return_value.delete.assert_called_once_with("icao_hex:406B48", '$["foreign_key"]')
 
 
 # ---------------------------------------------------------------------------
