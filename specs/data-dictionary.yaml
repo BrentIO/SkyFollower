@@ -312,13 +312,14 @@ sources:
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
     format: pdf
     cadence: weekly_thursday
-    notes: "Static PDF URL (does not change with updates); ~211 rows across 10 pages; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by VP-C registration against Mictronics records; must run after Mictronics; 'Series Type' column combines manufacturer and model in a single field (stored as aircraft.model); no type designator, powerplant, or detailed address data available; column headers contain embedded newlines — normalised by collapsing to single space"
+    notes: "Static PDF URL (does not change with updates); ~211 rows across 10 pages; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by VP-C registration against Mictronics records; must run after Mictronics; 'Series Type' column combines manufacturer and model in a single field (stored as aircraft.model); no type designator or powerplant data available; 'Registered Address' is international free-text stored as a single-element street array without further parsing; column headers contain embedded newlines — normalised by collapsing to single space"
     files:
       - name: "Active-Aircraft-Register.pdf"
         format: pdf
         columns:
           "Aircraft Registration": full VP-C-prefix registration mark
           "Registered Owner":      registered owner name
+          "Registered Address":    international free-text address (stored as registrant.street single-element array; not parsed)
           "Series Type":           combined manufacturer and model free-text (stored as aircraft.model)
           "Serial Number":         manufacturer serial number
 
@@ -706,6 +707,12 @@ records:
                 transform:
                   type: parse_address_street
                   description: "Best-effort parse; everything after first comma on line 1 (PostalCode City, Street) of first owner group; wrapped in a one-element list"
+              - source: ky-caa
+                file: Active-Aircraft-Register.pdf
+                field: "Registered Address"
+                transform:
+                  type: wrap_array
+                  description: "International free-text address; not parsed — stored as a single-element list"
 
           city:
             type: string

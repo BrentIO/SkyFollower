@@ -47,6 +47,7 @@ REDIS_TTL = _mod.REDIS_TTL
 MQTT_ROOT = _mod.MQTT_ROOT
 COL_REGISTRATION = _mod.COL_REGISTRATION
 COL_OWNER = _mod.COL_OWNER
+COL_ADDRESS = _mod.COL_ADDRESS
 COL_SERIES_TYPE = _mod.COL_SERIES_TYPE
 COL_SERIAL = _mod.COL_SERIAL
 
@@ -58,12 +59,14 @@ COL_SERIAL = _mod.COL_SERIAL
 def _make_row(
     registration="VP-CAD",
     owner="Castle Air Limited",
+    address="Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX United Kingdom",
     series_type="Leonardo S.p.A. AW139",
     serial="31475",
 ) -> dict:
     return {
         COL_REGISTRATION: registration,
         COL_OWNER: owner,
+        COL_ADDRESS: address,
         COL_SERIES_TYPE: series_type,
         COL_SERIAL: serial,
     }
@@ -148,16 +151,33 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "Leonardo S.p.A. AW139"
         assert record["aircraft"]["serial_number"] == "31475"
         assert record["registrant"]["names"] == ["Castle Air Limited"]
+        assert record["registrant"]["street"] == ["Castle Air Limited, Head Office, Trebrown, Liskeard, Cornwall PL14 3PX United Kingdom"]
 
     def test_combined_manufacturer_model_stored_as_model(self):
         row = _make_row(series_type="Gulfstream Aerospace Corporation G-IV")
         record = _build_record("C00002", "VP-CAI", row)
         assert record["aircraft"]["model"] == "Gulfstream Aerospace Corporation G-IV"
 
+    def test_address_stored_as_street(self):
+        row = _make_row(address="P.O. Box 309, Ugland House, Grand Cayman KY1-1104 Cayman Islands")
+        record = _build_record("C00002", "VP-CAF", row)
+        assert record["registrant"]["street"] == ["P.O. Box 309, Ugland House, Grand Cayman KY1-1104 Cayman Islands"]
+
+    def test_empty_address_omits_street(self):
+        row = _make_row(address="")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert "street" not in record.get("registrant", {})
+
     def test_empty_owner_omits_registrant(self):
-        row = _make_row(owner="")
+        row = _make_row(owner="", address="")
         record = _build_record("C00001", "VP-CAD", row)
         assert "registrant" not in record
+
+    def test_address_without_owner_still_stored(self):
+        row = _make_row(owner="", address="Grand Cayman KY1-1104 Cayman Islands")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["registrant"]["street"] == ["Grand Cayman KY1-1104 Cayman Islands"]
+        assert "names" not in record["registrant"]
 
     def test_empty_series_type_omits_model(self):
         row = _make_row(series_type="")

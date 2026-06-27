@@ -53,6 +53,7 @@ BATCH_SIZE = 100
 # Normalised column names (after stripping embedded newlines)
 COL_REGISTRATION = "Aircraft Registration"
 COL_OWNER = "Registered Owner"
+COL_ADDRESS = "Registered Address"
 COL_SERIES_TYPE = "Series Type"
 COL_SERIAL = "Serial Number"
 
@@ -140,6 +141,7 @@ def parse_pdf(file_path: str) -> list[dict]:
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build enrichment record from a PDF row."""
     owner = row.get(COL_OWNER, "").strip() or None
+    address = row.get(COL_ADDRESS, "").strip() or None
     series_type = row.get(COL_SERIES_TYPE, "").strip() or None
     serial = row.get(COL_SERIAL, "").strip() or None
 
@@ -152,6 +154,8 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     registrant_fields: dict = {}
     if owner:
         registrant_fields["names"] = [owner]
+    if address:
+        registrant_fields["street"] = [address]
 
     record: dict = {"icao_hex": icao_hex, "registration": registration}
     if aircraft_fields:
