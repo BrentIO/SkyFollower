@@ -1,3 +1,5 @@
+name: skyfollower-processor
+
 services:
 
   processor-0:
