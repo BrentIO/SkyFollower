@@ -41,8 +41,8 @@ class TestInboundMessage:
             InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="978MHz")
 
     def test_mlat_source(self):
-        msg = InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="mlat")
-        assert msg.source == "mlat"
+        msg = InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="MLAT")
+        assert msg.source == "MLAT"
 
 
 class TestPosition:

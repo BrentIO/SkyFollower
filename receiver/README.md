@@ -28,7 +28,7 @@ reconnect. One receiver container handles all configured sources concurrently
 |-------|------|-------------|
 | `host` | string | Hostname or IP of the readsb instance. |
 | `port` | integer | TCP port of the readsb raw output (e.g. `30002` for 1090 MHz, `30978` for 978 MHz UAT). |
-| `source` | string | Tag applied to every message from this stream. One of `"1090"`, `"978"`, or `"mlat"`. |
+| `source` | string | Tag applied to every message from this stream. One of `"1090"`, `"978"`, or `"MLAT"`. |
 
 Example with two sources:
 
