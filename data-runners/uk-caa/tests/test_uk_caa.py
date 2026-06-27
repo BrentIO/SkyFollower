@@ -725,89 +725,30 @@ class TestWriteToRedis:
         written = r.json.return_value.set.call_args.args[2]
         assert written["foreign_key"] == 66819
 
-    def test_fast_path_hex_mismatch_falls_back_to_search(self):
+    def test_fast_path_hex_mismatch_triggers_cleanup(self):
         r = self._make_redis()
+        r.json.return_value.get.return_value = [{}]
         session = MagicMock()
 
-        # Details returns a different ICAO hex (mark transferred to another aircraft)
-        details_stale = _make_details(icao_hex="407FFF")
-        details_correct = _make_details(icao_hex="406B48")
-        details_resp_stale = MagicMock()
-        details_resp_stale.json.return_value = details_stale
-        details_resp_stale.raise_for_status.return_value = None
-        details_resp_correct = MagicMock()
-        details_resp_correct.json.return_value = details_correct
-        details_resp_correct.raise_for_status.return_value = None
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-
-        session.get.side_effect = [details_resp_stale, details_resp_correct]
-        session.post.return_value = search_resp
-
-        with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
-
-        assert count == 1
-        session.post.assert_called_once()  # search was triggered
-        written = r.json.return_value.set.call_args.args[2]
-        assert written["foreign_key"] == 66819  # updated to new AircraftID
-
-    def test_fast_path_http_error_falls_back_to_search(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 404
-        http_error = requests.HTTPError(response=error_resp)
-        details_resp_error = MagicMock()
-        details_resp_error.raise_for_status.side_effect = http_error
-
-        details_correct = _make_details(mark="VAHH", icao_hex="406B48")
-        details_resp_correct = MagicMock()
-        details_resp_correct.json.return_value = details_correct
-        details_resp_correct.raise_for_status.return_value = None
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-
-        session.get.side_effect = [details_resp_error, details_resp_correct]
-        session.post.return_value = search_resp
-
-        with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
-
-        assert count == 1
-        session.post.assert_called_once()
-
-    def test_fast_path_stale_not_found_clears_foreign_key(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        # Details returns wrong hex (not a 404), re-search finds nothing — only foreign_key deleted
         details_stale = _make_details(icao_hex="407FFF")
         details_resp_stale = MagicMock()
         details_resp_stale.json.return_value = details_stale
         details_resp_stale.raise_for_status.return_value = None
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = []
-        search_resp.raise_for_status.return_value = None
 
         session.get.return_value = details_resp_stale
-        session.post.return_value = search_resp
 
         with patch("time.sleep"):
             count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
 
         assert count == 0
-        r.json.return_value.delete.assert_called_once_with("icao_hex:406B48", '$["foreign_key"]')
+        session.post.assert_not_called()
+        deleted_paths = [c.args[1] for c in r.json.return_value.delete.call_args_list]
+        assert "$.foreign_key" in deleted_paths
+        assert "$.registrant" in deleted_paths
 
-    def test_fast_path_404_and_search_not_found_triggers_cleanup(self):
+    def test_fast_path_http_error_triggers_cleanup(self):
         r = self._make_redis()
-        r.json.return_value.get.return_value = [{}]  # objects empty after field deletes
+        r.json.return_value.get.return_value = [{}]
         session = MagicMock()
 
         error_resp = MagicMock()
@@ -815,22 +756,16 @@ class TestWriteToRedis:
         details_resp_error = MagicMock()
         details_resp_error.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
 
-        search_resp = MagicMock()
-        search_resp.json.return_value = []
-        search_resp.raise_for_status.return_value = None
-
         session.get.return_value = details_resp_error
-        session.post.return_value = search_resp
 
         with patch("time.sleep"):
             count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
 
         assert count == 0
+        session.post.assert_not_called()
         deleted_paths = [c.args[1] for c in r.json.return_value.delete.call_args_list]
         assert "$.foreign_key" in deleted_paths
         assert "$.registrant" in deleted_paths
-        assert "$.aircraft.seats" in deleted_paths
-        assert "$.powerplant.count" in deleted_paths
 
     def test_fast_path_403_skips_without_search_or_cleanup(self):
         r = self._make_redis()
@@ -850,34 +785,6 @@ class TestWriteToRedis:
         session.post.assert_not_called()
         r.json.return_value.delete.assert_not_called()
 
-    def test_fast_path_404_but_search_finds_record_no_cleanup(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 404
-        details_resp_error = MagicMock()
-        details_resp_error.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        details_correct = _make_details(icao_hex="406B48")
-        details_resp_correct = MagicMock()
-        details_resp_correct.json.return_value = details_correct
-        details_resp_correct.raise_for_status.return_value = None
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-
-        session.get.side_effect = [details_resp_error, details_resp_correct]
-        session.post.return_value = search_resp
-
-        with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48", 99999)], r, session, REDIS_TTL, 0.1)
-
-        assert count == 1
-        deleted_paths = [c.args[1] for c in r.json.return_value.delete.call_args_list]
-        assert "$.registrant" not in deleted_paths
-
     def test_fast_path_non_registered_status_triggers_cleanup(self):
         r = self._make_redis()
         session = self._make_session(_make_details(reg_status="De-registered"))
@@ -887,7 +794,7 @@ class TestWriteToRedis:
         deleted_paths = [c.args[1] for c in r.json.return_value.delete.call_args_list]
         assert "$.registrant" in deleted_paths
 
-    def test_slow_path_no_cached_fk_non_registered_skips_without_cleanup(self):
+    def test_slow_path_non_registered_details_skips_without_cleanup(self):
         r = self._make_redis()
         session = MagicMock()
 
@@ -907,33 +814,6 @@ class TestWriteToRedis:
 
         assert count == 0
         r.json.return_value.delete.assert_not_called()
-
-    def test_slow_path_with_cached_fk_non_registered_triggers_cleanup(self):
-        # hex mismatch on fast path → re-search → details says De-registered → cleanup
-        r = self._make_redis()
-        session = MagicMock()
-
-        stale_resp = MagicMock()
-        stale_resp.json.return_value = _make_details(icao_hex="407FFF")
-        stale_resp.raise_for_status.return_value = None
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-
-        deregistered_resp = MagicMock()
-        deregistered_resp.json.return_value = _make_details(reg_status="De-registered")
-        deregistered_resp.raise_for_status.return_value = None
-
-        session.get.side_effect = [stale_resp, deregistered_resp]
-        session.post.return_value = search_resp
-
-        with patch("time.sleep"):
-            count = write_to_redis([("G-VAHH", "406B48", 66819)], r, session, REDIS_TTL, 0.1)
-
-        assert count == 0
-        deleted_paths = [c.args[1] for c in r.json.return_value.delete.call_args_list]
-        assert "$.registrant" in deleted_paths
 
 
 # ---------------------------------------------------------------------------
