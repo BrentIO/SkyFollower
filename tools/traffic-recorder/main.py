@@ -162,7 +162,7 @@ class SourceCapture(threading.Thread):
             sock.settimeout(1.0)
             if self.source_tag == "978":
                 self._capture_978(sock)
-            else:
+            elif self.source_tag == "1090":
                 self._capture_1090(sock)
 
     def _capture_1090(self, sock: socket.socket) -> None:
@@ -230,6 +230,9 @@ class SourceCapture(threading.Thread):
 # Entry point
 # ---------------------------------------------------------------------------
 
+_VALID_SOURCE_TAGS = {"1090", "978"}
+
+
 def _parse_source(s: str) -> tuple[str, int, str]:
     parts = s.split(":")
     if len(parts) != 3:
@@ -241,6 +244,10 @@ def _parse_source(s: str) -> tuple[str, int, str]:
         port = int(port_str)
     except ValueError:
         raise argparse.ArgumentTypeError(f"Invalid port in source {s!r}: {port_str!r}")
+    if tag not in _VALID_SOURCE_TAGS:
+        raise argparse.ArgumentTypeError(
+            f"Invalid source_tag {tag!r} in {s!r} — must be one of: {', '.join(sorted(_VALID_SOURCE_TAGS))}"
+        )
     return host, port, tag
 
 
