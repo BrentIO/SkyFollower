@@ -307,6 +307,21 @@ sources:
         path: "/lfa-publish-service/v2/oenfl/luftfahrzeuge?page=0&size=10000"
         description: "Full register download; returns flat JSON array; all active registered aircraft in one page"
 
+  ky-caa:
+    description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
+    url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
+    format: pdf
+    cadence: weekly_thursday
+    notes: "Static PDF URL (does not change with updates); ~211 rows across 10 pages; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by VP-C registration against Mictronics records; must run after Mictronics; 'Series Type' column combines manufacturer and model in a single field (stored as aircraft.model); no type designator, powerplant, or detailed address data available; column headers contain embedded newlines — normalised by collapsing to single space"
+    files:
+      - name: "Active-Aircraft-Register.pdf"
+        format: pdf
+        columns:
+          "Aircraft Registration": full VP-C-prefix registration mark
+          "Registered Owner":      registered owner name
+          "Series Type":           combined manufacturer and model free-text (stored as aircraft.model)
+          "Serial Number":         manufacturer serial number
+
   uk-caa:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
     url: "https://ginfoapi.caa.co.uk"
@@ -457,6 +472,9 @@ records:
           - source: bs-caa
             file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
             description: "Bahamas CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{C6\\-XXX} against Mictronics records; enriches existing records only"
+          - source: ky-caa
+            file: Active-Aircraft-Register.pdf
+            description: "Cayman Islands CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VP\\-CXXX} against Mictronics records; enriches existing records only"
           - source: uk-caa
             endpoint: details
             field: AircraftDetails.ICAO24BitAircraftAddress.Hex
@@ -521,6 +539,10 @@ records:
             file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
             field: AIRCRAFT REGISTRATION NUMBER
             description: "Full registration mark including C6- prefix (e.g. C6-BFY)"
+          - source: ky-caa
+            file: Active-Aircraft-Register.pdf
+            field: "Aircraft Registration"
+            description: "Full registration mark including VP-C prefix (e.g. VP-CAD)"
           - source: uk-caa
             endpoint: details
             field: RegistrationDetails.Mark
@@ -594,6 +616,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
+              - source: ky-caa
+                file: Active-Aircraft-Register.pdf
+                field: "Registered Owner"
+                transform:
+                  type: wrap_array
+                  description: "Single name — wrap in a one-element list; embedded newlines normalised to spaces"
               - source: uk-caa
                 endpoint: details
                 fields:
@@ -1069,6 +1097,10 @@ records:
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
                 field: "AIRCRAFT TYPE - MAKE/MODEL"
                 description: "Combined make and model free-text field (e.g. 'B737-790', 'CIRRUS SR 22', 'DE HAVILLAND DHC-6'); no separate manufacturer column; stored as-is"
+              - source: ky-caa
+                file: Active-Aircraft-Register.pdf
+                field: "Series Type"
+                description: "Combined manufacturer and model free-text field (e.g. 'Gulfstream Aerospace Corporation G-IV', 'Leonardo S.p.A. AW139'); no separate manufacturer column; embedded newlines normalised to spaces; stored as-is"
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.Type
@@ -1224,6 +1256,9 @@ records:
               - source: bs-caa
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
                 field: "SERIAL #"
+              - source: ky-caa
+                file: Active-Aircraft-Register.pdf
+                field: "Serial Number"
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.SerialNumber

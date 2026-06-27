@@ -52,6 +52,7 @@ services:
       - runner-bs-caa
       - runner-ch-bazl
       - runner-at-austrocontrol
+      - runner-ky-caa
       - runner-uk-caa
       - runner-flightaware
 
@@ -178,6 +179,15 @@ services:
   runner-at-austrocontrol:
     image: ghcr.io/brentio/skyfollower-runner-at-austrocontrol:latest
     container_name: skyfollower-runner-at-austrocontrol
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-ky-caa:
+    image: ghcr.io/brentio/skyfollower-runner-ky-caa:latest
+    container_name: skyfollower-runner-ky-caa
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
