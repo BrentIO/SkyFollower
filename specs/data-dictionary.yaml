@@ -329,7 +329,7 @@ sources:
     url: "https://ginfoapi.caa.co.uk"
     format: api
     cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates target records via Redis SCAN on UK ICAO hex range 400000–43FFFF (pattern icao_hex:4[0123]*); can only enrich records already present in Redis — must run after Mictronics; caches AircraftID in the foreign_key field on each Redis record to skip the search call on subsequent runs"
+    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no Redis dependency — runs independently of Mictronics"
     endpoints:
       search:
         method: POST
@@ -1797,12 +1797,3 @@ records:
             sources:
               - source: processor
 
-      foreign_key:
-        type: integer
-        description: "G-INFO AircraftID cached by the UK CAA runner; enables fast-path enrichment on subsequent runs by skipping the POST /api/aircraft/search call. Verified each run against the returned Mark field; cleared on mismatch or HTTP error."
-        persisted: false
-        sources:
-          - source: uk-caa
-            endpoint: details
-            field: AircraftID
-            description: "Written alongside every successful enrichment; on subsequent runs used directly as the details lookup key. Deleted from the Redis record if the mark no longer matches (aircraft re-registered) or if a 4xx HTTP error is returned."

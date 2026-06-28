@@ -2,19 +2,10 @@
 """
 SkyFollower United Kingdom CAA Data Runner
 
-Uses the UK CAA G-INFO REST API to enrich aircraft records already loaded
-by the Mictronics runner.  For each G-registered aircraft found in Redis
-the runner:
-
-  1. Scans Redis for aircraft:simple: keys in the UK ICAO hex range (400000-43FFFF).
-  2. Filters for records whose registration field starts with "G-".
-  3. POSTs to /api/aircraft/search with the registration suffix to resolve the
-     internal AircraftID.
-  4. GETs /api/aircraft/details/{AircraftID} for the full payload.
-  5. Writes the enrichment record to aircraft:detail:{hex} (fire-and-forget).
-
-Important: this runner discovers aircraft via the Mictronics aircraft:simple:
-records.  Schedule it AFTER Mictronics.
+Enumerates all G-registered aircraft via the UK CAA G-INFO REST API by
+iterating every 2-letter suffix combination AA-ZZ (676 calls total).
+For each aircraft returned with RegistrationStatus "R", calls the details
+endpoint to fetch the full payload and writes enrichment data to Redis.
 
 API base: https://ginfoapi.caa.co.uk  (no authentication required)
 """
@@ -27,6 +18,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from itertools import product
 from typing import Optional
 
 import paho.mqtt.client as mqtt
@@ -40,7 +32,6 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import (
     AIRCRAFT_DETAIL_SEARCH_INDEX,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
     aircraft_detail_key,
 )
 
@@ -50,28 +41,7 @@ API_BASE = "https://ginfoapi.caa.co.uk"
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/uk-caa"
 
-# Redis SCAN pattern covering UK ICAO hex range 400000-43FFFF.
-# Second hex digit 0-3 uniquely identifies the UK allocation block.
-
-# Fields written by this runner that must be removed when a 404 confirms the
-# aircraft record no longer exists in G-INFO.
-_UK_CAA_AIRCRAFT_FIELDS = [
-    "$.aircraft.type",
-    "$.aircraft.manufacturer",
-    "$.aircraft.model",
-    "$.aircraft.serial_number",
-    "$.aircraft.type_designator",
-    "$.aircraft.manufactured_date",
-    "$.aircraft.seats",
-]
-_UK_CAA_POWERPLANT_FIELDS = [
-    "$.powerplant.count",
-    "$.powerplant.model",
-]
-_UK_ICAO_SCAN_PATTERN = "aircraft:simple:4[0123]*"
-
-# Batch size for JSON mget calls when scanning Redis
-_SCAN_BATCH_SIZE = 500
+_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # ---------------------------------------------------------------------------
 # Decode tables
@@ -256,21 +226,6 @@ def _build_record(details: dict) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts are merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
 
@@ -290,117 +245,21 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Redis enumeration
-# ---------------------------------------------------------------------------
-
-def get_uk_registrations(r: redis_lib.Redis) -> list[tuple[str, str, Optional[int]]]:
-    """
-    Return (registration, icao_hex, foreign_key) triples for all G-registered
-    aircraft in Redis.
-
-    Scans icao_hex: keys in the UK ICAO hex range (400000-43FFFF), batch-fetches
-    the registration field and filters for the G- prefix, then fetches the cached
-    G-INFO AircraftID (foreign_key) for each matched record.
-
-    foreign_key is None when not yet cached.
-    """
-    results: list[tuple[str, str, Optional[int]]] = []
-    batch: list[str] = []
-
-    def _flush_batch() -> None:
-        reg_lists = r.json().mget(batch, "$.registration")
-        g_detail_keys: list[str] = []
-        g_regs: list[str] = []
-        g_hexes: list[str] = []
-        for key, reg_list in zip(batch, reg_lists):
-            if not reg_list:
-                continue
-            reg = reg_list[0]
-            if reg and str(reg).upper().startswith("G-"):
-                hex_val = key[len("aircraft:simple:"):]
-                g_detail_keys.append(aircraft_detail_key(hex_val))
-                g_regs.append(str(reg).upper())
-                g_hexes.append(hex_val.upper())
-
-        if g_detail_keys:
-            fk_lists = r.json().mget(g_detail_keys, '$["foreign_key"]')
-            for reg, hex_val, fk_list in zip(g_regs, g_hexes, fk_lists):
-                fk = fk_list[0] if fk_list else None
-                results.append((reg, hex_val, fk))
-
-        batch.clear()
-
-    scan_start = time.monotonic()
-    for key in r.scan_iter(_UK_ICAO_SCAN_PATTERN):
-        batch.append(key)
-        if len(batch) >= _SCAN_BATCH_SIZE:
-            _flush_batch()
-
-    if batch:
-        _flush_batch()
-
-    scan_elapsed = time.monotonic() - scan_start
-    logger.info(
-        "Found %d G-registered aircraft in Redis (scan completed in %.2fs).",
-        len(results), scan_elapsed,
-    )
-    return results
-
-
-# ---------------------------------------------------------------------------
 # G-INFO API
 # ---------------------------------------------------------------------------
 
-def _search_aircraft(session: requests.Session, icao_hex: str, expected_mark: str) -> Optional[int]:
-    """
-    POST /api/aircraft/search by ICAO hex address.
+def _search_by_prefix(session: requests.Session, prefix: str) -> list[dict]:
+    """POST /api/aircraft/search with a 2-letter registration prefix.
 
-    expected_mark is the registration suffix without 'G-' (e.g. 'VAHH').
-    When the API returns multiple results, filters by Mark and logs a warning.
-    Returns AircraftID of the matching result, or None if not found.
+    Returns the raw result list; may include non-registered aircraft.
     """
-    payload = {
-        "AircraftType": None,
-        "AOCHolder": None,
-        "ICAO24BitHex": icao_hex,
-        "ICAOAircraftTypeDesignator": None,
-        "MilitarySerialNumber": None,
-        "RegisteredOwner": None,
-        "Registration": None,
-        "SerialNumber": None,
-        "IncludeDeregistered": False,
-    }
     resp = session.post(
         f"{API_BASE}/api/aircraft/search",
-        json=payload,
+        json={"Registration": prefix},
         timeout=30,
     )
     resp.raise_for_status()
-    results = resp.json()
-    if not results:
-        return None
-
-    registered = [r for r in results if r.get("RegistrationStatus") == "R"]
-    if not registered:
-        logger.info("icao_hex=%s: all %d search result(s) have RegistrationStatus != R — skipping.",
-                    icao_hex, len(results))
-        return None
-
-    if len(registered) > 1:
-        logger.warning(
-            "Search for icao_hex=%s returned %d registered results — filtering by mark %s.",
-            icao_hex, len(registered), expected_mark,
-        )
-        matched = [r for r in registered if r.get("Mark", "").upper() == expected_mark.upper()]
-        if not matched:
-            logger.warning(
-                "No registered result matching mark %s for icao_hex=%s after filtering.",
-                expected_mark, icao_hex,
-            )
-            return None
-        registered = matched
-
-    return registered[0].get("AircraftID")
+    return resp.json() or []
 
 
 def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Optional[dict]:
@@ -413,29 +272,27 @@ def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Option
     return resp.json()
 
 
-# ---------------------------------------------------------------------------
-# Stale record cleanup
-# ---------------------------------------------------------------------------
+def enumerate_registrations(session: requests.Session, request_interval: float) -> list[int]:
+    """Return AircraftIDs for all G-registered aircraft via AA-ZZ enumeration.
 
-def _cleanup_stale_record(r: redis_lib.Redis, icao_hex: str) -> None:
+    Iterates all 676 2-letter suffix combinations, filtering on RegistrationStatus "R".
+    Errors on individual prefixes are logged and skipped; enumeration continues.
     """
-    Remove all fields written by this runner after a 404 confirms the aircraft
-    no longer exists in G-INFO.  Parent objects (aircraft, powerplant) are
-    deleted only if no other fields remain after cleanup.
-    """
-    key = aircraft_detail_key(icao_hex)
-    for path in ["$.foreign_key", "$.registrant"] + _UK_CAA_AIRCRAFT_FIELDS + _UK_CAA_POWERPLANT_FIELDS:
+    aircraft_ids: list[int] = []
+    for c1, c2 in product(_LETTERS, _LETTERS):
+        prefix = f"{c1}{c2}"
         try:
-            r.json().delete(key, path)
-        except Exception:
-            pass
-    for obj_path in ["$.aircraft", "$.powerplant"]:
-        try:
-            result = r.json().get(key, obj_path)
-            if result and result[0] == {}:
-                r.json().delete(key, obj_path)
-        except Exception:
-            pass
+            results = _search_by_prefix(session, prefix)
+            for result in results:
+                if result.get("RegistrationStatus") == "R":
+                    aid = result.get("AircraftID")
+                    if aid is not None:
+                        aircraft_ids.append(aid)
+        except Exception as exc:
+            logger.warning("Search error for prefix %s: %s", prefix, exc)
+        time.sleep(request_interval)
+    logger.info("Enumeration complete: found %d registered aircraft.", len(aircraft_ids))
+    return aircraft_ids
 
 
 # ---------------------------------------------------------------------------
@@ -443,149 +300,51 @@ def _cleanup_stale_record(r: redis_lib.Redis, icao_hex: str) -> None:
 # ---------------------------------------------------------------------------
 
 def write_to_redis(
-    registrations: list[tuple[str, str, Optional[int]]],
+    aircraft_ids: list[int],
     r: redis_lib.Redis,
     session: requests.Session,
     ttl: int,
     request_interval: float,
 ) -> int:
-    """
-    Enrich Redis records with UK CAA G-INFO data.
-
-    Fast path (foreign_key cached): calls GET /api/aircraft/details/{foreign_key}
-    directly and verifies the returned ICAO hex matches.  On any hard failure
-    (404, hex mismatch, non-Registered status) the stale record is cleaned up
-    and the aircraft is skipped.  403 is treated as transient — retry next run.
-
-    Slow path (no cache): POST /api/aircraft/search by ICAO hex to resolve
-    the AircraftID, then GET /api/aircraft/details/{id}.
-
-    The resolved AircraftID is always written back to Redis as foreign_key so
-    subsequent runs can use the fast path.
+    """Fetch details for each AircraftID and write enrichment records to Redis.
 
     Returns the count of records successfully written.
     """
     count = 0
-    not_found = 0
+    skipped = 0
     errors = 0
 
-    for registration, icao_hex_from_redis, cached_fk in registrations:
-        details = None
-        aircraft_id = None
-
-        if cached_fk is not None:
-            try:
-                time.sleep(request_interval)
-                details = _get_aircraft_details(session, cached_fk)
-                reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-                if reg_status != "Registered":
-                    logger.info(
-                        "%s: RegistrationDetails.Status is %r — cleaning up stale uk-caa data.",
-                        registration, reg_status,
-                    )
-                    try:
-                        _cleanup_stale_record(r, icao_hex_from_redis)
-                    except Exception as exc:
-                        logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
-                    continue
-                aircraft_details = details.get("AircraftDetails", {})
-                returned_hex = ((aircraft_details.get("ICAO24BitAircraftAddress") or {}).get("Hex") or "").strip().upper()
-                if returned_hex != icao_hex_from_redis.upper():
-                    logger.info(
-                        "%s: foreign_key %d hex mismatch (got %s, expected %s)"
-                        " — cleaning up stale uk-caa data.",
-                        registration, cached_fk, returned_hex, icao_hex_from_redis.upper(),
-                    )
-                    try:
-                        _cleanup_stale_record(r, icao_hex_from_redis)
-                    except Exception as exc:
-                        logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
-                    continue
-                aircraft_id = cached_fk
-            except requests.HTTPError as exc:
-                status = exc.response.status_code if exc.response is not None else None
-                if status == 403:
-                    logger.info("%s: details call returned 403 — retrying next run.", registration)
-                    continue
-                logger.info(
-                    "%s: details call failed (HTTP %s) — cleaning up stale uk-caa data.",
-                    registration, status,
-                )
-                try:
-                    _cleanup_stale_record(r, icao_hex_from_redis)
-                except Exception as exc:
-                    logger.warning("Cleanup failed for %s: %s", icao_hex_from_redis, exc)
-                continue
-            except Exception as exc:
-                logger.warning("Unexpected error fetching details for %s: %s", registration, exc)
-                errors += 1
-                continue
-
-        else:
-            try:
-                time.sleep(request_interval)
-                aircraft_id = _search_aircraft(session, icao_hex_from_redis, registration[2:])
-            except Exception as exc:
-                logger.warning("Search error for icao_hex=%s registration=%s: %s",
-                               icao_hex_from_redis, registration, exc)
-                errors += 1
-                continue
-
-            if aircraft_id is None:
-                not_found += 1
-                logger.debug("No G-INFO result for %s — skipping.", registration)
-                continue
-
-            try:
-                time.sleep(request_interval)
-                details = _get_aircraft_details(session, aircraft_id)
-            except requests.HTTPError as exc:
-                logger.warning(
-                    "HTTP error fetching details for icao_hex=%s registration=%s"
-                    " (AircraftID=%d): %s — caching foreign_key for next run.",
-                    icao_hex_from_redis, registration, aircraft_id, exc,
-                )
-                try:
-                    r.json().set(aircraft_detail_key(icao_hex_from_redis), "$.foreign_key", aircraft_id)
-                except Exception:
-                    pass
-                errors += 1
-                continue
-            except Exception as exc:
-                logger.warning("Unexpected error fetching details for icao_hex=%s registration=%s: %s",
-                               icao_hex_from_redis, registration, exc)
-                errors += 1
-                continue
-
-            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-            if reg_status != "Registered":
-                logger.info(
-                    "%s: RegistrationDetails.Status is %r — skipping.",
-                    registration, reg_status,
-                )
-                continue
-
-        record = _build_record(details)
-        if record is None:
-            logger.warning("Could not build record for %s.", registration)
+    for aircraft_id in aircraft_ids:
+        try:
+            time.sleep(request_interval)
+            details = _get_aircraft_details(session, aircraft_id)
+        except Exception as exc:
+            logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
             errors += 1
             continue
 
-        record["foreign_key"] = aircraft_id
-        record["source"] = "uk-caa"
+        reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+        if reg_status != "Registered":
+            logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
+            skipped += 1
+            continue
 
-        key = aircraft_detail_key(icao_hex_from_redis)
+        record = _build_record(details)
+        if record is None:
+            logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
+            errors += 1
+            continue
+
+        record["source"] = "uk-caa"
+        key = aircraft_detail_key(record["icao_hex"])
         r.json().set(key, "$", record)
         r.expire(key, ttl)
         count += 1
 
         if count % 500 == 0:
-            logger.info("  ... %d records written (%d not found, %d errors).", count, not_found, errors)
+            logger.info("  ... %d records written (%d skipped, %d errors).", count, skipped, errors)
 
-    logger.info(
-        "Finished: %d written, %d not found in G-INFO, %d errors.",
-        count, not_found, errors,
-    )
+    logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
     return count
 
 
@@ -721,8 +480,10 @@ def main() -> None:
 
     try:
         _ensure_search_index(r)
-        registrations = get_uk_registrations(r)
-        records_imported = write_to_redis(registrations, r, session, ttl, request_interval)
+        logger.info("Enumerating G-registered aircraft via AA-ZZ search (676 calls)...")
+        aircraft_ids = enumerate_registrations(session, request_interval)
+        logger.info("Fetching details for %d aircraft...", len(aircraft_ids))
+        records_imported = write_to_redis(aircraft_ids, r, session, ttl, request_interval)
         status = "success"
         logger.info("UK CAA runner completed successfully. Records imported: %d", records_imported)
 
