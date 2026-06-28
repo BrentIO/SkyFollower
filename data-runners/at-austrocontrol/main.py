@@ -3,9 +3,10 @@
 SkyFollower Austria Austrocontrol Data Runner
 
 Downloads the Austrian aircraft register from Austrocontrol, looks up each
-OE- registration in the Redis search index to find the ICAO hex (provided by
-Mictronics), deep-merges enrichment data into existing Redis records, publishes
-MQTT completion stats, then exits.
+OE- registration in the Redis simple search index to find the ICAO hex (provided
+by Mictronics), runs a type sanity check against the aircraft:simple record, then
+writes enrichment data to aircraft:detail:{icao_hex} and publishes MQTT completion
+stats, then exits.
 
 Important: the Austrocontrol register does not publish ICAO hex (Mode S) addresses.
 This runner can only enrich records that already exist in Redis from Mictronics.
@@ -35,7 +36,12 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import (
+    AIRCRAFT_DETAIL_SEARCH_INDEX,
+    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+    aircraft_detail_key,
+    aircraft_simple_key,
+)
 
 logger = logging.getLogger("at-austrocontrol")
 
@@ -89,6 +95,39 @@ _COUNTRY_MAP: dict[str, str] = {
 }
 
 _STRIP_QUOTES_RE = re.compile(r'^"(.*)"$', re.DOTALL)
+
+_TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
+
+
+# ---------------------------------------------------------------------------
+# Type sanity check helpers
+# ---------------------------------------------------------------------------
+
+def _type_tokens(model_str: str) -> set:
+    """Extract normalised type tokens from a model string (e.g. 'PA-38' → {'PA38'})."""
+    return {t.split('-')[0] for t in _TYPE_TOKEN_RE.findall(model_str.upper())}
+
+
+def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
+    """Return True if the Austrocontrol model string is compatible with the simple record.
+
+    Compares token sets extracted from the simple record's type_designator /
+    manufacturer_model fields against tokens extracted from the Austrocontrol
+    baumuster (model) string.  Returns True when either side has no tokens (no
+    information to compare) or when at least one token overlaps.
+    """
+    if not detail_model_str:
+        return True
+    simple_tokens = _type_tokens(
+        (simple_record.get("type_designator") or "") + " " +
+        (simple_record.get("manufacturer_model") or "")
+    )
+    if not simple_tokens:
+        return True
+    detail_tokens = _type_tokens(detail_model_str)
+    if not detail_tokens:
+        return True
+    return bool(simple_tokens & detail_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -196,28 +235,13 @@ def _build_record(item: dict, icao_hex: str, registration: str) -> dict:
 
     registrant = _parse_halter(item.get("halter") or "")
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration}
+    record: dict = {"icao_hex": icao_hex, "registration": registration, "source": "at-austrocontrol"}
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if registrant:
         record["registrant"] = registrant
 
     return record
-
-
-# ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts are merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -240,18 +264,18 @@ def _escape_tag(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -272,13 +296,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("icao_hex:", "")
+                icao_hex = doc.id.replace("aircraft:simple:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = icao_hex
@@ -351,40 +375,41 @@ def write_to_redis(items: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     count = 0
     errors = 0
-    batch: list[tuple[str, dict]] = []
+    pipe = r.pipeline()
+    pipe_count = 0
 
-    def _flush() -> None:
-        nonlocal errors
-        keys = [k for k, _ in batch]
-        try:
-            existing_list = r.json().mget(keys, "$")
-        except Exception as exc:
-            logger.warning("Redis mget failed: %s", exc)
-            errors += len(batch)
-            return
-        pipe = r.pipeline()
-        for (key, new_record), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
-            pipe.expire(key, ttl)
+    for registration, icao_hex in reg_icao_map.items():
+        item = reg_to_item[registration]
+        baumuster = (item.get("baumuster") or "").strip()
+
+        simple_raw = r.json().get(aircraft_simple_key(icao_hex))
+        if not simple_raw or not _type_check_passes(simple_raw, baumuster):
+            logger.debug("Type sanity check failed for %s, skipping", registration)
+            continue
+
+        record = _build_record(item, icao_hex, registration)
+        key = aircraft_detail_key(icao_hex)
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
+        pipe_count += 1
+        count += 1
+
+        if pipe_count >= 10000:
+            try:
+                pipe.execute()
+            except Exception as exc:
+                logger.warning("Redis pipeline failed: %s", exc)
+                errors += pipe_count
+            pipe = r.pipeline()
+            pipe_count = 0
+            logger.info("  ... %d records written.", count)
+
+    if pipe_count:
         try:
             pipe.execute()
         except Exception as exc:
             logger.warning("Redis pipeline failed: %s", exc)
-            errors += len(batch)
-
-    for registration, icao_hex in reg_icao_map.items():
-        item = reg_to_item[registration]
-        record = _build_record(item, icao_hex, registration)
-        batch.append((icao_hex_key(icao_hex), record))
-        count += 1
-        if len(batch) == 10000:
-            _flush()
-            batch.clear()
-            logger.info("  ... %d records written.", count)
-
-    if batch:
-        _flush()
+            errors += pipe_count
 
     logger.info("Finished: %d written, %d skipped (deregistered), %d errors.", count, deregistered, errors)
     return count
