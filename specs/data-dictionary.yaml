@@ -281,7 +281,7 @@ sources:
     url: "https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv"
     format: api
     cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; returns UTF-16 BE encoded semicolon-delimited CSV via POST with JSON body; single bulk download of all registered aircraft (~3,100 records); 'Main Owner' address is a single unstructured string parsed best-effort (Name[, Canton]?, Street, PostalCode City, Switzerland); canton abbreviation (2-letter) stripped from name; MOPSC = Maximum Operational Passenger Seating Configuration"
+    notes: "Undocumented public REST API; no auth required; returns UTF-16 BE encoded semicolon-delimited CSV via POST with JSON body; single bulk download of all registered aircraft (~3,100 records); 'Main Owner' address is a single unstructured string parsed best-effort (Name[, Canton]?, Street, PostalCode City, Switzerland); canton abbreviation (2-letter) stripped from name; when only one non-canton segment remains after extracting the postal line it is treated as the name (no street present); MOPSC = Maximum Operational Passenger Seating Configuration; seats = MOPSC + Minimum Crew; aircraft without a Mode S transponder have no ICAO hex in the registry and are skipped"
     endpoints:
       bulk:
         method: POST
@@ -637,7 +637,7 @@ records:
                 field: " Main Owner"
                 transform:
                   type: parse_address_name
-                  description: "Best-effort parse of 'Name[, Canton]?, Street, PostalCode City, Switzerland'; all comma-segments before the street; 2-letter canton abbreviations filtered out; wrapped in a one-element list"
+                  description: "Best-effort parse of 'Name[, Canton]?, Street, PostalCode City, Switzerland'; 2-letter canton abbreviations filtered out; if only one non-canton segment remains after extracting the postal line it is the name (no street); wrapped in a one-element list"
               - source: at-austrocontrol
                 endpoint: bulk
                 field: halter
@@ -1144,8 +1144,13 @@ records:
                 field: AircraftDetails.MaximumPassengers
               - source: ch-bazl
                 endpoint: bulk
-                field: " MOPSC"
-                description: "Maximum Operational Passenger Seating Configuration"
+                transform:
+                  type: sum
+                  fields:
+                    - field: " MOPSC"
+                      description: "Maximum Operational Passenger Seating Configuration"
+                    - field: " Minimum Crew"
+                      description: "Minimum required flight crew"
 
           category:
             type: string
@@ -1536,6 +1541,9 @@ records:
               - source: au-casa
                 file: acrftreg
                 field: Engmanu
+              - source: ch-bazl
+                endpoint: bulk
+                field: " Engine manufacturer"
 
           power_type:
             type: string

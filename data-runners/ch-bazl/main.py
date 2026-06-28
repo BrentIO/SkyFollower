@@ -85,6 +85,7 @@ def download_register(session: requests.Session) -> list[dict]:
             "aircraftStatus": ["Registered"],
         },
     }
+    logger.info("Downloading from %s", API_URL)
     response = session.post(API_URL, json=payload)
     response.raise_for_status()
 
@@ -130,9 +131,10 @@ def _parse_engine_model(raw: str) -> Optional[str]:
 
 
 def _parse_registrant(raw: str) -> Optional[dict]:
-    """Best-effort parse of BAZL's unstructured owner address string.
+    """Best-effort parse of BAZL's unstructured owner/operator address string.
 
     Format: Name[, Canton]?, Street, PostalCode City, Switzerland
+    When no street is present: Name[, Canton]?, PostalCode City, Switzerland
     """
     if not raw or raw.strip() in ("", "N/A", "-"):
         return None
@@ -155,11 +157,17 @@ def _parse_registrant(raw: str) -> Optional[dict]:
         postal_code = postal_city[:4]
         city = postal_city[5:].strip() or None
 
-    if parts:
-        street = parts.pop()
+    # Strip canton abbreviations from remaining parts
+    non_canton = [p for p in parts if not _CANTON_RE.match(p)]
 
-    # Remaining parts are the name; strip 2-letter canton abbreviations
-    name_parts = [p for p in parts if not _CANTON_RE.match(p)]
+    # Only treat the last part as street when 2+ non-canton parts remain;
+    # if only 1 remains it is the name (no street line in this record)
+    if len(non_canton) >= 2:
+        street = non_canton[-1]
+        name_parts = non_canton[:-1]
+    else:
+        name_parts = non_canton
+
     name = ", ".join(name_parts) if name_parts else None
 
     fields: dict = {}
@@ -209,7 +217,9 @@ def _build_record(row: dict) -> Optional[dict]:
     serial_number = row.get(" Serial Number", "").strip()
     if serial_number:
         aircraft_fields["serial_number"] = serial_number
-    seats = _parse_seats(row.get(" MOPSC", ""))
+    mopsc = _parse_seats(row.get(" MOPSC", ""))
+    crew = _parse_seats(row.get(" Minimum Crew", ""))
+    seats = (mopsc or 0) + (crew or 0) if (mopsc is not None or crew is not None) else None
     if seats is not None:
         aircraft_fields["seats"] = seats
 
@@ -217,6 +227,9 @@ def _build_record(row: dict) -> Optional[dict]:
     engine_type = _decode_engine_type(row.get(" Engine Category", ""))
     if engine_type:
         powerplant_fields["type"] = engine_type
+    engine_manufacturer = row.get(" Engine manufacturer", "").strip()
+    if engine_manufacturer:
+        powerplant_fields["manufacturer"] = engine_manufacturer
     engine_model = _parse_engine_model(row.get(" Engine", ""))
     if engine_model:
         powerplant_fields["model"] = engine_model
@@ -248,6 +261,13 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         status = row.get(" Status", "").strip()
         if status != "Registered":
             logger.debug("Skipping %s — Status is %r.", row.get(" Registration", "?"), status)
+            skipped += 1
+            continue
+
+        raw_hex = row.get(" Aircraft Address HEX", "").strip().upper()
+        if not raw_hex or len(raw_hex) != 6 or not all(c in "0123456789ABCDEF" for c in raw_hex):
+            registration = row.get(" Registration", "?").strip()
+            logger.warning("Skipping %s — no ICAO hex assigned.", registration)
             skipped += 1
             continue
 
