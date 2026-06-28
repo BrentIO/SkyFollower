@@ -40,7 +40,8 @@ _decode_aircraft_type = _mod._decode_aircraft_type
 _decode_country = _mod._decode_country
 _parse_halter = _mod._parse_halter
 _build_record = _mod._build_record
-_deep_merge = _mod._deep_merge
+_type_tokens = _mod._type_tokens
+_type_check_passes = _mod._type_check_passes
 _escape_tag = _mod._escape_tag
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
@@ -85,15 +86,18 @@ def _make_redis(existing=None):
     return r
 
 
-def _make_redis_with_search(icao_hex="440123", registration="OE-ARG"):
-    """Redis mock that returns a search result and no existing JSON record."""
+def _make_redis_with_search(icao_hex="440123", registration="OE-ARG", simple_record=None):
+    """Redis mock that returns a search result and a simple aircraft record for the type check."""
     r = _make_redis()
     doc = MagicMock()
-    doc.id = f"icao_hex:{icao_hex}"
+    doc.id = f"aircraft:simple:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
     r.ft.return_value.search.return_value = results
+    if simple_record is None:
+        simple_record = {"icao_hex": icao_hex, "registration": registration}
+    r.json.return_value.get.return_value = simple_record
     return r
 
 
@@ -260,6 +264,7 @@ class TestBuildRecord:
         record = _build_record(item, "440123", "OE-ARG")
         assert record["icao_hex"] == "440123"
         assert record["registration"] == "OE-ARG"
+        assert record["source"] == "at-austrocontrol"
         assert record["aircraft"]["type"] == "Airplane"
         assert record["aircraft"]["manufacturer"] == "Piper Aircraft Corp."
         assert record["aircraft"]["model"] == "PA-38-112"
@@ -299,39 +304,6 @@ class TestBuildRecord:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _deep_merge
-# ---------------------------------------------------------------------------
-
-class TestDeepMerge:
-    def test_flat_update_wins(self):
-        result = _deep_merge({"a": 1, "b": 2}, {"b": 99})
-        assert result == {"a": 1, "b": 99}
-
-    def test_nested_merge(self):
-        base = {"aircraft": {"type": "Airplane", "manufacturer": "Boeing"}}
-        update = {"aircraft": {"model": "737"}}
-        result = _deep_merge(base, update)
-        assert result["aircraft"]["type"] == "Airplane"
-        assert result["aircraft"]["manufacturer"] == "Boeing"
-        assert result["aircraft"]["model"] == "737"
-
-    def test_update_overwrites_nested_value(self):
-        base = {"aircraft": {"type": "Airplane"}}
-        update = {"aircraft": {"type": "Helicopter"}}
-        result = _deep_merge(base, update)
-        assert result["aircraft"]["type"] == "Helicopter"
-
-    def test_new_key_added(self):
-        result = _deep_merge({"a": 1}, {"b": 2})
-        assert result == {"a": 1, "b": 2}
-
-    def test_base_unchanged(self):
-        base = {"a": {"x": 1}}
-        _deep_merge(base, {"a": {"y": 2}})
-        assert "y" not in base["a"]
-
-
-# ---------------------------------------------------------------------------
 # Tests: _escape_tag
 # ---------------------------------------------------------------------------
 
@@ -349,6 +321,76 @@ class TestEscapeTag:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _type_tokens
+# ---------------------------------------------------------------------------
+
+class TestTypeTokens:
+    def test_plain_designator(self):
+        assert _type_tokens("B737") == {"B737"}
+
+    def test_hyphenated_designator_strips_suffix(self):
+        # "B737-800" → findall finds "B737", split('-')[0] = "B737"
+        assert _type_tokens("B737-800") == {"B737"}
+
+    def test_no_digits_returns_empty(self):
+        assert _type_tokens("Piper") == set()
+
+    def test_hyphen_between_letters_and_digits_no_match(self):
+        # "PA-38" has a hyphen between letters and digits; regex won't match across it
+        assert _type_tokens("PA-38") == set()
+
+    def test_compact_form_matches(self):
+        assert _type_tokens("PA38") == {"PA38"}
+
+    def test_multiple_tokens(self):
+        tokens = _type_tokens("B737 A320")
+        assert tokens == {"B737", "A320"}
+
+    def test_case_insensitive(self):
+        assert _type_tokens("b737") == {"B737"}
+
+    def test_empty_string_returns_empty(self):
+        assert _type_tokens("") == set()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _type_check_passes
+# ---------------------------------------------------------------------------
+
+class TestTypeCheckPasses:
+    def test_empty_detail_model_passes(self):
+        assert _type_check_passes({"type_designator": "B737"}, "") is True
+
+    def test_empty_simple_record_passes(self):
+        # No type_designator or manufacturer_model → simple_tokens empty → pass
+        assert _type_check_passes({}, "B737-800") is True
+
+    def test_no_tokens_in_detail_str_passes(self):
+        # "Piper Tomahawk" has no matching tokens → detail_tokens empty → pass
+        assert _type_check_passes({"type_designator": "PA38"}, "Piper Tomahawk") is True
+
+    def test_matching_token_passes(self):
+        simple = {"type_designator": "B737", "manufacturer_model": "Boeing 737-800"}
+        assert _type_check_passes(simple, "B737-800") is True
+
+    def test_mismatched_tokens_fails(self):
+        simple = {"type_designator": "A320", "manufacturer_model": "Airbus A320"}
+        assert _type_check_passes(simple, "B737-800") is False
+
+    def test_type_designator_only(self):
+        simple = {"type_designator": "C172"}
+        assert _type_check_passes(simple, "C172S") is True
+
+    def test_manufacturer_model_only(self):
+        simple = {"manufacturer_model": "Cessna C172"}
+        assert _type_check_passes(simple, "C172S") is True
+
+    def test_case_insensitive_model_str(self):
+        simple = {"type_designator": "B737"}
+        assert _type_check_passes(simple, "b737-800") is True
+
+
+# ---------------------------------------------------------------------------
 # Tests: write_to_redis
 # ---------------------------------------------------------------------------
 
@@ -358,7 +400,10 @@ class TestWriteToRedis:
         r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
         count = write_to_redis([item], r, REDIS_TTL)
         assert count == 1
-        r.json.return_value.mget.assert_called_once()
+        # fire-and-forget: no read-before-write
+        r.json.return_value.mget.assert_not_called()
+        # type sanity check: simple record must have been fetched
+        r.json.return_value.get.assert_called_once()
 
     def test_deregistered_record_skipped(self):
         item = _make_item(loeschung="2024-01-15")
@@ -376,28 +421,44 @@ class TestWriteToRedis:
         count = write_to_redis([item], r, REDIS_TTL)
         assert count == 0
         r.json.return_value.mget.assert_not_called()
+        r.json.return_value.get.assert_not_called()
 
-    def test_merges_with_existing_record(self):
+    def test_fire_and_forget_no_read_before_write(self):
+        """write_to_redis must not read existing records before writing (fire-and-forget)."""
         item = _make_item()
-        existing = {"icao_hex": "440123", "registration": "OE-ARG", "military": False}
         r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
-        r.json.return_value.mget.return_value = [[existing]]
-
-        captured = []
-
-        def _capture_set(key, path, value):
-            captured.append(value)
-            return MagicMock()
-
-        r.pipeline.return_value.__enter__ = MagicMock(return_value=r.pipeline.return_value)
-        r.pipeline.return_value.__exit__ = MagicMock(return_value=False)
-        r.pipeline.return_value.json.return_value.set.side_effect = _capture_set
-
         write_to_redis([item], r, REDIS_TTL)
-        assert len(captured) == 1
-        merged = captured[0]
-        assert merged["military"] is False
-        assert merged["aircraft"]["type"] == "Airplane"
+        r.json.return_value.mget.assert_not_called()
+
+    def test_writes_to_detail_key(self):
+        """Records must be written to aircraft:detail:{icao_hex}, not icao_hex:{icao_hex}."""
+        item = _make_item()
+        r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
+        write_to_redis([item], r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call is not None
+        key_used = set_call[0][0]
+        assert key_used == "aircraft:detail:440123"
+        assert "icao_hex:440123" not in key_used
+
+    def test_source_field_in_written_record(self):
+        """Every record written to Redis must contain source='at-austrocontrol'."""
+        item = _make_item()
+        r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
+        write_to_redis([item], r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call is not None
+        written = set_call[0][2]
+        assert written.get("source") == "at-austrocontrol"
+
+    def test_type_check_skips_when_simple_raw_none(self):
+        """If the aircraft:simple key is missing (None), the record must be skipped."""
+        item = _make_item()
+        r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
+        r.json.return_value.get.return_value = None
+        count = write_to_redis([item], r, REDIS_TTL)
+        assert count == 0
+        r.pipeline.return_value.json.return_value.set.assert_not_called()
 
     def test_registration_prefixed_with_oe(self):
         # Verify that at least one RediSearch query was issued for OE-ARG
@@ -406,11 +467,12 @@ class TestWriteToRedis:
         count = write_to_redis([item], r, REDIS_TTL)
         # Registration OE-ARG matched → one record written
         assert count == 1
-        # And the built record carries the OE- prefixed registration
+        # The built record carries the OE- prefixed registration and writes to detail key
         set_call = r.pipeline.return_value.json.return_value.set.call_args
-        if set_call:
-            written = set_call[0][2]
-            assert written.get("registration") == "OE-ARG"
+        assert set_call is not None
+        key_used, _, written = set_call[0]
+        assert key_used == "aircraft:detail:440123"
+        assert written.get("registration") == "OE-ARG"
 
     def test_numeric_kennzeichen_prefixed(self):
         item = _make_item(kennzeichen="9522", luftfahrzeugart="Eigenstartfähiger Motorsegler")
@@ -438,6 +500,8 @@ class TestWriteToRedis:
             _make_item(kennzeichen="ARK", seriennummer="471"),
         ]
         r = _make_redis()
+        # Return a valid simple record so type check passes
+        r.json.return_value.get.return_value = {"icao_hex": "440121", "registration": "OE-ARG"}
 
         call_count = [0]
 
@@ -447,7 +511,7 @@ class TestWriteToRedis:
             docs = []
             for reg in ["OE-ARG", "OE-ARK"]:
                 doc = MagicMock()
-                doc.id = f"icao_hex:44012{call_count[0]}"
+                doc.id = f"aircraft:simple:44012{call_count[0]}"
                 doc.registration = reg
                 docs.append(doc)
             results.docs = docs
