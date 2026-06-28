@@ -4,9 +4,11 @@ SkyFollower France DGAC Data Runner
 
 Downloads the Direction Générale de l'Aviation Civile (DGAC) aircraft register
 CSV, groups rows by registration to handle co-ownership, looks up each F-
-registration in the Redis search index to find the ICAO hex (provided by
-Mictronics), deep-merges DGAC enrichment data into existing Redis records,
-publishes MQTT completion stats, then exits.
+registration in the Redis simple-aircraft search index (idx:aircraft:simple,
+populated by Mictronics) to find the ICAO hex, performs a type sanity check
+against the simple record, then writes DGAC enrichment data to
+aircraft:detail:{icao_hex} (fire-and-forget, no read-before-write).
+Publishes MQTT completion stats then exits.
 
 Important: the DGAC register does not publish ICAO hex (Mode S) addresses.
 This runner can only enrich records that already exist in Redis from Mictronics.
@@ -38,7 +40,12 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import (
+    aircraft_detail_key,
+    aircraft_simple_key,
+    AIRCRAFT_DETAIL_SEARCH_INDEX,
+    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+)
 
 logger = logging.getLogger("fr-dgac")
 
@@ -173,6 +180,37 @@ def _escape_tag(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Type sanity check
+# ---------------------------------------------------------------------------
+
+_TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
+
+
+def _type_tokens(model_str: str) -> set:
+    return {t.split('-')[0] for t in _TYPE_TOKEN_RE.findall(model_str.upper())}
+
+
+def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
+    """Return True if the DGAC model string is consistent with the simple record's type info.
+
+    Both simple and detail tokens must be non-empty for the check to be
+    meaningful; if either side yields no tokens the check is skipped (passes).
+    """
+    if not detail_model_str:
+        return True
+    simple_tokens = _type_tokens(
+        (simple_record.get("type_designator") or "") + " " +
+        (simple_record.get("manufacturer_model") or "")
+    )
+    if not simple_tokens:
+        return True
+    detail_tokens = _type_tokens(detail_model_str)
+    if not detail_tokens:
+        return True
+    return bool(simple_tokens & detail_tokens)
+
+
+# ---------------------------------------------------------------------------
 # Record builder
 # ---------------------------------------------------------------------------
 
@@ -218,37 +256,22 @@ def _build_record(
 
 
 # ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts are merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -269,13 +292,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("icao_hex:", "")
+                icao_hex = doc.id.replace("aircraft:simple:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = icao_hex
@@ -352,7 +375,7 @@ def _group_by_registration(rows: list[dict]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
-    """Enrich existing Redis records with DGAC data. Returns count of records written."""
+    """Write DGAC enrichment records to aircraft:detail:{icao_hex}. Returns count written."""
     groups = _group_by_registration(rows)
     registrations = list(groups.keys())
     logger.info("Looking up %d registrations in Redis search index.", len(registrations))
@@ -365,20 +388,24 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     )
 
     count = 0
-    batch: list[tuple[str, dict]] = []
+    pipe = r.pipeline()
+    pipe_size = 0
 
-    def _flush() -> None:
-        keys = [k for k, _ in batch]
-        existing_list = r.json().mget(keys, "$")
-        pipe = r.pipeline()
-        for (key, new_record), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
-            pipe.expire(key, ttl)
+    def _flush_pipe() -> None:
+        nonlocal pipe_size
         pipe.execute()
+        pipe_size = 0
 
     for registration, icao_hex in reg_icao_map.items():
         group = groups[registration]
+        fr_dgac_model = group["first_row"].get("MODELE", "").strip()
+
+        # Type sanity check: compare DGAC model against the simple record.
+        simple_raw = r.json().get(aircraft_simple_key(icao_hex))
+        if simple_raw is not None and not _type_check_passes(simple_raw, fr_dgac_model):
+            logger.debug("Type sanity check failed for %s (%s), skipping.", registration, fr_dgac_model)
+            continue
+
         record = _build_record(
             icao_hex=icao_hex,
             registration=registration,
@@ -386,15 +413,20 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             names=group["names"],
             address_raw=group["address_raw"],
         )
-        batch.append((icao_hex_key(icao_hex), record))
+        record["source"] = "fr-dgac"
+
+        key = aircraft_detail_key(icao_hex)
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
+        pipe_size += 1
         count += 1
-        if len(batch) == 10000:
-            _flush()
-            batch.clear()
+
+        if pipe_size >= 5000:
+            _flush_pipe()
             logger.info("  ... %d records written.", count)
 
-    if batch:
-        _flush()
+    if pipe_size:
+        _flush_pipe()
 
     logger.info("Finished writing %d records to Redis.", count)
     return count
