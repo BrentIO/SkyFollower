@@ -1,7 +1,11 @@
 import pytest
 
 from shared.redis_keys import (
+    AIRCRAFT_DETAIL_SEARCH_INDEX,
+    AIRCRAFT_SIMPLE_SEARCH_INDEX,
     airport_key,
+    aircraft_detail_key,
+    aircraft_simple_key,
     config_areas_key,
     config_areas_version_key,
     config_rules_key,
@@ -13,18 +17,27 @@ from shared.redis_keys import (
     metrics_registration_misses_key,
     operator_key,
     processor_heartbeat_key,
-    registration_key,
 )
 
 
 class TestEnrichmentKeys:
-    def test_icao_hex_key(self):
+    def test_aircraft_simple_key(self):
+        assert aircraft_simple_key("a8ae7f") == "aircraft:simple:A8AE7F"
+        assert aircraft_simple_key("A8AE7F") == "aircraft:simple:A8AE7F"
+
+    def test_aircraft_detail_key(self):
+        assert aircraft_detail_key("a8ae7f") == "aircraft:detail:A8AE7F"
+        assert aircraft_detail_key("A8AE7F") == "aircraft:detail:A8AE7F"
+
+    def test_aircraft_simple_search_index_name(self):
+        assert AIRCRAFT_SIMPLE_SEARCH_INDEX == "idx:aircraft:simple"
+
+    def test_aircraft_detail_search_index_name(self):
+        assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
+
+    def test_icao_hex_key_deprecated_still_works(self):
         assert icao_hex_key("a8ae7f") == "icao_hex:A8AE7F"
         assert icao_hex_key("A8AE7F") == "icao_hex:A8AE7F"
-
-    def test_registration_key(self):
-        assert registration_key("n659dl") == "registration:N659DL"
-        assert registration_key("N659DL") == "registration:N659DL"
 
     def test_operator_key(self):
         assert operator_key("dal") == "operator:DAL"

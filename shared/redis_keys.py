@@ -9,18 +9,40 @@ are always explicit and typos in key names are caught by the type checker.
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
 
-# RediSearch index over all icao_hex:{hex} JSON documents.
-# Supports registration lookup without a separate reverse-index key.
-AIRCRAFT_SEARCH_INDEX = "idx:aircraft"
+# RediSearch index over all aircraft:simple:{hex} JSON documents (Mictronics).
+# Indexed fields: $.icao_hex, $.registration
+AIRCRAFT_SIMPLE_SEARCH_INDEX = "idx:aircraft:simple"
+
+# RediSearch index over all aircraft:detail:{hex} JSON documents (country runners).
+# Indexed fields: $.icao_hex, $.registration
+AIRCRAFT_DETAIL_SEARCH_INDEX = "idx:aircraft:detail"
 
 # RediSearch index over all airport:{icao_code} JSON documents.
 # Supports lookup by ICAO code or IATA code.
 AIRPORT_SEARCH_INDEX = "idx:airport"
 
+# ---------------------------------------------------------------------------
+# Deprecated — retained until all runners are migrated to the simple/detail
+# key schema. Remove once icao_hex_key() has no remaining callers.
+# ---------------------------------------------------------------------------
+
+# RediSearch index over all icao_hex:{hex} JSON documents.
+AIRCRAFT_SEARCH_INDEX = "idx:aircraft"
+
 
 def icao_hex_key(icao_hex: str) -> str:
-    """Aircraft enrichment record. icao_hex:{icao_hex}"""
+    """Deprecated. Use aircraft_simple_key() or aircraft_detail_key(). icao_hex:{icao_hex}"""
     return f"icao_hex:{icao_hex.upper()}"
+
+
+def aircraft_simple_key(icao_hex: str) -> str:
+    """Mictronics aircraft enrichment record. aircraft:simple:{icao_hex}"""
+    return f"aircraft:simple:{icao_hex.upper()}"
+
+
+def aircraft_detail_key(icao_hex: str) -> str:
+    """Country-runner aircraft enrichment record. aircraft:detail:{icao_hex}"""
+    return f"aircraft:detail:{icao_hex.upper()}"
 
 
 def operator_key(designator: str) -> str:
