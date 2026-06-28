@@ -272,41 +272,17 @@ def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Option
     return resp.json()
 
 
-def enumerate_registrations(session: requests.Session, request_interval: float) -> list[int]:
-    """Return AircraftIDs for all G-registered aircraft via AA-ZZ enumeration.
-
-    Iterates all 676 2-letter suffix combinations, filtering on RegistrationStatus "R".
-    Errors on individual prefixes are logged and skipped; enumeration continues.
-    """
-    aircraft_ids: list[int] = []
-    for c1, c2 in product(_LETTERS, _LETTERS):
-        prefix = f"{c1}{c2}"
-        try:
-            results = _search_by_prefix(session, prefix)
-            for result in results:
-                if result.get("RegistrationStatus") == "R":
-                    aid = result.get("AircraftID")
-                    if aid is not None:
-                        aircraft_ids.append(aid)
-        except Exception as exc:
-            logger.warning("Search error for prefix %s: %s", prefix, exc)
-        time.sleep(request_interval)
-    logger.info("Enumeration complete: found %d registered aircraft.", len(aircraft_ids))
-    return aircraft_ids
-
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
-
-def write_to_redis(
-    aircraft_ids: list[int],
-    r: redis_lib.Redis,
+def run_pipeline(
     session: requests.Session,
+    r: redis_lib.Redis,
     ttl: int,
     request_interval: float,
 ) -> int:
-    """Fetch details for each AircraftID and write enrichment records to Redis.
+    """Enumerate all G-registered aircraft via AA-ZZ search and write to Redis.
+
+    For each prefix, immediately fetches details and writes records — no
+    intermediate accumulation.  The search calls are not rate-limited; only
+    details calls sleep for request_interval to be polite to the API.
 
     Returns the count of records successfully written.
     """
@@ -314,35 +290,47 @@ def write_to_redis(
     skipped = 0
     errors = 0
 
-    for aircraft_id in aircraft_ids:
+    for c1, c2 in product(_LETTERS, _LETTERS):
+        prefix = f"{c1}{c2}"
         try:
-            time.sleep(request_interval)
-            details = _get_aircraft_details(session, aircraft_id)
+            results = _search_by_prefix(session, prefix)
         except Exception as exc:
-            logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-            errors += 1
+            logger.warning("Search error for prefix %s: %s", prefix, exc)
             continue
 
-        reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-        if reg_status != "Registered":
-            logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
-            skipped += 1
-            continue
+        aircraft_ids = [
+            item.get("AircraftID")
+            for item in results
+            if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
+        ]
+        logger.info("G-%s*: %d registered (written so far: %d).", prefix, len(aircraft_ids), count)
 
-        record = _build_record(details)
-        if record is None:
-            logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-            errors += 1
-            continue
+        for aircraft_id in aircraft_ids:
+            try:
+                time.sleep(request_interval)
+                details = _get_aircraft_details(session, aircraft_id)
+            except Exception as exc:
+                logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
+                errors += 1
+                continue
 
-        record["source"] = "uk-caa"
-        key = aircraft_detail_key(record["icao_hex"])
-        r.json().set(key, "$", record)
-        r.expire(key, ttl)
-        count += 1
+            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+            if reg_status != "Registered":
+                logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
+                skipped += 1
+                continue
 
-        if count % 500 == 0:
-            logger.info("  ... %d records written (%d skipped, %d errors).", count, skipped, errors)
+            record = _build_record(details)
+            if record is None:
+                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
+                errors += 1
+                continue
+
+            record["source"] = "uk-caa"
+            key = aircraft_detail_key(record["icao_hex"])
+            r.json().set(key, "$", record)
+            r.expire(key, ttl)
+            count += 1
 
     logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
     return count
@@ -480,10 +468,8 @@ def main() -> None:
 
     try:
         _ensure_search_index(r)
-        logger.info("Enumerating G-registered aircraft via AA-ZZ search (676 calls)...")
-        aircraft_ids = enumerate_registrations(session, request_interval)
-        logger.info("Fetching details for %d aircraft...", len(aircraft_ids))
-        records_imported = write_to_redis(aircraft_ids, r, session, ttl, request_interval)
+        logger.info("Enumerating and enriching G-registered aircraft via AA-ZZ search...")
+        records_imported = run_pipeline(session, r, ttl, request_interval)
         status = "success"
         logger.info("UK CAA runner completed successfully. Records imported: %d", records_imported)
 
