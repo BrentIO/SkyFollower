@@ -40,7 +40,9 @@ _normalise_header = _mod._normalise_header
 _normalise_cell = _mod._normalise_cell
 _build_record = _mod._build_record
 _nationality_to_iso = _mod._nationality_to_iso
-_deep_merge = _mod._deep_merge
+_type_tokens = _mod._type_tokens
+_type_check_passes = _mod._type_check_passes
+_ensure_search_index = _mod._ensure_search_index
 _escape_tag = _mod._escape_tag
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
@@ -52,6 +54,8 @@ COL_ADDRESS = _mod.COL_ADDRESS
 COL_NATIONALITY = _mod.COL_NATIONALITY
 COL_SERIES_TYPE = _mod.COL_SERIES_TYPE
 COL_SERIAL = _mod.COL_SERIAL
+
+from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, AIRCRAFT_SIMPLE_SEARCH_INDEX
 
 
 # ---------------------------------------------------------------------------
@@ -76,21 +80,28 @@ def _make_row(
     }
 
 
-def _make_redis(existing=None):
+def _make_redis():
+    """Return a bare MagicMock Redis client with no specific setup."""
     r = MagicMock()
-    mget_result = [[existing]] if existing is not None else [None]
-    r.json.return_value.mget.return_value = mget_result
     return r
 
 
-def _make_redis_with_search(icao_hex="C00001", registration="VP-CAD"):
+def _make_redis_with_search(icao_hex="C00001", registration="VP-CAD", simple_record=None):
+    """Return a mock Redis client that resolves one registration via the simple search index.
+
+    ``simple_record`` is what ``mget`` returns for the aircraft:simple key.
+    Defaults to an empty dict, which always passes the type sanity check.
+    """
     r = _make_redis()
     doc = MagicMock()
-    doc.id = f"icao_hex:{icao_hex}"
+    doc.id = f"aircraft:simple:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
     r.ft.return_value.search.return_value = results
+    # mget is called with the list of simple keys — return one entry per key
+    sr = simple_record if simple_record is not None else {}
+    r.json.return_value.mget.return_value = [[sr]]
     return r
 
 
@@ -152,11 +163,17 @@ class TestBuildRecord:
         record = _build_record("C00001", "VP-CAD", row)
         assert record["icao_hex"] == "C00001"
         assert record["registration"] == "VP-CAD"
+        assert record["source"] == "ky-caa"
         assert record["aircraft"]["model"] == "Leonardo S.p.A. AW139"
         assert record["aircraft"]["serial_number"] == "31475"
         assert record["registrant"]["names"] == ["Castle Air Limited"]
         assert record["registrant"]["street"] == ["Castle Air Limited", "Head Office", "Trebrown", "Liskeard", "Cornwall PL14 3PX"]
         assert record["registrant"]["country"] == "GB"
+
+    def test_source_field_always_present(self):
+        row = _make_row(series_type="", serial="", owner="", address="", nationality="")
+        record = _build_record("C00001", "VP-CAD", row)
+        assert record["source"] == "ky-caa"
 
     def test_combined_manufacturer_model_stored_as_model(self):
         row = _make_row(series_type="Gulfstream Aerospace Corporation G-IV")
@@ -293,36 +310,131 @@ class TestNationalityToIso:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _deep_merge
+# Tests: _type_tokens
 # ---------------------------------------------------------------------------
 
-class TestDeepMerge:
-    def test_flat_update_wins(self):
-        result = _deep_merge({"a": 1, "b": 2}, {"b": 99})
-        assert result == {"a": 1, "b": 99}
+class TestTypeTokens:
+    def test_aw139_extracted(self):
+        assert _type_tokens("Leonardo S.p.A. AW139") == {"AW139"}
 
-    def test_nested_merge(self):
-        base = {"aircraft": {"type": "Airplane", "manufacturer": "Boeing"}}
-        update = {"aircraft": {"model": "737"}}
-        result = _deep_merge(base, update)
-        assert result["aircraft"]["type"] == "Airplane"
-        assert result["aircraft"]["manufacturer"] == "Boeing"
-        assert result["aircraft"]["model"] == "737"
+    def test_b737_extracted_from_designator(self):
+        # The regex requires a letter prefix immediately before the digits.
+        # A standalone "B737" designator extracts correctly.
+        assert _type_tokens("B737") == {"B737"}
 
-    def test_update_overwrites_nested_value(self):
-        base = {"aircraft": {"model": "Old Model"}}
-        update = {"aircraft": {"model": "New Model"}}
-        result = _deep_merge(base, update)
-        assert result["aircraft"]["model"] == "New Model"
+    def test_b737_not_extracted_from_full_model(self):
+        # "Boeing 737-800" has no letter immediately before "737" — no token.
+        assert _type_tokens("Boeing 737-800") == set()
 
-    def test_new_key_added(self):
-        result = _deep_merge({"a": 1}, {"b": 2})
-        assert result == {"a": 1, "b": 2}
+    def test_type_designator_alone(self):
+        assert _type_tokens("AW139") == {"AW139"}
 
-    def test_base_unchanged(self):
-        base = {"a": {"x": 1}}
-        _deep_merge(base, {"a": {"y": 2}})
-        assert "y" not in base["a"]
+    def test_multiple_tokens(self):
+        tokens = _type_tokens("AW139 AW109")
+        assert "AW139" in tokens
+        assert "AW109" in tokens
+
+    def test_empty_string_returns_empty_set(self):
+        assert _type_tokens("") == set()
+
+    def test_no_matching_tokens(self):
+        assert _type_tokens("Leonardo S.p.A.") == set()
+
+    def test_case_insensitive_input(self):
+        assert _type_tokens("aw139") == {"AW139"}
+
+    def test_hyphen_stripped_from_token(self):
+        # "B737-800" → token is "B737" (the part before the hyphen)
+        assert _type_tokens("B737-800") == {"B737"}
+
+    def test_bd700_extracted_from_designator(self):
+        # Type designator "BD700" (no hyphen) extracts correctly.
+        assert _type_tokens("BD700") == {"BD700"}
+
+    def test_bd700_hyphenated_extracts_a10(self):
+        # "BD-700-1A10" has a hyphen between "BD" and "700" so "BD700" is not
+        # found; the regex does find "A10" from the "1A10" portion instead.
+        assert _type_tokens("Bombardier Inc. BD-700-1A10") == {"A10"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: _type_check_passes
+# ---------------------------------------------------------------------------
+
+class TestTypeCheckPasses:
+    def test_empty_detail_model_always_passes(self):
+        simple = {"type_designator": "AW109", "manufacturer_model": "Leonardo AW109"}
+        assert _type_check_passes(simple, "") is True
+
+    def test_none_detail_model_always_passes(self):
+        simple = {"type_designator": "AW109", "manufacturer_model": "Leonardo AW109"}
+        assert _type_check_passes(simple, None) is True
+
+    def test_no_simple_tokens_always_passes(self):
+        # Simple record has no recognisable type tokens
+        simple = {"type_designator": "Unknown", "manufacturer_model": "No model here"}
+        assert _type_check_passes(simple, "Leonardo AW139") is True
+
+    def test_no_detail_tokens_always_passes(self):
+        simple = {"type_designator": "AW139", "manufacturer_model": "Leonardo AW139"}
+        assert _type_check_passes(simple, "Leonardo S.p.A.") is True
+
+    def test_matching_tokens_passes(self):
+        simple = {"type_designator": "AW139", "manufacturer_model": "Leonardo AW139"}
+        assert _type_check_passes(simple, "Leonardo S.p.A. AW139") is True
+
+    def test_mismatched_tokens_fails(self):
+        simple = {"type_designator": "AW109", "manufacturer_model": "Leonardo AW109"}
+        assert _type_check_passes(simple, "Leonardo S.p.A. AW139") is False
+
+    def test_empty_simple_record_always_passes(self):
+        # No type_designator or manufacturer_model → no tokens → passes
+        assert _type_check_passes({}, "Leonardo AW139") is True
+
+    def test_type_designator_only_in_simple(self):
+        simple = {"type_designator": "AW139"}
+        assert _type_check_passes(simple, "Leonardo AW139") is True
+
+    def test_manufacturer_model_only_in_simple(self):
+        simple = {"manufacturer_model": "Leonardo AW139"}
+        assert _type_check_passes(simple, "Leonardo AW139") is True
+
+    def test_bd700_designator_match(self):
+        # Both sides have "BD700" as a token — passes.
+        simple = {"type_designator": "BD700", "manufacturer_model": "Bombardier BD700"}
+        assert _type_check_passes(simple, "Bombardier BD700") is True
+
+    def test_bd700_vs_aw139_mismatch(self):
+        simple = {"type_designator": "BD700", "manufacturer_model": "Bombardier BD700"}
+        assert _type_check_passes(simple, "Leonardo AW139") is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: _ensure_search_index
+# ---------------------------------------------------------------------------
+
+class TestEnsureSearchIndex:
+    def test_creates_index_when_not_exists(self):
+        r = MagicMock()
+        r.ft.return_value.info.side_effect = Exception("Index does not exist")
+        _ensure_search_index(r)
+        r.ft.assert_called_with(AIRCRAFT_DETAIL_SEARCH_INDEX)
+        r.ft.return_value.create_index.assert_called_once()
+
+    def test_skips_creation_when_index_exists(self):
+        r = MagicMock()
+        r.ft.return_value.info.return_value = {"some": "info"}
+        _ensure_search_index(r)
+        r.ft.return_value.create_index.assert_not_called()
+
+    def test_creates_index_with_detail_prefix(self):
+        r = MagicMock()
+        r.ft.return_value.info.side_effect = Exception("Index does not exist")
+        with patch("ky_caa_main.IndexDefinition") as mock_def:
+            _ensure_search_index(r)
+        mock_def.assert_called_once()
+        call_kwargs = mock_def.call_args.kwargs
+        assert call_kwargs.get("prefix") == ["aircraft:detail:"]
 
 
 # ---------------------------------------------------------------------------
@@ -364,27 +476,62 @@ class TestWriteToRedis:
         assert count == 0
         r.json.return_value.mget.assert_not_called()
 
-    def test_merges_with_existing_record(self):
+    def test_no_simple_record_skipped(self):
+        """Records where the simple key does not exist are skipped."""
         row = _make_row()
-        existing = {"icao_hex": "C00001", "registration": "VP-CAD", "military": False}
+        # simple_record=None causes mget to return [None] → simple_raw_list is None
         r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
-        r.json.return_value.mget.return_value = [[existing]]
+        r.json.return_value.mget.return_value = [None]  # key missing in Redis
+        count = write_to_redis([row], r, REDIS_TTL)
+        assert count == 0
 
-        captured = []
+    def test_type_check_mismatch_skips_record(self):
+        """Records where the type check fails are skipped."""
+        row = _make_row(series_type="Leonardo S.p.A. AW139")
+        # Simple record says AW109 — mismatch with AW139
+        simple = {"type_designator": "AW109", "manufacturer_model": "Leonardo AW109"}
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD", simple_record=simple)
+        count = write_to_redis([row], r, REDIS_TTL)
+        assert count == 0
 
-        def _capture_set(key, path, value):
-            captured.append(value)
-            return MagicMock()
+    def test_type_check_match_writes_record(self):
+        """Records where the type check passes are written."""
+        row = _make_row(series_type="Leonardo S.p.A. AW139")
+        simple = {"type_designator": "AW139", "manufacturer_model": "Leonardo AW139"}
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD", simple_record=simple)
+        count = write_to_redis([row], r, REDIS_TTL)
+        assert count == 1
 
-        r.pipeline.return_value.__enter__ = MagicMock(return_value=r.pipeline.return_value)
-        r.pipeline.return_value.__exit__ = MagicMock(return_value=False)
-        r.pipeline.return_value.json.return_value.set.side_effect = _capture_set
-
+    def test_record_written_without_reading_existing_detail(self):
+        """write_to_redis does not read the existing aircraft:detail key before writing."""
+        row = _make_row()
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
         write_to_redis([row], r, REDIS_TTL)
-        assert len(captured) == 1
-        merged = captured[0]
-        assert merged["military"] is False
-        assert merged["aircraft"]["model"] == "Leonardo S.p.A. AW139"
+        # mget is called once — only for the simple key (type check), not for the detail key
+        r.json.return_value.mget.assert_called_once()
+        call_args = r.json.return_value.mget.call_args
+        keys_arg = call_args[0][0]
+        assert all("aircraft:simple:" in k for k in keys_arg)
+        assert not any("aircraft:detail:" in k for k in keys_arg)
+
+    def test_writes_to_detail_key(self):
+        """Verified key written is aircraft:detail:{icao_hex}."""
+        row = _make_row()
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
+        write_to_redis([row], r, REDIS_TTL)
+        pipe = r.pipeline.return_value
+        set_call = pipe.json.return_value.set.call_args
+        assert set_call[0][0] == "aircraft:detail:C00001"
+
+    def test_source_field_in_written_record(self):
+        """Written records contain source='ky-caa'."""
+        row = _make_row()
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
+        write_to_redis([row], r, REDIS_TTL)
+        pipe = r.pipeline.return_value
+        set_call = pipe.json.return_value.set.call_args
+        written_record = set_call[0][2]
+        assert written_record["source"] == "ky-caa"
 
     def test_empty_registration_skipped(self):
         row = _make_row(registration="")
@@ -415,15 +562,24 @@ class TestWriteToRedis:
             docs = []
             for reg in ["VP-CAD", "VP-CAF"]:
                 doc = MagicMock()
-                doc.id = f"icao_hex:C0000{call_count[0]}"
+                doc.id = f"aircraft:simple:C0000{call_count[0]}"
                 doc.registration = reg
                 docs.append(doc)
             results.docs = docs
             return results
 
         r.ft.return_value.search.side_effect = _search
+        # Return an empty simple record for each — passes type check
+        r.json.return_value.mget.return_value = [[{}], [{}]]
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 2
+
+    def test_searches_simple_index(self):
+        """Registration lookup queries the Mictronics simple search index."""
+        row = _make_row()
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
+        write_to_redis([row], r, REDIS_TTL)
+        r.ft.assert_called_with(AIRCRAFT_SIMPLE_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
