@@ -235,7 +235,6 @@ def _build_record(row: dict) -> Optional[dict]:
         powerplant_fields["model"] = engine_model
 
     registrant = _parse_registrant(row.get(" Main Owner", ""))
-    operator = _parse_registrant(row.get(" Main Operator", ""))
 
     record: dict = {"icao_hex": raw_hex, "registration": registration}
     if aircraft_fields:
@@ -244,8 +243,6 @@ def _build_record(row: dict) -> Optional[dict]:
         record["powerplant"] = powerplant_fields
     if registrant:
         record["registrant"] = registrant
-    if operator:
-        record["operator"] = operator
 
     return record
 

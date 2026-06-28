@@ -385,15 +385,6 @@ class TestBuildRecord:
         record = _build_record(_make_row())
         assert record["registrant"]["names"] == ["Swiss International Air Lines Ltd."]
 
-    def test_operator_populated(self):
-        record = _build_record(_make_row(
-            operator="Edelweiss Air AG, 8058 Zürich-Flughafen, Switzerland"
-        ))
-        assert record["operator"]["names"] == ["Edelweiss Air AG"]
-
-    def test_operator_absent_when_empty(self):
-        record = _build_record(_make_row(operator=""))
-        assert "operator" not in record
 
     def test_short_hex_returns_none(self):
         assert _build_record(_make_row(icao_hex="4B19")) is None
