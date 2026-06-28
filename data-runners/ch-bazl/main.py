@@ -264,6 +264,13 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             skipped += 1
             continue
 
+        raw_hex = row.get(" Aircraft Address HEX", "").strip()
+        if not raw_hex:
+            registration = row.get(" Registration", "?").strip()
+            logger.warning("Skipping %s — no ICAO hex assigned.", registration)
+            skipped += 1
+            continue
+
         record = _build_record(row)
         if record is None:
             registration = row.get(" Registration", "?").strip()
