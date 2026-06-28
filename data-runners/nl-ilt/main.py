@@ -35,7 +35,10 @@ from odf.text import P
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.redis_keys import icao_hex_key
+from redis.commands.search.field import TagField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
+
+from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
 
 logger = logging.getLogger("nl-ilt")
 
@@ -247,18 +250,22 @@ def _build_record(row: dict) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Deep merge
+# Search index
 # ---------------------------------------------------------------------------
 
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
+def _ensure_search_index(r: redis_lib.Redis) -> None:
+    """Create the aircraft detail JSON search index if it does not already exist."""
+    try:
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+    except Exception:
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+            fields=[
+                TagField("$.icao_hex", as_name="icao_hex"),
+                TagField("$.registration", as_name="registration"),
+            ],
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -266,26 +273,23 @@ def _deep_merge(base: dict, update: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
-    """Build records and deep-merge into Redis. Returns count of records written."""
+    """Build records and write to Redis. Returns count of records written."""
     count = 0
-    batch: list[tuple[str, dict, str]] = []  # (redis_key, record, registration)
+    batch: list[tuple[str, dict]] = []  # (redis_key, record)
 
     def _flush() -> None:
-        keys = [k for k, _, _ in batch]
-        existing_list = r.json().mget(keys, "$")
         pipe = r.pipeline()
-        for (key, new_record, registration), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
+        for key, record in batch:
+            pipe.json().set(key, "$", record)
             pipe.expire(key, ttl)
-            pipe.set(f"registration:{registration}", new_record["icao_hex"], ex=ttl)
         pipe.execute()
 
     for row in rows:
         record = _build_record(row)
         if record is None:
             continue
-        batch.append((icao_hex_key(record["icao_hex"]), record, record["registration"]))
+        record["source"] = "nl-ilt"
+        batch.append((aircraft_detail_key(record["icao_hex"]), record))
         count += 1
         if len(batch) == WRITE_BATCH_SIZE:
             _flush()
@@ -448,6 +452,7 @@ def main() -> None:
     try:
         tmp_path = download_registry()
         rows = parse_ods(tmp_path)
+        _ensure_search_index(r)
         records_imported = write_to_redis(rows, r, ttl)
         status = "success"
         logger.info("Netherlands ILT runner completed successfully. Records imported: %d", records_imported)
