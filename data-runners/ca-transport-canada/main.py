@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
 
 logger = logging.getLogger("ca-transport-canada")
 
@@ -360,21 +360,6 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts are merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Build Redis record
 # ---------------------------------------------------------------------------
 
@@ -431,18 +416,18 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -466,12 +451,9 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     batch: list[tuple[str, dict]] = []
 
     def _flush():
-        keys = [k for k, _ in batch]
-        existing_list = r.json().mget(keys, "$")
         pipe = r.pipeline()
-        for (key, new_record), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
+        for key, record in batch:
+            pipe.json().set(key, "$", record)
             pipe.expire(key, ttl)
         pipe.execute()
 
@@ -484,7 +466,8 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         )
         owner_rows = owner_cur.fetchall()
         record = build_aircraft_record(acft_row, owner_rows)
-        key = icao_hex_key(record["icao_hex"])
+        record["source"] = "ca-transport-canada"
+        key = aircraft_detail_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
         if len(batch) == 10000:

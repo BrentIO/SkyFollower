@@ -664,13 +664,13 @@ class TestBuildAircraftRecord:
 # ---------------------------------------------------------------------------
 
 class TestRedisKeys:
-    def test_icao_hex_key_format(self):
-        from shared.redis_keys import icao_hex_key
-        assert icao_hex_key("c00001") == "icao_hex:C00001"
+    def test_aircraft_detail_key_format(self):
+        from shared.redis_keys import aircraft_detail_key
+        assert aircraft_detail_key("c00001") == "aircraft:detail:C00001"
 
-    def test_aircraft_search_index_name(self):
-        from shared.redis_keys import AIRCRAFT_SEARCH_INDEX
-        assert AIRCRAFT_SEARCH_INDEX == "idx:aircraft"
+    def test_aircraft_detail_search_index_name(self):
+        from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX
+        assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
 
 
 # ---------------------------------------------------------------------------
@@ -682,15 +682,8 @@ class TestWriteToRedis:
         with tempfile.TemporaryDirectory() as tmpdir:
             return stage_data(_make_files(), os.path.join(tmpdir, "staging.db"))
 
-    def _mock_redis(self, existing: Optional[dict] = None):
+    def _mock_redis(self):
         r = MagicMock()
-        r_json = MagicMock()
-        r.json.return_value = r_json
-        r_json.mget.side_effect = lambda keys, path: [
-            [existing] if existing and k == f"icao_hex:{existing['icao_hex']}" else None
-            for k in keys
-        ]
-
         pipe = MagicMock()
         pipe_json = MagicMock()
         r.pipeline.return_value = pipe
@@ -710,8 +703,8 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "icao_hex:C00001" in keys
-        assert "icao_hex:C00002" in keys
+        assert "aircraft:detail:C00001" in keys
+        assert "aircraft:detail:C00002" in keys
         conn.close()
 
     def test_inactive_icao_hex_not_written(self):
@@ -719,7 +712,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "icao_hex:C00003" not in keys
+        assert "aircraft:detail:C00003" not in keys
         conn.close()
 
     def test_json_set_uses_root_path(self):
@@ -754,31 +747,20 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
-        record = calls["icao_hex:C00001"]
+        record = calls["aircraft:detail:C00001"]
         assert isinstance(record, dict)
-        assert "source" not in record
+        assert record["source"] == "ca-transport-canada"
         assert record["registration"] == "C-GABC"
         conn.close()
 
-    def test_merges_with_existing_record(self):
-        """TC fields overwrite existing; unowned fields from other runners are preserved."""
+    def test_source_set_on_all_records(self):
+        """Every record written to Redis carries source='ca-transport-canada'."""
         conn = self._make_db()
-        existing = {
-            "icao_hex": "C00001",
-            "military": False,
-            "aircraft": {"type_designator": "C172", "wake_turbulence_category": "Light"},
-        }
-        r, _, pipe_json = self._mock_redis(existing=existing)
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
-        record = calls["icao_hex:C00001"]
-        # military is mictronics-owned — preserved from existing since TC omits it
-        assert record["military"] is False
-        # mictronics aircraft fields are preserved alongside TC aircraft fields
-        assert record["aircraft"]["type_designator"] == "C172"
-        assert record["aircraft"]["wake_turbulence_category"] == "Light"
-        # TC aircraft fields are present
-        assert record["aircraft"]["type"] == "Airplane"
+        for call in pipe_json.set.call_args_list:
+            record = call.args[2]
+            assert record["source"] == "ca-transport-canada"
         conn.close()
 
 
