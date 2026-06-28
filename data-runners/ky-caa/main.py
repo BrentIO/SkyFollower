@@ -3,9 +3,8 @@
 SkyFollower Cayman Islands CAA Data Runner
 
 Downloads the Cayman Islands Civil Aviation Authority (CAA) aircraft register
-PDF, parses aircraft data, and deep-merges enrichment records into Redis using
-the ICAO hex resolved via RediSearch (Mode S address is not published in this
-register).
+PDF, parses aircraft data, and writes enrichment records to Redis using
+the ICAO hex resolved via RediSearch against the Mictronics simple-key data.
 
 The register contains owner name, registration, combined make/model ("Series
 Type"), and serial number. No manufacturer column, type designator, or
@@ -24,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -41,7 +41,12 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import (
+    aircraft_detail_key,
+    aircraft_simple_key,
+    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+    AIRCRAFT_DETAIL_SEARCH_INDEX,
+)
 
 logger = logging.getLogger("ky-caa")
 
@@ -80,6 +85,38 @@ _NATIONALITY_TO_ISO: dict[str, str] = {
 def _nationality_to_iso(raw: str) -> Optional[str]:
     """Map a Nationality column value to ISO 3166-1 alpha-2, or None if unmapped."""
     return _NATIONALITY_TO_ISO.get(raw.lower().strip())
+
+
+# ---------------------------------------------------------------------------
+# Type sanity check helpers
+# ---------------------------------------------------------------------------
+
+_TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
+
+
+def _type_tokens(model_str: str) -> set:
+    """Extract type designator tokens from a model string (e.g. 'AW139' from 'Leonardo AW139')."""
+    return {t.split('-')[0] for t in _TYPE_TOKEN_RE.findall(model_str.upper())}
+
+
+def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
+    """Return True if the ky-caa model string is consistent with the Mictronics simple record.
+
+    Returns True when detail_model_str is empty, when neither record contains
+    recognisable type tokens, or when the token sets overlap.
+    """
+    if not detail_model_str:
+        return True
+    simple_tokens = _type_tokens(
+        (simple_record.get("type_designator") or "") + " " +
+        (simple_record.get("manufacturer_model") or "")
+    )
+    if not simple_tokens:
+        return True
+    detail_tokens = _type_tokens(detail_model_str)
+    if not detail_tokens:
+        return True
+    return bool(simple_tokens & detail_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -194,27 +231,12 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     if country_iso:
         registrant_fields["country"] = country_iso
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration}
+    record: dict = {"icao_hex": icao_hex, "registration": registration, "source": "ky-caa"}
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if registrant_fields:
         record["registrant"] = registrant_fields
     return record
-
-
-# ---------------------------------------------------------------------------
-# Deep merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -237,26 +259,29 @@ def _escape_tag(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
 # Registration → icao_hex lookup
 # ---------------------------------------------------------------------------
 
+_SIMPLE_KEY_PREFIX = "aircraft:simple:"
+
+
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
-    """Batch-query Redis search index for icao_hex by registration mark.
+    """Batch-query the Mictronics simple search index for icao_hex by registration mark.
 
     Returns {registration → icao_hex} for registrations already in Redis.
     Registrations not found (aircraft not yet in Mictronics) are omitted.
@@ -270,13 +295,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                hex_val = doc.id.replace("icao_hex:", "")
+                hex_val = doc.id[len(_SIMPLE_KEY_PREFIX):]
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = hex_val
@@ -291,7 +316,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 # ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
-    """Enrich existing Redis records with Cayman Islands CAA data. Returns count written."""
+    """Write Cayman Islands CAA data to aircraft detail keys. Returns count written.
+
+    Looks up each registration in the Mictronics simple search index, runs a
+    type sanity check against the simple record, then writes to
+    aircraft:detail:{icao_hex} without reading the existing detail record
+    (fire-and-forget).
+    """
     reg_row_map: dict[str, dict] = {}
     for row in rows:
         reg = row.get(COL_REGISTRATION, "").strip()
@@ -310,30 +341,41 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     )
 
     count = 0
-    batch: list[tuple[str, dict]] = []
+    pending: list[tuple[str, str]] = []  # (registration, hex_val)
 
-    def _flush() -> None:
-        keys = [k for k, _ in batch]
-        existing_list = r.json().mget(keys, "$")
+    def _flush_pending() -> None:
+        nonlocal count
+        simple_keys = [aircraft_simple_key(hex_val) for _, hex_val in pending]
+        simple_records = r.json().mget(simple_keys, "$")
+
         pipe = r.pipeline()
-        for (key, new_record), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
+        written = 0
+        for (registration, hex_val), simple_raw_list in zip(pending, simple_records):
+            simple_raw = simple_raw_list[0] if simple_raw_list else None
+            row = reg_row_map[registration]
+            series_type = row.get(COL_SERIES_TYPE, "").strip() or None
+            if simple_raw is None or not _type_check_passes(simple_raw, series_type):
+                logger.debug("Type sanity check failed for %s, skipping", registration)
+                continue
+            record = _build_record(hex_val, registration, row)
+            key = aircraft_detail_key(hex_val)
+            pipe.json().set(key, "$", record)
             pipe.expire(key, ttl)
-        pipe.execute()
+            written += 1
+
+        if written:
+            pipe.execute()
+        count += written
 
     for registration, hex_val in reg_icao_map.items():
-        row = reg_row_map[registration]
-        record = _build_record(hex_val, registration, row)
-        batch.append((icao_hex_key(hex_val), record))
-        count += 1
-        if len(batch) == 10000:
-            _flush()
-            batch.clear()
+        pending.append((registration, hex_val))
+        if len(pending) == 10000:
+            _flush_pending()
+            pending.clear()
             logger.info("  ... %d records written.", count)
 
-    if batch:
-        _flush()
+    if pending:
+        _flush_pending()
 
     logger.info("Finished writing %d records to Redis.", count)
     return count
