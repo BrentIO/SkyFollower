@@ -7,7 +7,7 @@ operators, and types JSON files, stages records in local SQLite, writes
 enrichment data to Redis with a 14-day TTL, publishes MQTT completion stats,
 then exits.
 
-Data source: https://www.mictronics.de/aircraft-database/indexedDB.php
+Data source: https://github.com/Mictronics/aircraft-database/raw/refs/heads/main/indexedDB.zip
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from shared.redis_keys import AIRCRAFT_SIMPLE_SEARCH_INDEX, aircraft_simple_key,
 
 logger = logging.getLogger("mictronics")
 
-DOWNLOAD_URL = "https://www.mictronics.de/aircraft-database/indexedDB.php"
+DOWNLOAD_URL = "https://github.com/Mictronics/aircraft-database/raw/refs/heads/main/indexedDB.zip"
 REDIS_TTL = 14 * 86400  # 14 days in seconds
 MQTT_ROOT = "SkyFollower/runner/mictronics"
 
