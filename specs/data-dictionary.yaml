@@ -212,6 +212,25 @@ sources:
           EngManufacturer:  engine manufacturer name
           EngModel:         engine model designation
 
+  br-anac:
+    description: "Brazil ANAC Registro Aeronáutico Brasileiro (RAB) — PP/PR/PT/PS/PU-prefix registrations"
+    url: "https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_aeronaves.json"
+    format: json
+    cadence: weekly_wednesday
+    notes: "JSON array, UTF-8 BOM encoded, ~43MB, ~34,551 total records; no ICAO hex — resolved via RediSearch against Mictronics records; must run after Mictronics; active filter: DTCANC is null AND CDINTERDICAO does not start with R (trademark reservation) or M (cancelled); MARCA stored without hyphen (PPAJH) — insert hyphen after position 2 (PP-AJH); CDCLS encodes aircraft type (position 1), engine count (position 2), and propulsion (position 3); PROPRIETARIOSJSON uses non-standard /\"\" escape for double-quotes"
+    fields:
+      MARCA:              Registration mark without hyphen (e.g. PPAJH → PP-AJH)
+      DTCANC:             Cancellation date; null = still active
+      CDINTERDICAO:       Status code; R=trademark reservation, M=cancelled — exclude both
+      NMFABRICANTE:       Aircraft manufacturer name
+      DSMODELO:           Aircraft model designation
+      CDTIPOICAO:         ICAO type designator (4-char)
+      NRSERIE:            Serial number
+      NRASSENTOS:         Number of seats (numeric string)
+      NRANOFABRICACAO:    Year of manufacture (4-digit string; may be null)
+      CDCLS:              Aircraft classification code — position 1=landing type, position 2=engine count, position 3=propulsion; special value RPA=drone
+      PROPRIETARIOSJSON:  JSON array of owners; non-standard /\"\" escaping for double-quotes; first entry NOME used as registrant name
+
   au-casa:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
@@ -477,6 +496,9 @@ records:
           - source: ky-caa
             file: Active-Aircraft-Register.pdf
             description: "Cayman Islands CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VP\\-CXXX} against Mictronics records; enriches existing records only"
+          - source: br-anac
+            file: dados_aeronaves.json
+            description: "ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{PP\\-XXX} against Mictronics records; enriches existing records only"
           - source: uk-caa
             endpoint: details
             field: AircraftDetails.ICAO24BitAircraftAddress.Hex
@@ -556,6 +578,13 @@ records:
             endpoint: bulk
             field: " Registration"
             description: "Full registration mark including HB- prefix (e.g. HB-JNA)"
+          - source: br-anac
+            file: dados_aeronaves.json
+            field: MARCA
+            transform:
+              type: insert_hyphen
+              position: 2
+              description: "MARCA stored without hyphen (e.g. PPAJH); hyphen inserted after position 2 to yield full registration (PP-AJH)"
 
       registrant:
         type: object
@@ -644,6 +673,12 @@ records:
                 transform:
                   type: parse_address_name
                   description: "Best-effort parse; line 0 of first owner group (\\r\\n-delimited); surrounding quotes stripped; wrapped in a one-element list"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: "PROPRIETARIOSJSON[0].NOME"
+                transform:
+                  type: wrap_array
+                  description: "NOME of first owner entry; /\\\"\\\" un-escaped to double-quote before JSON parse; 'Indisponível' treated as absent; wrapped in a one-element list"
 
           street:
             type: "array[string]"
@@ -1077,6 +1112,19 @@ records:
                     "Tragschrauber": Gyroplane
                     "Eigenstartfähiger Motorsegler": Glider
                     "Nicht eigenstartfähiger Motorsegler": Glider
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDCLS
+                transform:
+                  type: decode_table
+                  description: "Position 1 (index 0) of CDCLS; special value 'RPA' maps to Drone"
+                  values:
+                    "L": Airplane
+                    "H": Helicopter
+                    "A": Amphibian
+                    "G": Gyroplane
+                    "S": Seaplane
+                    "RPA": Drone
 
           model:
             type: string
@@ -1125,6 +1173,9 @@ records:
               - source: at-austrocontrol
                 endpoint: bulk
                 field: baumuster
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: DSMODELO
 
           seats:
             type: integer
@@ -1155,6 +1206,9 @@ records:
                       description: "Maximum Operational Passenger Seating Configuration"
                     - field: " Minimum Crew"
                       description: "Minimum required flight crew"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: NRASSENTOS
 
           category:
             type: string
@@ -1216,6 +1270,9 @@ records:
               - source: at-austrocontrol
                 endpoint: bulk
                 field: hersteller
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: NMFABRICANTE
 
           type_designator:
             type: string
@@ -1239,6 +1296,9 @@ records:
               - source: ch-bazl
                 endpoint: bulk
                 field: " ICAO Aircraft Type"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDTIPOICAO
 
           manufacturer_model:
             type: string
@@ -1291,6 +1351,9 @@ records:
               - source: at-austrocontrol
                 endpoint: bulk
                 field: seriennummer
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: NRSERIE
 
           manufactured_date:
             type: datetime
@@ -1362,6 +1425,15 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "BAZL provides 4-digit manufacture year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: NRANOFABRICACAO
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "ANAC provides 4-digit manufacture year only; null for some records — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
 
           wake_turbulence_category:
             type: string
@@ -1409,6 +1481,13 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: "AircraftDetails.Engines[0].TotalNumberOfEngines"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDCLS
+                transform:
+                  type: decode_character
+                  position: 1
+                  description: "Position 2 (index 1) of CDCLS is the engine count digit; '0' or absent = omit; omitted for RPA (drone) records"
 
           type:
             type: string
@@ -1495,6 +1574,18 @@ records:
                     "Jet Engine": Turbo-jet
                     "Electrical Engine": Electric
                     "Hydrogen-Electric": Hydrogen-Electric
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDCLS
+                transform:
+                  type: decode_character
+                  position: 2
+                  description: "Position 3 (index 2) of CDCLS is the propulsion code; T is context-sensitive: Turbo-shaft when CDCLS[0]='H' (helicopter), otherwise Turbo-prop; omitted for RPA (drone) records or when position is '0' or absent"
+                  values:
+                    "P": Piston
+                    "J": Turbo-jet
+                    "E": Electric
+                    "T": "Turbo-prop (or Turbo-shaft for helicopters — see description)"
 
           model:
             type: string
