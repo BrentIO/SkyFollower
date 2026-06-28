@@ -17,6 +17,7 @@ import json
 import logging
 import logging.handlers
 import os
+import pathlib
 import re
 import signal
 import sqlite3
@@ -47,12 +48,10 @@ from shared.redis_keys import (
     config_areas_version_key,
     config_rules_version_key,
     flight_key,
-    icao_hex_key,
     metrics_aircraft_type_misses_key,
     metrics_registration_misses_key,
     operator_key,
     processor_heartbeat_key,
-    registration_key,
 )
 
 logger = logging.getLogger("processor")
@@ -425,6 +424,8 @@ class Processor:
             host=rc["host"], port=rc.get("port", 6379),
             decode_responses=True,
         )
+        _lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "merge_aircraft.lua"
+        self._merge_sha = self._redis.script_load(_lua_path.read_text())
 
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
@@ -683,16 +684,9 @@ class Processor:
 
     def _enrich_aircraft(self, flight: Flight) -> None:
         try:
-            raw = self._redis.get(icao_hex_key(flight.icao_hex))
+            raw = self._redis.evalsha(self._merge_sha, 0, flight.icao_hex)
             if raw:
                 flight.aircraft = json.loads(raw)
-                # Write registration reverse-index if not already set
-                reg = flight.aircraft.get("registration")
-                if reg:
-                    self._redis.set(
-                        registration_key(reg), flight.icao_hex,
-                        nx=True, ex=14 * 86400,
-                    )
             else:
                 self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
                 self._redis.incr(metrics_registration_misses_key(self._id, "today"))

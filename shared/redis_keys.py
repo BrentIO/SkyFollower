@@ -21,19 +21,6 @@ AIRCRAFT_DETAIL_SEARCH_INDEX = "idx:aircraft:detail"
 # Supports lookup by ICAO code or IATA code.
 AIRPORT_SEARCH_INDEX = "idx:airport"
 
-# ---------------------------------------------------------------------------
-# Deprecated — retained until all runners are migrated to the simple/detail
-# key schema. Remove once icao_hex_key() has no remaining callers.
-# ---------------------------------------------------------------------------
-
-# RediSearch index over all icao_hex:{hex} JSON documents.
-AIRCRAFT_SEARCH_INDEX = "idx:aircraft"
-
-
-def icao_hex_key(icao_hex: str) -> str:
-    """Deprecated. Use aircraft_simple_key() or aircraft_detail_key(). icao_hex:{icao_hex}"""
-    return f"icao_hex:{icao_hex.upper()}"
-
 
 def aircraft_simple_key(icao_hex: str) -> str:
     """Mictronics aircraft enrichment record. aircraft:simple:{icao_hex}"""

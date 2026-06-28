@@ -289,36 +289,51 @@ class TestProcessorEnrichment:
         cfg = _minimal_config()
         with patch("processor.main.redis_lib.Redis") as MockRedis, \
              patch("processor.main.RulesEngine"), \
+             patch("processor.main.pathlib.Path"), \
              patch.object(Processor, "_claim_processor_id"):
             mock_redis = MagicMock()
+            mock_redis.script_load.return_value = "abc123sha"
             MockRedis.return_value = mock_redis
             p = Processor(cfg, processor_id=0)
             p._redis = mock_redis
+            p._merge_sha = "abc123sha"
             p._db = _make_db()
             return p, mock_redis
 
     def test_enrich_aircraft_populates_from_redis(self):
         p, mock_redis = self._make_processor()
         aircraft_data = {"icao_hex": "A8AE7F", "registration": "N659DL", "type_designator": "B763"}
-        mock_redis.get.return_value = json.dumps(aircraft_data)
+        mock_redis.evalsha.return_value = json.dumps(aircraft_data)
 
         f = Flight(p._db)
         f.icao_hex = "A8AE7F"
         p._enrich_aircraft(f)
 
         assert f.aircraft["registration"] == "N659DL"
+        mock_redis.evalsha.assert_called_once_with("abc123sha", 0, "A8AE7F")
 
     def test_enrich_aircraft_increments_miss_on_cache_miss(self):
         p, mock_redis = self._make_processor()
-        mock_redis.get.return_value = None
+        mock_redis.evalsha.return_value = None
 
         f = Flight(p._db)
         f.icao_hex = "ZZZZZZ"
         p._enrich_aircraft(f)
 
         mock_redis.incr.assert_called()
-        # Should still set icao_hex on aircraft
         assert f.aircraft.get("icao_hex") == "ZZZZZZ"
+
+    def test_enrich_aircraft_no_registration_key_written(self):
+        p, mock_redis = self._make_processor()
+        aircraft_data = {"icao_hex": "A8AE7F", "registration": "N659DL"}
+        mock_redis.evalsha.return_value = json.dumps(aircraft_data)
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._enrich_aircraft(f)
+
+        for call in mock_redis.set.call_args_list:
+            assert not str(call).startswith("registration:")
 
     def test_enrich_operator_skips_us_tail_number(self):
         p, mock_redis = self._make_processor()
