@@ -30,7 +30,7 @@ sources:
 
   mictronics:
     description: "Mictronics global aircraft database — type designators, military/interesting flags, and operators"
-    url: "https://www.mictronics.de/aircraft-database/indexedDB.php"
+    url: "https://github.com/Mictronics/aircraft-database/raw/refs/heads/main/indexedDB.zip"
     format: zip+json
     cadence: weekly_tuesday
     files:
