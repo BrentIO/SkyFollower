@@ -6,15 +6,15 @@ Uses the UK CAA G-INFO REST API to enrich aircraft records already loaded
 by the Mictronics runner.  For each G-registered aircraft found in Redis
 the runner:
 
-  1. Scans Redis for icao_hex: keys in the UK ICAO hex range (400000-43FFFF).
+  1. Scans Redis for aircraft:simple: keys in the UK ICAO hex range (400000-43FFFF).
   2. Filters for records whose registration field starts with "G-".
   3. POSTs to /api/aircraft/search with the registration suffix to resolve the
      internal AircraftID.
   4. GETs /api/aircraft/details/{AircraftID} for the full payload.
-  5. Deep-merges the enrichment into the existing icao_hex:{hex} JSON key.
+  5. Writes the enrichment record to aircraft:detail:{hex} (fire-and-forget).
 
-Important: this runner can only enrich records that already exist in Redis
-(populated by the Mictronics runner).  Schedule it AFTER Mictronics.
+Important: this runner discovers aircraft via the Mictronics aircraft:simple:
+records.  Schedule it AFTER Mictronics.
 
 API base: https://ginfoapi.caa.co.uk  (no authentication required)
 """
@@ -38,7 +38,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import (
+    AIRCRAFT_DETAIL_SEARCH_INDEX,
+    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+    aircraft_detail_key,
+)
 
 logger = logging.getLogger("uk-caa")
 
@@ -64,7 +68,7 @@ _UK_CAA_POWERPLANT_FIELDS = [
     "$.powerplant.count",
     "$.powerplant.model",
 ]
-_UK_ICAO_SCAN_PATTERN = "icao_hex:4[0123]*"
+_UK_ICAO_SCAN_PATTERN = "aircraft:simple:4[0123]*"
 
 # Batch size for JSON mget calls when scanning Redis
 _SCAN_BATCH_SIZE = 500
@@ -181,7 +185,7 @@ def _parse_year_built(year: Optional[int]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _build_record(details: dict) -> Optional[dict]:
-    """Build the icao_hex:{hex} enrichment record from a G-INFO details payload."""
+    """Build the aircraft:detail:{hex} enrichment record from a G-INFO details payload."""
     aircraft_details = details.get("AircraftDetails", {})
 
     icao_addr = aircraft_details.get("ICAO24BitAircraftAddress") or {}
@@ -271,18 +275,18 @@ def _deep_merge(base: dict, update: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +309,7 @@ def get_uk_registrations(r: redis_lib.Redis) -> list[tuple[str, str, Optional[in
 
     def _flush_batch() -> None:
         reg_lists = r.json().mget(batch, "$.registration")
-        g_keys: list[str] = []
+        g_detail_keys: list[str] = []
         g_regs: list[str] = []
         g_hexes: list[str] = []
         for key, reg_list in zip(batch, reg_lists):
@@ -313,13 +317,13 @@ def get_uk_registrations(r: redis_lib.Redis) -> list[tuple[str, str, Optional[in
                 continue
             reg = reg_list[0]
             if reg and str(reg).upper().startswith("G-"):
-                hex_val = key[len("icao_hex:"):]
-                g_keys.append(key)
+                hex_val = key[len("aircraft:simple:"):]
+                g_detail_keys.append(aircraft_detail_key(hex_val))
                 g_regs.append(str(reg).upper())
                 g_hexes.append(hex_val.upper())
 
-        if g_keys:
-            fk_lists = r.json().mget(g_keys, '$["foreign_key"]')
+        if g_detail_keys:
+            fk_lists = r.json().mget(g_detail_keys, '$["foreign_key"]')
             for reg, hex_val, fk_list in zip(g_regs, g_hexes, fk_lists):
                 fk = fk_list[0] if fk_list else None
                 results.append((reg, hex_val, fk))
@@ -419,7 +423,7 @@ def _cleanup_stale_record(r: redis_lib.Redis, icao_hex: str) -> None:
     no longer exists in G-INFO.  Parent objects (aircraft, powerplant) are
     deleted only if no other fields remain after cleanup.
     """
-    key = icao_hex_key(icao_hex)
+    key = aircraft_detail_key(icao_hex)
     for path in ["$.foreign_key", "$.registrant"] + _UK_CAA_AIRCRAFT_FIELDS + _UK_CAA_POWERPLANT_FIELDS:
         try:
             r.json().delete(key, path)
@@ -542,7 +546,7 @@ def write_to_redis(
                     icao_hex_from_redis, registration, aircraft_id, exc,
                 )
                 try:
-                    r.json().set(icao_hex_key(icao_hex_from_redis), "$.foreign_key", aircraft_id)
+                    r.json().set(aircraft_detail_key(icao_hex_from_redis), "$.foreign_key", aircraft_id)
                 except Exception:
                     pass
                 errors += 1
@@ -568,12 +572,10 @@ def write_to_redis(
             continue
 
         record["foreign_key"] = aircraft_id
+        record["source"] = "uk-caa"
 
-        key = icao_hex_key(icao_hex_from_redis)
-        existing_list = r.json().mget([key], "$")
-        existing_raw = existing_list[0] if existing_list else None
-        merged = _deep_merge(existing_raw[0], record) if existing_raw else record
-        r.json().set(key, "$", merged)
+        key = aircraft_detail_key(icao_hex_from_redis)
+        r.json().set(key, "$", record)
         r.expire(key, ttl)
         count += 1
 

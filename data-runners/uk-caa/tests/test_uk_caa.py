@@ -385,8 +385,8 @@ class TestGetUkRegistrations:
 
     def test_returns_g_registrations(self):
         r = self._make_redis(
-            ["icao_hex:406B48"],
-            {"icao_hex:406B48": "G-VAHH"},
+            ["aircraft:simple:406B48"],
+            {"aircraft:simple:406B48": "G-VAHH"},
         )
         results = get_uk_registrations(r)
         regs = [reg for reg, _, _ in results]
@@ -394,8 +394,8 @@ class TestGetUkRegistrations:
 
     def test_filters_non_g_registrations(self):
         r = self._make_redis(
-            ["icao_hex:406B48", "icao_hex:400001"],
-            {"icao_hex:406B48": "N12345", "icao_hex:400001": "G-ABCD"},
+            ["aircraft:simple:406B48", "aircraft:simple:400001"],
+            {"aircraft:simple:406B48": "N12345", "aircraft:simple:400001": "G-ABCD"},
         )
         results = get_uk_registrations(r)
         regs = [reg for reg, _, _ in results]
@@ -404,43 +404,43 @@ class TestGetUkRegistrations:
 
     def test_icao_hex_uppercased(self):
         r = self._make_redis(
-            ["icao_hex:406b48"],
-            {"icao_hex:406b48": "G-VAHH"},
+            ["aircraft:simple:406b48"],
+            {"aircraft:simple:406b48": "G-VAHH"},
         )
         results = get_uk_registrations(r)
         assert results[0][1] == "406B48"
 
     def test_registration_uppercased(self):
         r = self._make_redis(
-            ["icao_hex:406B48"],
-            {"icao_hex:406B48": "g-vahh"},
+            ["aircraft:simple:406B48"],
+            {"aircraft:simple:406B48": "g-vahh"},
         )
         results = get_uk_registrations(r)
         assert results[0][0] == "G-VAHH"
 
     def test_missing_registration_skipped(self):
-        r = self._make_redis(["icao_hex:406B48"], {})
+        r = self._make_redis(["aircraft:simple:406B48"], {})
         results = get_uk_registrations(r)
         assert results == []
 
     def test_uses_uk_icao_scan_pattern(self):
         r = self._make_redis([], {})
         get_uk_registrations(r)
-        r.scan_iter.assert_called_once_with("icao_hex:4[0123]*")
+        r.scan_iter.assert_called_once_with("aircraft:simple:4[0123]*")
 
     def test_returns_cached_foreign_key(self):
         r = self._make_redis(
-            ["icao_hex:406B48"],
-            {"icao_hex:406B48": "G-VAHH"},
-            fk_map={"icao_hex:406B48": 66819},
+            ["aircraft:simple:406B48"],
+            {"aircraft:simple:406B48": "G-VAHH"},
+            fk_map={"aircraft:detail:406B48": 66819},
         )
         results = get_uk_registrations(r)
         assert results[0][2] == 66819
 
     def test_returns_none_foreign_key_when_absent(self):
         r = self._make_redis(
-            ["icao_hex:406B48"],
-            {"icao_hex:406B48": "G-VAHH"},
+            ["aircraft:simple:406B48"],
+            {"aircraft:simple:406B48": "G-VAHH"},
         )
         results = get_uk_registrations(r)
         assert results[0][2] is None
@@ -588,7 +588,7 @@ class TestWriteToRedis:
         with patch("time.sleep"):
             write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         key_arg = r.json.return_value.set.call_args.args[0]
-        assert key_arg == "icao_hex:406B48"
+        assert key_arg == "aircraft:detail:406B48"
 
     def test_slow_path_json_set_uses_root_path(self):
         r = self._make_redis()
@@ -602,18 +602,22 @@ class TestWriteToRedis:
         session = self._make_session(_make_details())
         with patch("time.sleep"):
             write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
-        r.expire.assert_called_once_with("icao_hex:406B48", REDIS_TTL)
+        r.expire.assert_called_once_with("aircraft:detail:406B48", REDIS_TTL)
 
-    def test_slow_path_merges_with_existing(self):
-        existing = {"icao_hex": "406B48", "military": False, "aircraft": {"wake_turbulence_category": "Heavy"}}
-        r = self._make_redis(existing=existing)
+    def test_slow_path_writes_source_field(self):
+        r = self._make_redis()
         session = self._make_session(_make_details())
         with patch("time.sleep"):
             write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
         written = r.json.return_value.set.call_args.args[2]
-        assert written["military"] is False
-        assert written["aircraft"]["wake_turbulence_category"] == "Heavy"
-        assert written["aircraft"]["manufacturer"] == "BOEING COMPANY"
+        assert written["source"] == "uk-caa"
+
+    def test_slow_path_fire_and_forget_no_mget(self):
+        r = self._make_redis()
+        session = self._make_session(_make_details())
+        with patch("time.sleep"):
+            write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
+        r.json.return_value.mget.assert_not_called()
 
     def test_slow_path_searches_by_icao_hex(self):
         r = self._make_redis()
@@ -689,7 +693,7 @@ class TestWriteToRedis:
             count = write_to_redis([("G-VAHH", "406B48", None)], r, session, REDIS_TTL, 0.1)
 
         assert count == 0
-        r.json.return_value.set.assert_called_once_with("icao_hex:406B48", "$.foreign_key", 66819)
+        r.json.return_value.set.assert_called_once_with("aircraft:detail:406B48", "$.foreign_key", 66819)
 
     # ------------------------------------------------------------------
     # Fast path (cached foreign_key)
