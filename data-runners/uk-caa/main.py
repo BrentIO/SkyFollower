@@ -289,6 +289,7 @@ def run_pipeline(
     count = 0
     skipped = 0
     errors = 0
+    retry_queue: list[int] = []
 
     for c1, c2 in product(_LETTERS, _LETTERS):
         prefix = f"{c1}{c2}"
@@ -309,6 +310,13 @@ def run_pipeline(
             try:
                 time.sleep(request_interval)
                 details = _get_aircraft_details(session, aircraft_id)
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 403:
+                    retry_queue.append(aircraft_id)
+                else:
+                    logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
+                    errors += 1
+                continue
             except Exception as exc:
                 logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
                 errors += 1
@@ -317,6 +325,34 @@ def run_pipeline(
             reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
             if reg_status != "Registered":
                 logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
+                skipped += 1
+                continue
+
+            record = _build_record(details)
+            if record is None:
+                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
+                errors += 1
+                continue
+
+            record["source"] = "uk-caa"
+            key = aircraft_detail_key(record["icao_hex"])
+            r.json().set(key, "$", record)
+            r.expire(key, ttl)
+            count += 1
+
+    if retry_queue:
+        logger.info("Retrying %d aircraft that returned 403 (500ms interval)...", len(retry_queue))
+        for aircraft_id in retry_queue:
+            time.sleep(0.5)
+            try:
+                details = _get_aircraft_details(session, aircraft_id)
+            except Exception as exc:
+                logger.warning("Retry failed for AircraftID=%d: %s", aircraft_id, exc)
+                errors += 1
+                continue
+
+            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+            if reg_status != "Registered":
                 skipped += 1
                 continue
 
