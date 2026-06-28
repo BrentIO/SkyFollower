@@ -3,7 +3,7 @@
 SkyFollower New Zealand CAA Data Runner
 
 Downloads the NZ CAA aircraft register CSV, normalises fields into the
-icao_hex:{hex} enrichment shape, deep-merges into Redis with a 14-day TTL,
+aircraft:detail:{hex} enrichment shape, writes to Redis with a 14-day TTL,
 publishes MQTT completion stats, then exits.
 
 Data source: https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv
@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_SEARCH_INDEX, icao_hex_key
+from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
 
 logger = logging.getLogger("nz-caa")
 
@@ -135,7 +135,7 @@ def _parse_address(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _build_record(row: dict) -> Optional[dict]:
-    """Build the icao_hex:{hex} JSON record from a CSV row. Returns None if no ICAO hex."""
+    """Build the aircraft:detail:{hex} JSON record from a CSV row. Returns None if no ICAO hex."""
     icao_hex = row.get("Mode S Code HEX", "").strip().upper()
     if not icao_hex:
         return None
@@ -179,37 +179,22 @@ def _build_record(row: dict) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts are merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
-    """Create the aircraft JSON search index if it does not already exist."""
+    """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["icao_hex:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -238,12 +223,9 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     batch: list[tuple[str, dict]] = []
 
     def _flush() -> None:
-        keys = [k for k, _ in batch]
-        existing_list = r.json().mget(keys, "$")
         pipe = r.pipeline()
-        for (key, new_record), existing_raw in zip(batch, existing_list):
-            merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
+        for key, record in batch:
+            pipe.json().set(key, "$", record)
             pipe.expire(key, ttl)
         pipe.execute()
 
@@ -251,7 +233,8 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record = _build_record(row)
         if record is None:
             continue
-        key = icao_hex_key(record["icao_hex"])
+        record["source"] = "nz-caa"
+        key = aircraft_detail_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
         if len(batch) == 10000:
