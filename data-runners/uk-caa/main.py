@@ -177,7 +177,7 @@ def _build_record(details: dict) -> Optional[dict]:
         "serial_number": (aircraft_details.get("SerialNumber") or "").strip() or None,
         "type_designator": (aircraft_details.get("ICAOAircraftTypeDesignator") or "").strip() or None,
         "manufactured_date": _parse_year_built(aircraft_details.get("YearBuild")),
-        "seats": int(max_pax) if max_pax is not None else None,
+        "seats": int(max_pax) + 1 if max_pax is not None else None,
     }
     aircraft: Optional[dict] = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 

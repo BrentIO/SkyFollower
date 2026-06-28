@@ -1142,6 +1142,10 @@ records:
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.MaximumPassengers
+                transform:
+                  type: add
+                  value: 1
+                  description: "MaximumPassengers counts passengers only (excludes pilot); +1 gives total seats. Accuracy for multi-crew transport category aircraft is unknown."
               - source: ch-bazl
                 endpoint: bulk
                 transform:

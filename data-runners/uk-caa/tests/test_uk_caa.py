@@ -268,7 +268,7 @@ class TestBuildRecord:
 
     def test_aircraft_seats(self):
         record = _build_record(_make_details(maximum_passengers=296))
-        assert record["aircraft"]["seats"] == 296
+        assert record["aircraft"]["seats"] == 297
 
     def test_aircraft_seats_none_when_absent(self):
         details = _make_details()
