@@ -43,7 +43,7 @@ _parse_seats = _mod._parse_seats
 _parse_engine_model = _mod._parse_engine_model
 _parse_registrant = _mod._parse_registrant
 _build_record = _mod._build_record
-_deep_merge = _mod._deep_merge
+_ensure_search_index = _mod._ensure_search_index
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.REDIS_TTL
@@ -86,13 +86,8 @@ def _make_row(
     }
 
 
-def _make_redis(existing=None):
-    r = MagicMock()
-    # r.json().mget([key], "$") returns [[dict]] when key exists, [None] otherwise
-    mget_result = [[existing]] if existing is not None else [None]
-    r.json.return_value.mget.return_value = mget_result
-    r.json.return_value.get.return_value = None
-    return r
+def _make_redis():
+    return MagicMock()
 
 
 # ---------------------------------------------------------------------------
@@ -354,30 +349,6 @@ class TestBuildRecord:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _deep_merge
-# ---------------------------------------------------------------------------
-
-class TestDeepMerge:
-    def test_update_wins_on_flat_key(self):
-        result = _deep_merge({"a": 1}, {"a": 2})
-        assert result["a"] == 2
-
-    def test_preserves_base_key_not_in_update(self):
-        result = _deep_merge({"a": 1, "b": 2}, {"a": 9})
-        assert result["b"] == 2
-
-    def test_nested_dicts_merged(self):
-        result = _deep_merge({"a": {"x": 1, "y": 2}}, {"a": {"y": 9}})
-        assert result["a"]["x"] == 1
-        assert result["a"]["y"] == 9
-
-    def test_base_not_mutated(self):
-        base = {"a": 1}
-        _deep_merge(base, {"a": 2})
-        assert base["a"] == 1
-
-
-# ---------------------------------------------------------------------------
 # Tests: write_to_redis
 # ---------------------------------------------------------------------------
 
@@ -402,7 +373,7 @@ class TestWriteToRedis:
         r = _make_redis()
         write_to_redis([_make_row(icao_hex="4B1916")], r, REDIS_TTL)
         key = r.json.return_value.set.call_args.args[0]
-        assert key == "icao_hex:4B1916"
+        assert key == "aircraft:detail:4B1916"
 
     def test_uses_root_json_path(self):
         r = _make_redis()
@@ -412,15 +383,13 @@ class TestWriteToRedis:
     def test_sets_ttl(self):
         r = _make_redis()
         write_to_redis([_make_row()], r, REDIS_TTL)
-        r.expire.assert_called_once_with("icao_hex:4B1916", REDIS_TTL)
+        r.expire.assert_called_once_with("aircraft:detail:4B1916", REDIS_TTL)
 
-    def test_merges_with_existing(self):
-        existing = {"icao_hex": "4B1916", "military": False}
-        r = _make_redis(existing=existing)
+    def test_source_field_set(self):
+        r = _make_redis()
         write_to_redis([_make_row()], r, REDIS_TTL)
         written = r.json.return_value.set.call_args.args[2]
-        assert written["military"] is False
-        assert written["registration"] == "HB-JNA"
+        assert written["source"] == "ch-bazl"
 
     def test_invalid_row_counts_as_error(self):
         r = _make_redis()
@@ -441,7 +410,33 @@ class TestWriteToRedis:
         r = _make_redis()
         write_to_redis([_make_row(icao_hex="4b1916")], r, REDIS_TTL)
         key = r.json.return_value.set.call_args.args[0]
-        assert key == "icao_hex:4B1916"
+        assert key == "aircraft:detail:4B1916"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _ensure_search_index
+# ---------------------------------------------------------------------------
+
+class TestEnsureSearchIndex:
+    def test_skips_create_when_index_exists(self):
+        r = MagicMock()
+        r.ft.return_value.info.return_value = {"index_name": "idx:aircraft:detail"}
+        _ensure_search_index(r)
+        r.ft.return_value.create_index.assert_not_called()
+
+    def test_creates_index_when_missing(self):
+        r = MagicMock()
+        r.ft.return_value.info.side_effect = Exception("Unknown index name")
+        _ensure_search_index(r)
+        r.ft.return_value.create_index.assert_called_once()
+
+    def test_create_index_uses_correct_prefix(self):
+        r = MagicMock()
+        r.ft.return_value.info.side_effect = Exception("Unknown index name")
+        _ensure_search_index(r)
+        call_kwargs = r.ft.return_value.create_index.call_args.kwargs
+        definition = call_kwargs["definition"]
+        assert "aircraft:detail:" in definition.args
 
 
 # ---------------------------------------------------------------------------

@@ -27,8 +27,10 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 import redis as redis_lib
 import requests
+from redis.commands.search.field import TagField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import icao_hex_key
+from shared.redis_keys import aircraft_detail_key, AIRCRAFT_DETAIL_SEARCH_INDEX
 
 logger = logging.getLogger("ch-bazl")
 
@@ -233,21 +235,6 @@ def _build_record(row: dict) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Record merge
-# ---------------------------------------------------------------------------
-
-def _deep_merge(base: dict, update: dict) -> dict:
-    """Merge update into base. update values win; nested dicts merged recursively."""
-    result = dict(base)
-    for k, v in update.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = _deep_merge(result[k], v)
-        else:
-            result[k] = v
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Redis writer
 # ---------------------------------------------------------------------------
 
@@ -271,12 +258,10 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             errors += 1
             continue
 
-        key = icao_hex_key(record["icao_hex"])
+        record["source"] = "ch-bazl"
+        key = aircraft_detail_key(record["icao_hex"])
         try:
-            existing_list = r.json().mget([key], "$")
-            existing_raw = existing_list[0] if existing_list else None
-            merged = _deep_merge(existing_raw[0], record) if existing_raw else record
-            r.json().set(key, "$", merged)
+            r.json().set(key, "$", record)
             r.expire(key, ttl)
             count += 1
         except Exception as exc:
@@ -289,6 +274,25 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
     return count
+
+
+# ---------------------------------------------------------------------------
+# Search index
+# ---------------------------------------------------------------------------
+
+def _ensure_search_index(r: redis_lib.Redis) -> None:
+    """Create the aircraft:detail JSON search index if it does not already exist."""
+    try:
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+    except Exception:
+        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+            fields=[
+                TagField("$.icao_hex", as_name="icao_hex"),
+                TagField("$.registration", as_name="registration"),
+            ],
+            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +414,7 @@ def main() -> None:
         port=rc.get("port", 6379),
         decode_responses=True,
     )
+    _ensure_search_index(r)
 
     ttl_days = cfg.get("redis_ttl_days", 14)
     ttl = ttl_days * 86400
