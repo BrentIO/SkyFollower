@@ -65,9 +65,12 @@ def _make_row(
     year="2016",
     serial="44582",
     mopsc="320",
+    minimum_crew="2",
     engine_category="Jet Engine",
+    engine_manufacturer="GE AVIATION",
     engine="GE90-115BL",
     owner="Swiss International Air Lines Ltd., Obstgartenstrasse 25, 8302 Kloten, Switzerland",
+    operator="Swiss International Air Lines Ltd., Obstgartenstrasse 25, 8302 Kloten, Switzerland",
 ) -> dict:
     return {
         " Registration": registration,
@@ -80,9 +83,12 @@ def _make_row(
         " Year of Manufacture": year,
         " Serial Number": serial,
         " MOPSC": mopsc,
+        " Minimum Crew": minimum_crew,
         " Engine Category": engine_category,
+        " Engine manufacturer": engine_manufacturer,
         " Engine": engine,
         " Main Owner": owner,
+        " Main Operator": operator,
     }
 
 
@@ -238,6 +244,28 @@ class TestParseEngineModel:
 
 
 # ---------------------------------------------------------------------------
+# Tests: download_register URL logging
+# ---------------------------------------------------------------------------
+
+class TestDownloadRegisterLogging:
+    def test_logs_api_url(self):
+        mock_response = MagicMock()
+        mock_response.content = (
+            " Registration; Aircraft Address HEX; Status\r\n"
+        ).encode("utf-16")
+        mock_session = MagicMock()
+        mock_session.post.return_value = mock_response
+
+        with patch("ch_bazl_main.logger") as mock_logger:
+            try:
+                _mod.download_register(mock_session)
+            except Exception:
+                pass
+            logged_messages = [str(c) for c in mock_logger.info.call_args_list]
+            assert any(_mod.API_URL in msg for msg in logged_messages)
+
+
+# ---------------------------------------------------------------------------
 # Tests: _parse_registrant
 # ---------------------------------------------------------------------------
 
@@ -274,6 +302,14 @@ class TestParseRegistrant:
 
     def test_na_returns_none(self):
         assert _parse_registrant("N/A") is None
+
+    def test_name_only_no_street(self):
+        raw = "Edelweiss Air AG, 8058 Zürich-Flughafen, Switzerland"
+        result = _parse_registrant(raw)
+        assert result["names"] == ["Edelweiss Air AG"]
+        assert "street" not in result
+        assert result["postal_code"] == "8058"
+        assert result["city"] == "Zürich-Flughafen"
 
     def test_country_always_ch(self):
         raw = "Swiss International Air Lines Ltd., Obstgartenstrasse 25, 8302 Kloten, Switzerland"
@@ -317,13 +353,29 @@ class TestBuildRecord:
         record = _build_record(_make_row())
         assert record["aircraft"]["serial_number"] == "44582"
 
-    def test_seats(self):
-        record = _build_record(_make_row(mopsc="320"))
+    def test_seats_mopsc_plus_crew(self):
+        record = _build_record(_make_row(mopsc="3", minimum_crew="1"))
+        assert record["aircraft"]["seats"] == 4
+
+    def test_seats_mopsc_only_when_no_crew(self):
+        record = _build_record(_make_row(mopsc="320", minimum_crew=""))
         assert record["aircraft"]["seats"] == 320
+
+    def test_seats_none_when_both_empty(self):
+        record = _build_record(_make_row(mopsc="", minimum_crew=""))
+        assert "seats" not in record.get("aircraft", {})
 
     def test_engine_type(self):
         record = _build_record(_make_row(engine_category="Jet Engine"))
         assert record["powerplant"]["type"] == "Turbo-jet"
+
+    def test_engine_manufacturer(self):
+        record = _build_record(_make_row(engine_manufacturer="AVCO LYCOMING"))
+        assert record["powerplant"]["manufacturer"] == "AVCO LYCOMING"
+
+    def test_engine_manufacturer_absent_when_empty(self):
+        record = _build_record(_make_row(engine_manufacturer=""))
+        assert "manufacturer" not in record.get("powerplant", {})
 
     def test_engine_model(self):
         record = _build_record(_make_row(engine="GE90-115BL"))
@@ -333,6 +385,16 @@ class TestBuildRecord:
         record = _build_record(_make_row())
         assert record["registrant"]["names"] == ["Swiss International Air Lines Ltd."]
 
+    def test_operator_populated(self):
+        record = _build_record(_make_row(
+            operator="Edelweiss Air AG, 8058 Zürich-Flughafen, Switzerland"
+        ))
+        assert record["operator"]["names"] == ["Edelweiss Air AG"]
+
+    def test_operator_absent_when_empty(self):
+        record = _build_record(_make_row(operator=""))
+        assert "operator" not in record
+
     def test_short_hex_returns_none(self):
         assert _build_record(_make_row(icao_hex="4B19")) is None
 
@@ -340,11 +402,11 @@ class TestBuildRecord:
         assert _build_record(_make_row(registration="")) is None
 
     def test_no_engine_omits_powerplant(self):
-        record = _build_record(_make_row(engine_category="", engine=""))
+        record = _build_record(_make_row(engine_category="", engine_manufacturer="", engine=""))
         assert "powerplant" not in record
 
     def test_glider_no_engine_omits_powerplant(self):
-        record = _build_record(_make_row(aircraft_type="Glider", engine_category="", engine=""))
+        record = _build_record(_make_row(aircraft_type="Glider", engine_category="", engine_manufacturer="", engine=""))
         assert "powerplant" not in record
 
 
