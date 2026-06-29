@@ -400,6 +400,27 @@ sources:
           "Registered Owners":    Owner name and address combined; name before first comma (registrant.names[0]), street address after first comma (registrant.street)
           "Aircraft Status":      Filter: skip rows where value is 'Deregistered'
 
+  es-aesa:
+    description: "Spain AESA (Agencia Estatal de Seguridad Aérea) aircraft register — EC-prefix registrations"
+    url: "https://www.seguridadaerea.gob.es/sites/default/files/aeronaves_inscritas.pdf"
+    format: pdf
+    cadence: weekly_thursday
+    notes: "Static PDF URL (~4 MB, ~314 pages, ~241 EC- records); pdfplumber extract_table() works reliably; header row repeats each page — data rows identified by EC- prefix in first column; no registrant data available; Nº serie value 'NO\\nDISPONIBLE' (with embedded newline) treated as null; Año cons. value 1900 is a placeholder for unknown year — omit manufactured_date; Clase column decoded to English aircraft type; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 340000–34FFFF"
+    files:
+      - name: aeronaves_inscritas.pdf
+        format: pdf_table
+        columns:
+          Matrícula:      Full EC-prefix registration mark
+          "Fecha matric.": Date of registration; not stored
+          Fabricante:     Manufacturer name (stored as aircraft.manufacturer)
+          Modelo:         Model/type designation (stored as aircraft.model)
+          "Nº serie":     Manufacturer serial number; omit if 'NO\\nDISPONIBLE'
+          "Año cons.":    Construction year; stored as YYYY-01-01 in aircraft.manufactured_date; omit if 1900
+          "Marca Motor":  Powerplant manufacturer (stored as aircraft.powerplant_manufacturer)
+          "Modelo Motor": Powerplant model (stored as aircraft.powerplant_model)
+          "Nº mot.":      Number of powerplants as integer (stored as aircraft.powerplant_count)
+          Clase:          Aircraft category; decoded — AVION→Airplane, HELICOPTERO (VTOL)→Helicopter, AUTOGIRO→Gyroplane, GLOBO→Balloon, PLANEADOR/MOTOPLANEADOR→Glider, ULM-AVION→Ultralight Airplane, ULM-AUTOGIRO→Ultralight Autogyro, AFI-AVION→Airplane
+
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
