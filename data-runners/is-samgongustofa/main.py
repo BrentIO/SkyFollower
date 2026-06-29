@@ -220,7 +220,7 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
 def download_register(session: requests.Session) -> list[dict]:
     """Fetch the Iceland aircraft register via Apollo Persisted Query."""
-    logger.info("Downloading Iceland Samgöngustofa aircraft register.")
+    logger.info("Downloading Iceland Samgöngustofa aircraft register from %s", API_URL)
     response = session.get(API_URL, timeout=60)
     if response.status_code != 200:
         raise RuntimeError(f"Download failed with HTTP {response.status_code}")
