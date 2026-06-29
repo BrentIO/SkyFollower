@@ -124,6 +124,7 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "Cessna, 172"
         assert record["aircraft"]["serial_number"] == "28-12345"
         assert record["registrant"]["names"] == ["Belize Air Ltd"]
+        assert record["registrant"]["city"] == "Belize City"
 
     def test_null_serial_em_dash_omitted(self):
         row = _make_row(serial="–")
@@ -155,18 +156,20 @@ class TestBuildRecord:
         record = _build_record(row, "0A0123", "V3-ABC")
         assert record["registrant"]["names"] == ["Private Owner"]
 
-    def test_empty_owner_omits_registrant(self):
-        row = _make_row(owner="")
+    def test_empty_owner_empty_address_omits_registrant(self):
+        row = _make_row(owner="", address="")
         record = _build_record(row, "0A0123", "V3-ABC")
         assert "registrant" not in record
 
-    def test_address_not_stored(self):
+    def test_address_stored_as_city(self):
         row = _make_row(address="Blue Creek, O/Walk")
         record = _build_record(row, "0A0123", "V3-ABC")
-        assert "address" not in record
-        registrant = record.get("registrant", {})
-        assert "street" not in registrant
-        assert "city" not in registrant
+        assert record["registrant"]["city"] == "Blue Creek, O/Walk"
+
+    def test_empty_address_omits_city(self):
+        row = _make_row(address="")
+        record = _build_record(row, "0A0123", "V3-ABC")
+        assert "city" not in record.get("registrant", {})
 
 
 # ---------------------------------------------------------------------------

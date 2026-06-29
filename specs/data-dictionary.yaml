@@ -371,7 +371,7 @@ sources:
     url: "https://www.civilaviation.gov.bz/index.php/bdca-civil-aircraft-register"
     format: html
     cadence: weekly_wednesday
-    notes: "Single static HTML table page; ~67 records; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; no deregistration column — all rows assumed active; Owner field may contain '(Charterer by Demise)' suffix — stripped before storing; serial number '–' (em-dash) treated as null; Address column (unstructured city/region text) not stored; ICAO hex range: 084000–084FFF"
+    notes: "Single static HTML table page; ~67 records; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; no deregistration column — all rows assumed active; Owner field may contain '(Charterer by Demise)' suffix — stripped before storing; serial number '–' (em-dash) treated as null; Address column (unstructured city/region text) stored as registrant.city; ICAO hex range: 084000–084FFF"
     files:
       - name: bdca-civil-aircraft-register (HTML page)
         format: html_table
@@ -380,7 +380,7 @@ sources:
           "Manufacturer, Model":  Combined manufacturer and model (stored as aircraft.model)
           "Serial Number":        Manufacturer serial number; '–' treated as null
           Owner:                  Registered owner name; '(Charterer by Demise)' suffix stripped
-          Address:                Unstructured city/region text; not stored
+          Address:                Unstructured city/region text; stored as registrant.city
 
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
