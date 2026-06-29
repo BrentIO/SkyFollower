@@ -58,6 +58,7 @@ services:
       - runner-is-samgongustofa
       - runner-lu-dac
       - runner-bz-bdca
+      - runner-im-ardis
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -237,6 +238,15 @@ services:
   runner-bz-bdca:
     image: ghcr.io/brentio/skyfollower-runner-bz-bdca:latest
     container_name: skyfollower-runner-bz-bdca
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-im-ardis:
+    image: ghcr.io/brentio/skyfollower-runner-im-ardis:latest
+    container_name: skyfollower-runner-im-ardis
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro

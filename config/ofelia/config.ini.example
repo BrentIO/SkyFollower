@@ -50,6 +50,10 @@ container = skyfollower-runner-nl-ilt
 schedule = 10 6 * * 4
 container = skyfollower-runner-ky-caa
 
+[job-run "runner-im-ardis"]
+schedule = 10 7 * * 4
+container = skyfollower-runner-im-ardis
+
 [job-run "runner-bs-caa"]
 schedule = 10 5 * * 5
 container = skyfollower-runner-bs-caa
