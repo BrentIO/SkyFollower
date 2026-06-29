@@ -122,7 +122,9 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                         if headers:
                             records.append(dict(zip(headers, cells)))
                     else:
-                        headers = cells
+                        # Normalize header newlines to spaces so column name
+                        # lookups match our constants.
+                        headers = [c.replace("\n", " ") for c in cells]
 
     logger.info("Parsed %d OM- rows from PDF.", len(records))
     return records
@@ -224,7 +226,7 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
                 icao_hex = doc.id.replace("aircraft:simple:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
-                    reg_map[registration] = icao_hex
+                    reg_map[_normalize_registration(registration)] = icao_hex
         except Exception as exc:
             logger.warning("RediSearch batch %d/%d failed: %s", batch_num + 1, total_batches, exc)
 

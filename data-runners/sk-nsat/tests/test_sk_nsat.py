@@ -209,6 +209,13 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 1
 
+    def test_redis_registration_with_spaces_normalized(self):
+        # If Mictronics stores "OM - 0101" (with spaces), we still match it.
+        rows = [_make_row(reg="OM - 0101")]
+        r = _make_redis_with_search(icao_hex="710ABC", registration="OM - 0101")
+        count = write_to_redis(rows, r, REDIS_TTL)
+        assert count == 1
+
     def test_empty_registration_skipped(self):
         rows = [_make_row(reg="")]
         r = _make_redis_with_search()
