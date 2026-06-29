@@ -90,8 +90,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     records: list[dict] = []
     headers: list[str] | None = None
     pages_no_table = 0
-    dropped_no_headers = 0
-    dropped_sample: list | None = None
+    non_ec_pages: list[tuple] = []  # (page_num, first_row_cells)
 
     with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
         logger.info("PDF has %d pages.", len(pdf.pages))
@@ -100,35 +99,36 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             if not table:
                 pages_no_table += 1
                 continue
-            if page_num == 89:
-                logger.info("Page 89 raw table (%d rows): %s", len(table), [[_cell(v) for v in r] for r in table if r])
+            page_ec_count = 0
             for row in table:
                 if not row:
                     continue
                 cells = [_cell(v) for v in row]
-                # Log any row containing "FTR" to locate EC-FTR in the PDF
-                if any("FTR" in c for c in cells):
-                    logger.info("Page %d: row containing FTR: %s", page_num, cells)
                 first = cells[0]
                 if first.startswith("EC-"):
+                    page_ec_count += 1
                     if headers:
                         records.append(dict(zip(headers, cells)))
-                    else:
-                        dropped_no_headers += 1
-                        if dropped_sample is None:
-                            dropped_sample = cells
-                            logger.warning(
-                                "Page %d: dropped EC- row before any header seen: %s",
-                                page_num, dropped_sample,
-                            )
                 else:
                     # Normalize header newlines to spaces so field lookups match
                     headers = [c.replace("\n", " ") for c in cells]
+            if page_ec_count == 0:
+                first_row = next(([_cell(v) for v in r] for r in table if r), [])
+                non_ec_pages.append((page_num, first_row))
 
     if pages_no_table:
         logger.warning("%d pages yielded no table from extract_table().", pages_no_table)
-    if dropped_no_headers:
-        logger.warning("%d EC- rows dropped because no header row had been seen yet.", dropped_no_headers)
+    if non_ec_pages:
+        logger.info(
+            "%d pages had tables but no EC- rows. First 5: %s",
+            len(non_ec_pages),
+            [(p, r[:3]) for p, r in non_ec_pages[:5]],
+        )
+        last5 = [(p, r[:3]) for p, r in non_ec_pages[-5:]]
+        logger.info("Last 5 non-EC pages: %s", last5)
+        p89 = [(p, r) for p, r in non_ec_pages if p == 89]
+        if p89:
+            logger.info("Page 89 is a non-EC page. First row: %s", p89[0][1])
     logger.info("Parsed %d EC- rows from PDF.", len(records))
     if records:
         logger.info("PDF column keys: %s", list(records[0].keys()))
