@@ -421,6 +421,25 @@ sources:
           "Nº mot.":      Number of powerplants as integer (stored as aircraft.powerplant_count)
           Clase:          Aircraft category; decoded — AVION→Airplane, HELICOPTERO (VTOL)→Helicopter, AUTOGIRO→Gyroplane, GLOBO→Balloon, PLANEADOR/MOTOPLANEADOR→Glider, ULM-AVION→Ultralight Airplane, ULM-AUTOGIRO→Ultralight Autogyro, AFI-AVION→Airplane
 
+  kr-koca:
+    description: "South Korea Korea Office of Civil Aviation (KOCA) aircraft register — HL-prefix registrations"
+    url: "http://atis.koca.go.kr/ATIS/aircraft/statListEn01.do?AIR_GUBUN=all"
+    format: json
+    cadence: weekly_tuesday
+    notes: "HTTP (not HTTPS) JSON datatable endpoint; browser User-Agent required — bare requests return Korean-language error page; ~907 records returned in single response; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; date format YY.MM.DD with pivot year 50 (>=50 → 19xx, <50 → 20xx); AIR_FLY_WEIGHT and AIR_LIMIT_MAN not stored; owner name (REG_CUSER) stored as UTF-8 Korean text; ICAO hex range: 71C000–71CFFF"
+    files:
+      - name: statListEn01.do (JSON datatable)
+        format: json
+        columns:
+          REG_SNO:       Full HL-prefix registration mark; used as registration lookup key
+          REG_CUSER:     Registered owner name (Korean UTF-8 text); stored as registrant.names[0]
+          AIR_TYPE:      Aircraft type/model free-text code (stored as aircraft.model)
+          AIR_BUILD_NO:  Manufacturer serial number (stored as aircraft.serial_number)
+          AIR_BUILD_DATE: Construction date in YY.MM.DD format; converted to YYYY-MM-DD using pivot year 50
+          REG_DATE:      Registration date; not stored
+          AIR_LIMIT_MAN: Maximum occupants; not stored
+          AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
+
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
