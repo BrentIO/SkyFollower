@@ -349,6 +349,23 @@ sources:
       operator.postcode:       Postal code
       operator.country:        Country name (Icelandic or English; mapped to ISO 3166-1 alpha-2)
 
+  lu-dac:
+    description: "Luxembourg Directorate of Civil Aviation (DAC) aircraft register — LX-prefix registrations"
+    url: "https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html"
+    format: pdf
+    cadence: weekly_wednesday
+    notes: "~20-page PDF, ~298 records; URL is date-stamped (relev-aronefs-DD-MM-YYYY.pdf) and changes with each update — runner scrapes the index page to discover the current link; pdfplumber.extract_table() does not correctly detect the 6th column — uses word-position extraction instead; column x0 boundaries: [44,98,256,421,489,639,842]; rows where immat starts with 'LX-' begin a new record; subsequent rows without LX- are continuation rows for multi-line cells; privacy placeholders excluded from registrant.names: EXPLOITANT PRIVÉ, PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ; Propriétaire omitted if identical to Exploitant; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics; must run after Mictronics; no address/city/country data available; ICAO hex range: 4A0000–4AFFFF"
+    files:
+      - name: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+        format: pdf
+        columns:
+          Immat:              Full LX-prefix registration mark
+          Constructeur:       Aircraft manufacturer (aircraft.manufacturer)
+          "Type d'aéronef":   Aircraft model designation (aircraft.model)
+          "SN aéronef":       Manufacturer serial number (aircraft.serial_number)
+          Exploitant:         Operator name (registrant.names[0]); omit if EXPLOITANT PRIVÉ
+          Propriétaire:       Owner name (registrant.names[1]); omit if PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ, or identical to Exploitant
+
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"

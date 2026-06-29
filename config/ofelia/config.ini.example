@@ -30,6 +30,10 @@ container = skyfollower-runner-br-anac
 schedule = 10 9 * * 3
 container = skyfollower-runner-is-samgongustofa
 
+[job-run "runner-lu-dac"]
+schedule = 10 10 * * 3
+container = skyfollower-runner-lu-dac
+
 [job-run "runner-au-casa"]
 schedule = 10 7 * * 2
 container = skyfollower-runner-au-casa
