@@ -60,7 +60,7 @@ def _make_row(
         "MANUFACT.": manufacturer,
         "MODEL": model,
         "S/N": serial,
-        "OWNER/OPERATOR": owner,
+        "OWNER /OPERATOR": owner,
         "D.O.R": dor,
     }
 
