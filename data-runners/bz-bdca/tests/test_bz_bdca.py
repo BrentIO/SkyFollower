@@ -125,6 +125,7 @@ class TestBuildRecord:
         assert record["aircraft"]["serial_number"] == "28-12345"
         assert record["registrant"]["names"] == ["Belize Air Ltd"]
         assert record["registrant"]["city"] == "Belize City"
+        assert "street" not in record["registrant"]
 
     def test_null_serial_em_dash_omitted(self):
         row = _make_row(serial="–")
@@ -161,10 +162,23 @@ class TestBuildRecord:
         record = _build_record(row, "0A0123", "V3-ABC")
         assert "registrant" not in record
 
-    def test_address_stored_as_city(self):
+    def test_address_with_comma_splits_street_and_city(self):
         row = _make_row(address="Blue Creek, O/Walk")
         record = _build_record(row, "0A0123", "V3-ABC")
-        assert record["registrant"]["city"] == "Blue Creek, O/Walk"
+        assert record["registrant"]["street"] == ["Blue Creek"]
+        assert record["registrant"]["city"] == "O/Walk"
+
+    def test_address_without_comma_stored_as_city_only(self):
+        row = _make_row(address="Belize City")
+        record = _build_record(row, "0A0123", "V3-ABC")
+        assert record["registrant"]["city"] == "Belize City"
+        assert "street" not in record["registrant"]
+
+    def test_address_comma_no_street_stored_as_city_only(self):
+        row = _make_row(address=", Belize City")
+        record = _build_record(row, "0A0123", "V3-ABC")
+        assert record["registrant"]["city"] == "Belize City"
+        assert "street" not in record["registrant"]
 
     def test_empty_address_omits_city(self):
         row = _make_row(address="")

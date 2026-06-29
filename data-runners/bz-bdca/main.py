@@ -131,7 +131,16 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
     address = row.get("Address", "").strip()
     if address:
-        registrant_fields["city"] = address
+        if "," in address:
+            street_part, city_part = address.split(",", 1)
+            street_part = street_part.strip()
+            city_part = city_part.strip()
+            if street_part:
+                registrant_fields["street"] = [street_part]
+            if city_part:
+                registrant_fields["city"] = city_part
+        else:
+            registrant_fields["city"] = address
 
     record: dict = {
         "icao_hex": icao_hex,
