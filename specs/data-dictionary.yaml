@@ -440,6 +440,20 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  rs-cad:
+    description: "Serbia CAD (Civil Aviation Directorate) aircraft register — YU-prefix registrations"
+    url: "https://apps.cad.gov.rs/ords/dcvws/regvaz/site/listAircraft"
+    format: json
+    cadence: weekly_tuesday
+    notes: "REST JSON API; single call with limit=10000 covers all ~550 records; no auth required; SSL certificate has untrusted issuer chain — verify=False used; items[] array in response; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C7FFF"
+    fields:
+      registarska_oznaka:  Registration mark in YU-prefix format
+      "proizvođač":        Manufacturer name (stored as aircraft.manufacturer)
+      proizvođačka_oznaka: Model designation (stored as aircraft.model)
+      serijski_broj:       Manufacturer serial number (stored as aircraft.serial_number)
+      korisnik:            Operator/user (stored as registrant.names[0])
+      vrsta_vazduhoplova:  Aircraft type category; decoded — Avion→Airplane, Balon→Balloon, Helikopter→Helicopter, Jedrilica→Glider, Motorna jedrilica→Glider, Motorni zmaj→Weight-Shift-Control, Žirokopter→Gyroplane
+
   sg-caas:
     description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"
     url: "https://www.caas.gov.sg/industry/aircraft-operators/certificate-of-registration/"
