@@ -78,7 +78,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     header_cells = rows[0].find_all(["th", "td"])
     headers = [cell.get_text(strip=True) for cell in header_cells]
-    logger.debug("Headers: %s", headers)
+    logger.info("Table headers: %s", headers)
 
     records: list[dict] = []
     for row in rows[1:]:
@@ -89,6 +89,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
         row_dict = dict(zip(headers, values))
         records.append(row_dict)
 
+    if records:
+        logger.info("First row sample: %s", records[0])
     logger.info("Parsed %d rows from register.", len(records))
     return records
 
