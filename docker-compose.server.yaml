@@ -55,6 +55,7 @@ services:
       - runner-ky-caa
       - runner-uk-caa
       - runner-br-anac
+      - runner-is-samgongustofa
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -207,6 +208,15 @@ services:
   runner-uk-caa:
     image: ghcr.io/brentio/skyfollower-runner-uk-caa:latest
     container_name: skyfollower-runner-uk-caa
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-is-samgongustofa:
+    image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa:latest
+    container_name: skyfollower-runner-is-samgongustofa
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
