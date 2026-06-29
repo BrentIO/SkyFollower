@@ -9,6 +9,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
 # Module import
@@ -36,6 +37,7 @@ def _load_main():
 _mod = _load_main()
 
 _build_record = _mod._build_record
+_header_text = _mod._header_text
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.REDIS_TTL
@@ -68,6 +70,30 @@ def _make_row(
 
 def _make_redis() -> MagicMock:
     return MagicMock()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _header_text
+# ---------------------------------------------------------------------------
+
+class TestHeaderText:
+    def _cell(self, html: str):
+        return BeautifulSoup(html, "lxml").find("th")
+
+    def test_plain_header_unchanged(self):
+        cell = self._cell("<th>Aircraft Manufacturer</th>")
+        assert _header_text(cell) == "Aircraft Manufacturer"
+
+    def test_strips_sort_link_text(self):
+        # ARDIS wraps sort links in <a>; get_text() would concatenate both
+        cell = self._cell(
+            '<th><a href="#">Sort column by Registration Mark</a>Registration Mark</th>'
+        )
+        assert _header_text(cell) == "Registration Mark"
+
+    def test_falls_back_to_get_text_if_no_direct_text(self):
+        cell = self._cell('<th><span>Mode S Number</span></th>')
+        assert _header_text(cell) == "Mode S Number"
 
 
 # ---------------------------------------------------------------------------

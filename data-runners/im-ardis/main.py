@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 import redis as redis_lib
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -92,6 +92,20 @@ _POST_DATA = {
 # Download + parse
 # ---------------------------------------------------------------------------
 
+def _header_text(cell) -> str:
+    """Extract column header text from a <th>/<td>, ignoring child <a> elements.
+
+    ARDIS wraps sort links in <a> tags inside header cells, causing get_text()
+    to concatenate the link text with the column name (e.g. 'Sort column by
+    Registration MarkRegistration Mark'). Taking only NavigableString children
+    of the cell yields just the bare column name.
+    """
+    direct = "".join(
+        str(node) for node in cell.children if isinstance(node, NavigableString)
+    ).strip()
+    return direct if direct else cell.get_text(strip=True)
+
+
 def _fetch_token(session: requests.Session) -> str:
     """GET the search page and extract the CSRF verification token."""
     logger.info("Fetching CSRF token from %s", SEARCH_URL)
@@ -127,7 +141,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
         raise RuntimeError("Results table on ARDIS page is empty.")
 
     header_cells = rows[0].find_all(["th", "td"])
-    headers = [cell.get_text(strip=True) for cell in header_cells]
+    headers = [_header_text(cell) for cell in header_cells]
     logger.info("Table headers: %s", headers)
 
     records: list[dict] = []
