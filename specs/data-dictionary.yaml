@@ -326,6 +326,29 @@ sources:
         path: "/lfa-publish-service/v2/oenfl/luftfahrzeuge?page=0&size=10000"
         description: "Full register download; returns flat JSON array; all active registered aircraft in one page"
 
+  is-samgongustofa:
+    description: "Iceland Samgöngustofa (Transport Authority) aircraft register — TF-prefix registrations"
+    url: "https://island.is/api/graphql"
+    format: api
+    cadence: weekly_wednesday
+    notes: "Apollo Persisted Query (GET with operationName=GetAllAircrafts, pageSize=10000); returns all active registered TF- aircraft in a single response (~355 records); no ICAO hex — icao_hex resolved via RediSearch reverse-lookup by TF- registration against Mictronics records; must run after Mictronics; registration mark stored in 'identifiers' field; operator object may be null; productionYear=0 treated as absent; country names are Icelandic (Ísland) and are mapped to ISO 3166-1 alpha-2"
+    endpoints:
+      bulk:
+        method: GET
+        path: "/api/graphql?operationName=GetAllAircrafts&variables=%7B%22input%22%3A%7B%22pageNumber%22%3A1%2C%22pageSize%22%3A10000%7D%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22e2fc04031e25ffd8532d5f917192aefc40a2e2407b113cc1b264c7ecb852a819%22%7D%7D"
+        description: "Full register download via Apollo Persisted Query; returns all active registered aircraft"
+        response_path: "data.aircraftRegistryAllAircrafts.aircrafts"
+    fields:
+      identifiers:             Full TF-prefix registration mark
+      type:                    Aircraft model/type name (stored as aircraft.model)
+      serialNumber:            Manufacturer serial number
+      productionYear:          Year of manufacture (integer; 0 = absent)
+      operator.name:           Registered operator/owner name
+      operator.address:        Street address
+      operator.city:           City
+      operator.postcode:       Postal code
+      operator.country:        Country name (Icelandic or English; mapped to ISO 3166-1 alpha-2)
+
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
