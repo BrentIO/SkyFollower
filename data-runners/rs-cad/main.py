@@ -56,6 +56,16 @@ _FIELD_MODEL = "proizvođačka_oznaka"
 _FIELD_SERIAL = "serijski_broj"
 _FIELD_OPERATOR = "korisnik"
 
+_TYPE_MAP: dict[str, str] = {
+    "Avion": "Airplane",
+    "Balon": "Balloon",
+    "Helikopter": "Helicopter",
+    "Jedrilica": "Glider",
+    "Motorna jedrilica": "Motor Glider",
+    "Motorni zmaj": "Powered Hang Glider",
+    "Žirokopter": "Gyroplane",
+}
+
 
 # ---------------------------------------------------------------------------
 # Download + parse
@@ -87,9 +97,9 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     aircraft_fields: dict = {}
     registrant_fields: dict = {}
 
-    type_ = str(row.get(_FIELD_TYPE, "") or "").strip()
-    if type_:
-        aircraft_fields["type"] = type_
+    type_raw = str(row.get(_FIELD_TYPE, "") or "").strip()
+    if type_raw:
+        aircraft_fields["type"] = _TYPE_MAP.get(type_raw, type_raw)
 
     manufacturer = str(row.get(_FIELD_MANUFACTURER, "") or "").strip()
     if manufacturer:

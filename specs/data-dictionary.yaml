@@ -452,7 +452,7 @@ sources:
       proizvođačka_oznaka: Model designation (stored as aircraft.model)
       serijski_broj:       Manufacturer serial number (stored as aircraft.serial_number)
       korisnik:            Operator/user (stored as registrant.names[0])
-      vrsta_vazduhoplova:  Aircraft type category in Serbian (Helikopter, Avion, etc.); stored as aircraft.type
+      vrsta_vazduhoplova:  Aircraft type category; decoded to canonical English — Avion→Airplane, Balon→Balloon, Helikopter→Helicopter, Jedrilica→Glider, "Motorna jedrilica"→Motor Glider, "Motorni zmaj"→Powered Hang Glider, Žirokopter→Gyroplane; stored as aircraft.type
 
   sg-caas:
     description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"

@@ -165,16 +165,31 @@ class TestBuildRecord:
         assert record["icao_hex"] == "4C0A3E"
         assert record["registration"] == "YU-HRD"
         assert record["source"] == "rs-cad"
-        assert record["aircraft"]["type"] == "Helikopter"
+        assert record["aircraft"]["type"] == "Helicopter"
         assert record["aircraft"]["manufacturer"] == "Agusta Westland S.p.A."
         assert record["aircraft"]["model"] == "AW109SP"
         assert record["aircraft"]["serial_number"] == "22280"
         assert record["registrant"]["names"] == ["Kompanija Takovo d.o.o. Gornji Milanovac"]
 
-    def test_vrsta_stored_as_type(self):
-        row = _make_row(vrsta="Avion")
+    def test_type_decoded_to_english(self):
+        mappings = [
+            ("Avion", "Airplane"),
+            ("Balon", "Balloon"),
+            ("Helikopter", "Helicopter"),
+            ("Jedrilica", "Glider"),
+            ("Motorna jedrilica", "Motor Glider"),
+            ("Motorni zmaj", "Powered Hang Glider"),
+            ("Žirokopter", "Gyroplane"),
+        ]
+        for serbian, english in mappings:
+            row = _make_row(vrsta=serbian)
+            record = _build_record(row, "4C0A3E", "YU-HRD")
+            assert record["aircraft"]["type"] == english, f"{serbian!r} should decode to {english!r}"
+
+    def test_unknown_type_stored_as_is(self):
+        row = _make_row(vrsta="Nepoznato")
         record = _build_record(row, "4C0A3E", "YU-HRD")
-        assert record["aircraft"]["type"] == "Avion"
+        assert record["aircraft"]["type"] == "Nepoznato"
 
     def test_empty_vrsta_omits_type(self):
         row = _make_row(vrsta="")
