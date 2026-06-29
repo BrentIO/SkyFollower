@@ -67,13 +67,22 @@ def download_and_parse(session: requests.Session) -> list[dict]:
         raise RuntimeError(f"Download failed with HTTP {resp.status_code}")
 
     soup = BeautifulSoup(resp.text, "lxml")
-    table = soup.find("table")
+
+    # The page contains several navigation tables before the register table.
+    # Find the one whose first row contains "Registration Number".
+    table = None
+    for candidate in soup.find_all("table"):
+        first_row = candidate.find("tr")
+        if first_row and "Registration Number" in first_row.get_text():
+            table = candidate
+            break
+
     if table is None:
-        raise RuntimeError("No table found on Belize BDCA register page.")
+        raise RuntimeError("Could not find aircraft register table on Belize BDCA page.")
 
     rows = table.find_all("tr")
     if not rows:
-        raise RuntimeError("Table on Belize BDCA register page is empty.")
+        raise RuntimeError("Register table on Belize BDCA register page is empty.")
 
     # Extract header names from first row
     header_cells = rows[0].find_all(["th", "td"])
