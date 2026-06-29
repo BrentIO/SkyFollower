@@ -64,7 +64,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch the KOCA register JSON and return the data array."""
     logger.info("Downloading South Korea KOCA aircraft register from %s", REGISTER_URL)
     resp = session.get(REGISTER_URL, timeout=60)
-    if resp.status_code != 200:
+    if not resp.ok:
         raise RuntimeError(f"Download failed with HTTP {resp.status_code}")
 
     payload = resp.json()
