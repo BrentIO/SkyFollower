@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 import redis as redis_lib
 import requests
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -37,6 +38,11 @@ REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/im-ardis"
 
 _STATUS_DEREGISTERED = "Deregistered"
+
+# ARDIS header cells contain a sort link whose text is "Sort column by X"
+# concatenated with the actual column name X, yielding "Sort column by XX".
+# The backreference strips that prefix leaving just X.
+_SORT_HEADER_RE = re.compile(r"^Sort column by (.+)\1$")
 
 _POST_DATA = {
     "prs_rm__ptt": "8",
@@ -93,17 +99,15 @@ _POST_DATA = {
 # ---------------------------------------------------------------------------
 
 def _header_text(cell) -> str:
-    """Extract column header text from a <th>/<td>, ignoring child <a> elements.
+    """Extract column header text, stripping ARDIS sort-link prefix if present.
 
-    ARDIS wraps sort links in <a> tags inside header cells, causing get_text()
-    to concatenate the link text with the column name (e.g. 'Sort column by
-    Registration MarkRegistration Mark'). Taking only NavigableString children
-    of the cell yields just the bare column name.
+    ARDIS header cells contain a sort link whose get_text() concatenates as
+    'Sort column by Registration MarkRegistration Mark'. The regex uses a
+    backreference to detect this pattern and extract just the column name.
     """
-    direct = "".join(
-        str(node) for node in cell.children if isinstance(node, NavigableString)
-    ).strip()
-    return direct if direct else cell.get_text(strip=True)
+    text = cell.get_text(strip=True)
+    m = _SORT_HEADER_RE.match(text)
+    return m.group(1) if m else text
 
 
 def _fetch_token(session: requests.Session) -> str:

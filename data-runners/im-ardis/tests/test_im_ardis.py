@@ -9,7 +9,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup  # noqa: used in TestHeaderText
 
 # ---------------------------------------------------------------------------
 # Module import
