@@ -94,6 +94,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     dropped_sample: list | None = None
 
     with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+        logger.info("PDF has %d pages.", len(pdf.pages))
         for page_num, page in enumerate(pdf.pages, start=1):
             table = page.extract_table()
             if not table:
