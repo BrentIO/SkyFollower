@@ -69,14 +69,17 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     try:
         payload = resp.json()
+        # The KOCA endpoint double-encodes: the outer JSON value is a string
+        # containing the real JSON object, so parse once more if needed.
+        if isinstance(payload, str):
+            payload = json.loads(payload)
     except Exception:
         logger.error("Response is not valid JSON. Content-Type: %s. Body (first 500 chars): %s",
                      resp.headers.get("Content-Type"), resp.text[:500])
         raise
 
     if not isinstance(payload, dict):
-        logger.error("Unexpected JSON type %s. Body (first 500 chars): %s",
-                     type(payload).__name__, resp.text[:500])
+        logger.error("Unexpected JSON type %s after double-decode.", type(payload).__name__)
         raise RuntimeError(f"Expected JSON object, got {type(payload).__name__}")
 
     records = payload.get("data", [])
