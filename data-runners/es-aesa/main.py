@@ -100,6 +100,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             if not table:
                 pages_no_table += 1
                 continue
+            if page_num == 89:
+                logger.info("Page 89 raw table (%d rows): %s", len(table), [[_cell(v) for v in r] for r in table if r])
             for row in table:
                 if not row:
                     continue
