@@ -440,6 +440,24 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  sg-caas:
+    description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"
+    url: "https://www.caas.gov.sg/industry/aircraft-operators/certificate-of-registration/"
+    format: xlsx
+    cadence: monthly
+    notes: "xlsx URL is monthly-updated and discovered by scraping the CAAS index page each run — UUID component changes monthly; CDN host isomer-user-content.by.gov.sg requires browser User-Agent and Referer: https://www.caas.gov.sg/ header; ~242 records; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 760000–76FFFF"
+    files:
+      - name: "Aircraft-Register-as-at-{MonYYYY}.xlsx (date-stamped, discovered via index page)"
+        format: xlsx
+        columns:
+          "Aircraft Registration": Registration mark in 9V-prefix format
+          "Aircraft S/N":          Manufacturer serial number (stored as aircraft.serial_number)
+          "Aircraft Model":        Model designation (stored as aircraft.model)
+          "Operator":              Registered operator (stored as registrant.names[0])
+          "Aircraft Manufacturer": Manufacturer name (stored as aircraft.manufacturer)
+          "Engine Model":          Engine model designation (stored as aircraft.powerplant_model)
+          "Engine Manufacturer":   Engine manufacturer name (stored as aircraft.powerplant_manufacturer)
+
   sk-nsat:
     description: "Slovakia NSAT (Národný bezpečnostný úrad pre letectvo) aircraft register — OM-prefix registrations"
     url: "https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/"
