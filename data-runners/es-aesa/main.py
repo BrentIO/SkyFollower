@@ -99,6 +99,14 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                     headers = [_cell(v) for v in row]
 
     logger.info("Parsed %d EC- rows from PDF.", len(records))
+    if records:
+        logger.info("PDF column keys: %s", list(records[0].keys()))
+        registrations = [r.get("Matrícula", "") for r in records]
+        logger.info("First 5 registrations: %s", registrations[:5])
+        if "EC-FTR" in registrations:
+            logger.info("EC-FTR found in parsed rows.")
+        else:
+            logger.warning("EC-FTR NOT found in parsed rows — may be absent from PDF.")
     return records
 
 
@@ -239,11 +247,15 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Spain AESA data to aircraft:detail keys in Redis. Returns count written."""
     reg_row_map: dict[str, dict] = {}
+    skipped = 0
     for row in rows:
         reg = row.get("Matrícula", "").strip()
         if not reg:
+            skipped += 1
             continue
         reg_row_map[reg] = row
+    if skipped:
+        logger.warning("%d rows skipped due to empty Matrícula — possible column key mismatch.", skipped)
 
     registrations = list(reg_row_map.keys())
     logger.info("Looking up %d registrations in Redis search index.", len(registrations))
