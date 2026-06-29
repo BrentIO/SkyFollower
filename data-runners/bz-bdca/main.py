@@ -61,7 +61,7 @@ _NULL_SERIAL = frozenset(["–", "-", ""])
 
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch the Belize BDCA register page and parse the HTML table."""
-    logger.info("Downloading Belize BDCA civil aircraft register.")
+    logger.info("Downloading Belize BDCA civil aircraft register from %s", REGISTER_URL)
     resp = session.get(REGISTER_URL, timeout=60)
     if resp.status_code != 200:
         raise RuntimeError(f"Download failed with HTTP {resp.status_code}")
