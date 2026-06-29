@@ -114,9 +114,10 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                     if not row:
                         continue
                     cells = [(v or "").strip() for v in row]
-                    first = cells[0] if cells else ""
-                    # Data rows have a registration in the normalized OM- format
-                    normalized = _normalize_registration(first)
+                    # Registration is the second column (Poznávacia značka);
+                    # data rows have a value normalizing to OM-XXXX there.
+                    reg_cell = cells[1] if len(cells) > 1 else ""
+                    normalized = _normalize_registration(reg_cell)
                     if normalized.startswith("OM-"):
                         if headers:
                             records.append(dict(zip(headers, cells)))
