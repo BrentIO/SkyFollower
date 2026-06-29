@@ -120,10 +120,17 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                     normalized = _normalize_registration(reg_cell)
                     if normalized.startswith("OM-"):
                         if headers:
-                            records.append(dict(zip(headers, cells)))
+                            record = dict(zip(headers, cells))
+                            # Force positional column values under our constant
+                            # keys to avoid pdfplumber Unicode/newline encoding
+                            # mismatches between the PDF header and our constants.
+                            record[_COL_REGISTRATION] = reg_cell
+                            record[_COL_TYPE] = cells[0] if len(cells) > 0 else ""
+                            record[_COL_SERIAL] = cells[2] if len(cells) > 2 else ""
+                            record[_COL_OWNER] = cells[3] if len(cells) > 3 else ""
+                            record[_COL_OPERATOR] = cells[4] if len(cells) > 4 else ""
+                            records.append(record)
                     else:
-                        # Normalize header newlines to spaces so column name
-                        # lookups match our constants.
                         headers = [c.replace("\n", " ") for c in cells]
 
     logger.info("Parsed %d OM- rows from PDF.", len(records))
