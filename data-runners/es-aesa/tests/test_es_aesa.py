@@ -131,6 +131,17 @@ class TestCell:
     def test_plain_string(self):
         assert _cell("EC-ABC") == "EC-ABC"
 
+    def test_non_breaking_hyphen_normalized(self):
+        # U+2011 non-breaking hyphen → ASCII hyphen
+        assert _cell("EC‑FTR") == "EC-FTR"
+
+    def test_en_dash_normalized(self):
+        assert _cell("EC–FTR") == "EC-FTR"
+
+    def test_soft_hyphen_normalized(self):
+        # U+00AD soft hyphen
+        assert _cell("EC­FTR") == "EC-FTR"
+
 
 # ---------------------------------------------------------------------------
 # Tests: _decode_clase

@@ -52,6 +52,13 @@ BATCH_SIZE = 100
 
 _NO_SERIAL = "NO\nDISPONIBLE"
 
+# pdfplumber sometimes extracts Unicode hyphen variants instead of ASCII '-'.
+# Normalize them all so EC- prefix checks and RediSearch lookups work correctly.
+_UNICODE_HYPHENS = str.maketrans(
+    "‐‑‒–—−­",
+    "-------",
+)
+
 _CLASE_MAP = {
     "AVION": "Airplane",
     "HELICOPTERO (VTOL)": "Helicopter",
@@ -69,8 +76,8 @@ _CLASE_MAP = {
 # ---------------------------------------------------------------------------
 
 def _cell(value) -> str:
-    """Normalize a PDF cell value to a stripped string."""
-    return (value or "").strip()
+    """Normalize a PDF cell value: strip whitespace and unify Unicode hyphens."""
+    return (value or "").strip().translate(_UNICODE_HYPHENS)
 
 
 def download_and_parse(session: requests.Session) -> list[dict]:
