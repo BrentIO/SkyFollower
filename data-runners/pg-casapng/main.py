@@ -61,6 +61,10 @@ _COL_ADDRESS = 4
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+_COUNTRY_NORMALIZE: dict[str, str] = {
+    "PNG": "Papua New Guinea",
+}
+
 
 # ---------------------------------------------------------------------------
 # Download + parse
@@ -140,9 +144,19 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if operator:
         registrant_fields["names"] = [operator]
 
-    address = _WHITESPACE_RE.sub(" ", row.get("address", "").strip())
-    if address:
-        registrant_fields["street"] = address
+    raw_address = _WHITESPACE_RE.sub(" ", row.get("address", "").strip())
+    if raw_address:
+        parts = [p.strip() for p in raw_address.split(",")]
+        if len(parts) > 1:
+            country_raw = parts[-1]
+            country = _COUNTRY_NORMALIZE.get(country_raw, country_raw)
+            street = ", ".join(p for p in parts[:-1] if p)
+            if country:
+                registrant_fields["country"] = country
+        else:
+            street = parts[0]
+        if street:
+            registrant_fields["street"] = street
 
     record: dict = {
         "icao_hex": icao_hex,

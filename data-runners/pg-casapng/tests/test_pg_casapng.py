@@ -53,7 +53,7 @@ def _make_row(
     manufacturer="Cessna",
     model="172S",
     operator="Air Niugini",
-    address="PO Box 7186\nBoroko NCD",
+    address="PO Box 7186, Boroko NCD, PNG",
 ) -> dict:
     return {
         "registration": reg,
@@ -105,16 +105,31 @@ class TestBuildRecord:
         assert record["aircraft"]["manufacturer"] == "Cessna"
         assert record["aircraft"]["model"] == "172S"
         assert record["registrant"]["names"] == ["Air Niugini"]
+        assert record["registrant"]["street"] == "PO Box 7186, Boroko NCD"
+        assert record["registrant"]["country"] == "Papua New Guinea"
 
-    def test_address_newlines_replaced_with_space(self):
-        row = _make_row(address="PO Box 7186\nBoroko NCD")
+    def test_png_country_normalized(self):
+        row = _make_row(address="PO Box 1, Port Moresby, PNG")
         record = _build_record(row, "898A00", "P2-ANG")
-        assert record["registrant"]["street"] == "PO Box 7186 Boroko NCD"
+        assert record["registrant"]["country"] == "Papua New Guinea"
 
-    def test_address_multiple_whitespace_collapsed(self):
-        row = _make_row(address="123  Main  St")
+    def test_foreign_country_stored_as_is(self):
+        row = _make_row(address="123 Smith St, Brisbane, AUSTRALIA")
         record = _build_record(row, "898A00", "P2-ANG")
-        assert record["registrant"]["street"] == "123 Main St"
+        assert record["registrant"]["country"] == "AUSTRALIA"
+        assert record["registrant"]["street"] == "123 Smith St, Brisbane"
+
+    def test_address_newlines_collapsed_before_split(self):
+        row = _make_row(address="WEST NEW\nBRITAIN PROVINCE, PNG")
+        record = _build_record(row, "898A00", "P2-ANG")
+        assert record["registrant"]["street"] == "WEST NEW BRITAIN PROVINCE"
+        assert record["registrant"]["country"] == "Papua New Guinea"
+
+    def test_address_no_comma_treated_as_street_only(self):
+        row = _make_row(address="Port Moresby")
+        record = _build_record(row, "898A00", "P2-ANG")
+        assert record["registrant"]["street"] == "Port Moresby"
+        assert "country" not in record.get("registrant", {})
 
     def test_empty_manufacturer_omitted(self):
         row = _make_row(manufacturer="")
@@ -136,10 +151,11 @@ class TestBuildRecord:
         record = _build_record(row, "898A00", "P2-ANG")
         assert "names" not in record.get("registrant", {})
 
-    def test_empty_address_omits_street(self):
+    def test_empty_address_omits_street_and_country(self):
         row = _make_row(address="")
         record = _build_record(row, "898A00", "P2-ANG")
         assert "street" not in record.get("registrant", {})
+        assert "country" not in record.get("registrant", {})
 
     def test_empty_operator_and_address_omits_registrant(self):
         row = _make_row(operator="", address="")
