@@ -67,7 +67,18 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     if not resp.ok:
         raise RuntimeError(f"Download failed with HTTP {resp.status_code}")
 
-    payload = resp.json()
+    try:
+        payload = resp.json()
+    except Exception:
+        logger.error("Response is not valid JSON. Content-Type: %s. Body (first 500 chars): %s",
+                     resp.headers.get("Content-Type"), resp.text[:500])
+        raise
+
+    if not isinstance(payload, dict):
+        logger.error("Unexpected JSON type %s. Body (first 500 chars): %s",
+                     type(payload).__name__, resp.text[:500])
+        raise RuntimeError(f"Expected JSON object, got {type(payload).__name__}")
+
     records = payload.get("data", [])
     logger.info("Received %d records from KOCA register.", len(records))
     return records
