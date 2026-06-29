@@ -90,6 +90,9 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     records: list[dict] = []
     headers: list[str] | None = None
     pages_no_table = 0
+    pages_no_ec_row = 0
+    sample_non_ec_page: int | None = None
+    sample_non_ec_rows: list | None = None
 
     with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
@@ -97,19 +100,34 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             if not table:
                 pages_no_table += 1
                 continue
+            page_ec_count = 0
             for row in table:
                 if not row:
                     continue
                 first = _cell(row[0])
                 if first.startswith("EC-"):
+                    page_ec_count += 1
                     if headers:
                         records.append(dict(zip(headers, [_cell(v) for v in row])))
                 else:
                     # Normalize header newlines to spaces so field lookups match
                     headers = [_cell(v).replace("\n", " ") for v in row]
+            if page_ec_count == 0 and sample_non_ec_page is None:
+                # Capture the first table page that yields no EC- rows for diagnosis
+                sample_non_ec_page = page_num
+                sample_non_ec_rows = [[_cell(v) for v in r] for r in table if r][:3]
+                pages_no_ec_row += 1
+            elif page_ec_count == 0:
+                pages_no_ec_row += 1
 
     if pages_no_table:
         logger.warning("%d pages yielded no table from extract_table().", pages_no_table)
+    if pages_no_ec_row:
+        logger.warning(
+            "%d table-pages had no EC- rows (non-data pages expected). "
+            "First such page: %s, sample rows: %s",
+            pages_no_ec_row, sample_non_ec_page, sample_non_ec_rows,
+        )
     logger.info("Parsed %d EC- rows from PDF.", len(records))
     if records:
         logger.info("PDF column keys: %s", list(records[0].keys()))
