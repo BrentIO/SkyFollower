@@ -90,45 +90,28 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     records: list[dict] = []
     headers: list[str] | None = None
     pages_no_table = 0
-    non_ec_pages: list[tuple] = []  # (page_num, first_row_cells)
 
     with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
-        logger.info("PDF has %d pages.", len(pdf.pages))
         for page_num, page in enumerate(pdf.pages, start=1):
-            table = page.extract_table()
-            if not table:
+            tables = page.extract_tables()
+            if not tables:
                 pages_no_table += 1
                 continue
-            page_ec_count = 0
-            for row in table:
-                if not row:
-                    continue
-                cells = [_cell(v) for v in row]
-                first = cells[0]
-                if first.startswith("EC-"):
-                    page_ec_count += 1
-                    if headers:
-                        records.append(dict(zip(headers, cells)))
-                else:
-                    # Normalize header newlines to spaces so field lookups match
-                    headers = [c.replace("\n", " ") for c in cells]
-            if page_ec_count == 0:
-                first_row = next(([_cell(v) for v in r] for r in table if r), [])
-                non_ec_pages.append((page_num, first_row))
+            for table in tables:
+                for row in table:
+                    if not row:
+                        continue
+                    cells = [_cell(v) for v in row]
+                    first = cells[0]
+                    if first.startswith("EC-"):
+                        if headers:
+                            records.append(dict(zip(headers, cells)))
+                    else:
+                        # Normalize header newlines to spaces so field lookups match
+                        headers = [c.replace("\n", " ") for c in cells]
 
     if pages_no_table:
-        logger.warning("%d pages yielded no table from extract_table().", pages_no_table)
-    if non_ec_pages:
-        logger.info(
-            "%d pages had tables but no EC- rows. First 5: %s",
-            len(non_ec_pages),
-            [(p, r[:3]) for p, r in non_ec_pages[:5]],
-        )
-        last5 = [(p, r[:3]) for p, r in non_ec_pages[-5:]]
-        logger.info("Last 5 non-EC pages: %s", last5)
-        p89 = [(p, r) for p, r in non_ec_pages if p == 89]
-        if p89:
-            logger.info("Page 89 is a non-EC page. First row: %s", p89[0][1])
+        logger.warning("%d pages yielded no table from extract_tables().", pages_no_table)
     logger.info("Parsed %d EC- rows from PDF.", len(records))
     if records:
         logger.info("PDF column keys: %s", list(records[0].keys()))
