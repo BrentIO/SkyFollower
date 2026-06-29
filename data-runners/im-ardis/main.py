@@ -37,6 +37,8 @@ SEARCH_URL = "https://ardis.iomaircraftregistry.com/register/search"
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/im-ardis"
 
+_STATUS_DEREGISTERED = "Deregistered"
+
 # ARDIS header cells contain a sort link whose text is "Sort column by X"
 # concatenated with the actual column name X, yielding "Sort column by XX".
 # The backreference strips that prefix leaving just X.
@@ -164,6 +166,9 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
 def _build_record(row: dict) -> dict | None:
     """Build detail enrichment record from a parsed row. Returns None to skip."""
+    if row.get("Aircraft Status", "").strip() == _STATUS_DEREGISTERED:
+        return None
+
     icao_hex = row.get("Mode S Number", "").strip().upper()
     if not icao_hex:
         return None
