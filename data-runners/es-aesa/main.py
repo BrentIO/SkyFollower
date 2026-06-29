@@ -82,11 +82,13 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     records: list[dict] = []
     headers: list[str] | None = None
+    pages_no_table = 0
 
     with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
-        for page in pdf.pages:
+        for page_num, page in enumerate(pdf.pages, start=1):
             table = page.extract_table()
             if not table:
+                pages_no_table += 1
                 continue
             for row in table:
                 if not row:
@@ -96,8 +98,11 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                     if headers:
                         records.append(dict(zip(headers, [_cell(v) for v in row])))
                 else:
-                    headers = [_cell(v) for v in row]
+                    # Normalize header newlines to spaces so field lookups match
+                    headers = [_cell(v).replace("\n", " ") for v in row]
 
+    if pages_no_table:
+        logger.warning("%d pages yielded no table from extract_table().", pages_no_table)
     logger.info("Parsed %d EC- rows from PDF.", len(records))
     if records:
         logger.info("PDF column keys: %s", list(records[0].keys()))

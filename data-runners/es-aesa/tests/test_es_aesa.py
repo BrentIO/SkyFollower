@@ -61,6 +61,7 @@ def _make_row(
     num_mot="2",
     clase="AVION",
 ) -> dict:
+    # Column names use space (not newline) — headers are normalized during parsing
     return {
         "Matrícula": matricula,
         "Fecha matric.": fecha,
@@ -92,6 +93,28 @@ def _make_redis_no_match():
     results.docs = []
     r.ft.return_value.search.return_value = results
     return r
+
+
+# ---------------------------------------------------------------------------
+# Tests: header normalization (via _cell + replace)
+# ---------------------------------------------------------------------------
+
+class TestHeaderNormalization:
+    def test_newline_in_header_replaced_with_space(self):
+        # Simulates what download_and_parse does: _cell(v).replace("\n", " ")
+        raw = "Año\ncons."
+        normalized = _cell(raw).replace("\n", " ")
+        assert normalized == "Año cons."
+
+    def test_multiword_header_with_newline(self):
+        raw = "Nº\nmot."
+        normalized = _cell(raw).replace("\n", " ")
+        assert normalized == "Nº mot."
+
+    def test_plain_header_unchanged(self):
+        raw = "Fabricante"
+        normalized = _cell(raw).replace("\n", " ")
+        assert normalized == "Fabricante"
 
 
 # ---------------------------------------------------------------------------
