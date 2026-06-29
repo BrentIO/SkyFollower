@@ -59,6 +59,7 @@ services:
       - runner-lu-dac
       - runner-bz-bdca
       - runner-im-ardis
+      - runner-es-aesa
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -247,6 +248,15 @@ services:
   runner-im-ardis:
     image: ghcr.io/brentio/skyfollower-runner-im-ardis:latest
     container_name: skyfollower-runner-im-ardis
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-es-aesa:
+    image: ghcr.io/brentio/skyfollower-runner-es-aesa:latest
+    container_name: skyfollower-runner-es-aesa
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
