@@ -177,8 +177,8 @@ class TestBuildRecord:
             ("Balon", "Balloon"),
             ("Helikopter", "Helicopter"),
             ("Jedrilica", "Glider"),
-            ("Motorna jedrilica", "Motor Glider"),
-            ("Motorni zmaj", "Powered Hang Glider"),
+            ("Motorna jedrilica", "Glider"),
+            ("Motorni zmaj", "Weight-Shift-Control"),
             ("Žirokopter", "Gyroplane"),
         ]
         for serbian, english in mappings:
