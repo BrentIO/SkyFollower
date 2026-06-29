@@ -440,6 +440,23 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  sk-nsat:
+    description: "Slovakia NSAT (Národný bezpečnostný úrad pre letectvo) aircraft register — OM-prefix registrations"
+    url: "https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/"
+    format: pdf
+    cadence: weekly_tuesday
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — not hardcoded; ~31 pages, ~818 records; pdfplumber extract_tables() used; registration marks in PDF use spaced format 'OM - 0101' — normalized to 'OM-0101' by stripping all whitespace; both Vlastník (owner) and Prevádzkovateľ (operator) stored as registrant.names — deduplicated if identical; Záložné právo (lien) column not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 510000–51FFFF"
+    files:
+      - name: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+        format: pdf_table
+        columns:
+          "Typ lietadla":         Aircraft type/model (stored as aircraft.model)
+          "Poznávacia značka":    Registration mark in 'OM - XXXX' format; normalized to 'OM-XXXX'
+          "Výrobné číslo":        Manufacturer serial number (stored as aircraft.serial_number)
+          "Vlastník":             Registered owner (stored as registrant.names[0])
+          "Prevádzkovateľ":       Operator (stored as registrant.names[1]); omitted if identical to Vlastník
+          "Záložné právo":        Lien status; not stored
+
   tc-caa:
     description: "Turks & Caicos Islands Civil Aviation Authority (CAA) aircraft register — VQ-prefix registrations"
     url: "https://tcicaa.tc/operations-safety/aircrafts/aircraft-register"
