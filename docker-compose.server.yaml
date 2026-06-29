@@ -61,6 +61,7 @@ services:
       - runner-im-ardis
       - runner-es-aesa
       - runner-kr-koca
+      - runner-sg-caas
       - runner-sk-nsat
       - runner-tc-caa
       - runner-flightaware
@@ -269,6 +270,15 @@ services:
   runner-kr-koca:
     image: ghcr.io/brentio/skyfollower-runner-kr-koca:latest
     container_name: skyfollower-runner-kr-koca
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-sg-caas:
+    image: ghcr.io/brentio/skyfollower-runner-sg-caas:latest
+    container_name: skyfollower-runner-sg-caas
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
