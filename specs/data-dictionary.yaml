@@ -440,6 +440,23 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  tc-caa:
+    description: "Turks & Caicos Islands Civil Aviation Authority (CAA) aircraft register — VQ-prefix registrations"
+    url: "https://tcicaa.tc/operations-safety/aircrafts/aircraft-register"
+    format: html
+    cadence: weekly_thursday
+    notes: "Single static HTML table page; ~28 records; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; D.O.R (Date of Registration) column not stored; actual column name is 'OWNER /OPERATOR' (with space before slash); ICAO hex range: 0C0F00–0C0FFF"
+    files:
+      - name: aircraft-register (HTML page)
+        format: html_table
+        columns:
+          REG:              Full VQ-prefix registration mark
+          "MANUFACT.":      Manufacturer name (stored as aircraft.manufacturer)
+          MODEL:            Model/type designation (stored as aircraft.model)
+          "S/N":            Manufacturer serial number
+          "OWNER /OPERATOR": Registered owner or operator name (stored as registrant.names[0]); note space before slash
+          D.O.R:            Date of Registration; not stored
+
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
