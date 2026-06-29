@@ -50,6 +50,7 @@ BATCH_SIZE = 100
 
 # JSON field names
 _FIELD_REGISTRATION = "registarska_oznaka"
+_FIELD_TYPE = "vrsta_vazduhoplova"
 _FIELD_MANUFACTURER = "proizvođač"
 _FIELD_MODEL = "proizvođačka_oznaka"
 _FIELD_SERIAL = "serijski_broj"
@@ -85,6 +86,10 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from an API row."""
     aircraft_fields: dict = {}
     registrant_fields: dict = {}
+
+    type_ = str(row.get(_FIELD_TYPE, "") or "").strip()
+    if type_:
+        aircraft_fields["type"] = type_
 
     manufacturer = str(row.get(_FIELD_MANUFACTURER, "") or "").strip()
     if manufacturer:

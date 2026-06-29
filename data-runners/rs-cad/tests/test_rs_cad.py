@@ -43,6 +43,7 @@ publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.REDIS_TTL
 MQTT_ROOT = _mod.MQTT_ROOT
 _FIELD_REGISTRATION = _mod._FIELD_REGISTRATION
+_FIELD_TYPE = _mod._FIELD_TYPE
 _FIELD_MANUFACTURER = _mod._FIELD_MANUFACTURER
 _FIELD_MODEL = _mod._FIELD_MODEL
 _FIELD_SERIAL = _mod._FIELD_SERIAL
@@ -63,11 +64,11 @@ def _make_row(
 ) -> dict:
     return {
         _FIELD_REGISTRATION: reg,
+        _FIELD_TYPE: vrsta,
         _FIELD_MANUFACTURER: manufacturer,
         _FIELD_MODEL: model,
         _FIELD_SERIAL: serial,
         _FIELD_OPERATOR: operator,
-        "vrsta_vazduhoplova": vrsta,
     }
 
 
@@ -164,16 +165,21 @@ class TestBuildRecord:
         assert record["icao_hex"] == "4C0A3E"
         assert record["registration"] == "YU-HRD"
         assert record["source"] == "rs-cad"
+        assert record["aircraft"]["type"] == "Helikopter"
         assert record["aircraft"]["manufacturer"] == "Agusta Westland S.p.A."
         assert record["aircraft"]["model"] == "AW109SP"
         assert record["aircraft"]["serial_number"] == "22280"
         assert record["registrant"]["names"] == ["Kompanija Takovo d.o.o. Gornji Milanovac"]
 
-    def test_vrsta_not_stored(self):
-        row = _make_row(vrsta="Helikopter")
+    def test_vrsta_stored_as_type(self):
+        row = _make_row(vrsta="Avion")
         record = _build_record(row, "4C0A3E", "YU-HRD")
-        assert "vrsta_vazduhoplova" not in record
-        assert "vrsta" not in record
+        assert record["aircraft"]["type"] == "Avion"
+
+    def test_empty_vrsta_omits_type(self):
+        row = _make_row(vrsta="")
+        record = _build_record(row, "4C0A3E", "YU-HRD")
+        assert "type" not in record.get("aircraft", {})
 
     def test_empty_manufacturer_omitted(self):
         row = _make_row(manufacturer="")
@@ -196,7 +202,7 @@ class TestBuildRecord:
         assert "registrant" not in record
 
     def test_no_aircraft_fields_omits_aircraft_key(self):
-        row = _make_row(manufacturer="", model="", serial="")
+        row = _make_row(vrsta="", manufacturer="", model="", serial="")
         record = _build_record(row, "4C0A3E", "YU-HRD")
         assert "aircraft" not in record
 

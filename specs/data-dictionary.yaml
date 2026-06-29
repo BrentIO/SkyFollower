@@ -445,14 +445,14 @@ sources:
     url: "https://apps.cad.gov.rs/ords/dcvws/regvaz/site/listAircraft"
     format: json
     cadence: weekly_tuesday
-    notes: "REST JSON API; single call with limit=10000 covers all ~550 records; no auth required; items[] array in response; vrsta_vazduhoplova (type category) not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C7FFF"
+    notes: "REST JSON API; single call with limit=10000 covers all ~550 records; no auth required; SSL certificate has untrusted issuer chain — verify=False used; items[] array in response; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C7FFF"
     fields:
       registarska_oznaka:  Registration mark in YU-prefix format
       "proizvođač":        Manufacturer name (stored as aircraft.manufacturer)
       proizvođačka_oznaka: Model designation (stored as aircraft.model)
       serijski_broj:       Manufacturer serial number (stored as aircraft.serial_number)
       korisnik:            Operator/user (stored as registrant.names[0])
-      vrsta_vazduhoplova:  Aircraft type category (Helikopter, Avion, etc.); not stored
+      vrsta_vazduhoplova:  Aircraft type category in Serbian (Helikopter, Avion, etc.); stored as aircraft.type
 
   sg-caas:
     description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"
