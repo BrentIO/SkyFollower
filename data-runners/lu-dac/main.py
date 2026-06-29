@@ -89,7 +89,9 @@ def _find_download_url(session: requests.Session) -> str:
         raise RuntimeError("Could not find PDF URL on Luxembourg DAC index page.")
 
     url = matches[0]
-    if not url.startswith("http"):
+    if url.startswith("//"):
+        url = "https:" + url
+    elif not url.startswith("http"):
         url = "https://dac.gouvernement.lu" + url
     logger.info("Discovered PDF URL: %s", url)
     return url
