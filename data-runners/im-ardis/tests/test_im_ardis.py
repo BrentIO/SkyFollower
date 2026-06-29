@@ -114,9 +114,11 @@ class TestBuildRecord:
         assert record["registrant"]["names"] == ["Island Air Ltd"]
         assert record["registrant"]["street"] == ["1 Strand Street"]
 
-    def test_deregistered_returns_none(self):
+    def test_deregistered_still_written(self):
         row = _make_row(status="Deregistered")
-        assert _build_record(row) is None
+        record = _build_record(row)
+        assert record is not None
+        assert record["icao_hex"] == "43E717"
 
     def test_missing_mode_s_returns_none(self):
         row = _make_row(mode_s="")
@@ -185,11 +187,11 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 1
 
-    def test_deregistered_record_skipped(self):
+    def test_deregistered_record_written(self):
         rows = [_make_row(status="Deregistered")]
         r = _make_redis()
         count = write_to_redis(rows, r, REDIS_TTL)
-        assert count == 0
+        assert count == 1
 
     def test_missing_mode_s_skipped(self):
         rows = [_make_row(mode_s="")]
@@ -223,7 +225,7 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call[0][2]["source"] == "im-ardis"
 
-    def test_mixed_active_and_deregistered(self):
+    def test_all_status_values_written(self):
         rows = [
             _make_row(registration="M-ABCD", mode_s="43E717", status="Active"),
             _make_row(registration="M-ZZZZ", mode_s="43E718", status="Deregistered"),
@@ -231,7 +233,7 @@ class TestWriteToRedis:
         ]
         r = _make_redis()
         count = write_to_redis(rows, r, REDIS_TTL)
-        assert count == 2
+        assert count == 3
 
 
 # ---------------------------------------------------------------------------

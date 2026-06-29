@@ -387,7 +387,7 @@ sources:
     url: "https://ardis.iomaircraftregistry.com/register/search"
     format: html
     cadence: weekly_thursday
-    notes: "CSRF-protected HTML search form; GET page to extract __RequestVerificationToken, then POST with page size 50000 to retrieve all records; ~1449 total rows including deregistered; filter rows where Aircraft Status == 'Deregistered'; Mode S Number column provides ICAO hex directly — no RediSearch reverse-lookup needed; Registered Owners field split on first comma: name before, street address after; ICAO hex range: 43E000–43EFFF"
+    notes: "CSRF-protected HTML search form; GET page to extract __RequestVerificationToken, then POST with page size 50000 to retrieve all records; ~1449 total rows including deregistered; all rows with a Mode S Number are written regardless of status; Mode S Number column provides ICAO hex directly — no RediSearch reverse-lookup needed; Registered Owners field split on first comma: name before, street address after; Registration Mark header cell contains a sort link that causes get_text() to duplicate the column name — stripped via backreference regex; ICAO hex range: 43E000–43EFFF"
     files:
       - name: ARDIS search results (HTML table)
         format: html_table
@@ -398,7 +398,7 @@ sources:
           "Serial Number":        Manufacturer serial number
           "Mode S Number":        6-char uppercase ICAO hex; used directly as icao_hex key
           "Registered Owners":    Owner name and address combined; name before first comma (registrant.names[0]), street address after first comma (registrant.street)
-          "Aircraft Status":      Filter: skip rows where value is 'Deregistered'
+          "Aircraft Status":      Stored for reference; all rows written regardless of status
 
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
