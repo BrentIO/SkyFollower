@@ -103,21 +103,25 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             for row in table:
                 if not row:
                     continue
-                first = _cell(row[0])
+                cells = [_cell(v) for v in row]
+                # Log any row containing "FTR" to locate EC-FTR in the PDF
+                if any("FTR" in c for c in cells):
+                    logger.info("Page %d: row containing FTR: %s", page_num, cells)
+                first = cells[0]
                 if first.startswith("EC-"):
                     if headers:
-                        records.append(dict(zip(headers, [_cell(v) for v in row])))
+                        records.append(dict(zip(headers, cells)))
                     else:
                         dropped_no_headers += 1
                         if dropped_sample is None:
-                            dropped_sample = [_cell(v) for v in row]
+                            dropped_sample = cells
                             logger.warning(
                                 "Page %d: dropped EC- row before any header seen: %s",
                                 page_num, dropped_sample,
                             )
                 else:
                     # Normalize header newlines to spaces so field lookups match
-                    headers = [_cell(v).replace("\n", " ") for v in row]
+                    headers = [c.replace("\n", " ") for c in cells]
 
     if pages_no_table:
         logger.warning("%d pages yielded no table from extract_table().", pages_no_table)
