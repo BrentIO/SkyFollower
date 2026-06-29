@@ -440,6 +440,22 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  pg-casapng:
+    description: "Papua New Guinea CASA PNG (Civil Aviation Safety Authority) aircraft register — P2-prefix registrations"
+    url: "https://casapng.gov.pg/safety-regulatory/airworthiness/Aircraft-Registers/"
+    format: pdf
+    cadence: monthly
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — first PDF link is most recent; ~15 pages, ~217 P2- records; pdfplumber extract_table() used; no header row — columns identified by position; address field may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 898000–89FFFF"
+    files:
+      - name: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+        format: pdf_table
+        columns:
+          0: Registration mark in P2-prefix format
+          1: Manufacturer name (stored as aircraft.manufacturer)
+          2: Model designation (stored as aircraft.model)
+          3: Operator name (stored as registrant.names[0])
+          4: Address (stored as registrant.street; embedded newlines collapsed to space)
+
   rs-cad:
     description: "Serbia CAD (Civil Aviation Directorate) aircraft register — YU-prefix registrations"
     url: "https://apps.cad.gov.rs/ords/dcvws/regvaz/site/listAircraft"
