@@ -46,6 +46,10 @@ container = skyfollower-runner-au-casa
 schedule = 10 8 * * 2
 container = skyfollower-runner-kr-koca
 
+[job-run "runner-sk-nsat"]
+schedule = 10 9 * * 2
+container = skyfollower-runner-sk-nsat
+
 [job-run "runner-nl-ilt"]
 schedule = 10 5 * * 4
 container = skyfollower-runner-nl-ilt
