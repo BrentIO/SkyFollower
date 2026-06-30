@@ -18,7 +18,7 @@ overridden by detail page 'Aircraft model/type').
 Detail page fields collected:
   Aircraft section: Manufacturer, Year Built, Category, S/N,
                     Aircraft model/type, ARC expiry date (not stored)
-  Operator details: Name, Address, Zip code, town, Country
+  Operator details: Name, Address, Zip code/town (split: numeric → postal_code, text → city), Country
 
 Data source: https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157
 """
@@ -65,6 +65,7 @@ _BROWSER_UA = (
 )
 
 _WHITESPACE_RE = __import__("re").compile(r"\s+")
+_ZIP_TOWN_RE = __import__("re").compile(r"^(\d+)\s+(.+)$")
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +114,7 @@ def _fetch_detail_page(session: requests.Session, registration: str) -> dict:
     """Fetch the detail page for one aircraft and return extracted fields."""
     slug = registration.lower()
     url = f"{_DETAIL_BASE_URL}{slug}"
-    logger.info("Fetching Montenegro CAA detail page from %s", url)
+    logger.debug("Fetching Montenegro CAA detail page from %s", url)
     resp = session.get(url, timeout=30)
     if not resp.ok:
         logger.warning("Detail page for %s returned HTTP %s; skipping.", registration, resp.status_code)
@@ -122,23 +123,37 @@ def _fetch_detail_page(session: requests.Session, registration: str) -> dict:
     soup = BeautifulSoup(resp.text, "lxml")
     fields: dict = {}
 
-    # Detail pages use a definition list or table of label/value pairs.
-    # Try <table> first, then <dl>.
-    table = soup.find("table")
-    if table:
-        for tr in table.find_all("tr"):
-            cells = tr.find_all(["th", "td"])
-            if len(cells) >= 2:
-                key = cells[0].get_text(strip=True)
-                value = cells[1].get_text(strip=True)
-                fields[key] = value
-    else:
-        dl = soup.find("dl")
-        if dl:
-            terms = dl.find_all("dt")
-            defs = dl.find_all("dd")
-            for dt, dd in zip(terms, defs):
-                fields[dt.get_text(strip=True)] = dd.get_text(strip=True)
+    # Strategy 1: Drupal field-label / field-item div pattern
+    for label_el in soup.find_all(class_="field-label"):
+        key = label_el.get_text(strip=True).rstrip(":").strip()
+        parent = label_el.parent
+        if parent:
+            value_el = parent.find(class_="field-item")
+            if value_el:
+                fields[key] = value_el.get_text(strip=True)
+                continue
+        sibling = label_el.find_next_sibling()
+        if sibling:
+            fields[key] = sibling.get_text(strip=True)
+
+    # Strategy 2: all <table> elements (page may have multiple)
+    if not fields:
+        for table in soup.find_all("table"):
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                if len(cells) >= 2:
+                    key = cells[0].get_text(strip=True)
+                    value = cells[1].get_text(strip=True)
+                    if key:
+                        fields[key] = value
+
+    # Strategy 3: <dl> definition lists
+    if not fields:
+        for dl in soup.find_all("dl"):
+            for dt, dd in zip(dl.find_all("dt"), dl.find_all("dd")):
+                key = dt.get_text(strip=True)
+                if key:
+                    fields[key] = dd.get_text(strip=True)
 
     return fields
 
@@ -220,9 +235,14 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if operator_address:
         registrant_fields["street"] = operator_address
 
-    operator_zip = row.get("operator_zip", "").strip()
-    if operator_zip:
-        registrant_fields["postal_code"] = operator_zip
+    operator_zip_town = row.get("operator_zip", "").strip()
+    if operator_zip_town:
+        m = _ZIP_TOWN_RE.match(operator_zip_town)
+        if m:
+            registrant_fields["postal_code"] = m.group(1)
+            registrant_fields["city"] = m.group(2)
+        else:
+            registrant_fields["postal_code"] = operator_zip_town
 
     operator_country = _WHITESPACE_RE.sub(" ", row.get("operator_country", "").strip())
     if operator_country:

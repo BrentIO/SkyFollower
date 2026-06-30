@@ -485,7 +485,7 @@ sources:
           Dereg: Not evaluated (list URL pre-filters to active only)
           Name: Operator name (stored as registrant.names[0])
           Address: Operator street address (stored as registrant.street)
-          "Zip code, town": Postal code and city combined (stored as registrant.postal_code)
+          "Zip code, town": Postal code and city combined; numeric prefix → registrant.postal_code, text suffix → registrant.city
           Country: Operator country (stored as registrant.country)
 
   mk-caa:

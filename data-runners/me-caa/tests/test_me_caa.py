@@ -300,7 +300,7 @@ class TestFetchDetailPage:
         session = MagicMock()
         session.get.return_value = _make_response(_detail_html())
         import logging
-        with patch.object(logging.getLogger("me-caa"), "info") as mock_log:
+        with patch.object(logging.getLogger("me-caa"), "debug") as mock_log:
             _fetch_detail_page(session, "4O-AOA")
         logged = " ".join(str(a) for call in mock_log.call_args_list for a in call.args)
         assert "4o-aoa" in logged
@@ -392,8 +392,31 @@ class TestBuildRecord:
         assert record["aircraft"]["manufactured_date"] == "2008-01-01"
         assert record["registrant"]["names"] == ["ToMontenegro DOO"]
         assert record["registrant"]["street"] == "Bulevar Džordža Vašingtona broj 98"
-        assert record["registrant"]["postal_code"] == "81000 Podgorica"
+        assert record["registrant"]["postal_code"] == "81000"
+        assert record["registrant"]["city"] == "Podgorica"
         assert record["registrant"]["country"] == "Montenegro"
+
+    def test_zip_town_split_postal_code(self):
+        row = _make_row(operator_zip="85310 Budva")
+        record = _build_record(row, "4C0100", "4O-AOA")
+        assert record["registrant"]["postal_code"] == "85310"
+
+    def test_zip_town_split_city(self):
+        row = _make_row(operator_zip="85310 Budva")
+        record = _build_record(row, "4C0100", "4O-AOA")
+        assert record["registrant"]["city"] == "Budva"
+
+    def test_zip_town_no_space_stored_as_postal_code_only(self):
+        row = _make_row(operator_zip="81000")
+        record = _build_record(row, "4C0100", "4O-AOA")
+        assert record["registrant"]["postal_code"] == "81000"
+        assert "city" not in record["registrant"]
+
+    def test_zip_town_city_with_spaces(self):
+        row = _make_row(operator_zip="20000 Bar City")
+        record = _build_record(row, "4C0100", "4O-AOA")
+        assert record["registrant"]["postal_code"] == "20000"
+        assert record["registrant"]["city"] == "Bar City"
 
     def test_category_decoded_to_type(self):
         row = _make_row(category="General Aviation – Helicopter")
