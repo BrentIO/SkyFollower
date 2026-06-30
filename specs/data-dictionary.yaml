@@ -445,7 +445,7 @@ sources:
     url: "https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; SSL certificate has untrusted issuer chain in Docker — verify=False used; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
     files:
       - name: "Aircraft register PDF (date-stamped, discovered via index page)"
         format: pdf_table
