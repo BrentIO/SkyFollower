@@ -458,6 +458,36 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  me-caa:
+    description: "Montenegro CAA aircraft register — 4O-prefix registrations"
+    url: "https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157"
+    format: html_paginated
+    cadence: weekly_tuesday
+    notes: "List URL includes field_ispisan_iz_registra_tid=157 which pre-filters to active registrations only — no deregistration filtering needed in code; paginated with &page=N; ~33 active records; each aircraft detail page (https://www.caa.me/en/{registration-lowercase}) fetched for enrichment; full model name from detail 'Aircraft model/type' preferred over list 'Tip'; Category decoded by splitting on em-dash (e.g. 'Transport – Airplane' → 'Airplane'); MTOM and ARC expiry date not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C3FFF"
+    pages:
+      list:
+        url: "https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157&page={N}"
+        columns:
+          Registarska oznaka: Registration mark in 4O-prefix format
+          Redni broj u registru: Sequence number; not stored
+          Ime: Operator name; not stored (taken from detail page instead)
+          Tip: Short type code; overridden by detail page 'Aircraft model/type' if present
+      detail:
+        url: "https://www.caa.me/en/{registration-lowercase}"
+        fields:
+          Manufacturer: Manufacturer name (stored as aircraft.manufacturer)
+          "Year Built": Year of manufacture (stored as aircraft.manufactured_date as YYYY-01-01)
+          Category: Aircraft category (decoded — 'Transport – Airplane' → 'Airplane'; stored as aircraft.type)
+          S/N: Manufacturer serial number (stored as aircraft.serial_number)
+          "Aircraft model/type": Full model name (stored as aircraft.model; preferred over list Tip)
+          MTOM: Maximum takeoff mass; not stored
+          "ARC expiry date": Airworthiness certificate expiry; not stored
+          Dereg: Not evaluated (list URL pre-filters to active only)
+          Name: Operator name (stored as registrant.names[0])
+          Address: Operator street address (stored as registrant.street)
+          "Zip code, town": Postal code and city combined; numeric prefix → registrant.postal_code, text suffix → registrant.city
+          Country: Operator country (stored as registrant.country)
+
   mk-caa:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"
     url: "https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/"
