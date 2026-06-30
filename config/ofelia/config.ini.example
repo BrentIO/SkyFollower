@@ -58,6 +58,10 @@ container = skyfollower-runner-mk-caa
 schedule = 10 10 * * 2
 container = skyfollower-runner-rs-cad
 
+[job-run "runner-mz-iacm"]
+schedule = 10 12 1 * *
+container = skyfollower-runner-mz-iacm
+
 [job-run "runner-pg-casapng"]
 schedule = 10 11 1 * *
 container = skyfollower-runner-pg-casapng
