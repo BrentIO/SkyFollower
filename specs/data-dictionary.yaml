@@ -458,6 +458,28 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  me-caa:
+    description: "Montenegro CAA aircraft register — 4O-prefix registrations"
+    url: "https://www.caa.me/en/registri"
+    format: html_paginated
+    cadence: weekly_tuesday
+    notes: "Paginated HTML list (10 records/page, ~61 total, ~33 active); pagination stops when page returns no table rows; rows where Ime == 'Ispisan iz registra - Deregistered' are skipped; each active aircraft detail page (https://www.caa.me/en/{registration-lowercase}) fetched individually to confirm Dereg field is empty and to retrieve Manufacturer and Year Built; MTOM field not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C3FFF"
+    pages:
+      list:
+        url: "https://www.caa.me/en/registri?page={N}"
+        columns:
+          Registarska oznaka: Registration mark in 4O-prefix format
+          Redni broj u registru: Sequence number; not stored
+          Ime: Owner name (stored as registrant.names[0]); value 'Ispisan iz registra - Deregistered' → row skipped
+          Tip: Aircraft type/model (stored as aircraft.model)
+      detail:
+        url: "https://www.caa.me/en/{registration-lowercase}"
+        fields:
+          Manufacturer: Manufacturer name (stored as aircraft.manufacturer)
+          "Year Built": Year of manufacture (stored as aircraft.manufactured_date as YYYY-01-01)
+          MTOM: Maximum takeoff mass; not stored
+          Dereg: Deregistration date; non-empty → row skipped
+
   mk-caa:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"
     url: "https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/"
