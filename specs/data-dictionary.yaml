@@ -440,6 +440,24 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
+  hu-kozhaf:
+    description: "Hungary KoZHAF (National Transport Authority) aircraft register — HA-prefix registrations"
+    url: "https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604"
+    format: pdf
+    cadence: weekly_tuesday
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
+    files:
+      - name: "Aircraft register PDF (date-stamped, discovered via index page)"
+        format: pdf_table
+        columns:
+          0: Registration mark in HA-prefix format (stray space after hyphen normalized away)
+          1: Model designation (stored as aircraft.model; embedded newlines collapsed to space)
+          2: Manufacturer serial number (stored as aircraft.serial_number)
+          3: Year of manufacture (4-digit; stored as aircraft.manufactured_date as YYYY-01-01)
+          4: Owner name (stored as registrant.names[0]; embedded newlines collapsed to space)
+          5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
+          6: Operator name (stored as registrant.names[1] if different from owner)
+
   mk-caa:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"
     url: "https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/"
