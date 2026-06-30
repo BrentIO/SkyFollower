@@ -45,7 +45,6 @@ write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.REDIS_TTL
 MQTT_ROOT = _mod.MQTT_ROOT
-_DEREGISTERED_MARKER = _mod._DEREGISTERED_MARKER
 _LIST_URL = _mod._LIST_URL
 
 
@@ -210,11 +209,12 @@ class TestFetchListPage:
         logged = " ".join(str(a) for call in mock_log.call_args_list for a in call.args)
         assert "page=2" in logged
 
-    def test_page_number_in_url(self):
+    def test_page_number_appended_to_filtered_url(self):
         session = MagicMock()
         session.get.return_value = _make_response(_list_html([]))
         _fetch_list_page(session, 3)
         called_url = session.get.call_args[0][0]
+        assert "field_ispisan_iz_registra_tid=157" in called_url
         assert "page=3" in called_url
 
 
@@ -321,38 +321,6 @@ class TestDownloadAndParse:
             responses.append(_make_response(html))
         session.get.side_effect = responses
         return session
-
-    def test_skips_deregistered_on_list(self):
-        session = self._make_session(
-            list_pages=[[
-                {"Registarska oznaka": "4O-AAA", "Ime": _DEREGISTERED_MARKER, "Tip": "C172"},
-                {"Registarska oznaka": "4O-BBB", "Ime": "Owner", "Tip": "PA28"},
-            ]],
-            detail_responses=[_detail_html()],
-        )
-        records = download_and_parse(session)
-        assert len(records) == 1
-        assert records[0]["registration"] == "4O-BBB"
-
-    def test_skips_when_dereg_not_no(self):
-        session = self._make_session(
-            list_pages=[[
-                {"Registarska oznaka": "4O-AAA", "Ime": "Owner", "Tip": "C172"},
-            ]],
-            detail_responses=[_detail_html(dereg="2022-06-01")],
-        )
-        records = download_and_parse(session)
-        assert records == []
-
-    def test_includes_when_dereg_is_no(self):
-        session = self._make_session(
-            list_pages=[[
-                {"Registarska oznaka": "4O-AOA", "Ime": "Owner", "Tip": "ERJ190"},
-            ]],
-            detail_responses=[_detail_html(dereg="No")],
-        )
-        records = download_and_parse(session)
-        assert len(records) == 1
 
     def test_skips_non_4o_prefix(self):
         session = self._make_session(

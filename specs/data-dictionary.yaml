@@ -460,17 +460,17 @@ sources:
 
   me-caa:
     description: "Montenegro CAA aircraft register — 4O-prefix registrations"
-    url: "https://www.caa.me/en/registri"
+    url: "https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157"
     format: html_paginated
     cadence: weekly_tuesday
-    notes: "Paginated HTML list (10 records/page, ~61 total, ~33 active); pagination stops when page returns no table rows; rows where Ime == 'Ispisan iz registra - Deregistered' are skipped; each active aircraft detail page (https://www.caa.me/en/{registration-lowercase}) fetched individually; Dereg == 'No' confirms active (secondary deregistration guard); full model name from detail 'Aircraft model/type' preferred over list 'Tip'; Category decoded by splitting on em-dash (e.g. 'Transport – Airplane' → 'Airplane'); MTOM and ARC expiry date not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C3FFF"
+    notes: "List URL includes field_ispisan_iz_registra_tid=157 which pre-filters to active registrations only — no deregistration filtering needed in code; paginated with &page=N; ~33 active records; each aircraft detail page (https://www.caa.me/en/{registration-lowercase}) fetched for enrichment; full model name from detail 'Aircraft model/type' preferred over list 'Tip'; Category decoded by splitting on em-dash (e.g. 'Transport – Airplane' → 'Airplane'); MTOM and ARC expiry date not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C3FFF"
     pages:
       list:
-        url: "https://www.caa.me/en/registri?page={N}"
+        url: "https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157&page={N}"
         columns:
           Registarska oznaka: Registration mark in 4O-prefix format
           Redni broj u registru: Sequence number; not stored
-          Ime: Deregistered marker ('Ispisan iz registra - Deregistered' → row skipped) or operator name; not stored (operator name taken from detail page instead)
+          Ime: Operator name; not stored (taken from detail page instead)
           Tip: Short type code; overridden by detail page 'Aircraft model/type' if present
       detail:
         url: "https://www.caa.me/en/{registration-lowercase}"
@@ -482,7 +482,7 @@ sources:
           "Aircraft model/type": Full model name (stored as aircraft.model; preferred over list Tip)
           MTOM: Maximum takeoff mass; not stored
           "ARC expiry date": Airworthiness certificate expiry; not stored
-          Dereg: Active indicator; 'No' = active; any other value → row skipped
+          Dereg: Not evaluated (list URL pre-filters to active only)
           Name: Operator name (stored as registrant.names[0])
           Address: Operator street address (stored as registrant.street)
           "Zip code, town": Postal code and city combined (stored as registrant.postal_code)

@@ -2,25 +2,25 @@
 """
 SkyFollower Montenegro CAA Data Runner
 
-Fetches the Montenegro CAA aircraft register from a paginated HTML list at
-https://www.caa.me/en/registri, filters out deregistered aircraft (Ime ==
-"Ispisan iz registra - Deregistered"), fetches each active aircraft's detail
-page to confirm Dereg == "No" and to collect all enrichment fields, looks up
-each 4O- registration in the Redis simple search index to find the ICAO hex
-(provided by Mictronics), writes enrichment data to aircraft:detail:{icao_hex},
-publishes MQTT completion stats, then exits.
+Fetches the Montenegro CAA aircraft register from a pre-filtered paginated HTML
+list that returns only active registrations, fetches each aircraft's detail page
+to collect enrichment fields, looks up each 4O- registration in the Redis simple
+search index to find the ICAO hex (provided by Mictronics), writes enrichment
+data to aircraft:detail:{icao_hex}, publishes MQTT completion stats, then exits.
+
+The list URL includes field_ispisan_iz_registra_tid=157 which restricts results
+to active registrations only — no deregistration filtering is needed in code.
 
 List page columns: Registarska oznaka (registration), Redni broj u registru
-(sequence, not stored), Ime (deregistered marker or operator — used only for
-filtering), Tip (short type code — overridden by detail page model).
+(sequence, not stored), Ime (operator name, not stored), Tip (short type code —
+overridden by detail page 'Aircraft model/type').
 
 Detail page fields collected:
   Aircraft section: Manufacturer, Year Built, Category, S/N,
                     Aircraft model/type, ARC expiry date (not stored)
-  Registration Details: Dereg ("No" = active; other = skip)
   Operator details: Name, Address, Zip code, town, Country
 
-Data source: https://www.caa.me/en/registri
+Data source: https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157
 """
 
 from __future__ import annotations
@@ -51,9 +51,8 @@ from shared.redis_keys import (
 
 logger = logging.getLogger("me-caa")
 
-_LIST_URL = "https://www.caa.me/en/registri"
+_LIST_URL = "https://www.caa.me/en/registri?field_registarska_oznaka1_value=&field_redni_broj_u_registru_value=&field_proizvo_a__tid=All&field_tip_tid=All&field_ime_tid=All&field_ispisan_iz_registra_tid=157"
 _DETAIL_BASE_URL = "https://www.caa.me/en/"
-_DEREGISTERED_MARKER = "Ispisan iz registra - Deregistered"
 
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/me-caa"
@@ -86,7 +85,7 @@ def _decode_category(raw: str) -> str:
 
 def _fetch_list_page(session: requests.Session, page: int) -> list[dict]:
     """Fetch one page of the registry list. Returns rows; empty list = no more pages."""
-    url = f"{_LIST_URL}?page={page}"
+    url = f"{_LIST_URL}&page={page}"
     logger.info("Fetching Montenegro CAA registry list from %s", url)
     resp = session.get(url, timeout=30)
     if not resp.ok:
@@ -145,36 +144,26 @@ def _fetch_detail_page(session: requests.Session, registration: str) -> dict:
 
 
 def download_and_parse(session: requests.Session) -> list[dict]:
-    """Paginate the registry list, fetch detail pages for active aircraft, and return records."""
-    active_rows: list[dict] = []
+    """Paginate the active-only registry list, fetch detail pages, and return records."""
+    list_rows: list[dict] = []
     page = 0
 
     while True:
         rows = _fetch_list_page(session, page)
         if not rows:
             break
-        for row in rows:
-            ime = row.get("Ime", "").strip()
-            if ime == _DEREGISTERED_MARKER:
-                continue
-            active_rows.append(row)
+        list_rows.extend(rows)
         page += 1
 
-    logger.info("Found %d active aircraft on list pages.", len(active_rows))
+    logger.info("Found %d aircraft on list pages.", len(list_rows))
 
     records: list[dict] = []
-    for row in active_rows:
+    for row in list_rows:
         registration = row.get("Registarska oznaka", "").strip()
         if not registration.startswith("4O-"):
             continue
 
         detail = _fetch_detail_page(session, registration)
-
-        # Secondary deregistration check — Dereg is "No" for active aircraft
-        dereg = detail.get("Dereg", "").strip()
-        if dereg.lower() != "no":
-            logger.info("Skipping %s — Dereg is %r (not 'No').", registration, dereg)
-            continue
 
         records.append({
             "registration": registration,
@@ -190,7 +179,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "operator_country": detail.get("Country", "").strip(),
         })
 
-    logger.info("Parsed %d active 4O- records.", len(records))
+    logger.info("Parsed %d 4O- records.", len(records))
     return records
 
 
