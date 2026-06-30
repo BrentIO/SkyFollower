@@ -74,6 +74,9 @@ _FIELD_MANUFACTURER = 0
 _FIELD_MODEL = 1
 _FIELD_SERIAL = 2
 _FIELD_OWNER = 3
+# Status is the 10th column from the left; with registration in the 2nd column
+# that places it at field_groups index 8.  Tune if column layout differs.
+_FIELD_STATUS = 8
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -137,8 +140,12 @@ def _ocr_pdf(pdf_bytes: bytes) -> list[dict]:
             config="--psm 6",
         )
         row_records = _extract_records_from_ocr_data(data)
-        logger.info("Page %d: extracted %d C9- rows.", page_num, len(row_records))
-        records.extend(row_records)
+        valid = [r for r in row_records if r.get("status", "").lower() == "válido"]
+        logger.info(
+            "Page %d: extracted %d C9- rows, %d válido.",
+            page_num, len(row_records), len(valid),
+        )
+        records.extend(valid)
 
     return records
 
@@ -235,11 +242,13 @@ def _parse_row(row_words: list[dict]) -> dict | None:
     groups = _split_by_gap(right_words)
     field_values = [" ".join(w["text"] for w in g).strip() for g in groups]
 
-    logger.debug("Row reg=%s groups=%s", registration, field_values)
+    status = field_values[_FIELD_STATUS].strip() if _FIELD_STATUS < len(field_values) else ""
+    logger.debug("Row reg=%s status=%r groups=%s", registration, status, field_values)
 
     return {
         "registration": registration,
         "field_groups": field_values,
+        "status": status,
     }
 
 

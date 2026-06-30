@@ -463,7 +463,7 @@ sources:
     url: "https://www.iacm.gov.mz/direccao-de-seguranca-de-voo/"
     format: pdf_scanned
     cadence: monthly
-    notes: "PDF URL is date-encoded in filename (e.g. DIRECCAO-DE-SEGURANCA-DE-VOO1.pdf) and discovered by scraping the index page each run; PDF is a scanned printout — pdfplumber cannot extract text; OCR via pdf2image (Poppler, 200 DPI) + pytesseract (Tesseract, por+eng language, PSM 6); words grouped into rows by Y-coordinate proximity (15px tolerance); columns split by horizontal gap width (40px threshold); ~2 pages, small registry; leading row-number cells (left of C9- cell) are ignored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; Dockerfile installs tesseract-ocr, tesseract-ocr-por, poppler-utils system packages; ICAO hex range: C8C000–C8CFFF"
+    notes: "PDF URL is date-encoded in filename (e.g. DIRECCAO-DE-SEGURANCA-DE-VOO1.pdf) and discovered by scraping the index page each run; PDF is a scanned printout — pdfplumber cannot extract text; OCR via pdf2image (Poppler, 200 DPI) + pytesseract (Tesseract, por+eng language, PSM 6); words grouped into rows by Y-coordinate proximity (15px tolerance); columns split by horizontal gap width (40px threshold); ~2 pages, small registry; leading row-number cells (left of C9- cell) are ignored; status column (10th from left, field_groups[8]) decoded — only Válido rows written; Inválido rows skipped; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; Dockerfile installs tesseract-ocr, tesseract-ocr-por, poppler-utils system packages; ICAO hex range: C8C000–C8CFFF"
     files:
       - name: "DIRECCAO-DE-SEGURANCA-DE-VOO{N}.pdf (date-encoded, discovered via index page)"
         format: pdf_scanned_table
@@ -473,6 +473,8 @@ sources:
           2: Aircraft type/model designation (stored as aircraft.model; second column group)
           3: Manufacturer serial number (stored as aircraft.serial_number; third column group)
           4: Owner/operator name (stored as registrant.names[0]; fourth column group)
+          5-9: Intermediate columns not stored
+          10: Registration status (Válido→included; Inválido→row skipped; 10th from left = field_groups[8])
 
   mk-caa:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"

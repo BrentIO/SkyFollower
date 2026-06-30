@@ -48,6 +48,7 @@ REDIS_TTL = _mod.REDIS_TTL
 MQTT_ROOT = _mod.MQTT_ROOT
 _ROW_TOLERANCE = _mod._ROW_TOLERANCE
 _COL_GAP = _mod._COL_GAP
+_FIELD_STATUS = _mod._FIELD_STATUS
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +230,24 @@ class TestParseRow:
         result = _parse_row(row)
         assert result is not None
         assert len(result["field_groups"]) >= 1
+
+    def test_status_captured(self):
+        groups = ["Cessna", "172S", "12345", "Owner", "x", "x", "x", "x", "Válido"]
+        row_words = [_word("C9-AAA", 10, 100, right=70)]
+        for i, g in enumerate(groups):
+            row_words.append(_word(g, 70 + i * (_COL_GAP + 30), 100, right=70 + i * (_COL_GAP + 30) + 25))
+        result = _parse_row(row_words)
+        assert result is not None
+        assert result["status"] == "Válido"
+
+    def test_status_empty_when_fewer_groups(self):
+        row = [
+            _word("C9-AAA", 10, 100, right=60),
+            _word("Cessna", 110, 100, right=170),
+        ]
+        result = _parse_row(row)
+        assert result is not None
+        assert result["status"] == ""
 
     def test_leading_row_number_ignored(self):
         row = [
