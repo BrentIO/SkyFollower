@@ -5,15 +5,20 @@ SkyFollower Montenegro CAA Data Runner
 Fetches the Montenegro CAA aircraft register from a paginated HTML list at
 https://www.caa.me/en/registri, filters out deregistered aircraft (Ime ==
 "Ispisan iz registra - Deregistered"), fetches each active aircraft's detail
-page to confirm Dereg is empty and to collect Manufacturer and Year Built,
-looks up each 4O- registration in the Redis simple search index to find the
-ICAO hex (provided by Mictronics), writes enrichment data to
-aircraft:detail:{icao_hex}, publishes MQTT completion stats, then exits.
+page to confirm Dereg == "No" and to collect all enrichment fields, looks up
+each 4O- registration in the Redis simple search index to find the ICAO hex
+(provided by Mictronics), writes enrichment data to aircraft:detail:{icao_hex},
+publishes MQTT completion stats, then exits.
 
 List page columns: Registarska oznaka (registration), Redni broj u registru
-(sequence, not stored), Ime (owner name or deregistered marker), Tip (model).
-Detail page fields: Manufacturer, Year Built, MTOM (not stored), Dereg
-(empty = active; non-empty = skip).
+(sequence, not stored), Ime (deregistered marker or operator — used only for
+filtering), Tip (short type code — overridden by detail page model).
+
+Detail page fields collected:
+  Aircraft section: Manufacturer, Year Built, Category, S/N,
+                    Aircraft model/type, ARC expiry date (not stored)
+  Registration Details: Dereg ("No" = active; other = skip)
+  Operator details: Name, Address, Zip code, town, Country
 
 Data source: https://www.caa.me/en/registri
 """
@@ -61,6 +66,18 @@ _BROWSER_UA = (
 )
 
 _WHITESPACE_RE = __import__("re").compile(r"\s+")
+
+
+# ---------------------------------------------------------------------------
+# Category → aircraft.type decoder
+# ---------------------------------------------------------------------------
+
+def _decode_category(raw: str) -> str:
+    """Extract aircraft type from a category string like 'Transport – Airplane'."""
+    for sep in ("–", "-"):  # em-dash then hyphen
+        if sep in raw:
+            return raw.split(sep, 1)[1].strip()
+    return raw.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -153,18 +170,24 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
         detail = _fetch_detail_page(session, registration)
 
-        # Secondary deregistration check via detail page Dereg field
+        # Secondary deregistration check — Dereg is "No" for active aircraft
         dereg = detail.get("Dereg", "").strip()
-        if dereg:
-            logger.info("Skipping %s — Dereg field is non-empty: %r", registration, dereg)
+        if dereg.lower() != "no":
+            logger.info("Skipping %s — Dereg is %r (not 'No').", registration, dereg)
             continue
 
         records.append({
             "registration": registration,
-            "model": row.get("Tip", "").strip(),
-            "owner_name": row.get("Ime", "").strip(),
+            # Prefer full model name from detail page over short Tip from list
+            "model": detail.get("Aircraft model/type", "").strip() or row.get("Tip", "").strip(),
+            "category": detail.get("Category", "").strip(),
+            "serial_number": detail.get("S/N", "").strip(),
             "manufacturer": detail.get("Manufacturer", "").strip(),
             "year_built": detail.get("Year Built", "").strip(),
+            "operator_name": detail.get("Name", "").strip(),
+            "operator_address": detail.get("Address", "").strip(),
+            "operator_zip": detail.get("Zip code, town", "").strip(),
+            "operator_country": detail.get("Country", "").strip(),
         })
 
     logger.info("Parsed %d active 4O- records.", len(records))
@@ -184,6 +207,14 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if model:
         aircraft_fields["model"] = model
 
+    raw_category = row.get("category", "").strip()
+    if raw_category:
+        aircraft_fields["type"] = _decode_category(raw_category)
+
+    serial = row.get("serial_number", "").strip()
+    if serial:
+        aircraft_fields["serial_number"] = serial
+
     manufacturer = _WHITESPACE_RE.sub(" ", row.get("manufacturer", "").strip())
     if manufacturer:
         aircraft_fields["manufacturer"] = manufacturer
@@ -192,9 +223,21 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if year and year.isdigit() and len(year) == 4:
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
-    owner_name = _WHITESPACE_RE.sub(" ", row.get("owner_name", "").strip())
-    if owner_name:
-        registrant_fields["names"] = [owner_name]
+    operator_name = _WHITESPACE_RE.sub(" ", row.get("operator_name", "").strip())
+    if operator_name:
+        registrant_fields["names"] = [operator_name]
+
+    operator_address = _WHITESPACE_RE.sub(" ", row.get("operator_address", "").strip())
+    if operator_address:
+        registrant_fields["street"] = operator_address
+
+    operator_zip = row.get("operator_zip", "").strip()
+    if operator_zip:
+        registrant_fields["postal_code"] = operator_zip
+
+    operator_country = _WHITESPACE_RE.sub(" ", row.get("operator_country", "").strip())
+    if operator_country:
+        registrant_fields["country"] = operator_country
 
     record: dict = {
         "icao_hex": icao_hex,
