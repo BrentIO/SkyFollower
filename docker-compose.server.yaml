@@ -64,6 +64,7 @@ services:
       - runner-hu-kozhaf
       - runner-md-caa
       - runner-me-caa
+      - runner-mv-caa
       - runner-mk-caa
       - runner-pg-casapng
       - runner-rs-cad
@@ -285,6 +286,15 @@ services:
   runner-md-caa:
     image: ghcr.io/brentio/skyfollower-runner-md-caa:latest
     container_name: skyfollower-runner-md-caa
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+
+  runner-mv-caa:
+    image: ghcr.io/brentio/skyfollower-runner-mv-caa:latest
+    container_name: skyfollower-runner-mv-caa
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro

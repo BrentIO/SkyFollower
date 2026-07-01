@@ -458,6 +458,31 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  mv-caa:
+    description: "Maldives CAA aircraft register — 8Q-prefix registrations"
+    url: "https://www.caa.gov.mv/operations/registration-of-aircraft-and-mortgages"
+    format: pdf
+    cadence: weekly_tuesday
+    notes: "PDF URL discovered by scraping index page each run (filename is an opaque hash); landscape-format PDF; ~8 pages, ~138 records; pdfplumber extract_table() used; rows filtered to Status == 'Valid'; owner field is multiline — first line stored as registrant.names[0], remaining lines joined and stored as registrant.street; Legal Owner, MTOW, mortgage/AREDI columns not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    files:
+      - name: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+        format: pdf_table
+    columns:
+      0: "N/S (sequence; not stored)"
+      1: "Certificate# (not stored)"
+      2: "Registration (8Q-prefix; used as lookup key)"
+      3: "Manufacturer+Designation (stored as aircraft.model; newlines collapsed to space)"
+      4: "MTOW (not stored)"
+      5: "Serial Number (stored as aircraft.serial_number)"
+      6: "Year Built (stored as aircraft.manufactured_date → YYYY-01-01)"
+      7: "Owner Name+Address (multiline; first line → registrant.names[0], last line → registrant.country, middle lines → registrant.street list)"
+      8: "Legal Owner (not stored)"
+      9: "Registration Basis (not stored)"
+      "10-12": "Mortgage/AREDI (not stored)"
+      13: "Original Issue Date (not stored)"
+      14: "Last Revision Date (not stored)"
+      15: "Status (filter: keep only 'Valid')"
+
   md-caa:
     description: "Moldova CAA aircraft register — ER-prefix registrations"
     url: "https://www.caa.md/modules/filemanager/files/documentum/Registrul_Aerian_al_Republicii_Moldova.pdf"
