@@ -142,14 +142,20 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 # Record builder
 # ---------------------------------------------------------------------------
 
-def _split_owner(raw: str) -> tuple[str, list[str]]:
-    """Split multiline owner field: first line = name, remaining lines = address."""
+def _split_owner(raw: str) -> tuple[str, list[str], str]:
+    """Split multiline owner field into (name, street_lines, country).
+
+    First line = name; last line = country; middle lines = street.
+    """
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
-        return "", []
+        return "", [], ""
+    if len(lines) == 1:
+        return lines[0], [], ""
     name = lines[0]
-    address = lines[1:] if len(lines) > 1 else []
-    return name, address
+    country = lines[-1]
+    street = lines[1:-1]
+    return name, street, country
 
 
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
@@ -169,12 +175,14 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if year and year.isdigit() and len(year) == 4:
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
-    owner_name, owner_address = _split_owner(row.get("owner", ""))
+    owner_name, owner_street, owner_country = _split_owner(row.get("owner", ""))
     owner_name = _WHITESPACE_RE.sub(" ", owner_name)
     if owner_name:
         registrant_fields["names"] = [owner_name]
-    if owner_address:
-        registrant_fields["street"] = owner_address
+    if owner_street:
+        registrant_fields["street"] = owner_street
+    if owner_country:
+        registrant_fields["country"] = owner_country
 
     record: dict = {
         "icao_hex": icao_hex,

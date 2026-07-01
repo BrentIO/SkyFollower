@@ -58,7 +58,7 @@ def _make_pdf_row(
     model="Viking Air (De Havilland)\nDHC-6-100",
     serial="501",
     year="1967",
-    owner="Island Aviation Services Ltd\nMale, Maldives",
+    owner="Island Aviation Services Ltd\nMale, Maldives\nMaldives",
     status="Valid",
 ) -> list:
     return [
@@ -86,7 +86,7 @@ def _make_row(
     model="Viking Air (De Havilland)\nDHC-6-100",
     serial="501",
     year_built="1967",
-    owner="Island Aviation Services Ltd\nMale, Maldives",
+    owner="Island Aviation Services Ltd\nMale, Maldives\nMaldives",
 ) -> dict:
     return {
         "registration": registration,
@@ -150,30 +150,41 @@ def _make_redis_no_match():
 # ---------------------------------------------------------------------------
 
 class TestSplitOwner:
-    def test_name_and_address(self):
-        name, addr = _split_owner("Island Aviation Services Ltd\nMale, Maldives")
+    def test_name_and_country_only(self):
+        name, street, country = _split_owner("Island Aviation Services Ltd\nMaldives")
         assert name == "Island Aviation Services Ltd"
-        assert addr == ["Male, Maldives"]
+        assert street == []
+        assert country == "Maldives"
+
+    def test_name_street_country(self):
+        name, street, country = _split_owner("Island Aviation Services Ltd\nMale, Maldives\nMaldives")
+        assert name == "Island Aviation Services Ltd"
+        assert street == ["Male, Maldives"]
+        assert country == "Maldives"
 
     def test_name_only(self):
-        name, addr = _split_owner("Island Aviation Services Ltd")
+        name, street, country = _split_owner("Island Aviation Services Ltd")
         assert name == "Island Aviation Services Ltd"
-        assert addr == []
+        assert street == []
+        assert country == ""
 
     def test_empty_string(self):
-        name, addr = _split_owner("")
+        name, street, country = _split_owner("")
         assert name == ""
-        assert addr == []
+        assert street == []
+        assert country == ""
 
-    def test_multiple_address_lines_preserved(self):
-        name, addr = _split_owner("Owner Name\nStreet 1\nCity\nCountry")
+    def test_multiple_street_lines_preserved(self):
+        name, street, country = _split_owner("Owner Name\nStreet 1\nCity\nCountry")
         assert name == "Owner Name"
-        assert addr == ["Street 1", "City", "Country"]
+        assert street == ["Street 1", "City"]
+        assert country == "Country"
 
     def test_blank_lines_ignored(self):
-        name, addr = _split_owner("Owner Name\n\nCity")
+        name, street, country = _split_owner("Owner Name\n\nMaldives")
         assert name == "Owner Name"
-        assert addr == ["City"]
+        assert street == []
+        assert country == "Maldives"
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +203,7 @@ class TestBuildRecord:
         assert record["aircraft"]["manufactured_date"] == "1967-01-01"
         assert record["registrant"]["names"] == ["Island Aviation Services Ltd"]
         assert record["registrant"]["street"] == ["Male, Maldives"]
+        assert record["registrant"]["country"] == "Maldives"
 
     def test_model_newlines_collapsed(self):
         row = _make_row(model="Viking Air\nDHC-6-100")
@@ -224,30 +236,44 @@ class TestBuildRecord:
         assert "manufactured_date" not in record.get("aircraft", {})
 
     def test_owner_name_stored_as_names(self):
-        row = _make_row(owner="MANTA AIR PVT LTD\nMale")
+        row = _make_row(owner="MANTA AIR PVT LTD\nMale\nMaldives")
         record = _build_record(row, "900100", "8Q-IAD")
         assert record["registrant"]["names"] == ["MANTA AIR PVT LTD"]
 
     def test_owner_address_stored_as_street(self):
-        row = _make_row(owner="MANTA AIR PVT LTD\nMale, Maldives")
+        row = _make_row(owner="MANTA AIR PVT LTD\nMale, Maldives\nMaldives")
         record = _build_record(row, "900100", "8Q-IAD")
         assert record["registrant"]["street"] == ["Male, Maldives"]
+
+    def test_owner_country_stored(self):
+        row = _make_row(owner="MANTA AIR PVT LTD\nMale\nMaldives")
+        record = _build_record(row, "900100", "8Q-IAD")
+        assert record["registrant"]["country"] == "Maldives"
 
     def test_owner_multiple_address_lines_preserved(self):
         row = _make_row(owner="MANTA AIR PVT LTD\nStreet 1\nMale 20026\nMaldives")
         record = _build_record(row, "900100", "8Q-IAD")
-        assert record["registrant"]["street"] == ["Street 1", "Male 20026", "Maldives"]
+        assert record["registrant"]["street"] == ["Street 1", "Male 20026"]
+        assert record["registrant"]["country"] == "Maldives"
 
     def test_empty_owner_omits_registrant(self):
         row = _make_row(owner="")
         record = _build_record(row, "900100", "8Q-IAD")
         assert "registrant" not in record
 
-    def test_owner_name_only_no_street(self):
+    def test_owner_name_only_no_street_no_country(self):
         row = _make_row(owner="Solo Owner")
         record = _build_record(row, "900100", "8Q-IAD")
         assert record["registrant"]["names"] == ["Solo Owner"]
         assert "street" not in record["registrant"]
+        assert "country" not in record["registrant"]
+
+    def test_owner_name_and_country_no_street(self):
+        row = _make_row(owner="Solo Owner\nMaldives")
+        record = _build_record(row, "900100", "8Q-IAD")
+        assert record["registrant"]["names"] == ["Solo Owner"]
+        assert "street" not in record["registrant"]
+        assert record["registrant"]["country"] == "Maldives"
 
     def test_no_aircraft_fields_omits_aircraft_key(self):
         row = _make_row(model="", serial="", year_built="")
@@ -429,7 +455,7 @@ class TestDownloadAndParse:
         assert r["model"] == "Viking Air (De Havilland)\nDHC-6-100"
         assert r["serial"] == "501"
         assert r["year_built"] == "1967"
-        assert r["owner"] == "Island Aviation Services Ltd\nMale, Maldives"
+        assert r["owner"] == "Island Aviation Services Ltd\nMale, Maldives\nMaldives"
 
 
 # ---------------------------------------------------------------------------
