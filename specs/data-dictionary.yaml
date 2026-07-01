@@ -458,6 +458,20 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  lv-caa:
+    description: "Latvia CAA aircraft register — YL-prefix registrations"
+    url: "https://data.gov.lv/dati/lv/api/action/datastore_search?resource_id=dbde00e6-8616-449a-8cac-ef748c6793f3&limit=50000"
+    format: json_api
+    cadence: weekly_tuesday
+    notes: "CKAN datastore JSON API; no auth required; single request returns all ~366 records; Construction_Year is an integer; Registered_on and Aircraft_Model_Category not stored; no registrant data available; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    fields:
+      Registration_Mark: Registration mark (YL-prefix; used as lookup key)
+      Model: Aircraft model (stored as aircraft.model)
+      Serial_No: Serial number (stored as aircraft.serial_number)
+      Construction_Year: "Integer year (stored as aircraft.manufactured_date → YYYY-01-01)"
+      Registered_on: Registration date (not stored)
+      Aircraft_Model_Category: Category description (stored as aircraft.type)
+
   mv-caa:
     description: "Maldives CAA aircraft register — 8Q-prefix registrations"
     url: "https://www.caa.gov.mv/operations/registration-of-aircraft-and-mortgages"
