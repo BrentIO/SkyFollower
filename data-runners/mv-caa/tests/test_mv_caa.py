@@ -153,27 +153,27 @@ class TestSplitOwner:
     def test_name_and_address(self):
         name, addr = _split_owner("Island Aviation Services Ltd\nMale, Maldives")
         assert name == "Island Aviation Services Ltd"
-        assert addr == "Male, Maldives"
+        assert addr == ["Male, Maldives"]
 
     def test_name_only(self):
         name, addr = _split_owner("Island Aviation Services Ltd")
         assert name == "Island Aviation Services Ltd"
-        assert addr == ""
+        assert addr == []
 
     def test_empty_string(self):
         name, addr = _split_owner("")
         assert name == ""
-        assert addr == ""
+        assert addr == []
 
-    def test_multiple_address_lines_joined(self):
+    def test_multiple_address_lines_preserved(self):
         name, addr = _split_owner("Owner Name\nStreet 1\nCity\nCountry")
         assert name == "Owner Name"
-        assert addr == "Street 1 City Country"
+        assert addr == ["Street 1", "City", "Country"]
 
     def test_blank_lines_ignored(self):
         name, addr = _split_owner("Owner Name\n\nCity")
         assert name == "Owner Name"
-        assert addr == "City"
+        assert addr == ["City"]
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ class TestBuildRecord:
         assert record["aircraft"]["serial_number"] == "501"
         assert record["aircraft"]["manufactured_date"] == "1967-01-01"
         assert record["registrant"]["names"] == ["Island Aviation Services Ltd"]
-        assert record["registrant"]["street"] == "Male, Maldives"
+        assert record["registrant"]["street"] == ["Male, Maldives"]
 
     def test_model_newlines_collapsed(self):
         row = _make_row(model="Viking Air\nDHC-6-100")
@@ -231,7 +231,12 @@ class TestBuildRecord:
     def test_owner_address_stored_as_street(self):
         row = _make_row(owner="MANTA AIR PVT LTD\nMale, Maldives")
         record = _build_record(row, "900100", "8Q-IAD")
-        assert record["registrant"]["street"] == "Male, Maldives"
+        assert record["registrant"]["street"] == ["Male, Maldives"]
+
+    def test_owner_multiple_address_lines_preserved(self):
+        row = _make_row(owner="MANTA AIR PVT LTD\nStreet 1\nMale 20026\nMaldives")
+        record = _build_record(row, "900100", "8Q-IAD")
+        assert record["registrant"]["street"] == ["Street 1", "Male 20026", "Maldives"]
 
     def test_empty_owner_omits_registrant(self):
         row = _make_row(owner="")

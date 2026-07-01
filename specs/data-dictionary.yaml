@@ -475,7 +475,7 @@ sources:
       4: "MTOW (not stored)"
       5: "Serial Number (stored as aircraft.serial_number)"
       6: "Year Built (stored as aircraft.manufactured_date → YYYY-01-01)"
-      7: "Owner Name+Address (multiline; first line → registrant.names[0], remaining → registrant.street)"
+      7: "Owner Name+Address (multiline; first line → registrant.names[0], remaining lines stored as registrant.street list)"
       8: "Legal Owner (not stored)"
       9: "Registration Basis (not stored)"
       "10-12": "Mortgage/AREDI (not stored)"

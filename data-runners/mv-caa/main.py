@@ -142,13 +142,13 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 # Record builder
 # ---------------------------------------------------------------------------
 
-def _split_owner(raw: str) -> tuple[str, str]:
-    """Split multiline owner field: first line = name, remaining = address."""
+def _split_owner(raw: str) -> tuple[str, list[str]]:
+    """Split multiline owner field: first line = name, remaining lines = address."""
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
-        return "", ""
+        return "", []
     name = lines[0]
-    address = " ".join(lines[1:]) if len(lines) > 1 else ""
+    address = lines[1:] if len(lines) > 1 else []
     return name, address
 
 
@@ -171,7 +171,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
     owner_name, owner_address = _split_owner(row.get("owner", ""))
     owner_name = _WHITESPACE_RE.sub(" ", owner_name)
-    owner_address = _WHITESPACE_RE.sub(" ", owner_address)
     if owner_name:
         registrant_fields["names"] = [owner_name]
     if owner_address:
