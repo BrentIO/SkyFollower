@@ -78,6 +78,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "model": (rec.get("Model") or "").strip(),
             "serial": (rec.get("Serial_No") or "").strip(),
             "year_built": rec.get("Construction_Year"),
+            "category": (rec.get("Aircraft_Model_Category") or "").strip(),
         })
 
     logger.info("Parsed %d YL- records from API.", len(records))
@@ -95,6 +96,10 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     model = _WHITESPACE_RE.sub(" ", row.get("model", "").strip())
     if model:
         aircraft_fields["model"] = model
+
+    category = _WHITESPACE_RE.sub(" ", row.get("category", "").strip())
+    if category:
+        aircraft_fields["type"] = category
 
     serial = row.get("serial", "").strip()
     if serial:

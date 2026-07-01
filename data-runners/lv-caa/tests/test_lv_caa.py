@@ -80,12 +80,14 @@ def _make_row(
     model="80TA",
     serial="0231291",
     year_built=1991,
+    category="Balloon (hot-air)",
 ) -> dict:
     return {
         "registration": registration,
         "model": model,
         "serial": serial,
         "year_built": year_built,
+        "category": category,
     }
 
 
@@ -166,6 +168,7 @@ class TestDownloadAndParse:
         assert r["model"] == "80TA"
         assert r["serial"] == "0231291"
         assert r["year_built"] == 1991
+        assert r["category"] == "Balloon (hot-air)"
 
     def test_registered_on_not_stored(self):
         session = MagicMock()
@@ -173,12 +176,6 @@ class TestDownloadAndParse:
         records = download_and_parse(session)
         assert "Registered_on" not in records[0]
         assert "registered_on" not in records[0]
-
-    def test_category_not_stored(self):
-        session = MagicMock()
-        session.get.return_value = _make_api_response([_make_api_record()])
-        records = download_and_parse(session)
-        assert "Aircraft_Model_Category" not in records[0]
 
     def test_null_fields_handled(self):
         session = MagicMock()
@@ -215,8 +212,19 @@ class TestBuildRecord:
         assert record["registration"] == "YL-AAA"
         assert record["source"] == "lv-caa"
         assert record["aircraft"]["model"] == "80TA"
+        assert record["aircraft"]["type"] == "Balloon (hot-air)"
         assert record["aircraft"]["serial_number"] == "0231291"
         assert record["aircraft"]["manufactured_date"] == "1991-01-01"
+
+    def test_category_stored_as_type(self):
+        row = _make_row(category="Aeroplane")
+        record = _build_record(row, "502100", "YL-AAA")
+        assert record["aircraft"]["type"] == "Aeroplane"
+
+    def test_empty_category_omits_type(self):
+        row = _make_row(category="")
+        record = _build_record(row, "502100", "YL-AAA")
+        assert "type" not in record.get("aircraft", {})
 
     def test_no_registrant_key(self):
         row = _make_row()
@@ -259,7 +267,7 @@ class TestBuildRecord:
         assert "serial_number" not in record.get("aircraft", {})
 
     def test_no_aircraft_fields_omits_aircraft_key(self):
-        row = _make_row(model="", serial="", year_built=None)
+        row = _make_row(model="", serial="", year_built=None, category="")
         record = _build_record(row, "502100", "YL-AAA")
         assert "aircraft" not in record
 

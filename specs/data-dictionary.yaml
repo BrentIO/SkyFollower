@@ -470,7 +470,7 @@ sources:
       Serial_No: Serial number (stored as aircraft.serial_number)
       Construction_Year: "Integer year (stored as aircraft.manufactured_date → YYYY-01-01)"
       Registered_on: Registration date (not stored)
-      Aircraft_Model_Category: Category description (not stored)
+      Aircraft_Model_Category: Category description (stored as aircraft.type)
 
   mv-caa:
     description: "Maldives CAA aircraft register — 8Q-prefix registrations"
