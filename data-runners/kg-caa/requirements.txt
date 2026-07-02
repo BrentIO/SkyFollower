@@ -1,0 +1,7 @@
+pydantic>=2.0
+uuid7>=0.1.0
+redis>=5.0
+paho-mqtt>=2.0
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0

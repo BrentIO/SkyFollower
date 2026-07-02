@@ -458,6 +458,21 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  kg-caa:
+    description: "Kyrgyzstan CAA aircraft register — EX-prefix registrations"
+    url: "https://caa.kg/en/node/46"
+    format: html_table
+    cadence: weekly_tuesday
+    notes: "Static single-page HTML table; 56 data rows; 7 columns; col 0 is always empty (visual row-number placeholder); operator (col 1) and type-of-aircraft (col 2) independently use rowspan to span multiple aircraft rows — table is expanded to a full grid before parsing so column indices are always fixed; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    columns:
+      0: "№ п/п (always empty in data rows)"
+      1: "Эксплуатант/Operator + Собственник/Owner (rowspan; carried forward → registrant.names[0])"
+      2: "Тип ВС/Type of Aircraft (rowspan; carried forward → aircraft.model)"
+      3: "Регистрац. номер/Registration (EX-prefix; used as lookup key)"
+      4: "Дата регистрации/Date of Registration (not stored)"
+      5: "Серийный №/Serial Number (stored as aircraft.serial_number)"
+      6: "Дата производства/Date of Manufacture (stored as aircraft.manufactured_date; DD.MM.YYYY → YYYY-MM-DD; Month YYYY → YYYY-MM-01)"
+
   lv-caa:
     description: "Latvia CAA aircraft register — YL-prefix registrations"
     url: "https://data.gov.lv/dati/lv/api/action/datastore_search?resource_id=dbde00e6-8616-449a-8cac-ef748c6793f3&limit=50000"
