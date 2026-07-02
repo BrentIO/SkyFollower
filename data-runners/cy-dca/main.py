@@ -58,6 +58,8 @@ BATCH_SIZE = 100
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+_OWNER_HEADER_LABELS = {"OWNER", "LESSOR", "TRUSTEE"}
+
 _COL_REGISTRATION = 0
 _COL_MANUFACTURER = 1
 _COL_MODEL = 2
@@ -127,7 +129,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["serial_number"] = serial
 
     owner_raw = row.get("owner") or ""
-    names = [_clean(part) for part in owner_raw.split("/") if _clean(part)]
+    names = [p for part in owner_raw.split("/") if (p := _clean(part).strip(":")) and p.upper() not in _OWNER_HEADER_LABELS]
     if names:
         registrant_fields["names"] = names
 

@@ -280,6 +280,30 @@ class TestBuildRecord:
         record = _build_record(_make_row(owner=" / "), "4B0001", "5B-ABC")
         assert "registrant" not in record
 
+    def test_owner_label_skipped(self):
+        record = _build_record(_make_row(owner="OWNER"), "4B0001", "5B-ABC")
+        assert "registrant" not in record
+
+    def test_lessor_label_skipped(self):
+        record = _build_record(_make_row(owner="LESSOR"), "4B0001", "5B-ABC")
+        assert "registrant" not in record
+
+    def test_trustee_label_skipped(self):
+        record = _build_record(_make_row(owner="TRUSTEE"), "4B0001", "5B-ABC")
+        assert "registrant" not in record
+
+    def test_label_mixed_with_real_name_filters_label(self):
+        record = _build_record(_make_row(owner="OWNER / ACME Aviation Ltd"), "4B0001", "5B-ABC")
+        assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
+
+    def test_colon_stripped_from_name(self):
+        record = _build_record(_make_row(owner="ACME Aviation Ltd:"), "4B0001", "5B-ABC")
+        assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
+
+    def test_colon_stripped_before_label_check(self):
+        record = _build_record(_make_row(owner="OWNER:"), "4B0001", "5B-ABC")
+        assert "registrant" not in record
+
     def test_source_is_cy_dca(self):
         record = _build_record(_make_row(), "4B0001", "5B-ABC")
         assert record["source"] == "cy-dca"
