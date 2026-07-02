@@ -458,6 +458,23 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  ee-transpordiamet:
+    description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"
+    url: "https://transpordiamet.ee/ohusoidukite-register"
+    format: html_table
+    cadence: weekly_tuesday
+    notes: "Single page with one HTML table; 2 header rows then ~166 data rows; registration marks may contain internal whitespace (e.g. 'ES - MBA') — normalize by removing all whitespace before prefix check; columns 0/2/3/8 are blank padding; no ICAO hex — resolved via RediSearch; owner stored as registrant.names[0], operator as registrant.names[1] (omitted if identical to owner); must run after Mictronics"
+    columns:
+      0: "blank"
+      1: "Registration mark (ES-prefix; normalize re.sub whitespace → lookup key)"
+      2: "blank"
+      3: "blank"
+      4: "Type of Aircraft (stored as aircraft.model)"
+      5: "Serial number (stored as aircraft.serial_number)"
+      6: "Owner (stored as registrant.names[0])"
+      7: "Operator (stored as registrant.names[1]; omitted if identical to owner)"
+      8: "blank"
+
   ge-gcaa:
     description: "Georgia GCAA aircraft register — 4L-prefix registrations"
     url: "https://gcaa.ge/civil-aircraft-register/"
