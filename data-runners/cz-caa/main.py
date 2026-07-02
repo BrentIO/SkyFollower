@@ -54,11 +54,11 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 _CATEGORY_MAP = {
     "AVREG_DATA.CATEGORIES.AIRPLANE": "Airplane",
-    "AVREG_DATA.CATEGORIES.GAS_BALLOON": "Gas Balloon",
+    "AVREG_DATA.CATEGORIES.GAS_BALLOON": "Balloon",
     "AVREG_DATA.CATEGORIES.GLIDER": "Glider",
     "AVREG_DATA.CATEGORIES.HELICOPTER": "Helicopter",
-    "AVREG_DATA.CATEGORIES.HOT_AIR_AIRSHIP": "Hot Air Airship",
-    "AVREG_DATA.CATEGORIES.HOT_AIR_BALLOON": "Hot Air Balloon",
+    "AVREG_DATA.CATEGORIES.HOT_AIR_AIRSHIP": "Blimp/Dirigible",
+    "AVREG_DATA.CATEGORIES.HOT_AIR_BALLOON": "Balloon",
     "AVREG_DATA.CATEGORIES.POWERED_GLIDER": "Powered Glider",
     "Bezpilotní letadlo": "Unmanned Aircraft",
 }
