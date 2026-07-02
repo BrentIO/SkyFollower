@@ -54,8 +54,10 @@ def _make_table_html(rows_html: str) -> str:
 
 
 def _header_row() -> str:
+    """7-column header matching the real page structure."""
     return (
         "<tr>"
+        "<th>№ п/п</th>"
         "<th>Эксплуатант/Operator</th>"
         "<th>Тип ВС/Type</th>"
         "<th>Регистрац. номер</th>"
@@ -73,12 +75,17 @@ def _full_row(
     date_reg="01.01.2000",
     serial="23456",
     mfr_date="15.06.1998",
-    rowspan=1,
+    operator_rowspan=1,
+    model_rowspan=1,
 ) -> str:
+    """Full 7-cell data row; col 0 is always empty (row-number placeholder)."""
+    op_rs = f' rowspan="{operator_rowspan}"' if operator_rowspan > 1 else ""
+    mdl_rs = f' rowspan="{model_rowspan}"' if model_rowspan > 1 else ""
     return (
         f"<tr>"
-        f'<td rowspan="{rowspan}">{operator}</td>'
-        f"<td>{model}</td>"
+        f"<td></td>"
+        f"<td{op_rs}>{operator}</td>"
+        f"<td{mdl_rs}>{model}</td>"
         f"<td>{registration}</td>"
         f"<td>{date_reg}</td>"
         f"<td>{serial}</td>"
@@ -94,9 +101,10 @@ def _continuation_row(
     serial="99999",
     mfr_date="декабрь 1998",
 ) -> str:
-    """Operator rowspanned away; model present."""
+    """6-cell row: operator rowspanned away, model present; col 0 still empty."""
     return (
         f"<tr>"
+        f"<td></td>"
         f"<td>{model}</td>"
         f"<td>{registration}</td>"
         f"<td>{date_reg}</td>"
@@ -112,9 +120,10 @@ def _double_continuation_row(
     serial="11111",
     mfr_date="01.01.2000",
 ) -> str:
-    """Both operator and model rowspanned away."""
+    """5-cell row: both operator and model rowspanned away; col 0 still empty."""
     return (
         f"<tr>"
+        f"<td></td>"
         f"<td>{registration}</td>"
         f"<td>{date_reg}</td>"
         f"<td>{serial}</td>"
@@ -253,7 +262,7 @@ class TestDownloadAndParse:
     def test_operator_carried_forward_across_rowspan(self):
         html = _make_table_html(
             _header_row()
-            + _full_row(operator="Air Manas", registration="EX-001", rowspan=2)
+            + _full_row(operator="Air Manas", registration="EX-001", operator_rowspan=2)
             + _continuation_row(registration="EX-002")
         )
         session = MagicMock()
@@ -266,7 +275,8 @@ class TestDownloadAndParse:
     def test_model_carried_forward_when_both_rowspanned(self):
         html = _make_table_html(
             _header_row()
-            + _full_row(operator="Tez Jet", model="AVRO 146-RJ85", registration="EX-008", rowspan=2)
+            + _full_row(operator="Tez Jet", model="AVRO 146-RJ85", registration="EX-008",
+                        operator_rowspan=2, model_rowspan=2)
             + _double_continuation_row(registration="EX-009")
         )
         session = MagicMock()
@@ -281,8 +291,8 @@ class TestDownloadAndParse:
     def test_operator_changes_for_new_group(self):
         html = _make_table_html(
             _header_row()
-            + _full_row(operator="Air Manas", registration="EX-001", rowspan=1)
-            + _full_row(operator="Avia Traffic", registration="EX-003", rowspan=1)
+            + _full_row(operator="Air Manas", registration="EX-001")
+            + _full_row(operator="Avia Traffic", registration="EX-003")
         )
         session = MagicMock()
         session.get.return_value = _make_response(html)

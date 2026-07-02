@@ -9,12 +9,13 @@ enrichment data to aircraft:detail:{icao_hex}, publishes MQTT completion
 stats, then exits.
 
 Table columns (0-based, after rowspan expansion):
-  0: Operator/Owner (rowspan; carried forward across aircraft rows)
-  1: Type of Aircraft (stored as aircraft.model)
-  2: Registration (EX-prefix; used as lookup key)
-  3: Date of Registration (not stored)
-  4: Serial Number (stored as aircraft.serial_number)
-  5: Date of Manufacture (stored as aircraft.manufactured_date)
+  0: № п/п — always empty in data rows (visual row-number placeholder)
+  1: Эксплуатант/Operator + Собственник/Owner (rowspan; carried forward)
+  2: Тип ВС/Type of Aircraft (rowspan; carried forward; stored as aircraft.model)
+  3: Регистрац. номер/Registration (EX-prefix; used as lookup key)
+  4: Дата регистрации/Date of Registration (not stored)
+  5: Серийный №/Serial Number (stored as aircraft.serial_number)
+  6: Дата производства/Date of Manufacture (stored as aircraft.manufactured_date)
 
 Date of Manufacture formats:
   DD.MM.YYYY  → YYYY-MM-DD
@@ -106,6 +107,44 @@ def _parse_manufacture_date(raw: str) -> str:
 # Download + parse
 # ---------------------------------------------------------------------------
 
+def _expand_table(table) -> list[list[str]]:
+    """Expand HTML rowspan attributes into a uniform grid of text cells."""
+    grid: list[list[str]] = []
+    pending: dict[int, tuple[str, int]] = {}  # col → (text, remaining_rows)
+
+    for tr in table.find_all("tr"):
+        cells = list(tr.find_all(["td", "th"]))
+        row: list[str] = []
+        col = 0
+        ci = 0
+
+        while ci < len(cells) or any(k >= col for k in pending):
+            if col in pending:
+                text, rem = pending[col]
+                row.append(text)
+                if rem > 1:
+                    pending[col] = (text, rem - 1)
+                else:
+                    del pending[col]
+                col += 1
+            elif ci < len(cells):
+                cell = cells[ci]
+                ci += 1
+                text = _WHITESPACE_RE.sub(" ", cell.get_text(separator=" ", strip=True))
+                span = int(cell.get("rowspan") or 1)
+                if span > 1:
+                    pending[col] = (text, span - 1)
+                row.append(text)
+                col += 1
+            else:
+                col += 1  # skip gap to reach next pending column
+
+        if row:
+            grid.append(row)
+
+    return grid
+
+
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch and parse the Kyrgyzstan CAA aircraft register HTML page."""
     logger.info("Downloading Kyrgyzstan CAA aircraft register from %s", _PAGE_URL)
@@ -118,46 +157,22 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     if not table:
         raise RuntimeError("No table found on Kyrgyzstan CAA page.")
 
+    # Columns (0-based, after rowspan expansion):
+    #   0: № п/п (empty placeholder)  1: Operator/Owner  2: Type/Model
+    #   3: Registration  4: Date registered (skip)  5: Serial  6: Date manufactured
     records: list[dict] = []
-    current_operator = ""
-    current_model = ""
-
-    for tr in table.find_all("tr"):
-        cells = tr.find_all(["td", "th"])
-        if not cells:
+    for row in _expand_table(table):
+        if len(row) < 7:
             continue
-
-        texts = [_WHITESPACE_RE.sub(" ", c.get_text(separator=" ", strip=True)) for c in cells]
-
-        # Skip rows with no EX- registration
-        if not any(t.startswith("EX-") for t in texts):
+        registration = row[3].strip()
+        if not registration.startswith("EX-"):
             continue
-
-        reg_idx = next(i for i, t in enumerate(texts) if t.startswith("EX-"))
-        registration = texts[reg_idx].strip()
-
-        if reg_idx == 2:
-            # Full row: [operator, model, registration, date_reg, serial, mfr_date]
-            current_operator = texts[0]
-            current_model = texts[1]
-            serial = texts[4] if len(texts) > 4 else ""
-            mfr_date_raw = texts[5] if len(texts) > 5 else ""
-        elif reg_idx == 1:
-            # Operator rowspanned, model present: [model, registration, date_reg, serial, mfr_date]
-            current_model = texts[0]
-            serial = texts[3] if len(texts) > 3 else ""
-            mfr_date_raw = texts[4] if len(texts) > 4 else ""
-        else:
-            # Both operator and model rowspanned: [registration, date_reg, serial, mfr_date]
-            serial = texts[2] if len(texts) > 2 else ""
-            mfr_date_raw = texts[3] if len(texts) > 3 else ""
-
         records.append({
             "registration": registration,
-            "operator": _WHITESPACE_RE.sub(" ", current_operator).strip(),
-            "model": _WHITESPACE_RE.sub(" ", current_model).strip(),
-            "serial": serial.strip(),
-            "manufacture_date_raw": mfr_date_raw.strip(),
+            "operator": row[1].strip(),
+            "model": row[2].strip(),
+            "serial": row[5].strip(),
+            "manufacture_date_raw": row[6].strip(),
         })
 
     logger.info("Parsed %d EX- records.", len(records))

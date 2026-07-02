@@ -463,14 +463,15 @@ sources:
     url: "https://caa.kg/en/node/46"
     format: html_table
     cadence: weekly_tuesday
-    notes: "Static single-page HTML table; ~15 EX- records; operator/owner cell and type-of-aircraft cell may both use rowspan spanning multiple aircraft rows — both values carried forward independently; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    notes: "Static single-page HTML table; 56 data rows; 7 columns; col 0 is always empty (visual row-number placeholder); operator (col 1) and type-of-aircraft (col 2) independently use rowspan to span multiple aircraft rows — table is expanded to a full grid before parsing so column indices are always fixed; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     columns:
-      0: "Эксплуатант/Operator (rowspan; carried forward → registrant.names[0])"
-      1: "Тип ВС/Type of Aircraft (stored as aircraft.model)"
-      2: "Регистрац. номер/Registration (EX-prefix; used as lookup key)"
-      3: "Дата регистрации/Date of Registration (not stored)"
-      4: "Серийный №/Serial Number (stored as aircraft.serial_number)"
-      5: "Дата производства/Date of Manufacture (stored as aircraft.manufactured_date; DD.MM.YYYY → YYYY-MM-DD; Month YYYY → YYYY-MM-01)"
+      0: "№ п/п (always empty in data rows)"
+      1: "Эксплуатант/Operator + Собственник/Owner (rowspan; carried forward → registrant.names[0])"
+      2: "Тип ВС/Type of Aircraft (rowspan; carried forward → aircraft.model)"
+      3: "Регистрац. номер/Registration (EX-prefix; used as lookup key)"
+      4: "Дата регистрации/Date of Registration (not stored)"
+      5: "Серийный №/Serial Number (stored as aircraft.serial_number)"
+      6: "Дата производства/Date of Manufacture (stored as aircraft.manufactured_date; DD.MM.YYYY → YYYY-MM-DD; Month YYYY → YYYY-MM-01)"
 
   lv-caa:
     description: "Latvia CAA aircraft register — YL-prefix registrations"
