@@ -64,7 +64,8 @@ def _data_row(
 ) -> str:
     return (
         f"<tr><td></td><td>{reg}</td><td>{col2}</td><td>{col3}</td>"
-        f"<td>{model}</td><td>{serial}</td><td>{owner}</td><td>{operator}</td><td>{col8}</td></tr>"
+        f"<td>{model}</td><td>{serial}</td><td>{owner}</td>"
+        f"<td>{operator}</td><td>{col8}</td></tr>"
     )
 
 
@@ -86,14 +87,12 @@ def _make_row(
     model="Cessna 172",
     serial="17260001",
     owner="Owner Co",
-    operator="Operator Co",
 ) -> dict:
     return {
         "registration": registration,
         "model": model,
         "serial": serial,
         "owner": owner,
-        "operator": operator,
     }
 
 
@@ -154,7 +153,7 @@ class TestDownloadAndParse:
         assert r["model"] == "Cessna 172"
         assert r["serial"] == "17260001"
         assert r["owner"] == "Owner Co"
-        assert r["operator"] == "Operator Co"
+        assert "operator" not in r
 
     def test_skips_header_rows(self):
         html = _page_html([_data_row()])
@@ -224,25 +223,10 @@ class TestBuildRecord:
         assert record["source"] == "ee-transpordiamet"
         assert record["aircraft"]["model"] == "Cessna 172"
         assert record["aircraft"]["serial_number"] == "17260001"
-        assert record["registrant"]["names"] == ["Owner Co", "Operator Co"]
-
-    def test_operator_omitted_when_same_as_owner(self):
-        row = _make_row(owner="Same Co", operator="Same Co")
-        record = _build_record(row, "4B1234", "ES-AAA")
-        assert record["registrant"]["names"] == ["Same Co"]
-
-    def test_only_owner_when_no_operator(self):
-        row = _make_row(operator="")
-        record = _build_record(row, "4B1234", "ES-AAA")
         assert record["registrant"]["names"] == ["Owner Co"]
 
-    def test_only_operator_when_no_owner(self):
+    def test_no_registrant_when_owner_empty(self):
         row = _make_row(owner="")
-        record = _build_record(row, "4B1234", "ES-AAA")
-        assert record["registrant"]["names"] == ["Operator Co"]
-
-    def test_no_registrant_when_both_empty(self):
-        row = _make_row(owner="", operator="")
         record = _build_record(row, "4B1234", "ES-AAA")
         assert "registrant" not in record
 

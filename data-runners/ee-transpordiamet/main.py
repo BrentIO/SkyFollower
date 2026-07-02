@@ -16,7 +16,7 @@ Table columns (0-based, 9 columns total):
   4: Type of Aircraft  → aircraft.model
   5: Serial number     → aircraft.serial_number
   6: Owner             → registrant.names[0]
-  7: Operator          → registrant.names[1] (omitted if identical to owner)
+  7: Operator          (not imported)
   8: blank
 
 Data source: https://transpordiamet.ee/ohusoidukite-register
@@ -61,7 +61,6 @@ _COL_REGISTRATION = 1
 _COL_MODEL = 4
 _COL_SERIAL = 5
 _COL_OWNER = 6
-_COL_OPERATOR = 7
 _MIN_COLS = 8
 
 
@@ -99,7 +98,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "model": cells[_COL_MODEL].strip(),
             "serial": cells[_COL_SERIAL].strip(),
             "owner": cells[_COL_OWNER].strip(),
-            "operator": cells[_COL_OPERATOR].strip() if len(cells) > _COL_OPERATOR else "",
         })
 
     logger.info("Parsed %d ES- records.", len(records))
@@ -124,15 +122,8 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["serial_number"] = serial
 
     owner = _WHITESPACE_RE.sub(" ", row.get("owner", "").strip())
-    operator = _WHITESPACE_RE.sub(" ", row.get("operator", "").strip())
-
-    names: list[str] = []
     if owner:
-        names.append(owner)
-    if operator and operator != owner:
-        names.append(operator)
-    if names:
-        registrant_fields["names"] = names
+        registrant_fields["names"] = [owner]
 
     record: dict = {
         "icao_hex": icao_hex,

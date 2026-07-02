@@ -463,7 +463,7 @@ sources:
     url: "https://transpordiamet.ee/ohusoidukite-register"
     format: html_table
     cadence: weekly_tuesday
-    notes: "Single page with one HTML table; 2 header rows then ~166 data rows; registration marks may contain internal whitespace (e.g. 'ES - MBA') — normalize by removing all whitespace before prefix check; columns 0/2/3/8 are blank padding; no ICAO hex — resolved via RediSearch; owner stored as registrant.names[0], operator as registrant.names[1] (omitted if identical to owner); must run after Mictronics"
+    notes: "Single page with one HTML table; 2 header rows then ~166 data rows; registration marks may contain internal whitespace (e.g. 'ES - MBA') — normalize by removing all whitespace before prefix check; columns 0/2/3/7/8 are blank or not imported; no ICAO hex — resolved via RediSearch; owner stored as registrant.names[0]; operator column not imported; must run after Mictronics"
     columns:
       0: "blank"
       1: "Registration mark (ES-prefix; normalize re.sub whitespace → lookup key)"
@@ -472,7 +472,7 @@ sources:
       4: "Type of Aircraft (stored as aircraft.model)"
       5: "Serial number (stored as aircraft.serial_number)"
       6: "Owner (stored as registrant.names[0])"
-      7: "Operator (stored as registrant.names[1]; omitted if identical to owner)"
+      7: "Operator (not imported)"
       8: "blank"
 
   ge-gcaa:
