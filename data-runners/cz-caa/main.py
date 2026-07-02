@@ -47,7 +47,7 @@ _DETAIL_URL = "https://lr.caa.gov.cz/api/avreg/{id}"
 
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/cz-caa"
-REQUEST_DELAY = 0.5   # seconds between detail requests
+REQUEST_DELAY = 0.25  # seconds between detail requests
 _DETAIL_MAX_RETRIES = 3
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -99,11 +99,9 @@ def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
                 return None
 
 
-def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY) -> list[dict]:
-    """Fetch all active Czech CAA records and return enrichment-ready dicts."""
+def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
+    """Yield enrichment-ready dicts one at a time as each detail record is fetched."""
     ids = _fetch_active_ids(session)
-    records = []
-    errors = 0
 
     for i, record_id in enumerate(ids):
         if i > 0:
@@ -111,14 +109,13 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY) 
 
         detail = _fetch_detail(session, record_id)
         if detail is None:
-            errors += 1
             continue
 
         transponder = (detail.get("transponder") or "").strip().upper()
         if not transponder:
             continue
 
-        records.append({
+        yield {
             "icao_hex": transponder,
             "manufacturer": (detail.get("manufacturer") or "").strip(),
             "model": (detail.get("model") or "").strip(),
@@ -126,14 +123,7 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY) 
             "manufacture_year": detail.get("manufacture_year"),
             "owner": _first_display_name(detail.get("owners")),
             "operator": _first_display_name(detail.get("operators")),
-        })
-
-    logger.info(
-        "Parsed %d records with transponder codes (%d detail errors).",
-        len(records),
-        errors,
-    )
-    return records
+        }
 
 
 def _first_display_name(entries) -> str:
@@ -196,42 +186,20 @@ def _build_record(row: dict) -> dict:
 # Write to Redis
 # ---------------------------------------------------------------------------
 
-def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
-    """Write Czech CAA data to aircraft:detail keys in Redis. Returns count written."""
-    count = 0
-    errors = 0
-    pipe = r.pipeline()
-    pipe_count = 0
-
-    for row in rows:
-        icao_hex = row.get("icao_hex", "").strip()
-        if not icao_hex:
-            continue
-        record = _build_record(row)
-        key = aircraft_detail_key(icao_hex)
-        pipe.json().set(key, "$", record)
-        pipe.expire(key, ttl)
-        count += 1
-        pipe_count += 1
-
-        if pipe_count >= 1000:
-            try:
-                pipe.execute()
-            except Exception as exc:
-                logger.warning("Redis pipeline failed: %s", exc)
-                errors += pipe_count
-            pipe = r.pipeline()
-            pipe_count = 0
-
-    if pipe_count:
-        try:
-            pipe.execute()
-        except Exception as exc:
-            logger.warning("Redis pipeline failed: %s", exc)
-            errors += pipe_count
-
-    logger.info("Finished: %d written, %d errors.", count, errors)
-    return count
+def write_to_redis(row: dict, r: redis_lib.Redis, ttl: int) -> bool:
+    """Write a single Czech CAA record to Redis. Returns True on success."""
+    icao_hex = row.get("icao_hex", "").strip()
+    if not icao_hex:
+        return False
+    record = _build_record(row)
+    key = aircraft_detail_key(icao_hex)
+    try:
+        r.json().set(key, "$", record)
+        r.expire(key, ttl)
+        return True
+    except Exception as exc:
+        logger.warning("Redis write failed for %s: %s", icao_hex, exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -363,8 +331,9 @@ def main() -> None:
     records_imported = 0
 
     try:
-        rows = download_and_parse(session)
-        records_imported = write_to_redis(rows, r, ttl)
+        for row in download_and_parse(session):
+            if write_to_redis(row, r, ttl):
+                records_imported += 1
         status = "success"
         logger.info(
             "Czech CAA runner completed successfully. Records imported: %d",

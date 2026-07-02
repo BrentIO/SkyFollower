@@ -261,13 +261,15 @@ class TestDownloadAndParse:
         session.get.side_effect = calls
         return session
 
+    def _collect(self, session, delay=0):
+        return list(download_and_parse(session, delay=delay))
+
     def test_basic_parse(self):
         session = self._session_with(
             [_list_record(id=1)],
             [_detail_response()],
         )
-        with patch("time.sleep"):
-            records = download_and_parse(session, delay=0)
+        records = self._collect(session)
         assert len(records) == 1
         assert records[0]["icao_hex"] == "49B0AA"
         assert records[0]["manufacturer"] == "Airbus"
@@ -282,24 +284,21 @@ class TestDownloadAndParse:
             [_list_record(id=1)],
             [_detail_response(transponder=None)],
         )
-        records = download_and_parse(session, delay=0)
-        assert records == []
+        assert self._collect(session) == []
 
     def test_skips_empty_transponder(self):
         session = self._session_with(
             [_list_record(id=1)],
             [_detail_response(transponder="")],
         )
-        records = download_and_parse(session, delay=0)
-        assert records == []
+        assert self._collect(session) == []
 
     def test_transponder_uppercased(self):
         session = self._session_with(
             [_list_record(id=1)],
             [_detail_response(transponder="49b0aa")],
         )
-        records = download_and_parse(session, delay=0)
-        assert records[0]["icao_hex"] == "49B0AA"
+        assert self._collect(session)[0]["icao_hex"] == "49B0AA"
 
     def test_skips_deleted_records(self):
         session = MagicMock()
@@ -310,8 +309,7 @@ class TestDownloadAndParse:
             ]),
             _detail_response(),
         ]
-        records = download_and_parse(session, delay=0)
-        assert len(records) == 1
+        assert len(self._collect(session)) == 1
 
     def test_continues_on_detail_error(self):
         session = MagicMock()
@@ -320,7 +318,7 @@ class TestDownloadAndParse:
             _make_response(status_code=500),
             _detail_response(transponder="AAAAAA"),
         ]
-        records = download_and_parse(session, delay=0)
+        records = self._collect(session)
         assert len(records) == 1
         assert records[0]["icao_hex"] == "AAAAAA"
 
@@ -332,7 +330,7 @@ class TestDownloadAndParse:
             _detail_response(transponder="222222"),
         ]
         with patch("cz_caa_main.time.sleep") as mock_sleep:
-            download_and_parse(session, delay=0.05)
+            self._collect(session, delay=0.05)
         mock_sleep.assert_called_once_with(0.05)
 
     def test_no_sleep_before_first_record(self):
@@ -342,7 +340,7 @@ class TestDownloadAndParse:
             _detail_response(),
         ]
         with patch("cz_caa_main.time.sleep") as mock_sleep:
-            download_and_parse(session, delay=0.05)
+            self._collect(session, delay=0.05)
         mock_sleep.assert_not_called()
 
 
@@ -429,37 +427,34 @@ class TestBuildRecord:
 
 class TestWriteToRedis:
     def test_writes_record(self):
-        rows = [_make_row()]
         r = _make_redis()
-        assert write_to_redis(rows, r, REDIS_TTL) == 1
+        assert write_to_redis(_make_row(), r, REDIS_TTL) is True
 
     def test_writes_to_correct_key(self):
-        rows = [_make_row(icao_hex="49B0AA")]
         r = _make_redis()
-        write_to_redis(rows, r, REDIS_TTL)
-        set_call = r.pipeline.return_value.json.return_value.set.call_args
-        assert set_call[0][0] == "aircraft:detail:49B0AA"
+        write_to_redis(_make_row(icao_hex="49B0AA"), r, REDIS_TTL)
+        key = r.json.return_value.set.call_args[0][0]
+        assert key == "aircraft:detail:49B0AA"
 
     def test_source_field_in_record(self):
-        rows = [_make_row()]
         r = _make_redis()
-        write_to_redis(rows, r, REDIS_TTL)
-        set_call = r.pipeline.return_value.json.return_value.set.call_args
-        assert set_call[0][2]["source"] == "cz-caa"
+        write_to_redis(_make_row(), r, REDIS_TTL)
+        written = r.json.return_value.set.call_args[0][2]
+        assert written["source"] == "cz-caa"
 
     def test_ttl_applied(self):
-        rows = [_make_row(icao_hex="49B0AA")]
         r = _make_redis()
-        write_to_redis(rows, r, REDIS_TTL)
-        r.pipeline.return_value.expire.assert_called_with("aircraft:detail:49B0AA", REDIS_TTL)
+        write_to_redis(_make_row(icao_hex="49B0AA"), r, REDIS_TTL)
+        r.expire.assert_called_with("aircraft:detail:49B0AA", REDIS_TTL)
 
-    def test_empty_icao_hex_skipped(self):
-        rows = [_make_row(icao_hex="")]
+    def test_empty_icao_hex_returns_false(self):
         r = _make_redis()
-        assert write_to_redis(rows, r, REDIS_TTL) == 0
+        assert write_to_redis(_make_row(icao_hex=""), r, REDIS_TTL) is False
 
-    def test_empty_list_returns_zero(self):
-        assert write_to_redis([], _make_redis(), REDIS_TTL) == 0
+    def test_redis_error_returns_false(self):
+        r = _make_redis()
+        r.json.return_value.set.side_effect = Exception("connection refused")
+        assert write_to_redis(_make_row(), r, REDIS_TTL) is False
 
 
 # ---------------------------------------------------------------------------
