@@ -38,7 +38,10 @@ _mod = _load_main()
 _fetch_active_ids = _mod._fetch_active_ids
 _fetch_detail = _mod._fetch_detail
 _first_display_name = _mod._first_display_name
+_all_display_names = _mod._all_display_names
 _build_record = _mod._build_record
+_CATEGORY_MAP = _mod._CATEGORY_MAP
+_ENGINE_TYPE_MAP = _mod._ENGINE_TYPE_MAP
 download_and_parse = _mod.download_and_parse
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
@@ -74,6 +77,10 @@ def _detail_response(
     model="A320",
     serial_number="1234",
     manufacture_year=2005,
+    category="AVREG_DATA.CATEGORIES.AIRPLANE",
+    engine_type="AVREG_DATA.ENGINE_TYPES.PISTON",
+    engine_count=2,
+    max_on_board=6,
     owners=None,
     operators=None,
 ):
@@ -83,6 +90,10 @@ def _detail_response(
         "model": model,
         "serial_number": serial_number,
         "manufacture_year": manufacture_year,
+        "category": category,
+        "engine_type": engine_type,
+        "engine_count": engine_count,
+        "max_on_board": max_on_board,
         "owners": owners if owners is not None else [{"display_name": "Owner Co"}],
         "operators": operators if operators is not None else [{"display_name": "Operator Co"}],
     })
@@ -90,20 +101,28 @@ def _detail_response(
 
 def _make_row(
     icao_hex="49B0AA",
+    category="AVREG_DATA.CATEGORIES.AIRPLANE",
     manufacturer="Airbus",
     model="A320",
     serial="1234",
     manufacture_year=2005,
-    owner="Owner Co",
+    engine_type="AVREG_DATA.ENGINE_TYPES.PISTON",
+    engine_count=2,
+    seats=6,
+    owners=None,
     operator="Operator Co",
 ) -> dict:
     return {
         "icao_hex": icao_hex,
+        "category": category,
         "manufacturer": manufacturer,
         "model": model,
         "serial": serial,
         "manufacture_year": manufacture_year,
-        "owner": owner,
+        "engine_type": engine_type,
+        "engine_count": engine_count,
+        "seats": seats,
+        "owners": owners if owners is not None else ["Owner Co"],
         "operator": operator,
     }
 
@@ -250,6 +269,26 @@ class TestFirstDisplayName:
         assert _first_display_name([{}]) == ""
 
 
+class TestAllDisplayNames:
+    def test_returns_all_names(self):
+        entries = [{"display_name": "Alice"}, {"display_name": "Bob"}, {"display_name": "Carol"}]
+        assert _all_display_names(entries) == ["Alice", "Bob", "Carol"]
+
+    def test_returns_empty_for_none(self):
+        assert _all_display_names(None) == []
+
+    def test_returns_empty_for_empty_list(self):
+        assert _all_display_names([]) == []
+
+    def test_skips_empty_display_names(self):
+        entries = [{"display_name": "Alice"}, {"display_name": ""}, {"display_name": "Carol"}]
+        assert _all_display_names(entries) == ["Alice", "Carol"]
+
+    def test_normalizes_whitespace(self):
+        entries = [{"display_name": "  John  Doe  "}]
+        assert _all_display_names(entries) == ["John Doe"]
+
+
 # ---------------------------------------------------------------------------
 # Tests: download_and_parse
 # ---------------------------------------------------------------------------
@@ -271,13 +310,30 @@ class TestDownloadAndParse:
         )
         records = self._collect(session)
         assert len(records) == 1
-        assert records[0]["icao_hex"] == "49B0AA"
-        assert records[0]["manufacturer"] == "Airbus"
-        assert records[0]["model"] == "A320"
-        assert records[0]["serial"] == "1234"
-        assert records[0]["manufacture_year"] == 2005
-        assert records[0]["owner"] == "Owner Co"
-        assert records[0]["operator"] == "Operator Co"
+        r = records[0]
+        assert r["icao_hex"] == "49B0AA"
+        assert r["category"] == "AVREG_DATA.CATEGORIES.AIRPLANE"
+        assert r["manufacturer"] == "Airbus"
+        assert r["model"] == "A320"
+        assert r["serial"] == "1234"
+        assert r["manufacture_year"] == 2005
+        assert r["engine_type"] == "AVREG_DATA.ENGINE_TYPES.PISTON"
+        assert r["engine_count"] == 2
+        assert r["seats"] == 6
+        assert r["owners"] == ["Owner Co"]
+        assert r["operator"] == "Operator Co"
+
+    def test_all_owners_collected(self):
+        session = self._session_with(
+            [_list_record(id=1)],
+            [_detail_response(owners=[
+                {"display_name": "Alice"},
+                {"display_name": "Bob"},
+                {"display_name": "Carol"},
+            ])],
+        )
+        records = self._collect(session)
+        assert records[0]["owners"] == ["Alice", "Bob", "Carol"]
 
     def test_skips_null_transponder(self):
         session = self._session_with(
@@ -354,31 +410,84 @@ class TestBuildRecord:
         record = _build_record(row)
         assert record["icao_hex"] == "49B0AA"
         assert record["source"] == "cz-caa"
+        assert record["aircraft"]["category"] == "Airplane"
         assert record["aircraft"]["manufacturer"] == "Airbus"
         assert record["aircraft"]["model"] == "A320"
         assert record["aircraft"]["serial_number"] == "1234"
         assert record["aircraft"]["manufactured_date"] == "2005-01-01"
+        assert record["aircraft"]["powerplant"] == {"type": "Piston", "count": 2}
+        assert record["aircraft"]["seats"] == 6
         assert record["registrant"]["names"] == ["Owner Co", "Operator Co"]
 
-    def test_operator_omitted_when_same_as_owner(self):
-        row = _make_row(owner="Same Co", operator="Same Co")
+    def test_all_owners_in_names(self):
+        row = _make_row(owners=["Alice", "Bob", "Carol"], operator="")
+        record = _build_record(row)
+        assert record["registrant"]["names"] == ["Alice", "Bob", "Carol"]
+
+    def test_operator_appended_when_not_in_owners(self):
+        row = _make_row(owners=["Owner Co"], operator="Operator Co")
+        record = _build_record(row)
+        assert record["registrant"]["names"] == ["Owner Co", "Operator Co"]
+
+    def test_operator_not_duplicated_when_already_in_owners(self):
+        row = _make_row(owners=["Same Co"], operator="Same Co")
         record = _build_record(row)
         assert record["registrant"]["names"] == ["Same Co"]
 
-    def test_only_owner_when_no_operator(self):
-        row = _make_row(operator="")
-        record = _build_record(row)
-        assert record["registrant"]["names"] == ["Owner Co"]
-
-    def test_only_operator_when_no_owner(self):
-        row = _make_row(owner="")
-        record = _build_record(row)
-        assert record["registrant"]["names"] == ["Operator Co"]
-
-    def test_no_registrant_when_both_empty(self):
-        row = _make_row(owner="", operator="")
+    def test_no_registrant_when_no_names(self):
+        row = _make_row(owners=[], operator="")
         record = _build_record(row)
         assert "registrant" not in record
+
+    def test_category_mapped(self):
+        for key, expected in _CATEGORY_MAP.items():
+            row = _make_row(category=key)
+            assert _build_record(row)["aircraft"]["category"] == expected
+
+    def test_unknown_category_omitted(self):
+        row = _make_row(category="UNKNOWN_VALUE")
+        record = _build_record(row)
+        assert "category" not in record.get("aircraft", {})
+
+    def test_none_category_omitted(self):
+        row = _make_row(category=None)
+        record = _build_record(row)
+        assert "category" not in record.get("aircraft", {})
+
+    def test_engine_type_mapped(self):
+        for key, expected in _ENGINE_TYPE_MAP.items():
+            row = _make_row(engine_type=key)
+            assert _build_record(row)["aircraft"]["powerplant"]["type"] == expected
+
+    def test_no_engine_type_omitted(self):
+        row = _make_row(engine_type="AVREG_DATA.ENGINE_TYPES.NO_ENGINE", engine_count=0)
+        record = _build_record(row)
+        assert "powerplant" not in record.get("aircraft", {})
+
+    def test_engine_count_zero_omitted(self):
+        row = _make_row(engine_type=None, engine_count=0)
+        record = _build_record(row)
+        assert "powerplant" not in record.get("aircraft", {})
+
+    def test_engine_count_without_type(self):
+        row = _make_row(engine_type=None, engine_count=2)
+        record = _build_record(row)
+        assert record["aircraft"]["powerplant"] == {"count": 2}
+
+    def test_seats_stored(self):
+        row = _make_row(seats=4)
+        record = _build_record(row)
+        assert record["aircraft"]["seats"] == 4
+
+    def test_seats_zero_omitted(self):
+        row = _make_row(seats=0)
+        record = _build_record(row)
+        assert "seats" not in record.get("aircraft", {})
+
+    def test_seats_none_omitted(self):
+        row = _make_row(seats=None)
+        record = _build_record(row)
+        assert "seats" not in record.get("aircraft", {})
 
     def test_year_stored_as_date(self):
         row = _make_row(manufacture_year=1998)
@@ -409,11 +518,6 @@ class TestBuildRecord:
         row = _make_row(serial="")
         record = _build_record(row)
         assert "serial_number" not in record.get("aircraft", {})
-
-    def test_no_aircraft_when_all_fields_empty(self):
-        row = _make_row(manufacturer="", model="", serial="", manufacture_year=None)
-        record = _build_record(row)
-        assert "aircraft" not in record
 
     def test_no_registration_field(self):
         row = _make_row()

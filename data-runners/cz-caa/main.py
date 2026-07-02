@@ -52,6 +52,25 @@ _DETAIL_MAX_RETRIES = 3
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+_CATEGORY_MAP = {
+    "AVREG_DATA.CATEGORIES.AIRPLANE": "Airplane",
+    "AVREG_DATA.CATEGORIES.GAS_BALLOON": "Gas Balloon",
+    "AVREG_DATA.CATEGORIES.GLIDER": "Glider",
+    "AVREG_DATA.CATEGORIES.HELICOPTER": "Helicopter",
+    "AVREG_DATA.CATEGORIES.HOT_AIR_AIRSHIP": "Hot Air Airship",
+    "AVREG_DATA.CATEGORIES.HOT_AIR_BALLOON": "Hot Air Balloon",
+    "AVREG_DATA.CATEGORIES.POWERED_GLIDER": "Powered Glider",
+    "Bezpilotní letadlo": "Unmanned Aircraft",
+}
+
+_ENGINE_TYPE_MAP = {
+    "AVREG_DATA.ENGINE_TYPES.ELECTRIC": "Electric",
+    "AVREG_DATA.ENGINE_TYPES.PISTON": "Piston",
+    "AVREG_DATA.ENGINE_TYPES.TURBINE": "Turbine",
+    "AVREG_DATA.ENGINE_TYPES.TURBOSHAFT": "Turboshaft",
+    # NO_ENGINE → omitted (no powerplant entry)
+}
+
 
 # ---------------------------------------------------------------------------
 # Download + parse
@@ -117,11 +136,15 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
 
         yield {
             "icao_hex": transponder,
+            "category": detail.get("category"),
             "manufacturer": (detail.get("manufacturer") or "").strip(),
             "model": (detail.get("model") or "").strip(),
             "serial": (detail.get("serial_number") or "").strip(),
             "manufacture_year": detail.get("manufacture_year"),
-            "owner": _first_display_name(detail.get("owners")),
+            "engine_type": detail.get("engine_type"),
+            "engine_count": detail.get("engine_count"),
+            "seats": detail.get("max_on_board"),
+            "owners": _all_display_names(detail.get("owners")),
             "operator": _first_display_name(detail.get("operators")),
         }
 
@@ -133,6 +156,18 @@ def _first_display_name(entries) -> str:
     return _WHITESPACE_RE.sub(" ", (entries[0].get("display_name") or "").strip())
 
 
+def _all_display_names(entries) -> list[str]:
+    """Return all non-empty display_names from a list of owner/operator dicts."""
+    if not entries:
+        return []
+    names = []
+    for entry in entries:
+        name = _WHITESPACE_RE.sub(" ", (entry.get("display_name") or "").strip())
+        if name:
+            names.append(name)
+    return names
+
+
 # ---------------------------------------------------------------------------
 # Record builder
 # ---------------------------------------------------------------------------
@@ -142,6 +177,10 @@ def _build_record(row: dict) -> dict:
     icao_hex = row["icao_hex"]
     aircraft_fields: dict = {}
     registrant_fields: dict = {}
+
+    category = _CATEGORY_MAP.get(row.get("category") or "")
+    if category:
+        aircraft_fields["category"] = category
 
     manufacturer = _WHITESPACE_RE.sub(" ", row.get("manufacturer", "").strip())
     if manufacturer:
@@ -159,13 +198,25 @@ def _build_record(row: dict) -> dict:
     if isinstance(year, int) and 1900 <= year <= 2100:
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
-    owner = _WHITESPACE_RE.sub(" ", row.get("owner", "").strip())
+    powerplant: dict = {}
+    engine_type = _ENGINE_TYPE_MAP.get(row.get("engine_type") or "")
+    if engine_type:
+        powerplant["type"] = engine_type
+    engine_count = row.get("engine_count")
+    if isinstance(engine_count, int) and engine_count > 0:
+        powerplant["count"] = engine_count
+    if powerplant:
+        aircraft_fields["powerplant"] = powerplant
+
+    seats = row.get("seats")
+    if isinstance(seats, int) and seats > 0:
+        aircraft_fields["seats"] = seats
+
+    owner_names = row.get("owners") or []
     operator = _WHITESPACE_RE.sub(" ", row.get("operator", "").strip())
 
-    names: list[str] = []
-    if owner:
-        names.append(owner)
-    if operator and operator != owner:
+    names: list[str] = list(owner_names)
+    if operator and operator not in names:
         names.append(operator)
     if names:
         registrant_fields["names"] = names
