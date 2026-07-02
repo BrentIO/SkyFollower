@@ -185,7 +185,7 @@ class TestFetchDetail:
         session = MagicMock()
         session.get.return_value = _detail_response()
         import logging
-        with patch.object(logging.getLogger("cz-caa"), "info") as mock_log:
+        with patch.object(logging.getLogger("cz-caa"), "debug") as mock_log:
             _fetch_detail(session, 42)
         logged = " ".join(str(a) for c in mock_log.call_args_list for a in c.args)
         assert "42" in logged

@@ -73,7 +73,7 @@ def _fetch_active_ids(session: requests.Session) -> list[int]:
 def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
     """Fetch a single aircraft detail record."""
     url = _DETAIL_URL.format(id=record_id)
-    logger.info("Downloading Czech CAA detail from %s", url)
+    logger.debug("Downloading Czech CAA detail from %s", url)
     resp = session.get(url, timeout=30)
     if not resp.ok:
         logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
