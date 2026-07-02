@@ -477,8 +477,7 @@ sources:
       engine_type: "aircraft.powerplant.type (mapped: PISTON→Piston, TURBINE→Turbine, TURBOSHAFT→Turboshaft, ELECTRIC→Electric; NO_ENGINE omitted)"
       engine_count: "aircraft.powerplant.count (omitted if 0 or null)"
       max_on_board: "aircraft.seats (omitted if 0 or null)"
-      "owners[*].display_name": "registrant.names (all owners)"
-      "operators[0].display_name": "appended to registrant.names if not already present"
+      "owners[*].display_name": "registrant.names (all owners; operators not imported)"
 
   ee-transpordiamet:
     description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"

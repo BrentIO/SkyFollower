@@ -73,6 +73,7 @@ def _list_record(id=1, deletion_date=None):
 
 def _detail_response(
     transponder="49B0AA",
+    registration_number="NHE",
     manufacturer="Airbus",
     model="A320",
     serial_number="1234",
@@ -86,6 +87,7 @@ def _detail_response(
 ):
     return _make_response({
         "transponder": transponder,
+        "registration_number": registration_number,
         "manufacturer": manufacturer,
         "model": model,
         "serial_number": serial_number,
@@ -101,6 +103,7 @@ def _detail_response(
 
 def _make_row(
     icao_hex="49B0AA",
+    registration="OK-NHE",
     category="AVREG_DATA.CATEGORIES.AIRPLANE",
     manufacturer="Airbus",
     model="A320",
@@ -110,10 +113,10 @@ def _make_row(
     engine_count=2,
     seats=6,
     owners=None,
-    operator="Operator Co",
 ) -> dict:
     return {
         "icao_hex": icao_hex,
+        "registration": registration,
         "category": category,
         "manufacturer": manufacturer,
         "model": model,
@@ -123,7 +126,6 @@ def _make_row(
         "engine_count": engine_count,
         "seats": seats,
         "owners": owners if owners is not None else ["Owner Co"],
-        "operator": operator,
     }
 
 
@@ -321,7 +323,31 @@ class TestDownloadAndParse:
         assert r["engine_count"] == 2
         assert r["seats"] == 6
         assert r["owners"] == ["Owner Co"]
-        assert r["operator"] == "Operator Co"
+        assert "operator" not in r
+
+    def test_registration_prefixed_with_ok(self):
+        session = self._session_with(
+            [_list_record(id=1)],
+            [_detail_response(registration_number="NHE")],
+        )
+        records = self._collect(session)
+        assert records[0]["registration"] == "OK-NHE"
+
+    def test_numeric_registration_prefixed_with_ok(self):
+        session = self._session_with(
+            [_list_record(id=1)],
+            [_detail_response(registration_number="1213")],
+        )
+        records = self._collect(session)
+        assert records[0]["registration"] == "OK-1213"
+
+    def test_empty_registration_stored_empty(self):
+        session = self._session_with(
+            [_list_record(id=1)],
+            [_detail_response(registration_number=None)],
+        )
+        records = self._collect(session)
+        assert records[0]["registration"] == ""
 
     def test_all_owners_collected(self):
         session = self._session_with(
@@ -417,25 +443,15 @@ class TestBuildRecord:
         assert record["aircraft"]["manufactured_date"] == "2005-01-01"
         assert record["aircraft"]["powerplant"] == {"type": "Piston", "count": 2}
         assert record["aircraft"]["seats"] == 6
-        assert record["registrant"]["names"] == ["Owner Co", "Operator Co"]
+        assert record["registrant"]["names"] == ["Owner Co"]
 
     def test_all_owners_in_names(self):
-        row = _make_row(owners=["Alice", "Bob", "Carol"], operator="")
+        row = _make_row(owners=["Alice", "Bob", "Carol"])
         record = _build_record(row)
         assert record["registrant"]["names"] == ["Alice", "Bob", "Carol"]
 
-    def test_operator_appended_when_not_in_owners(self):
-        row = _make_row(owners=["Owner Co"], operator="Operator Co")
-        record = _build_record(row)
-        assert record["registrant"]["names"] == ["Owner Co", "Operator Co"]
-
-    def test_operator_not_duplicated_when_already_in_owners(self):
-        row = _make_row(owners=["Same Co"], operator="Same Co")
-        record = _build_record(row)
-        assert record["registrant"]["names"] == ["Same Co"]
-
-    def test_no_registrant_when_no_names(self):
-        row = _make_row(owners=[], operator="")
+    def test_no_registrant_when_no_owners(self):
+        row = _make_row(owners=[])
         record = _build_record(row)
         assert "registrant" not in record
 
@@ -519,8 +535,13 @@ class TestBuildRecord:
         record = _build_record(row)
         assert "serial_number" not in record.get("aircraft", {})
 
-    def test_no_registration_field(self):
-        row = _make_row()
+    def test_registration_stored(self):
+        row = _make_row(registration="OK-NHE")
+        record = _build_record(row)
+        assert record["registration"] == "OK-NHE"
+
+    def test_empty_registration_omitted(self):
+        row = _make_row(registration="")
         record = _build_record(row)
         assert "registration" not in record
 

@@ -134,8 +134,12 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
         if not transponder:
             continue
 
+        raw_reg = (detail.get("registration_number") or "").strip()
+        registration = f"OK-{raw_reg}" if raw_reg else ""
+
         yield {
             "icao_hex": transponder,
+            "registration": registration,
             "category": detail.get("category"),
             "manufacturer": (detail.get("manufacturer") or "").strip(),
             "model": (detail.get("model") or "").strip(),
@@ -145,7 +149,6 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
             "engine_count": detail.get("engine_count"),
             "seats": detail.get("max_on_board"),
             "owners": _all_display_names(detail.get("owners")),
-            "operator": _first_display_name(detail.get("operators")),
         }
 
 
@@ -212,19 +215,18 @@ def _build_record(row: dict) -> dict:
     if isinstance(seats, int) and seats > 0:
         aircraft_fields["seats"] = seats
 
-    owner_names = row.get("owners") or []
-    operator = _WHITESPACE_RE.sub(" ", row.get("operator", "").strip())
-
-    names: list[str] = list(owner_names)
-    if operator and operator not in names:
-        names.append(operator)
+    names = list(row.get("owners") or [])
     if names:
         registrant_fields["names"] = names
+
+    registration = row.get("registration", "").strip()
 
     record: dict = {
         "icao_hex": icao_hex,
         "source": "cz-caa",
     }
+    if registration:
+        record["registration"] = registration
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if registrant_fields:
