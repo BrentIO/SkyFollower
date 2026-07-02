@@ -175,7 +175,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "registration": raw_reg,
             "operator": row[1].strip(),
             "model": row[2].strip(),
-            "serial": re.sub(r"\s+", "", row[5]),
+            "serial": re.sub(r"\s+", "", row[5]).translate(_CYRILLIC_SUBSTITUTIONS),
             "manufacture_date_raw": row[6].strip(),
         })
 

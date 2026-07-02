@@ -332,6 +332,16 @@ class TestDownloadAndParse:
         assert len(records) == 1
         assert records[0]["registration"] == "EX-80003"
 
+    def test_cyrillic_in_serial_normalised_to_latin(self):
+        html = _make_table_html(
+            _header_row() + _full_row(serial="ЕХ1234")
+        )
+        session = MagicMock()
+        session.get.return_value = _make_response(html)
+        records = download_and_parse(session)
+        assert len(records) == 1
+        assert records[0]["serial"] == "EX1234"
+
     def test_skips_non_ex_rows(self):
         html = _make_table_html(
             _header_row()
