@@ -469,7 +469,7 @@ sources:
       detail: "GET https://lr.caa.gov.cz/api/avreg/{id} → {transponder, category, manufacturer, model, serial_number, manufacture_year, engine_type, engine_count, max_on_board, owners, operators}"
     fields:
       transponder: "ICAO hex → aircraft:detail:{transponder} key (skip if null/empty)"
-      category: "aircraft.category (mapped: AIRPLANE→Airplane, GLIDER→Glider, HELICOPTER→Helicopter, HOT_AIR_BALLOON→Hot Air Balloon, HOT_AIR_AIRSHIP→Hot Air Airship, GAS_BALLOON→Gas Balloon, POWERED_GLIDER→Powered Glider, Bezpilotní letadlo→Unmanned Aircraft)"
+      category: "aircraft.type (mapped: AIRPLANE→Airplane, GLIDER→Glider, HELICOPTER→Helicopter, HOT_AIR_BALLOON→Hot Air Balloon, HOT_AIR_AIRSHIP→Hot Air Airship, GAS_BALLOON→Gas Balloon, POWERED_GLIDER→Powered Glider, Bezpilotní letadlo→Unmanned Aircraft)"
       manufacturer: "aircraft.manufacturer"
       model: "aircraft.model"
       serial_number: "aircraft.serial_number"

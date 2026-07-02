@@ -180,7 +180,7 @@ def _build_record(row: dict) -> dict:
 
     category = _CATEGORY_MAP.get(row.get("category") or "")
     if category:
-        aircraft_fields["category"] = category
+        aircraft_fields["type"] = category
 
     manufacturer = _WHITESPACE_RE.sub(" ", row.get("manufacturer", "").strip())
     if manufacturer:

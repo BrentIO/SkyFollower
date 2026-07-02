@@ -410,7 +410,7 @@ class TestBuildRecord:
         record = _build_record(row)
         assert record["icao_hex"] == "49B0AA"
         assert record["source"] == "cz-caa"
-        assert record["aircraft"]["category"] == "Airplane"
+        assert record["aircraft"]["type"] == "Airplane"
         assert record["aircraft"]["manufacturer"] == "Airbus"
         assert record["aircraft"]["model"] == "A320"
         assert record["aircraft"]["serial_number"] == "1234"
@@ -442,17 +442,17 @@ class TestBuildRecord:
     def test_category_mapped(self):
         for key, expected in _CATEGORY_MAP.items():
             row = _make_row(category=key)
-            assert _build_record(row)["aircraft"]["category"] == expected
+            assert _build_record(row)["aircraft"]["type"] == expected
 
     def test_unknown_category_omitted(self):
         row = _make_row(category="UNKNOWN_VALUE")
         record = _build_record(row)
-        assert "category" not in record.get("aircraft", {})
+        assert "type" not in record.get("aircraft", {})
 
     def test_none_category_omitted(self):
         row = _make_row(category=None)
         record = _build_record(row)
-        assert "category" not in record.get("aircraft", {})
+        assert "type" not in record.get("aircraft", {})
 
     def test_engine_type_mapped(self):
         for key, expected in _ENGINE_TYPE_MAP.items():
