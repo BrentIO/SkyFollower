@@ -301,6 +301,37 @@ class TestDownloadAndParse:
         assert records[0]["operator"] == "Air Manas"
         assert records[1]["operator"] == "Avia Traffic"
 
+    def test_cyrillic_registration_normalised_to_latin(self):
+        # Cyrillic Е (U+0415) and Х (U+0425) look identical to Latin E/X
+        html = _make_table_html(
+            _header_row() + _full_row(registration="ЕХ-00001")
+        )
+        session = MagicMock()
+        session.get.return_value = _make_response(html)
+        records = download_and_parse(session)
+        assert len(records) == 1
+        assert records[0]["registration"] == "EX-00001"
+
+    def test_internal_spaces_removed_from_registration(self):
+        html = _make_table_html(
+            _header_row() + _full_row(registration="EX-370 20")
+        )
+        session = MagicMock()
+        session.get.return_value = _make_response(html)
+        records = download_and_parse(session)
+        assert len(records) == 1
+        assert records[0]["registration"] == "EX-37020"
+
+    def test_cyrillic_with_space_normalised(self):
+        html = _make_table_html(
+            _header_row() + _full_row(registration="ЕХ- 80003")
+        )
+        session = MagicMock()
+        session.get.return_value = _make_response(html)
+        records = download_and_parse(session)
+        assert len(records) == 1
+        assert records[0]["registration"] == "EX-80003"
+
     def test_skips_non_ex_rows(self):
         html = _make_table_html(
             _header_row()

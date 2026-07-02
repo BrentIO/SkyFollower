@@ -74,6 +74,9 @@ _MONTH_MAP = {
 _DMY_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
 _MONTH_YEAR_RE = re.compile(r"^([^\d]+)\s+(\d{4})$")
 
+# Cyrillic homoglyphs that appear in place of Latin in some registration cells
+_CYRILLIC_SUBSTITUTIONS = str.maketrans("ЕХех", "EXex")
+
 
 # ---------------------------------------------------------------------------
 # Date normalisation
@@ -164,14 +167,15 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     for row in _expand_table(table):
         if len(row) < 7:
             continue
-        registration = row[3].strip()
-        if not registration.startswith("EX-"):
+        # Normalise: remove all whitespace, map Cyrillic homoglyphs to Latin
+        raw_reg = re.sub(r"\s+", "", row[3]).translate(_CYRILLIC_SUBSTITUTIONS)
+        if not raw_reg.startswith("EX-"):
             continue
         records.append({
-            "registration": registration,
+            "registration": raw_reg,
             "operator": row[1].strip(),
             "model": row[2].strip(),
-            "serial": row[5].strip(),
+            "serial": re.sub(r"\s+", "", row[5]),
             "manufacture_date_raw": row[6].strip(),
         })
 
