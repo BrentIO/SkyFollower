@@ -64,7 +64,7 @@ def _fetch_active_ids(session: requests.Session) -> list[int]:
         raise RuntimeError(f"List request failed with HTTP {resp.status_code}")
 
     data = resp.json()
-    records = data.get("data", data) if isinstance(data, dict) else data
+    records = data.get("rows", data) if isinstance(data, dict) else data
     active = [r["id"] for r in records if r.get("deletion_date") is None and r.get("id")]
     logger.info("Found %d active records (of %d total).", len(active), len(records))
     return active

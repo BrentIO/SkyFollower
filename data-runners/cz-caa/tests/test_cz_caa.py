@@ -60,7 +60,7 @@ def _make_response(json_data=None, status_code=200):
 
 
 def _list_response(records: list[dict]):
-    return _make_response({"data": records})
+    return _make_response({"rows": records, "total": len(records)})
 
 
 def _list_record(id=1, deletion_date=None):
@@ -147,13 +147,13 @@ class TestFetchActiveIds:
         session.get.return_value = _list_response([])
         assert _fetch_active_ids(session) == []
 
-    def test_handles_flat_list_response(self):
-        """API may return a flat list instead of {data: [...]}."""
+    def test_handles_rows_key(self):
+        """API returns {rows: [...], total: N}."""
         session = MagicMock()
-        session.get.return_value = _make_response([
-            _list_record(id=1),
-            _list_record(id=2),
-        ])
+        session.get.return_value = _make_response({
+            "rows": [_list_record(id=1), _list_record(id=2)],
+            "total": 2,
+        })
         ids = _fetch_active_ids(session)
         assert ids == [1, 2]
 
