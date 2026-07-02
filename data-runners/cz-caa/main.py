@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""
+SkyFollower Czech CAA Data Runner
+
+Two-step REST API:
+  1. GET list endpoint → filter to active records (deletion_date = null)
+  2. GET detail endpoint per record → extract ICAO hex from `transponder` field
+
+ICAO hex is available directly (no RediSearch needed). Writes enrichment
+data to aircraft:detail:{icao_hex} with 14-day TTL.
+
+List endpoint:   https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000
+Detail endpoint: https://lr.caa.gov.cz/api/avreg/{id}
+
+Field mapping:
+  transponder       → aircraft:detail:{icao_hex} key (skip if null/empty)
+  manufacturer      → aircraft.manufacturer
+  model             → aircraft.model
+  serial_number     → aircraft.serial_number
+  manufacture_year  → aircraft.manufactured_date (integer year → YYYY-01-01)
+  owners[0]         → registrant.names[0]
+  operators[0]      → registrant.names[1] (omitted if identical to owner)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+
+import paho.mqtt.client as mqtt
+import redis as redis_lib
+import requests
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from shared.redis_keys import aircraft_detail_key
+
+logger = logging.getLogger("cz-caa")
+
+_LIST_URL = "https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000"
+_DETAIL_URL = "https://lr.caa.gov.cz/api/avreg/{id}"
+
+REDIS_TTL = 14 * 86400
+MQTT_ROOT = "SkyFollower/runner/cz-caa"
+REQUEST_DELAY = 0.05  # seconds between detail requests
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+# ---------------------------------------------------------------------------
+# Download + parse
+# ---------------------------------------------------------------------------
+
+def _fetch_active_ids(session: requests.Session) -> list[int]:
+    """Fetch the aircraft list and return IDs of active (non-deleted) records."""
+    logger.info("Downloading Czech CAA aircraft list from %s", _LIST_URL)
+    resp = session.get(_LIST_URL, timeout=60)
+    if not resp.ok:
+        raise RuntimeError(f"List request failed with HTTP {resp.status_code}")
+
+    data = resp.json()
+    records = data.get("data", data) if isinstance(data, dict) else data
+    active = [r["id"] for r in records if r.get("deletion_date") is None and r.get("id")]
+    logger.info("Found %d active records (of %d total).", len(active), len(records))
+    return active
+
+
+def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
+    """Fetch a single aircraft detail record."""
+    url = _DETAIL_URL.format(id=record_id)
+    logger.info("Downloading Czech CAA detail from %s", url)
+    resp = session.get(url, timeout=30)
+    if not resp.ok:
+        logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
+        return None
+    return resp.json()
+
+
+def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY) -> list[dict]:
+    """Fetch all active Czech CAA records and return enrichment-ready dicts."""
+    ids = _fetch_active_ids(session)
+    records = []
+    errors = 0
+
+    for i, record_id in enumerate(ids):
+        if i > 0:
+            time.sleep(delay)
+
+        detail = _fetch_detail(session, record_id)
+        if detail is None:
+            errors += 1
+            continue
+
+        transponder = (detail.get("transponder") or "").strip().upper()
+        if not transponder:
+            continue
+
+        records.append({
+            "icao_hex": transponder,
+            "manufacturer": (detail.get("manufacturer") or "").strip(),
+            "model": (detail.get("model") or "").strip(),
+            "serial": (detail.get("serial_number") or "").strip(),
+            "manufacture_year": detail.get("manufacture_year"),
+            "owner": _first_display_name(detail.get("owners")),
+            "operator": _first_display_name(detail.get("operators")),
+        })
+
+    logger.info(
+        "Parsed %d records with transponder codes (%d detail errors).",
+        len(records),
+        errors,
+    )
+    return records
+
+
+def _first_display_name(entries) -> str:
+    """Return display_name of the first entry in a list, or empty string."""
+    if not entries:
+        return ""
+    return _WHITESPACE_RE.sub(" ", (entries[0].get("display_name") or "").strip())
+
+
+# ---------------------------------------------------------------------------
+# Record builder
+# ---------------------------------------------------------------------------
+
+def _build_record(row: dict) -> dict:
+    """Build a Redis detail record from a parsed row."""
+    icao_hex = row["icao_hex"]
+    aircraft_fields: dict = {}
+    registrant_fields: dict = {}
+
+    manufacturer = _WHITESPACE_RE.sub(" ", row.get("manufacturer", "").strip())
+    if manufacturer:
+        aircraft_fields["manufacturer"] = manufacturer
+
+    model = _WHITESPACE_RE.sub(" ", row.get("model", "").strip())
+    if model:
+        aircraft_fields["model"] = model
+
+    serial = row.get("serial", "").strip()
+    if serial:
+        aircraft_fields["serial_number"] = serial
+
+    year = row.get("manufacture_year")
+    if isinstance(year, int) and 1900 <= year <= 2100:
+        aircraft_fields["manufactured_date"] = f"{year}-01-01"
+
+    owner = _WHITESPACE_RE.sub(" ", row.get("owner", "").strip())
+    operator = _WHITESPACE_RE.sub(" ", row.get("operator", "").strip())
+
+    names: list[str] = []
+    if owner:
+        names.append(owner)
+    if operator and operator != owner:
+        names.append(operator)
+    if names:
+        registrant_fields["names"] = names
+
+    record: dict = {
+        "icao_hex": icao_hex,
+        "source": "cz-caa",
+    }
+    if aircraft_fields:
+        record["aircraft"] = aircraft_fields
+    if registrant_fields:
+        record["registrant"] = registrant_fields
+
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Write to Redis
+# ---------------------------------------------------------------------------
+
+def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
+    """Write Czech CAA data to aircraft:detail keys in Redis. Returns count written."""
+    count = 0
+    errors = 0
+    pipe = r.pipeline()
+    pipe_count = 0
+
+    for row in rows:
+        icao_hex = row.get("icao_hex", "").strip()
+        if not icao_hex:
+            continue
+        record = _build_record(row)
+        key = aircraft_detail_key(icao_hex)
+        pipe.json().set(key, "$", record)
+        pipe.expire(key, ttl)
+        count += 1
+        pipe_count += 1
+
+        if pipe_count >= 1000:
+            try:
+                pipe.execute()
+            except Exception as exc:
+                logger.warning("Redis pipeline failed: %s", exc)
+                errors += pipe_count
+            pipe = r.pipeline()
+            pipe_count = 0
+
+    if pipe_count:
+        try:
+            pipe.execute()
+        except Exception as exc:
+            logger.warning("Redis pipeline failed: %s", exc)
+            errors += pipe_count
+
+    logger.info("Finished: %d written, %d errors.", count, errors)
+    return count
+
+
+# ---------------------------------------------------------------------------
+# MQTT
+# ---------------------------------------------------------------------------
+
+def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
+    """Publish completion statistics to MQTT."""
+    mc = cfg.get("mqtt")
+    if not mc:
+        logger.info("No MQTT config; skipping stats publish.")
+        return
+
+    run_at = datetime.now(timezone.utc).isoformat()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    connected = False
+
+    def _on_connect(c, userdata, flags, reason_code, properties):
+        nonlocal connected
+        connected = True
+
+    client.on_connect = _on_connect
+
+    try:
+        client.connect(mc["host"], port=mc.get("port", 1883), keepalive=60)
+        client.loop_start()
+
+        deadline = time.monotonic() + 5
+        while not connected and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        if not connected:
+            logger.warning("MQTT connect timed out; skipping stats publish.")
+            client.loop_stop()
+            return
+
+        base = MQTT_ROOT + "/statistic"
+        client.publish(f"{base}/records_imported", str(records_imported), retain=True)
+        client.publish(f"{base}/last_run_at", run_at, retain=True)
+        client.publish(f"{base}/last_run_status", status, retain=True)
+
+        _publish_ha_autodiscovery(client)
+
+        time.sleep(0.5)
+        client.loop_stop()
+        client.disconnect()
+        logger.info("MQTT stats published (status=%s, records=%d).", status, records_imported)
+
+    except Exception as exc:
+        logger.warning("MQTT publish failed: %s", exc)
+        try:
+            client.loop_stop()
+        except Exception:
+            pass
+
+
+def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
+    device = {
+        "ids": "SkyFollower_runner_cz_caa",
+        "name": "SkyFollower Czech CAA Runner",
+        "manufacturer": "P5Software, LLC",
+    }
+    stats = [
+        ("records_imported", "Czech CAA Records Imported", "mdi:airplane", "total_increasing", None),
+        ("last_run_at", "Czech CAA Last Run At", "mdi:clock", None, None),
+        ("last_run_status", "Czech CAA Last Run Status", "mdi:check-circle", None, None),
+    ]
+    for name, friendly_name, icon, state_class, unit in stats:
+        payload: dict = {
+            "state_topic": f"{MQTT_ROOT}/statistic/{name}",
+            "name": friendly_name,
+            "unique_id": f"SkyFollower_runner_cz_caa_{name}",
+            "object_id": f"SkyFollower_runner_cz_caa_{name}",
+            "device": device,
+            "icon": icon,
+        }
+        if state_class:
+            payload["state_class"] = state_class
+        if unit:
+            payload["unit_of_measurement"] = unit
+        client.publish(
+            f"homeassistant/sensor/SkyFollower_runner_cz_caa_{name}/config",
+            json.dumps(payload),
+            retain=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+def _load_config() -> dict:
+    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        stream=sys.stdout,
+    )
+
+    try:
+        cfg = _load_config()
+    except FileNotFoundError as exc:
+        logger.critical("Settings file not found: %s", exc)
+        sys.exit(1)
+
+    rc = cfg["redis"]
+    r = redis_lib.Redis(
+        host=rc["host"],
+        port=rc.get("port", 6379),
+        decode_responses=True,
+    )
+
+    ttl_days = cfg.get("redis_ttl_days", 14)
+    ttl = ttl_days * 86400
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"})
+
+    status = "failure"
+    records_imported = 0
+
+    try:
+        rows = download_and_parse(session)
+        records_imported = write_to_redis(rows, r, ttl)
+        status = "success"
+        logger.info(
+            "Czech CAA runner completed successfully. Records imported: %d",
+            records_imported,
+        )
+
+    except Exception as exc:
+        logger.error("Czech CAA runner failed: %s", exc, exc_info=True)
+
+    finally:
+        session.close()
+        try:
+            publish_completion_stats(cfg, records_imported, status)
+        except Exception as exc:
+            logger.warning("Failed to publish MQTT stats: %s", exc)
+
+    if status != "success":
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
