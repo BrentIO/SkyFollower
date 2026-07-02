@@ -58,7 +58,8 @@ BATCH_SIZE = 100
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
-_OWNER_HEADER_LABELS = {"OWNER", "LESSOR", "TRUSTEE"}
+_OWNER_HEADER_LABELS = {"OWNER", "TRUSTEE"}
+_OWNER_REMOVE_RE = re.compile(r"LESS(?:OR|EE)", re.IGNORECASE)
 
 _COL_REGISTRATION = 0
 _COL_MANUFACTURER = 1
@@ -107,6 +108,13 @@ def _clean(value) -> str:
     return _WHITESPACE_RE.sub(" ", (value or "").strip())
 
 
+def _clean_owner_part(value: str) -> str:
+    """Remove colons and LESSOR/LESSEE substrings, then normalize whitespace."""
+    s = (value or "").replace(":", "")
+    s = _OWNER_REMOVE_RE.sub("", s)
+    return _WHITESPACE_RE.sub(" ", s).strip()
+
+
 # ---------------------------------------------------------------------------
 # Record builder
 # ---------------------------------------------------------------------------
@@ -129,7 +137,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["serial_number"] = serial
 
     owner_raw = row.get("owner") or ""
-    names = [p for part in owner_raw.split("/") if (p := _clean(part).strip(":")) and p.upper() not in _OWNER_HEADER_LABELS]
+    names = [p for part in owner_raw.split("/") if (p := _clean_owner_part(part)) and p.upper() not in _OWNER_HEADER_LABELS]
     if names:
         registrant_fields["names"] = names
 

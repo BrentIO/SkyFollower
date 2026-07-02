@@ -39,6 +39,7 @@ _build_record = _mod._build_record
 _clean = _mod._clean
 _escape_tag = _mod._escape_tag
 _build_registration_map = _mod._build_registration_map
+_clean_owner_part = _mod._clean_owner_part
 write_to_redis = _mod.write_to_redis
 _PDF_URL = _mod._PDF_URL
 
@@ -94,6 +95,37 @@ class TestClean:
 
     def test_newlines_collapsed(self):
         assert _clean("hello\nworld") == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# _clean_owner_part
+# ---------------------------------------------------------------------------
+
+
+class TestCleanOwnerPart:
+    def test_removes_colon(self):
+        assert _clean_owner_part("ACME Corp:") == "ACME Corp"
+
+    def test_removes_inline_colon(self):
+        assert _clean_owner_part("OWNER: ACME Corp") == "OWNER ACME Corp"
+
+    def test_removes_lessor(self):
+        assert _clean_owner_part("LESSOR ACME Corp") == "ACME Corp"
+
+    def test_removes_lessee(self):
+        assert _clean_owner_part("LESSEE ACME Corp") == "ACME Corp"
+
+    def test_case_insensitive(self):
+        assert _clean_owner_part("lessor ACME Corp") == "ACME Corp"
+
+    def test_lessor_alone_returns_empty(self):
+        assert _clean_owner_part("LESSOR") == ""
+
+    def test_collapses_whitespace_after_removal(self):
+        assert _clean_owner_part("ACME  Corp") == "ACME Corp"
+
+    def test_none_returns_empty(self):
+        assert _clean_owner_part(None) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -284,23 +316,31 @@ class TestBuildRecord:
         record = _build_record(_make_row(owner="OWNER"), "4B0001", "5B-ABC")
         assert "registrant" not in record
 
-    def test_lessor_label_skipped(self):
+    def test_lessor_removed_as_substring(self):
+        record = _build_record(_make_row(owner="LESSOR ACME Aviation Ltd"), "4B0001", "5B-ABC")
+        assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
+
+    def test_lessor_alone_omits_registrant(self):
         record = _build_record(_make_row(owner="LESSOR"), "4B0001", "5B-ABC")
         assert "registrant" not in record
+
+    def test_lessee_removed_as_substring(self):
+        record = _build_record(_make_row(owner="LESSEE Corp"), "4B0001", "5B-ABC")
+        assert record["registrant"]["names"] == ["Corp"]
 
     def test_trustee_label_skipped(self):
         record = _build_record(_make_row(owner="TRUSTEE"), "4B0001", "5B-ABC")
         assert "registrant" not in record
 
-    def test_label_mixed_with_real_name_filters_label(self):
+    def test_owner_label_mixed_with_real_name_filters_label(self):
         record = _build_record(_make_row(owner="OWNER / ACME Aviation Ltd"), "4B0001", "5B-ABC")
         assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
 
-    def test_colon_stripped_from_name(self):
+    def test_colon_removed_from_name(self):
         record = _build_record(_make_row(owner="ACME Aviation Ltd:"), "4B0001", "5B-ABC")
         assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
 
-    def test_colon_stripped_before_label_check(self):
+    def test_colon_removed_before_label_check(self):
         record = _build_record(_make_row(owner="OWNER:"), "4B0001", "5B-ABC")
         assert "registrant" not in record
 
