@@ -458,6 +458,20 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  ge-gcaa:
+    description: "Georgia GCAA aircraft register — 4L-prefix registrations"
+    url: "https://gcaa.ge/civil-aircraft-register/"
+    format: html_table
+    cadence: weekly_tuesday
+    notes: "Single page with two pre-rendered HTML tables (table_1: operator data; table_2: owner data); both share the same 6-column layout; records merged by registration mark — aircraft fields taken from whichever table provides them; operator stored as registrant.names[0], owner as registrant.names[1] (omitted if identical to operator); Georgian-script company names preserved as UTF-8; year of manufacture → YYYY-01-01; ~63 unique 4L- records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
+    columns:
+      0: "Operator (table_1) / Owner (table_2) — Georgian+English text; stored as registrant.names"
+      1: "Aircraft type (stored as aircraft.model)"
+      2: "Registration (4L-prefix; lookup key)"
+      3: "Registration date (not stored)"
+      4: "Serial number (stored as aircraft.serial_number)"
+      5: "Year of manufacture (4-digit year → aircraft.manufactured_date YYYY-01-01)"
+
   gg-2reg:
     description: "Guernsey (Bailiwick) aircraft register — 2-prefix registrations"
     url: "https://www.2-reg.com/legislation/register/"
