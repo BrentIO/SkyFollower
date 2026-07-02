@@ -47,7 +47,8 @@ _DETAIL_URL = "https://lr.caa.gov.cz/api/avreg/{id}"
 
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/cz-caa"
-REQUEST_DELAY = 0.05  # seconds between detail requests
+REQUEST_DELAY = 0.5   # seconds between detail requests
+_DETAIL_MAX_RETRIES = 3
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -71,14 +72,31 @@ def _fetch_active_ids(session: requests.Session) -> list[int]:
 
 
 def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
-    """Fetch a single aircraft detail record."""
+    """Fetch a single aircraft detail record with retry on connection errors."""
     url = _DETAIL_URL.format(id=record_id)
     logger.debug("Downloading Czech CAA detail from %s", url)
-    resp = session.get(url, timeout=30)
-    if not resp.ok:
-        logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
-        return None
-    return resp.json()
+
+    for attempt in range(_DETAIL_MAX_RETRIES + 1):
+        try:
+            resp = session.get(url, timeout=30)
+            if not resp.ok:
+                logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
+                return None
+            return resp.json()
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            if attempt < _DETAIL_MAX_RETRIES:
+                wait = 2 ** attempt
+                logger.warning(
+                    "Detail request for id=%d failed (%s); retrying in %ds (attempt %d/%d).",
+                    record_id, exc, wait, attempt + 1, _DETAIL_MAX_RETRIES,
+                )
+                time.sleep(wait)
+            else:
+                logger.warning(
+                    "Detail request for id=%d failed after %d attempts: %s",
+                    record_id, _DETAIL_MAX_RETRIES + 1, exc,
+                )
+                return None
 
 
 def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY) -> list[dict]:

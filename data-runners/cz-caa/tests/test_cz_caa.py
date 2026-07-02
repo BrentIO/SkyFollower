@@ -8,6 +8,7 @@ import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+import requests
 
 # ---------------------------------------------------------------------------
 # Module import
@@ -180,6 +181,35 @@ class TestFetchDetail:
         session = MagicMock()
         session.get.return_value = _make_response(status_code=404)
         assert _fetch_detail(session, 1) is None
+
+    def test_retries_on_connection_error_then_succeeds(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ConnectionError("dropped"),
+            _detail_response(),
+        ]
+        with patch("cz_caa_main.time.sleep"):
+            result = _fetch_detail(session, 1)
+        assert result is not None
+        assert result["transponder"] == "49B0AA"
+
+    def test_returns_none_after_all_retries_exhausted(self):
+        session = MagicMock()
+        session.get.side_effect = requests.exceptions.ConnectionError("dropped")
+        with patch("cz_caa_main.time.sleep"):
+            assert _fetch_detail(session, 1) is None
+
+    def test_retry_uses_exponential_backoff(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ConnectionError("dropped"),
+            requests.exceptions.ConnectionError("dropped"),
+            _detail_response(),
+        ]
+        with patch("cz_caa_main.time.sleep") as mock_sleep:
+            _fetch_detail(session, 1)
+        assert mock_sleep.call_args_list[0] == call(1)
+        assert mock_sleep.call_args_list[1] == call(2)
 
     def test_logs_detail_url(self):
         session = MagicMock()
