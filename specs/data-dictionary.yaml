@@ -458,6 +458,21 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  hr-ccaa:
+    description: "Croatia Civil Aviation Agency aircraft register — 9A-prefix registrations"
+    url: "https://www.ccaa.hr/en/list-of-registered-aircraft-94674"
+    format: pdf
+    cadence: weekly_tuesday
+    notes: "PDF URL is hash-based and discovered by scraping the index page for the first /file/ link; PDF contains registration suffix only (e.g. ABC) — 9A- prefix must be prepended; no ICAO hex — RediSearch lookup via Mictronics simple index; newlines in cells collapsed to spaces; must run after Mictronics"
+    fields:
+      "REG. OZNAKA": "registration suffix — prepend 9A- for lookup key"
+      "REDNI BROJ U REGISTRU": "not stored"
+      "PROIZVOĐAČ": "aircraft.manufacturer"
+      "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA": "aircraft.model"
+      "SERIJSKI BROJ": "aircraft.serial_number"
+      "VLASNIK": "registrant.names[0]"
+      "ADRESA": "registrant.street"
+
   cy-dca:
     description: "Cyprus Department of Civil Aviation aircraft register — 5B-prefix registrations"
     url: "https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf"

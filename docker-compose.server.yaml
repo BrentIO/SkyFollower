@@ -78,6 +78,7 @@ services:
       - runner-sk-nsat
       - runner-tc-caa
       - runner-cy-dca
+      - runner-hr-ccaa
       - runner-flightaware
 
   # ---------------------------------------------------------------------------
@@ -433,6 +434,16 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
+
+  runner-hr-ccaa:
+    image: ghcr.io/brentio/skyfollower-runner-hr-ccaa:latest
+    container_name: skyfollower-runner-hr-ccaa
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+      - runner-mictronics
 
   runner-cy-dca:
     image: ghcr.io/brentio/skyfollower-runner-cy-dca:latest
