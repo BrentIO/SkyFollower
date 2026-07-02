@@ -35,6 +35,9 @@ import paho.mqtt.client as mqtt
 import pdfplumber
 import redis as redis_lib
 import requests
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -69,7 +72,7 @@ _COL_OWNER = 5
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Download the Cyprus DCA PDF and return parsed records."""
     logger.info("Downloading Cyprus DCA aircraft register from %s", _PDF_URL)
-    resp = session.get(_PDF_URL, timeout=60)
+    resp = session.get(_PDF_URL, timeout=60, verify=False)
     if not resp.ok:
         raise RuntimeError(f"PDF request failed with HTTP {resp.status_code}")
 
