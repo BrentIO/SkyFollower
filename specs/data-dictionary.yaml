@@ -458,6 +458,20 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  cy-dca:
+    description: "Cyprus Department of Civil Aviation aircraft register — 5B-prefix registrations"
+    url: "https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf"
+    format: pdf
+    cadence: weekly_tuesday
+    notes: "Stable PDF URL; all pages parsed with pdfplumber extract_table(); rows filtered to 5B- prefix; no ICAO hex in source — RediSearch lookup by registration against Mictronics simple index; OWNER/OPERATOR column split by / to produce multiple registrant names; MTOW KGS not stored; must run after Mictronics"
+    fields:
+      "REGISTRATION MARK": "registration lookup key (5B-prefix)"
+      "MANUFACTURER": "aircraft.manufacturer"
+      "AIRCRAFT TYPE": "aircraft.model"
+      "AIRCRAFT SERIAL NO": "aircraft.serial_number"
+      "MTOW KGS": "not stored"
+      "AIRCRAFT OWNER/OPERATOR": "registrant.names (split by /)"
+
   cz-caa:
     description: "Czech CAA aircraft register — OK-prefix and numeric registrations"
     url: "https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000"
