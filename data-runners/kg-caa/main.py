@@ -120,6 +120,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     records: list[dict] = []
     current_operator = ""
+    current_model = ""
 
     for tr in table.find_all("tr"):
         cells = tr.find_all(["td", "th"])
@@ -128,46 +129,33 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
         texts = [_WHITESPACE_RE.sub(" ", c.get_text(separator=" ", strip=True)) for c in cells]
 
-        # Skip header rows
-        if all(not t.startswith("EX-") for t in texts) and not any("EX-" in t for t in texts):
-            # Check if first cell looks like an operator name (not a header keyword)
-            first = texts[0] if texts else ""
-            if first and not first.startswith("EX-"):
-                # Could be operator row or header — update operator if it looks like a name
-                if len(cells[0].get("rowspan", "0") or "0") > 0 or cells[0].get("rowspan"):
-                    current_operator = first
+        # Skip rows with no EX- registration
+        if not any(t.startswith("EX-") for t in texts):
             continue
 
-        # Find the registration cell
-        registration = ""
-        for t in texts:
-            if t.startswith("EX-"):
-                registration = t.strip()
-                break
-        if not registration:
-            continue
-
-        # Determine column positions by finding which index holds the EX- value
         reg_idx = next(i for i, t in enumerate(texts) if t.startswith("EX-"))
+        registration = texts[reg_idx].strip()
 
-        # If the first cell is not the operator (i.e. operator spans from above),
-        # col layout depends on whether col 0 is present as operator or rowspanned away
         if reg_idx == 2:
-            # Full row: [operator, model, registration, date_reg, serial, date_mfr]
+            # Full row: [operator, model, registration, date_reg, serial, mfr_date]
             current_operator = texts[0]
-            model = texts[1] if len(texts) > 1 else ""
+            current_model = texts[1]
             serial = texts[4] if len(texts) > 4 else ""
             mfr_date_raw = texts[5] if len(texts) > 5 else ""
-        else:
-            # Operator rowspanned away: [model, registration, date_reg, serial, date_mfr]
-            model = texts[0] if len(texts) > 0 else ""
+        elif reg_idx == 1:
+            # Operator rowspanned, model present: [model, registration, date_reg, serial, mfr_date]
+            current_model = texts[0]
             serial = texts[3] if len(texts) > 3 else ""
             mfr_date_raw = texts[4] if len(texts) > 4 else ""
+        else:
+            # Both operator and model rowspanned: [registration, date_reg, serial, mfr_date]
+            serial = texts[2] if len(texts) > 2 else ""
+            mfr_date_raw = texts[3] if len(texts) > 3 else ""
 
         records.append({
             "registration": registration,
             "operator": _WHITESPACE_RE.sub(" ", current_operator).strip(),
-            "model": _WHITESPACE_RE.sub(" ", model).strip(),
+            "model": _WHITESPACE_RE.sub(" ", current_model).strip(),
             "serial": serial.strip(),
             "manufacture_date_raw": mfr_date_raw.strip(),
         })

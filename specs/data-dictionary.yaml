@@ -463,7 +463,7 @@ sources:
     url: "https://caa.kg/en/node/46"
     format: html_table
     cadence: weekly_tuesday
-    notes: "Static single-page HTML table; ~15 EX- records; operator/owner cell uses rowspan spanning all aircraft for that operator — tracked by carrying the operator name forward across continuation rows; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    notes: "Static single-page HTML table; ~15 EX- records; operator/owner cell and type-of-aircraft cell may both use rowspan spanning multiple aircraft rows — both values carried forward independently; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     columns:
       0: "Эксплуатант/Operator (rowspan; carried forward → registrant.names[0])"
       1: "Тип ВС/Type of Aircraft (stored as aircraft.model)"

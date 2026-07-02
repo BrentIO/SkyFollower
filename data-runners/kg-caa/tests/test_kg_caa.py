@@ -94,9 +94,27 @@ def _continuation_row(
     serial="99999",
     mfr_date="декабрь 1998",
 ) -> str:
+    """Operator rowspanned away; model present."""
     return (
         f"<tr>"
         f"<td>{model}</td>"
+        f"<td>{registration}</td>"
+        f"<td>{date_reg}</td>"
+        f"<td>{serial}</td>"
+        f"<td>{mfr_date}</td>"
+        f"</tr>"
+    )
+
+
+def _double_continuation_row(
+    registration="EX-003",
+    date_reg="01.03.2002",
+    serial="11111",
+    mfr_date="01.01.2000",
+) -> str:
+    """Both operator and model rowspanned away."""
+    return (
+        f"<tr>"
         f"<td>{registration}</td>"
         f"<td>{date_reg}</td>"
         f"<td>{serial}</td>"
@@ -244,6 +262,21 @@ class TestDownloadAndParse:
         assert len(records) == 2
         assert records[0]["operator"] == "Air Manas"
         assert records[1]["operator"] == "Air Manas"
+
+    def test_model_carried_forward_when_both_rowspanned(self):
+        html = _make_table_html(
+            _header_row()
+            + _full_row(operator="Tez Jet", model="AVRO 146-RJ85", registration="EX-008", rowspan=2)
+            + _double_continuation_row(registration="EX-009")
+        )
+        session = MagicMock()
+        session.get.return_value = _make_response(html)
+        records = download_and_parse(session)
+        assert len(records) == 2
+        assert records[0]["operator"] == "Tez Jet"
+        assert records[0]["model"] == "AVRO 146-RJ85"
+        assert records[1]["operator"] == "Tez Jet"
+        assert records[1]["model"] == "AVRO 146-RJ85"
 
     def test_operator_changes_for_new_group(self):
         html = _make_table_html(
