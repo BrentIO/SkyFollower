@@ -154,9 +154,10 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if owner:
         registrant_fields["names"] = [owner]
 
-    address = _clean(row.get("address", ""))
-    if address:
-        registrant_fields["street"] = address
+    address_raw = row.get("address") or ""
+    address_parts = [p for part in address_raw.split(",") if (p := _clean(part))]
+    if address_parts:
+        registrant_fields["street"] = address_parts
 
     record: dict = {
         "icao_hex": icao_hex,

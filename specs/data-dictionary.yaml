@@ -471,7 +471,7 @@ sources:
       "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA": "aircraft.model"
       "SERIJSKI BROJ": "aircraft.serial_number"
       "VLASNIK": "registrant.names[0]"
-      "ADRESA": "registrant.street"
+      "ADRESA": "registrant.street (array; split by comma)"
 
   cy-dca:
     description: "Cyprus Department of Civil Aviation aircraft register — 5B-prefix registrations"

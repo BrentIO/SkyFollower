@@ -349,9 +349,17 @@ class TestBuildRecord:
         record = _build_record(_make_row(owner="ACME Aviation d.o.o."), "501234", "9A-ABC")
         assert record["registrant"]["names"] == ["ACME Aviation d.o.o."]
 
-    def test_registrant_street(self):
+    def test_registrant_street_split_by_comma(self):
         record = _build_record(_make_row(address="Zagreb, Croatia"), "501234", "9A-ABC")
-        assert record["registrant"]["street"] == "Zagreb, Croatia"
+        assert record["registrant"]["street"] == ["Zagreb", "Croatia"]
+
+    def test_registrant_street_single_part(self):
+        record = _build_record(_make_row(address="Zagreb"), "501234", "9A-ABC")
+        assert record["registrant"]["street"] == ["Zagreb"]
+
+    def test_registrant_street_multiple_commas(self):
+        record = _build_record(_make_row(address="Ilica 1, 10000 Zagreb, Croatia"), "501234", "9A-ABC")
+        assert record["registrant"]["street"] == ["Ilica 1", "10000 Zagreb", "Croatia"]
 
     def test_empty_owner_omits_names(self):
         record = _build_record(_make_row(owner=""), "501234", "9A-ABC")
