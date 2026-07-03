@@ -532,15 +532,11 @@ sources:
     cadence: weekly_tuesday
     notes: "Single page with one HTML table; 2 header rows then ~166 data rows; registration marks may contain internal whitespace (e.g. 'ES - MBA') — normalize by removing all whitespace before prefix check; columns 0/2/3/7/8 are blank or not imported; no ICAO hex — resolved via RediSearch; owner stored as registrant.names[0]; operator column not imported; must run after Mictronics"
     columns:
-      0: "blank"
-      1: "Registration mark (ES-prefix; normalize re.sub whitespace → lookup key)"
-      2: "blank"
-      3: "blank"
-      4: "Type of Aircraft (stored as aircraft.model)"
-      5: "Serial number (stored as aircraft.serial_number)"
-      6: "Owner (stored as registrant.names[0])"
-      7: "Operator (not imported)"
-      8: "blank"
+      1: "Registration mark (ES-prefix; internal whitespace normalized, e.g. 'ES - MBA' → 'ES-MBA')"
+      4: "Type of aircraft"
+      5: "Manufacturer serial number"
+      6: "Registered owner name"
+      7: "Operator name; not imported"
 
   ge-gcaa:
     description: "Georgia GCAA aircraft register — 4L-prefix registrations"
@@ -996,6 +992,8 @@ records:
           - source: cy-dca
             file: Aircraft_Register_Extract.pdf
             description: "Cyprus DCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{5B\\-XXX} against Mictronics records; enriches existing records only"
+          - source: ee-transpordiamet
+            description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1112,6 +1110,9 @@ records:
             file: Aircraft_Register_Extract.pdf
             field: "REGISTRATION MARK"
             description: "Full 5B-prefix registration mark (e.g. 5B-DBZ)"
+          - source: ee-transpordiamet
+            field: "1"
+            description: "ES-prefix registration mark; internal whitespace normalized (e.g. 'ES - MBA' → 'ES-MBA')"
 
       registrant:
         type: object
@@ -1280,6 +1281,11 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "String split on /; each segment trimmed; empty segments discarded"
+              - source: ee-transpordiamet
+                field: "6"
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1940,6 +1946,8 @@ records:
               - source: cy-dca
                 file: Aircraft_Register_Extract.pdf
                 field: "AIRCRAFT TYPE"
+              - source: ee-transpordiamet
+                field: "4"
 
           seats:
             type: integer
@@ -2191,6 +2199,8 @@ records:
               - source: cy-dca
                 file: Aircraft_Register_Extract.pdf
                 field: "AIRCRAFT SERIAL NO"
+              - source: ee-transpordiamet
+                field: "5"
 
           manufactured_date:
             type: datetime
