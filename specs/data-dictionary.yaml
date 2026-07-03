@@ -695,11 +695,11 @@ sources:
       - name: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
         format: pdf_table
         columns:
-          0: Registration mark in P2-prefix format
-          1: Manufacturer name (stored as aircraft.manufacturer)
-          2: Model designation (stored as aircraft.model)
-          3: Operator name (stored as registrant.names[0])
-          4: "Address; comma-delimited — last element stored as registrant.country (PNG→Papua New Guinea), remainder as registrant.street; embedded newlines collapsed to space before splitting"
+          0: Registration mark (P2-prefix; lookup key)
+          1: Manufacturer name
+          2: Aircraft model designation
+          3: Operator name
+          4: "Address string; comma-delimited; may contain embedded newlines"
 
   rs-cad:
     description: "Serbia CAD (Civil Aviation Directorate) aircraft register — YU-prefix registrations"
@@ -1005,6 +1005,9 @@ records:
           - source: mk-caa
             file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
             description: "North Macedonia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{Z3\\-XXX} against Mictronics records; enriches existing records only"
+          - source: pg-casapng
+            file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+            description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1139,6 +1142,10 @@ records:
             file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
             field: "2"
             description: "Full Z3-prefix registration mark (e.g. Z3-AAA)"
+          - source: pg-casapng
+            file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+            field: "0"
+            description: "Full P2-prefix registration mark (e.g. P2-ANG)"
 
       registrant:
         type: object
@@ -1324,6 +1331,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Embedded newlines collapsed to space; wrap single owner name in a one-element list"
+              - source: pg-casapng
+                file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+                field: "3"
+                transform:
+                  type: wrap_array
+                  description: "Single operator name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1436,6 +1449,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Embedded newlines collapsed to space; wrap address in a one-element list"
+              - source: pg-casapng
+                file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+                field: "4"
+                transform:
+                  type: collect_non_empty
+                  description: "Embedded newlines collapsed to space; comma-split; all segments except last; empty segments discarded"
 
           city:
             type: string
@@ -1653,6 +1672,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Last line of multiline owner/address cell; full English country name mapped to ISO 3166-1 alpha-2"
+              - source: pg-casapng
+                file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+                field: "4"
+                transform:
+                  type: decode_country_name
+                  description: "Last comma-segment of address string; 'PNG' expanded to 'Papua New Guinea' before country name lookup"
 
           type:
             type: string
@@ -2019,6 +2044,9 @@ records:
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "3"
                 description: "Embedded newlines collapsed to space"
+              - source: pg-casapng
+                file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+                field: "2"
 
           seats:
             type: integer
@@ -2148,6 +2176,9 @@ records:
               - source: mk-caa
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "4"
+              - source: pg-casapng
+                file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
+                field: "1"
 
           type_designator:
             type: string
