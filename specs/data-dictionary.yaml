@@ -549,12 +549,12 @@ sources:
     cadence: weekly_tuesday
     notes: "Single page with two pre-rendered HTML tables (table_1: operator data; table_2: owner data); both share the same 6-column layout; records merged by registration mark — aircraft fields taken from whichever table provides them; operator stored as registrant.names[0], owner as registrant.names[1] (omitted if identical to operator); Georgian-script company names preserved as UTF-8; year of manufacture → YYYY-01-01; ~63 unique 4L- records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
     columns:
-      0: "Operator (table_1) / Owner (table_2) — Georgian+English text; stored as registrant.names"
-      1: "Aircraft type (stored as aircraft.model)"
+      0: "Operator (table_1) / Owner (table_2) — Georgian and English text"
+      1: "Aircraft type"
       2: "Registration (4L-prefix; lookup key)"
-      3: "Registration date (not stored)"
-      4: "Serial number (stored as aircraft.serial_number)"
-      5: "Year of manufacture (4-digit year → aircraft.manufactured_date YYYY-01-01)"
+      3: "Registration date; not stored"
+      4: "Serial number"
+      5: "Year of manufacture (4-digit integer)"
 
   gg-2reg:
     description: "Guernsey (Bailiwick) aircraft register — 2-prefix registrations"
@@ -980,6 +980,8 @@ records:
           - source: hu-kozhaf
             file: "Aircraft register PDF (date-stamped, discovered via index page)"
             description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
+          - source: ge-gcaa
+            description: "Georgia GCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4L\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1074,6 +1076,9 @@ records:
             file: "Aircraft register PDF (date-stamped, discovered via index page)"
             field: "0"
             description: "HA-prefix registration mark; stray space after hyphen (HA- GZQ) normalized to HA-GZQ"
+          - source: ge-gcaa
+            field: "2"
+            description: "Full 4L-prefix registration mark (e.g. 4L-GAA)"
 
       registrant:
         type: object
@@ -1212,6 +1217,13 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Owner name (col 4) and operator name (col 6); col 6 omitted if identical to col 4; embedded newlines collapsed to space"
+              - source: ge-gcaa
+                fields:
+                  - { field: "0", table: table_1, description: "Operator" }
+                  - { field: "0", table: table_2, description: "Owner; omitted if identical to operator" }
+                transform:
+                  type: collect_ordered
+                  description: "Operator from table_1 as first entry; owner from table_2 as second if different; Georgian-script names preserved as UTF-8"
 
           street:
             type: "array[string]"
@@ -1829,6 +1841,8 @@ records:
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "1"
                 description: "Embedded newlines collapsed to space"
+              - source: ge-gcaa
+                field: "1"
 
           seats:
             type: integer
@@ -2055,6 +2069,8 @@ records:
               - source: hu-kozhaf
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "2"
+              - source: ge-gcaa
+                field: "4"
 
           manufactured_date:
             type: datetime
@@ -2182,6 +2198,14 @@ records:
               - source: hu-kozhaf
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "3"
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "4-digit manufacture year; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: ge-gcaa
+                field: "5"
                 precision: year
                 transform:
                   type: format_string
