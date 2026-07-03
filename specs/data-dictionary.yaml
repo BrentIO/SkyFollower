@@ -605,20 +605,20 @@ sources:
       - name: "Aircraft register PDF (opaque hash filename; discovered via index page)"
         format: pdf_table
     columns:
-      0: "N/S (sequence; not stored)"
-      1: "Certificate# (not stored)"
-      2: "Registration (8Q-prefix; used as lookup key)"
-      3: "Manufacturer+Designation (stored as aircraft.model; newlines collapsed to space)"
-      4: "MTOW (not stored)"
-      5: "Serial Number (stored as aircraft.serial_number)"
-      6: "Year Built (stored as aircraft.manufactured_date → YYYY-01-01)"
-      7: "Owner Name+Address (multiline; first line → registrant.names[0], last line → registrant.country, middle lines → registrant.street list)"
-      8: "Legal Owner (not stored)"
-      9: "Registration Basis (not stored)"
-      "10-12": "Mortgage/AREDI (not stored)"
-      13: "Original Issue Date (not stored)"
-      14: "Last Revision Date (not stored)"
-      15: "Status (filter: keep only 'Valid')"
+      0: "Sequence number; not stored"
+      1: "Certificate number; not stored"
+      2: "Registration mark (8Q-prefix; lookup key)"
+      3: "Manufacturer and model designation (may contain embedded newlines)"
+      4: "Maximum takeoff weight; not stored"
+      5: "Manufacturer serial number"
+      6: "Year of manufacture (4-digit integer)"
+      7: "Owner name and address (multiline; first line is name, last line is country, middle lines are street address)"
+      8: "Legal owner; not stored"
+      9: "Registration basis; not stored"
+      "10-12": "Mortgage and AREDI columns; not stored"
+      13: "Original issue date; not stored"
+      14: "Last revision date; not stored"
+      15: "Registration status; records filtered to 'Valid' only; not stored"
 
   md-caa:
     description: "Moldova CAA aircraft register — ER-prefix registrations"
@@ -996,6 +996,9 @@ records:
             description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
           - source: lv-caa
             description: "Latvia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YL\\-XXX} against Mictronics records; enriches existing records only"
+          - source: mv-caa
+            file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+            description: "Maldives CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{8Q\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1118,6 +1121,10 @@ records:
           - source: lv-caa
             field: Registration_Mark
             description: "Full YL-prefix registration mark (e.g. YL-LCS)"
+          - source: mv-caa
+            file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+            field: "2"
+            description: "Full 8Q-prefix registration mark (e.g. 8Q-MAD)"
 
       registrant:
         type: object
@@ -1291,6 +1298,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list"
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "7"
+                transform:
+                  type: wrap_array
+                  description: "First line of multiline owner/address cell — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1391,6 +1404,12 @@ records:
                 transform:
                   type: split_comma
                   description: "Comma-separated address string split into individual street lines"
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "7"
+                transform:
+                  type: collect_non_empty
+                  description: "Middle lines of multiline owner/address cell (between first and last line); empty lines discarded"
 
           city:
             type: string
@@ -1602,6 +1621,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Icelandic or English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Ísland'→IS, 'Iceland'→IS)"
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "7"
+                transform:
+                  type: decode_country_name
+                  description: "Last line of multiline owner/address cell; full English country name mapped to ISO 3166-1 alpha-2"
 
           type:
             type: string
@@ -1957,6 +1982,10 @@ records:
                 field: "4"
               - source: lv-caa
                 field: Model
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "3"
+                description: "Embedded newlines collapsed to space"
 
           seats:
             type: integer
@@ -2212,6 +2241,9 @@ records:
                 field: "5"
               - source: lv-caa
                 field: Serial_No
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "5"
 
           manufactured_date:
             type: datetime
@@ -2364,6 +2396,15 @@ records:
                   type: format_string
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "Integer year; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+              - source: mv-caa
+                file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
+                field: "6"
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "4-digit year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
 
           wake_turbulence_category:
