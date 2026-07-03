@@ -56,9 +56,26 @@ BATCH_SIZE = 100
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+_CATEGORY_MAP = {
+    "experimental": None,
+    "glider": "Glider",
+    "gyroplane": "Gyroplane",
+    "hot-air balloon": "Balloon",
+    "large aeroplane": "Airplane",
+    "motor-hanglider": "Weight-Shift-Control",
+    "paramotor-trike": "Weight-Shift-Control",
+    "powered sailplane": "Powered Glider",
+    "rotorcraft": "Rotorcraft",
+    "sailplane": "Glider",
+    "small aeroplane": "Airplane",
+    "small rotorcraft": "Rotorcraft",
+    "very light aeroplane": "Airplane",
+}
+
 _COL_MODEL = 2
 _COL_SERIAL = 3
 _COL_REGISTRATION = 4
+_COL_CATEGORY = 5
 _HEADER_ROWS = 2
 
 
@@ -110,6 +127,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "registration": registration,
             "model": _clean(row[_COL_MODEL]),
             "serial": _clean(row[_COL_SERIAL]),
+            "category": _clean(row[_COL_CATEGORY]) if len(row) > _COL_CATEGORY else "",
         })
 
     wb.close()
@@ -131,6 +149,12 @@ def _clean(value) -> str:
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build a Redis detail record from a parsed row."""
     aircraft_fields: dict = {}
+
+    category_raw = _clean(row.get("category", ""))
+    if category_raw:
+        aircraft_type = _CATEGORY_MAP.get(category_raw.lower())
+        if aircraft_type:
+            aircraft_fields["type"] = aircraft_type
 
     model = _clean(row.get("model", ""))
     if model:

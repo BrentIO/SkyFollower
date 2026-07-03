@@ -54,11 +54,13 @@ def _make_row(
     registration="LZ-ABC",
     model="Cessna 172",
     serial="17280001",
+    category="Small Aeroplane",
 ):
     return {
         "registration": registration,
         "model": model,
         "serial": serial,
+        "category": category,
     }
 
 
@@ -245,14 +247,15 @@ class TestDownloadAndParse:
         assert len(rows) == 1
         assert rows[0]["registration"] == "LZ-XYZ"
 
-    def test_maps_model_and_serial(self):
+    def test_maps_model_serial_and_category(self):
         xlsx_bytes = _make_xlsx_bytes([
-            (1, 46192, "Cessna 172", "SN001", "LZ-ABC", "Cat", "Basis"),
+            (1, 46192, "Cessna 172", "SN001", "LZ-ABC", "Small Aeroplane", "Basis"),
         ])
         session = _make_session(xlsx_bytes=xlsx_bytes)
         rows = download_and_parse(session)
         assert rows[0]["model"] == "Cessna 172"
         assert rows[0]["serial"] == "SN001"
+        assert rows[0]["category"] == "Small Aeroplane"
 
     def test_logs_parsed_count(self):
         xlsx_bytes = _make_xlsx_bytes([
@@ -292,8 +295,48 @@ class TestBuildRecord:
         record = _build_record(_make_row(serial="17280001"), "42A001", "LZ-ABC")
         assert record["aircraft"]["serial_number"] == "17280001"
 
+    def test_aircraft_type_mapped_from_category(self):
+        record = _build_record(_make_row(category="Small Aeroplane"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Airplane"
+
+    def test_category_case_insensitive(self):
+        record = _build_record(_make_row(category="small aeroplane"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Airplane"
+
+    def test_sailplane_maps_to_glider(self):
+        record = _build_record(_make_row(category="Sailplane"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Glider"
+
+    def test_rotorcraft_maps_to_rotorcraft(self):
+        record = _build_record(_make_row(category="Rotorcraft"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Rotorcraft"
+
+    def test_hot_air_balloon_maps_to_balloon(self):
+        record = _build_record(_make_row(category="Hot-air Balloon"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Balloon"
+
+    def test_powered_sailplane_maps_to_powered_glider(self):
+        record = _build_record(_make_row(category="Powered Sailplane"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Powered Glider"
+
+    def test_motor_hanglider_maps_to_wsc(self):
+        record = _build_record(_make_row(category="Motor-hanglider"), "42A001", "LZ-ABC")
+        assert record["aircraft"]["type"] == "Weight-Shift-Control"
+
+    def test_experimental_omits_type(self):
+        record = _build_record(_make_row(category="Experimental"), "42A001", "LZ-ABC")
+        assert "type" not in record.get("aircraft", {})
+
+    def test_unknown_category_omits_type(self):
+        record = _build_record(_make_row(category="Unknown Category"), "42A001", "LZ-ABC")
+        assert "type" not in record.get("aircraft", {})
+
+    def test_empty_category_omits_type(self):
+        record = _build_record(_make_row(category=""), "42A001", "LZ-ABC")
+        assert "type" not in record.get("aircraft", {})
+
     def test_empty_model_omits_aircraft(self):
-        record = _build_record(_make_row(model="", serial=""), "42A001", "LZ-ABC")
+        record = _build_record(_make_row(model="", serial="", category=""), "42A001", "LZ-ABC")
         assert "aircraft" not in record
 
     def test_empty_model_but_serial_present(self):

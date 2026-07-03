@@ -470,7 +470,7 @@ sources:
       "Модел (col 2)": "aircraft.model"
       "Сериен № (col 3)": "aircraft.serial_number"
       "Рег. знак (col 4)": "registration lookup key (LZ-prefix)"
-      "Категория ВС (col 5)": "not stored"
+      "Категория ВС (col 5)": "aircraft.type (case-insensitive; mapped: Small/Large/Very Light Aeroplane→Airplane, Sailplane/Glider→Glider, Powered Sailplane→Powered Glider, Rotorcraft/Small Rotorcraft→Rotorcraft, Gyroplane→Gyroplane, Hot-air Balloon→Balloon, Motor-hanglider/Paramotor-Trike→Weight-Shift-Control, Experimental→omitted)"
       "Основание (col 6)": "not stored"
 
   hr-ccaa:
