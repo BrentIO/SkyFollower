@@ -31,10 +31,10 @@ print(msg.icao_hex, msg.source)
 ```
 
 ```python
-from shared.redis_keys import icao_hex_key, config_rules_key
+from shared.redis_keys import aircraft_simple_key, config_rules_key
 
 # Build a Redis key for a specific aircraft
-key = icao_hex_key("A8AE7F")          # → "icao_hex:A8AE7F"
+key = aircraft_simple_key("A8AE7F")    # → "aircraft:simple:A8AE7F"
 
 # Get the key for the active rules configuration
 rules_key = config_rules_key()         # → "config:rules"
