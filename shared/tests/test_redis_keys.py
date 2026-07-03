@@ -11,7 +11,6 @@ from shared.redis_keys import (
     config_rules_key,
     config_rules_version_key,
     flight_key,
-    icao_hex_key,
     metrics_aircraft_type_misses_key,
     metrics_flights_archived_key,
     metrics_registration_misses_key,
@@ -34,10 +33,6 @@ class TestEnrichmentKeys:
 
     def test_aircraft_detail_search_index_name(self):
         assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
-
-    def test_icao_hex_key_deprecated_still_works(self):
-        assert icao_hex_key("a8ae7f") == "icao_hex:A8AE7F"
-        assert icao_hex_key("A8AE7F") == "icao_hex:A8AE7F"
 
     def test_operator_key(self):
         assert operator_key("dal") == "operator:DAL"
