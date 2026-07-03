@@ -340,14 +340,14 @@ sources:
         response_path: "data.aircraftRegistryAllAircrafts.aircrafts"
     fields:
       identifiers:             Full TF-prefix registration mark
-      type:                    Aircraft model/type name (stored as aircraft.model)
+      type:                    Aircraft model/type name
       serialNumber:            Manufacturer serial number
       productionYear:          Year of manufacture (integer; 0 = absent)
       operator.name:           Registered operator/owner name
       operator.address:        Street address
       operator.city:           City
       operator.postcode:       Postal code
-      operator.country:        Country name (Icelandic or English; mapped to ISO 3166-1 alpha-2)
+      operator.country:        Country name (Icelandic or English)
 
   lu-dac:
     description: "Luxembourg Directorate of Civil Aviation (DAC) aircraft register — LX-prefix registrations"
@@ -971,6 +971,9 @@ records:
           - source: me-caa
             page: detail
             description: "Montenegro CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4O\\-XXX} against Mictronics records; enriches existing records only"
+          - source: is-samgongustofa
+            endpoint: bulk
+            description: "Iceland Samgöngustofa does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{TF\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1053,6 +1056,10 @@ records:
             page: list
             field: "Registarska oznaka"
             description: "Full 4O-prefix registration mark (e.g. 4O-AOM)"
+          - source: is-samgongustofa
+            endpoint: bulk
+            field: identifiers
+            description: "Full TF-prefix registration mark (e.g. TF-ISA)"
 
       registrant:
         type: object
@@ -1171,6 +1178,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single operator/owner name — wrap in a one-element list"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: operator.name
+                transform:
+                  type: wrap_array
+                  description: "Single operator/owner name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1253,6 +1266,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single street address line — wrap in a one-element list"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: operator.address
+                transform:
+                  type: wrap_array
+                  description: "Single street address line — wrap in a one-element list"
 
           city:
             type: string
@@ -1305,6 +1324,9 @@ records:
                 transform:
                   type: parse_address_city
                   description: "Text suffix after the leading numeric postal code digits (e.g. '81000 Podgorica' → 'Podgorica')"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: operator.city
 
           administrative_area:
             type: string
@@ -1379,6 +1401,9 @@ records:
                 transform:
                   type: parse_address_postal
                   description: "Leading numeric digit sequence before the first space (e.g. '81000 Podgorica' → '81000')"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: operator.postcode
 
           country:
             type: string
@@ -1452,6 +1477,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Montenegro'→ME); falls back to raw name if unmapped"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: operator.country
+                transform:
+                  type: decode_country_name
+                  description: "Icelandic or English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Ísland'→IS, 'Iceland'→IS)"
 
           type:
             type: string
@@ -1754,6 +1785,9 @@ records:
               - source: me-caa
                 page: detail
                 field: "Aircraft model/type"
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: type
 
           seats:
             type: integer
@@ -1971,6 +2005,9 @@ records:
               - source: me-caa
                 page: detail
                 field: S/N
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: serialNumber
 
           manufactured_date:
             type: datetime
@@ -2080,6 +2117,16 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "4-digit integer year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
+              - source: is-samgongustofa
+                endpoint: bulk
+                field: productionYear
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "Integer year; 0 treated as absent — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+                  skip_if_value: 0
 
           wake_turbulence_category:
             type: string
