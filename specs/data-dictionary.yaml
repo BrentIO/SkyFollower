@@ -761,11 +761,11 @@ sources:
         format: html_table
         columns:
           REG:              Full VQ-prefix registration mark
-          "MANUFACT.":      Manufacturer name (stored as aircraft.manufacturer)
-          MODEL:            Model/type designation (stored as aircraft.model)
+          "MANUFACT.":      Manufacturer name
+          MODEL:            Model and type designation
           "S/N":            Manufacturer serial number
-          "OWNER /OPERATOR": Registered owner or operator name (stored as registrant.names[0]); note space before slash
-          D.O.R:            Date of Registration; not stored
+          "OWNER /OPERATOR": Registered owner or operator name (column header contains a space before the slash)
+          D.O.R:            Date of registration; not stored
 
   ky-caa:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
@@ -1013,6 +1013,9 @@ records:
           - source: sk-nsat
             file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
             description: "Slovakia NSAT does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{OM\\-XXX} against Mictronics records; enriches existing records only"
+          - source: tc-caa
+            file: aircraft-register (HTML page)
+            description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1158,6 +1161,10 @@ records:
             file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
             field: "Poznávacia značka"
             description: "Spaced format 'OM - XXXX' normalized to 'OM-XXXX' by stripping whitespace around hyphen"
+          - source: tc-caa
+            file: aircraft-register (HTML page)
+            field: REG
+            description: "Full VQ-prefix registration mark (e.g. VQ-TCA)"
 
       registrant:
         type: object
@@ -1362,6 +1369,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Owner and operator collected in order; duplicate operator entry discarded"
+              - source: tc-caa
+                file: aircraft-register (HTML page)
+                field: "OWNER /OPERATOR"
+                transform:
+                  type: wrap_array
+                  description: "Single owner or operator name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -2090,6 +2103,9 @@ records:
               - source: sk-nsat
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
                 field: "Typ lietadla"
+              - source: tc-caa
+                file: aircraft-register (HTML page)
+                field: MODEL
 
           seats:
             type: integer
@@ -2224,6 +2240,9 @@ records:
                 field: "1"
               - source: rs-cad
                 field: "proizvođač"
+              - source: tc-caa
+                file: aircraft-register (HTML page)
+                field: "MANUFACT."
 
           type_designator:
             type: string
@@ -2367,6 +2386,9 @@ records:
               - source: sk-nsat
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
                 field: "Výrobné číslo"
+              - source: tc-caa
+                file: aircraft-register (HTML page)
+                field: "S/N"
 
           manufactured_date:
             type: datetime
