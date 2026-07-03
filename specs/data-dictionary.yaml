@@ -458,6 +458,21 @@ sources:
           5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
           6: Operator name (stored as registrant.names[1] if different from owner)
 
+  bg-caa:
+    description: "Bulgaria CAA aircraft register — LZ-prefix registrations"
+    url: "https://www.caa.bg/bg/category/300/17238"
+    format: xlsx
+    cadence: weekly_tuesday
+    notes: "xlsx URL is date-encoded (Aircraft_Register_YYYYMMDD.xlsx) and discovered by scraping the index page; rows 0 (info) and 1 (header) skipped; column 4 holds LZ-prefix registration; no manufacturer, owner, or date stored; no ICAO hex — RediSearch lookup via Mictronics simple index; must run after Mictronics"
+    fields:
+      "Рег. № (col 0)": "not stored"
+      "Дата (col 1)": "not stored (Excel serial date)"
+      "Модел (col 2)": "aircraft.model"
+      "Сериен № (col 3)": "aircraft.serial_number"
+      "Рег. знак (col 4)": "registration lookup key (LZ-prefix)"
+      "Категория ВС (col 5)": "not stored"
+      "Основание (col 6)": "not stored"
+
   hr-ccaa:
     description: "Croatia Civil Aviation Agency aircraft register — 9A-prefix registrations"
     url: "https://www.ccaa.hr/en/list-of-registered-aircraft-94674"
