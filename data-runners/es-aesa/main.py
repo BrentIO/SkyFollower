@@ -65,8 +65,8 @@ _CLASE_MAP = {
     "AUTOGIRO": "Gyroplane",
     "GLOBO": "Balloon",
     "PLANEADOR/MOTOPL\nANEADOR": "Glider",
-    "ULM-AVION": "Ultralight Airplane",
-    "ULM-AUTOGIRO": "Ultralight Autogyro",
+    "ULM-AVION": "Airplane",
+    "ULM-AUTOGIRO": "Gyroplane",
     "AFI-AVION": "Airplane",
 }
 
@@ -158,18 +158,20 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         except ValueError:
             pass
 
+    powerplant_fields: dict = {}
+
     powerplant_manufacturer = row.get("Marca Motor", "").strip()
     if powerplant_manufacturer:
-        aircraft_fields["powerplant_manufacturer"] = powerplant_manufacturer
+        powerplant_fields["manufacturer"] = powerplant_manufacturer
 
     powerplant_model = row.get("Modelo Motor", "").strip()
     if powerplant_model:
-        aircraft_fields["powerplant_model"] = powerplant_model
+        powerplant_fields["model"] = powerplant_model
 
     num_motors = row.get("Nº mot.", "").strip()
     if num_motors:
         try:
-            aircraft_fields["powerplant_count"] = int(num_motors)
+            powerplant_fields["count"] = int(num_motors)
         except ValueError:
             pass
 
@@ -185,6 +187,8 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
+    if powerplant_fields:
+        record["powerplant"] = powerplant_fields
 
     return record
 

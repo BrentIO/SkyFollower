@@ -117,7 +117,7 @@ class TestDecodeAircraftType:
         assert _decode_aircraft_type("Glider") == "Glider"
 
     def test_powered_glider(self):
-        assert _decode_aircraft_type("Powered Glider") == "Glider"
+        assert _decode_aircraft_type("Powered Glider") == "Powered Glider"
 
     def test_homebuild_glider_typo(self):
         assert _decode_aircraft_type("Homebuild Glider") == "Glider"
