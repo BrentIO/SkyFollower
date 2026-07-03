@@ -708,12 +708,12 @@ sources:
     cadence: weekly_tuesday
     notes: "REST JSON API; single call with limit=10000 covers all ~550 records; no auth required; SSL certificate has untrusted issuer chain — verify=False used; items[] array in response; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C0000–4C7FFF"
     fields:
-      registarska_oznaka:  Registration mark in YU-prefix format
-      "proizvođač":        Manufacturer name (stored as aircraft.manufacturer)
-      proizvođačka_oznaka: Model designation (stored as aircraft.model)
-      serijski_broj:       Manufacturer serial number (stored as aircraft.serial_number)
-      korisnik:            Operator/user (stored as registrant.names[0])
-      vrsta_vazduhoplova:  Aircraft type category; decoded — Avion→Airplane, Balon→Balloon, Helikopter→Helicopter, Jedrilica→Glider, Motorna jedrilica→Glider, Motorni zmaj→Weight-Shift-Control, Žirokopter→Gyroplane
+      registarska_oznaka:  Registration mark (YU-prefix; lookup key)
+      "proizvođač":        Manufacturer name
+      proizvođačka_oznaka: Aircraft model designation
+      serijski_broj:       Manufacturer serial number
+      korisnik:            Operator or user name
+      vrsta_vazduhoplova:  Aircraft type category (Serbian)
 
   sg-caas:
     description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"
@@ -1008,6 +1008,8 @@ records:
           - source: pg-casapng
             file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
             description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
+          - source: rs-cad
+            description: "Serbia CAD does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YU\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1146,6 +1148,9 @@ records:
             file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
             field: "0"
             description: "Full P2-prefix registration mark (e.g. P2-ANG)"
+          - source: rs-cad
+            field: registarska_oznaka
+            description: "Full YU-prefix registration mark (e.g. YU-APA)"
 
       registrant:
         type: object
@@ -1334,6 +1339,11 @@ records:
               - source: pg-casapng
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "3"
+                transform:
+                  type: wrap_array
+                  description: "Single operator name — wrap in a one-element list"
+              - source: rs-cad
+                field: korisnik
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
@@ -1936,6 +1946,19 @@ records:
                     "Paramotor-Trike": Weight-Shift-Control
               - source: lv-caa
                 field: Aircraft_Model_Category
+              - source: rs-cad
+                field: vrsta_vazduhoplova
+                transform:
+                  type: decode_table
+                  description: "Serbian aircraft category label"
+                  values:
+                    "Avion": Airplane
+                    "Balon": Balloon
+                    "Helikopter": Helicopter
+                    "Jedrilica": Glider
+                    "Motorna jedrilica": Motor Glider
+                    "Motorni zmaj": Weight-Shift-Control
+                    "Žirokopter": Gyroplane
 
           model:
             type: string
@@ -2047,6 +2070,8 @@ records:
               - source: pg-casapng
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "2"
+              - source: rs-cad
+                field: proizvođačka_oznaka
 
           seats:
             type: integer
@@ -2179,6 +2204,8 @@ records:
               - source: pg-casapng
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "1"
+              - source: rs-cad
+                field: "proizvođač"
 
           type_designator:
             type: string
@@ -2317,6 +2344,8 @@ records:
               - source: mk-caa
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "5"
+              - source: rs-cad
+                field: serijski_broj
 
           manufactured_date:
             type: datetime
