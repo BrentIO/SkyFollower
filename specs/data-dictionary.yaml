@@ -521,6 +521,9 @@ sources:
       engine_count: "Number of engines (integer; 0 if not applicable)"
       max_on_board: "Maximum number of persons on board (integer; 0 if not applicable)"
       "owners[*].display_name": "Display name of each registered owner"
+    filter:
+      field: transponder
+      skip_if_empty: true
 
   ee-transpordiamet:
     description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"
@@ -965,7 +968,6 @@ records:
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase"
-              skip_if_empty: true
 
       registration:
         type: string
