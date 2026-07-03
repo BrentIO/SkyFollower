@@ -431,10 +431,10 @@ sources:
         format: json
         columns:
           REG_SNO:       Full HL-prefix registration mark; used as registration lookup key
-          REG_CUSER:     Registered owner name (Korean UTF-8 text); stored as registrant.names[0]
-          AIR_TYPE:      Aircraft type/model free-text code (stored as aircraft.model)
-          AIR_BUILD_NO:  Manufacturer serial number (stored as aircraft.serial_number)
-          AIR_BUILD_DATE: Construction date in YY.MM.DD format; converted to YYYY-MM-DD using pivot year 50
+          REG_CUSER:     Registered owner name (Korean UTF-8 text)
+          AIR_TYPE:      Aircraft type/model free-text code
+          AIR_BUILD_NO:  Manufacturer serial number
+          AIR_BUILD_DATE: Construction date in YY.MM.DD format
           REG_DATE:      Registration date; not stored
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
@@ -974,6 +974,9 @@ records:
           - source: is-samgongustofa
             endpoint: bulk
             description: "Iceland Samgöngustofa does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{TF\\-XXX} against Mictronics records; enriches existing records only"
+          - source: kr-koca
+            file: statListEn01.do (JSON datatable)
+            description: "Korea KOCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HL\\-XXXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1060,6 +1063,10 @@ records:
             endpoint: bulk
             field: identifiers
             description: "Full TF-prefix registration mark (e.g. TF-ISA)"
+          - source: kr-koca
+            file: statListEn01.do (JSON datatable)
+            field: REG_SNO
+            description: "Full HL-prefix registration mark (e.g. HL-7612)"
 
       registrant:
         type: object
@@ -1184,6 +1191,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single operator/owner name — wrap in a one-element list"
+              - source: kr-koca
+                file: statListEn01.do (JSON datatable)
+                field: REG_CUSER
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name (Korean UTF-8 text) — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1788,6 +1801,9 @@ records:
               - source: is-samgongustofa
                 endpoint: bulk
                 field: type
+              - source: kr-koca
+                file: statListEn01.do (JSON datatable)
+                field: AIR_TYPE
 
           seats:
             type: integer
@@ -2008,6 +2024,9 @@ records:
               - source: is-samgongustofa
                 endpoint: bulk
                 field: serialNumber
+              - source: kr-koca
+                file: statListEn01.do (JSON datatable)
+                field: AIR_BUILD_NO
 
           manufactured_date:
             type: datetime
@@ -2127,6 +2146,11 @@ records:
                   description: "Integer year; 0 treated as absent — January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: 0
+              - source: kr-koca
+                file: statListEn01.do (JSON datatable)
+                field: AIR_BUILD_DATE
+                description: "YY.MM.DD string; pivot year 50 (>=50 → 19xx, <50 → 20xx); output as YYYY-MM-DD"
+                skip_if_empty: true
 
           wake_turbulence_category:
             type: string
