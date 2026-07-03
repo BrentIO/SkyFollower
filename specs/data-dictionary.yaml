@@ -449,13 +449,13 @@ sources:
       - name: "Aircraft register PDF (date-stamped, discovered via index page)"
         format: pdf_table
         columns:
-          0: Registration mark in HA-prefix format (stray space after hyphen normalized away)
-          1: Model designation (stored as aircraft.model; embedded newlines collapsed to space)
-          2: Manufacturer serial number (stored as aircraft.serial_number)
-          3: Year of manufacture (4-digit; stored as aircraft.manufactured_date as YYYY-01-01)
-          4: Owner name (stored as registrant.names[0]; embedded newlines collapsed to space)
-          5: Owner address (stored as registrant.street; embedded newlines collapsed to space)
-          6: Operator name (stored as registrant.names[1] if different from owner)
+          0: Registration mark in HA-prefix format (stray space after hyphen present in source)
+          1: Model designation (may contain embedded newlines)
+          2: Manufacturer serial number
+          3: Year of manufacture (4-digit integer)
+          4: Owner name (may contain embedded newlines)
+          5: Owner address (may contain embedded newlines)
+          6: Operator name; may be identical to owner
 
   bg-caa:
     description: "Bulgaria CAA aircraft register — LZ-prefix registrations"
@@ -977,6 +977,9 @@ records:
           - source: kr-koca
             file: statListEn01.do (JSON datatable)
             description: "Korea KOCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HL\\-XXXX} against Mictronics records; enriches existing records only"
+          - source: hu-kozhaf
+            file: "Aircraft register PDF (date-stamped, discovered via index page)"
+            description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1067,6 +1070,10 @@ records:
             file: statListEn01.do (JSON datatable)
             field: REG_SNO
             description: "Full HL-prefix registration mark (e.g. HL-7612)"
+          - source: hu-kozhaf
+            file: "Aircraft register PDF (date-stamped, discovered via index page)"
+            field: "0"
+            description: "HA-prefix registration mark; stray space after hyphen (HA- GZQ) normalized to HA-GZQ"
 
       registrant:
         type: object
@@ -1197,6 +1204,14 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner name (Korean UTF-8 text) — wrap in a one-element list"
+              - source: hu-kozhaf
+                file: "Aircraft register PDF (date-stamped, discovered via index page)"
+                fields:
+                  - { field: "4" }
+                  - { field: "6" }
+                transform:
+                  type: collect_non_empty
+                  description: "Owner name (col 4) and operator name (col 6); col 6 omitted if identical to col 4; embedded newlines collapsed to space"
 
           street:
             type: "array[string]"
@@ -1285,6 +1300,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single street address line — wrap in a one-element list"
+              - source: hu-kozhaf
+                file: "Aircraft register PDF (date-stamped, discovered via index page)"
+                field: "5"
+                transform:
+                  type: wrap_array
+                  description: "Owner address; embedded newlines collapsed to space — wrap in a one-element list"
 
           city:
             type: string
@@ -1804,6 +1825,10 @@ records:
               - source: kr-koca
                 file: statListEn01.do (JSON datatable)
                 field: AIR_TYPE
+              - source: hu-kozhaf
+                file: "Aircraft register PDF (date-stamped, discovered via index page)"
+                field: "1"
+                description: "Embedded newlines collapsed to space"
 
           seats:
             type: integer
@@ -2027,6 +2052,9 @@ records:
               - source: kr-koca
                 file: statListEn01.do (JSON datatable)
                 field: AIR_BUILD_NO
+              - source: hu-kozhaf
+                file: "Aircraft register PDF (date-stamped, discovered via index page)"
+                field: "2"
 
           manufactured_date:
             type: datetime
@@ -2151,6 +2179,15 @@ records:
                 field: AIR_BUILD_DATE
                 description: "YY.MM.DD string; pivot year 50 (>=50 → 19xx, <50 → 20xx); output as YYYY-MM-DD"
                 skip_if_empty: true
+              - source: hu-kozhaf
+                file: "Aircraft register PDF (date-stamped, discovered via index page)"
+                field: "3"
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "4-digit manufacture year; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
 
           wake_turbulence_category:
             type: string
