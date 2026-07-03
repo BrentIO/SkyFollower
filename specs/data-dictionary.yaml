@@ -964,7 +964,8 @@ records:
             field: transponder
             transform:
               type: uppercase
-              description: "6-character hex string normalised to uppercase; skip if null or empty"
+              description: "6-character hex string normalised to uppercase"
+              skip_if_empty: true
 
       registration:
         type: string
@@ -1734,7 +1735,8 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: max_on_board
-                notes: "Omit if 0 or null"
+                skip_if_empty: true
+                skip_if_value: 0
 
           category:
             type: string
@@ -2070,7 +2072,8 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: engine_count
-                notes: "Omit if 0 or null"
+                skip_if_empty: true
+                skip_if_value: 0
 
           type:
             type: string
@@ -2172,6 +2175,7 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: engine_type
+                skip_if_value: "NO_ENGINE"
                 transform:
                   type: decode_table
                   values:
@@ -2179,7 +2183,6 @@ records:
                     "TURBINE": Turbine
                     "TURBOSHAFT": Turboshaft
                     "ELECTRIC": Electric
-                    "NO_ENGINE": ~~omit~~
 
           model:
             type: string
