@@ -678,12 +678,12 @@ sources:
         columns:
           0: Entry number; not stored
           1: Registration date; not stored
-          2: Registration mark in Z3-prefix format
-          3: Model designation (stored as aircraft.model)
-          4: Manufacturer name (stored as aircraft.manufacturer)
-          5: Manufacturer serial number (stored as aircraft.serial_number)
-          6: Owner name (stored as registrant.names[0]; embedded newlines collapsed to space)
-          7: Owner address (stored as registrant.street; embedded newlines collapsed to space)
+          2: Registration mark (Z3-prefix; lookup key)
+          3: Aircraft model designation (may contain embedded newlines)
+          4: Manufacturer name
+          5: Manufacturer serial number
+          6: Owner name (may contain embedded newlines)
+          7: Owner address (may contain embedded newlines)
 
   pg-casapng:
     description: "Papua New Guinea CASA PNG (Civil Aviation Safety Authority) aircraft register — P2-prefix registrations"
@@ -1002,6 +1002,9 @@ records:
           - source: md-caa
             file: Registrul_Aerian_al_Republicii_Moldova.pdf
             description: "Moldova CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ER\\-XXX} against Mictronics records; enriches existing records only"
+          - source: mk-caa
+            file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+            description: "North Macedonia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{Z3\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1132,6 +1135,10 @@ records:
             file: Registrul_Aerian_al_Republicii_Moldova.pdf
             field: "2"
             description: "Full ER-prefix registration mark (e.g. ER-AXP)"
+          - source: mk-caa
+            file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+            field: "2"
+            description: "Full Z3-prefix registration mark (e.g. Z3-AAA)"
 
       registrant:
         type: object
@@ -1311,6 +1318,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "First line of multiline owner/address cell — wrap in a one-element list"
+              - source: mk-caa
+                file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+                field: "6"
+                transform:
+                  type: wrap_array
+                  description: "Embedded newlines collapsed to space; wrap single owner name in a one-element list"
 
           street:
             type: "array[string]"
@@ -1417,6 +1430,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Middle lines of multiline owner/address cell (between first and last line); empty lines discarded"
+              - source: mk-caa
+                file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+                field: "7"
+                transform:
+                  type: wrap_array
+                  description: "Embedded newlines collapsed to space; wrap address in a one-element list"
 
           city:
             type: string
@@ -1996,6 +2015,10 @@ records:
               - source: md-caa
                 file: Registrul_Aerian_al_Republicii_Moldova.pdf
                 field: "1"
+              - source: mk-caa
+                file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+                field: "3"
+                description: "Embedded newlines collapsed to space"
 
           seats:
             type: integer
@@ -2122,6 +2145,9 @@ records:
               - source: cy-dca
                 file: Aircraft_Register_Extract.pdf
                 field: "MANUFACTURER"
+              - source: mk-caa
+                file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+                field: "4"
 
           type_designator:
             type: string
@@ -2257,6 +2283,9 @@ records:
               - source: md-caa
                 file: Registrul_Aerian_al_Republicii_Moldova.pdf
                 field: "3"
+              - source: mk-caa
+                file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
+                field: "5"
 
           manufactured_date:
             type: datetime
