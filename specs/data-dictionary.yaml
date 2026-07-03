@@ -588,12 +588,12 @@ sources:
     cadence: weekly_tuesday
     notes: "CKAN datastore JSON API; no auth required; single request returns all ~366 records; Construction_Year is an integer; Registered_on not stored; no registrant data available; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     fields:
-      Registration_Mark: Registration mark (YL-prefix; used as lookup key)
-      Model: Aircraft model (stored as aircraft.model)
-      Serial_No: Serial number (stored as aircraft.serial_number)
-      Construction_Year: "Integer year (stored as aircraft.manufactured_date → YYYY-01-01)"
-      Registered_on: Registration date (not stored)
-      Aircraft_Model_Category: Category description (stored as aircraft.type)
+      Registration_Mark: Registration mark (YL-prefix; lookup key)
+      Model: Aircraft model designation
+      Serial_No: Manufacturer serial number
+      Construction_Year: Year of manufacture (integer)
+      Registered_on: Registration date; not stored
+      Aircraft_Model_Category: Free-text aircraft category description
 
   mv-caa:
     description: "Maldives CAA aircraft register — 8Q-prefix registrations"
@@ -994,6 +994,8 @@ records:
             description: "Cyprus DCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{5B\\-XXX} against Mictronics records; enriches existing records only"
           - source: ee-transpordiamet
             description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
+          - source: lv-caa
+            description: "Latvia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YL\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1113,6 +1115,9 @@ records:
           - source: ee-transpordiamet
             field: "1"
             description: "ES-prefix registration mark; internal whitespace normalized (e.g. 'ES - MBA' → 'ES-MBA')"
+          - source: lv-caa
+            field: Registration_Mark
+            description: "Full YL-prefix registration mark (e.g. YL-LCS)"
 
       registrant:
         type: object
@@ -1853,6 +1858,8 @@ records:
                     "Hot-air Balloon": Balloon
                     "Motor-hanglider": Weight-Shift-Control
                     "Paramotor-Trike": Weight-Shift-Control
+              - source: lv-caa
+                field: Aircraft_Model_Category
 
           model:
             type: string
@@ -1948,6 +1955,8 @@ records:
                 field: "AIRCRAFT TYPE"
               - source: ee-transpordiamet
                 field: "4"
+              - source: lv-caa
+                field: Model
 
           seats:
             type: integer
@@ -2201,6 +2210,8 @@ records:
                 field: "AIRCRAFT SERIAL NO"
               - source: ee-transpordiamet
                 field: "5"
+              - source: lv-caa
+                field: Serial_No
 
           manufactured_date:
             type: datetime
@@ -2346,6 +2357,14 @@ records:
                 field: "6"
                 description: "DD.MM.YYYY → YYYY-MM-DD; month-name YYYY (Russian or English) → YYYY-MM-01"
                 skip_if_empty: true
+              - source: lv-caa
+                field: Construction_Year
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "Integer year; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
 
           wake_turbulence_category:
             type: string
