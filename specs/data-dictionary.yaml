@@ -578,12 +578,12 @@ sources:
     notes: "Static single-page HTML table; 56 data rows; 7 columns; col 0 is always empty (visual row-number placeholder); operator (col 1) and type-of-aircraft (col 2) independently use rowspan to span multiple aircraft rows — table is expanded to a full grid before parsing so column indices are always fixed; date of manufacture may be DD.MM.YYYY or Russian/English month name + year; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     columns:
       0: "№ п/п (always empty in data rows)"
-      1: "Эксплуатант/Operator + Собственник/Owner (rowspan; carried forward → registrant.names[0])"
-      2: "Тип ВС/Type of Aircraft (rowspan; carried forward → aircraft.model)"
+      1: "Эксплуатант/Operator + Собственник/Owner (rowspan; value carried forward across spanned rows)"
+      2: "Тип ВС/Type of Aircraft (rowspan; value carried forward across spanned rows)"
       3: "Регистрац. номер/Registration (EX-prefix; used as lookup key)"
-      4: "Дата регистрации/Date of Registration (not stored)"
-      5: "Серийный №/Serial Number (stored as aircraft.serial_number)"
-      6: "Дата производства/Date of Manufacture (stored as aircraft.manufactured_date; DD.MM.YYYY → YYYY-MM-DD; Month YYYY → YYYY-MM-01)"
+      4: "Дата регистрации/Date of Registration; not stored"
+      5: "Серийный №/Serial Number"
+      6: "Дата производства/Date of Manufacture (DD.MM.YYYY or month-name YYYY format)"
 
   lv-caa:
     description: "Latvia CAA aircraft register — YL-prefix registrations"
@@ -985,6 +985,8 @@ records:
           - source: gg-2reg
             file: "PDF (date-encoded, discovered via index page)"
             description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
+          - source: kg-caa
+            description: "Kyrgyzstan CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{EX\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1086,6 +1088,9 @@ records:
             file: "PDF (date-encoded, discovered via index page)"
             field: "0"
             description: "Full 2-prefix registration mark (e.g. 2-ABCD)"
+          - source: kg-caa
+            field: "3"
+            description: "Full EX-prefix registration mark (e.g. EX-001)"
 
       registrant:
         type: object
@@ -1237,6 +1242,11 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner/charterer name — wrap in a one-element list"
+              - source: kg-caa
+                field: "1"
+                transform:
+                  type: wrap_array
+                  description: "Operator/owner name; rowspan value carried forward across spanned rows — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1859,6 +1869,9 @@ records:
               - source: gg-2reg
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "2"
+              - source: kg-caa
+                field: "2"
+                description: "Rowspan value carried forward across spanned rows"
 
           seats:
             type: integer
@@ -2093,6 +2106,8 @@ records:
               - source: gg-2reg
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "3"
+              - source: kg-caa
+                field: "5"
 
           manufactured_date:
             type: datetime
@@ -2234,6 +2249,10 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "4-digit manufacture year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
+              - source: kg-caa
+                field: "6"
+                description: "DD.MM.YYYY → YYYY-MM-DD; month-name YYYY (Russian or English) → YYYY-MM-01"
+                skip_if_empty: true
 
           wake_turbulence_category:
             type: string
