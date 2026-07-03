@@ -393,12 +393,11 @@ sources:
         format: html_table
         columns:
           "Registration Mark":    Full M-prefix registration mark
-          "Aircraft Manufacturer": Manufacturer name (stored as aircraft.manufacturer)
-          "Aircraft Type":        Model/type designation (stored as aircraft.model)
+          "Aircraft Manufacturer": Manufacturer name
+          "Aircraft Type":        Model/type designation
           "Serial Number":        Manufacturer serial number
-          "Mode S Number":        6-char uppercase ICAO hex; used directly as icao_hex key
-          "Registered Owners":    Owner name and address combined; name before first comma (registrant.names[0]), street address after first comma (registrant.street)
-          "Aircraft Status":      Filter: skip rows where value is 'Deregistered'
+          "Mode S Number":        6-char uppercase ICAO hex
+          "Registered Owners":    Owner name and address combined
 
   es-aesa:
     description: "Spain AESA (Agencia Estatal de Seguridad Aérea) aircraft register — EC-prefix registrations"
@@ -954,6 +953,12 @@ records:
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase"
+          - source: im-ardis
+            file: ARDIS search results (HTML table)
+            field: "Mode S Number"
+            transform:
+              type: uppercase
+              description: "6-character hex string normalised to uppercase; ICAO hex provided directly — no RediSearch lookup needed"
 
       registration:
         type: string
@@ -1028,6 +1033,10 @@ records:
               type: insert_hyphen
               position: 2
               description: "MARCA stored without hyphen (e.g. PPAJH); hyphen inserted after position 2 to yield full registration (PP-AJH)"
+          - source: im-ardis
+            file: ARDIS search results (HTML table)
+            field: "Registration Mark"
+            description: "Full M-prefix registration mark (e.g. M-ABCD)"
 
       registrant:
         type: object
@@ -1128,6 +1137,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
+              - source: im-ardis
+                file: ARDIS search results (HTML table)
+                field: "Registered Owners"
+                transform:
+                  type: split_first_comma_name
+                  description: "Everything before the first comma; wrapped in a one-element list"
 
           street:
             type: "array[string]"
@@ -1198,6 +1213,12 @@ records:
                 transform:
                   type: split_comma
                   description: "Country suffix (matching Nationality column) stripped first; remaining string split on commas, each segment trimmed and stored as a separate street line"
+              - source: im-ardis
+                file: ARDIS search results (HTML table)
+                field: "Registered Owners"
+                transform:
+                  type: split_first_comma_street
+                  description: "Everything after the first comma; wrapped in a one-element list"
 
           city:
             type: string
@@ -1645,6 +1666,9 @@ records:
               - source: sg-caas
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: Aircraft Model
+              - source: im-ardis
+                file: ARDIS search results (HTML table)
+                field: "Aircraft Type"
 
           seats:
             type: integer
@@ -1748,6 +1772,9 @@ records:
               - source: sg-caas
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: Aircraft Manufacturer
+              - source: im-ardis
+                file: ARDIS search results (HTML table)
+                field: "Aircraft Manufacturer"
 
           type_designator:
             type: string
@@ -1839,6 +1866,9 @@ records:
               - source: sg-caas
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: "Aircraft S/N"
+              - source: im-ardis
+                file: ARDIS search results (HTML table)
+                field: "Serial Number"
 
           manufactured_date:
             type: datetime
