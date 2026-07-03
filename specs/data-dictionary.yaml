@@ -630,11 +630,11 @@ sources:
       - name: "Registrul_Aerian_al_Republicii_Moldova.pdf"
         format: pdf_table
     columns:
-      0: Nr. (sequence number; not stored)
-      1: Type of aircraft (stored as aircraft.model)
-      2: Registration marks (ER-prefix; used as lookup key)
-      3: Serial No. (stored as aircraft.serial_number)
-      4: "Operator* (3-letter code; not stored)"
+      0: Sequence number; not stored
+      1: Aircraft type designation
+      2: Registration mark (ER-prefix; lookup key)
+      3: Manufacturer serial number
+      4: Operator ICAO 3-letter code; not stored
 
   me-caa:
     description: "Montenegro CAA aircraft register — 4O-prefix registrations"
@@ -999,6 +999,9 @@ records:
           - source: mv-caa
             file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
             description: "Maldives CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{8Q\\-XXX} against Mictronics records; enriches existing records only"
+          - source: md-caa
+            file: Registrul_Aerian_al_Republicii_Moldova.pdf
+            description: "Moldova CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ER\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1125,6 +1128,10 @@ records:
             file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
             field: "2"
             description: "Full 8Q-prefix registration mark (e.g. 8Q-MAD)"
+          - source: md-caa
+            file: Registrul_Aerian_al_Republicii_Moldova.pdf
+            field: "2"
+            description: "Full ER-prefix registration mark (e.g. ER-AXP)"
 
       registrant:
         type: object
@@ -1986,6 +1993,9 @@ records:
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "3"
                 description: "Embedded newlines collapsed to space"
+              - source: md-caa
+                file: Registrul_Aerian_al_Republicii_Moldova.pdf
+                field: "1"
 
           seats:
             type: integer
@@ -2244,6 +2254,9 @@ records:
               - source: mv-caa
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "5"
+              - source: md-caa
+                file: Registrul_Aerian_al_Republicii_Moldova.pdf
+                field: "3"
 
           manufactured_date:
             type: datetime
