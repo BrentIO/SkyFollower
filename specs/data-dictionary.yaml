@@ -412,14 +412,14 @@ sources:
         columns:
           Matrícula:      Full EC-prefix registration mark
           "Fecha matric.": Date of registration; not stored
-          Fabricante:     Manufacturer name (stored as aircraft.manufacturer)
-          Modelo:         Model/type designation (stored as aircraft.model)
+          Fabricante:     Manufacturer name
+          Modelo:         Model/type designation
           "Nº serie":     Manufacturer serial number; omit if 'NO\\nDISPONIBLE'
-          "Año cons.":    Construction year; stored as YYYY-01-01 in aircraft.manufactured_date; omit if 1900
-          "Marca Motor":  Powerplant manufacturer (stored as powerplant.manufacturer)
-          "Modelo Motor": Powerplant model (stored as powerplant.model)
-          "Nº mot.":      Number of powerplants as integer (stored as powerplant.count)
-          Clase:          Aircraft category; decoded — AVION→Airplane, HELICOPTERO (VTOL)→Helicopter, AUTOGIRO→Gyroplane, GLOBO→Balloon, PLANEADOR/MOTOPLANEADOR→Glider, ULM-AVION→Airplane, ULM-AUTOGIRO→Gyroplane, AFI-AVION→Airplane
+          "Año cons.":    Construction year (4-digit); 1900 is a placeholder for unknown year
+          "Marca Motor":  Powerplant manufacturer
+          "Modelo Motor": Powerplant model
+          "Nº mot.":      Number of powerplants (integer string)
+          Clase:          Aircraft category code
 
   kr-koca:
     description: "South Korea Korea Office of Civil Aviation (KOCA) aircraft register — HL-prefix registrations"
@@ -1568,6 +1568,20 @@ records:
                     "G": Gyroplane
                     "S": Seaplane
                     "RPA": Drone
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: Clase
+                transform:
+                  type: decode_table
+                  values:
+                    "AVION": Airplane
+                    "HELICOPTERO (VTOL)": Helicopter
+                    "AUTOGIRO": Gyroplane
+                    "GLOBO": Balloon
+                    "PLANEADOR/MOTOPLANEADOR": Glider
+                    "ULM-AVION": Airplane
+                    "ULM-AUTOGIRO": Gyroplane
+                    "AFI-AVION": Airplane
 
           model:
             type: string
@@ -1619,6 +1633,9 @@ records:
               - source: br-anac
                 file: dados_aeronaves.json
                 field: DSMODELO
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: Modelo
 
           seats:
             type: integer
@@ -1716,6 +1733,9 @@ records:
               - source: br-anac
                 file: dados_aeronaves.json
                 field: NMFABRICANTE
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: Fabricante
 
           type_designator:
             type: string
@@ -1797,6 +1817,13 @@ records:
               - source: br-anac
                 file: dados_aeronaves.json
                 field: NRSERIE
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: "Nº serie"
+                transform:
+                  type: skip_if_value
+                  value: "NO\nDISPONIBLE"
+                  description: "Value 'NO\\nDISPONIBLE' (with embedded newline) treated as absent"
 
           manufactured_date:
             type: datetime
@@ -1877,6 +1904,16 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "ANAC provides 4-digit manufacture year only; null for some records — January 1 at midnight UTC assumed"
                   skip_if_empty: true
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: "Año cons."
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "4-digit construction year; 1900 is a placeholder for unknown year — omit; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+                  skip_if_value: "1900"
 
           wake_turbulence_category:
             type: string
@@ -1931,6 +1968,11 @@ records:
                   type: decode_character
                   position: 1
                   description: "Position 2 (index 1) of CDCLS is the engine count digit; '0' or absent = omit; omitted for RPA (drone) records"
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: "Nº mot."
+                transform:
+                  type: parse_integer
 
           type:
             type: string
@@ -2057,6 +2099,9 @@ records:
                   type: split_first
                   delimiter: ", "
                   description: "Comma-separated multi-engine entries take first value (e.g. 'CFM56-5B4/3, CFM56-5B4/P' → 'CFM56-5B4/3')"
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: "Modelo Motor"
 
           manufacturer:
             type: string
@@ -2082,6 +2127,9 @@ records:
               - source: ch-bazl
                 endpoint: bulk
                 field: " Engine manufacturer"
+              - source: es-aesa
+                file: aeronaves_inscritas.pdf
+                field: "Marca Motor"
 
           power_type:
             type: string
