@@ -511,16 +511,19 @@ sources:
       list: "GET https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000 → {rows: [{id, category, type, registration_number, deletion_date}], total: N}"
       detail: "GET https://lr.caa.gov.cz/api/avreg/{id} → {transponder, category, manufacturer, model, serial_number, manufacture_year, engine_type, engine_count, max_on_board, owners, operators}"
     fields:
-      transponder: "ICAO hex → aircraft:detail:{transponder} key (skip if null/empty)"
-      category: "aircraft.type (mapped: AIRPLANE→Airplane, GLIDER→Glider, HELICOPTER→Helicopter, HOT_AIR_BALLOON→Balloon, GAS_BALLOON→Balloon, HOT_AIR_AIRSHIP→Blimp/Dirigible, POWERED_GLIDER→Powered Glider, Bezpilotní letadlo→Unmanned Aircraft)"
-      manufacturer: "aircraft.manufacturer"
-      model: "aircraft.model"
-      serial_number: "aircraft.serial_number"
-      manufacture_year: "aircraft.manufactured_date (integer → YYYY-01-01)"
-      engine_type: "aircraft.powerplant.type (mapped: PISTON→Piston, TURBINE→Turbine, TURBOSHAFT→Turboshaft, ELECTRIC→Electric; NO_ENGINE omitted)"
-      engine_count: "aircraft.powerplant.count (omitted if 0 or null)"
-      max_on_board: "aircraft.seats (omitted if 0 or null)"
-      "owners[*].display_name": "registrant.names (all owners; operators not imported)"
+      transponder: "ICAO Mode S hex code (6-char uppercase hex string; null if not yet assigned)"
+      category: "Aircraft category code (AVREG_DATA enum: AIRPLANE, GLIDER, HELICOPTER, HOT_AIR_BALLOON, GAS_BALLOON, HOT_AIR_AIRSHIP, POWERED_GLIDER, Bezpilotní letadlo)"
+      manufacturer: "Aircraft manufacturer name"
+      model: "Aircraft model designation"
+      serial_number: "Manufacturer serial number"
+      manufacture_year: "Year of manufacture (integer)"
+      engine_type: "Powerplant type code (AVREG_DATA enum: PISTON, TURBINE, TURBOSHAFT, ELECTRIC, NO_ENGINE)"
+      engine_count: "Number of engines (integer; 0 if not applicable)"
+      max_on_board: "Maximum number of persons on board (integer; 0 if not applicable)"
+      "owners[*].display_name": "Display name of each registered owner"
+    filter:
+      field: transponder
+      skip_if_empty: true
 
   ee-transpordiamet:
     description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"
@@ -959,6 +962,12 @@ records:
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase; ICAO hex provided directly — no RediSearch lookup needed"
+          - source: cz-caa
+            endpoint: detail
+            field: transponder
+            transform:
+              type: uppercase
+              description: "6-character hex string normalised to uppercase"
 
       registration:
         type: string
@@ -1143,6 +1152,12 @@ records:
                 transform:
                   type: split_first_comma_name
                   description: "Everything before the first comma; wrapped in a one-element list"
+              - source: cz-caa
+                endpoint: detail
+                field: "owners[*].display_name"
+                transform:
+                  type: collect_ordered
+                  description: "All owner display_names collected in order"
 
           street:
             type: "array[string]"
@@ -1609,6 +1624,20 @@ records:
                     "ULM-AVION": Airplane
                     "ULM-AUTOGIRO": Gyroplane
                     "AFI-AVION": Airplane
+              - source: cz-caa
+                endpoint: detail
+                field: category
+                transform:
+                  type: decode_table
+                  values:
+                    "AIRPLANE": Airplane
+                    "GLIDER": Glider
+                    "HELICOPTER": Helicopter
+                    "HOT_AIR_BALLOON": Balloon
+                    "GAS_BALLOON": Balloon
+                    "HOT_AIR_AIRSHIP": "Blimp/Dirigible"
+                    "POWERED_GLIDER": Powered Glider
+                    "Bezpilotní letadlo": Unmanned Aircraft
 
           model:
             type: string
@@ -1669,6 +1698,9 @@ records:
               - source: im-ardis
                 file: ARDIS search results (HTML table)
                 field: "Aircraft Type"
+              - source: cz-caa
+                endpoint: detail
+                field: model
 
           seats:
             type: integer
@@ -1702,6 +1734,11 @@ records:
               - source: br-anac
                 file: dados_aeronaves.json
                 field: NRASSENTOS
+              - source: cz-caa
+                endpoint: detail
+                field: max_on_board
+                skip_if_empty: true
+                skip_if_value: 0
 
           category:
             type: string
@@ -1775,6 +1812,9 @@ records:
               - source: im-ardis
                 file: ARDIS search results (HTML table)
                 field: "Aircraft Manufacturer"
+              - source: cz-caa
+                endpoint: detail
+                field: manufacturer
 
           type_designator:
             type: string
@@ -1869,6 +1909,9 @@ records:
               - source: im-ardis
                 file: ARDIS search results (HTML table)
                 field: "Serial Number"
+              - source: cz-caa
+                endpoint: detail
+                field: serial_number
 
           manufactured_date:
             type: datetime
@@ -1959,6 +2002,16 @@ records:
                   description: "4-digit construction year; 1900 is a placeholder for unknown year — omit; January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: "1900"
+              - source: cz-caa
+                endpoint: detail
+                field: manufacture_year
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "Integer year; 0 or null treated as absent — January 1 at midnight UTC assumed"
+                  skip_if_empty: true
+                  skip_if_value: 0
 
           wake_turbulence_category:
             type: string
@@ -2018,6 +2071,11 @@ records:
                 field: "Nº mot."
                 transform:
                   type: parse_integer
+              - source: cz-caa
+                endpoint: detail
+                field: engine_count
+                skip_if_empty: true
+                skip_if_value: 0
 
           type:
             type: string
@@ -2116,6 +2174,17 @@ records:
                     "J": Turbo-jet
                     "E": Electric
                     "T": "Turbo-prop (or Turbo-shaft for helicopters — see description)"
+              - source: cz-caa
+                endpoint: detail
+                field: engine_type
+                skip_if_value: "NO_ENGINE"
+                transform:
+                  type: decode_table
+                  values:
+                    "PISTON": Piston
+                    "TURBINE": Turbine
+                    "TURBOSHAFT": Turboshaft
+                    "ELECTRIC": Electric
 
           model:
             type: string
