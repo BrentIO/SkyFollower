@@ -657,18 +657,18 @@ sources:
       detail:
         url: "https://www.caa.me/en/{registration-lowercase}"
         fields:
-          Manufacturer: Manufacturer name (stored as aircraft.manufacturer)
-          "Year Built": Year of manufacture (stored as aircraft.manufactured_date as YYYY-01-01)
-          Category: Aircraft category (decoded — 'Transport – Airplane' → 'Airplane'; stored as aircraft.type)
-          S/N: Manufacturer serial number (stored as aircraft.serial_number)
-          "Aircraft model/type": Full model name (stored as aircraft.model; preferred over list Tip)
+          Manufacturer: Manufacturer name
+          "Year Built": Year of manufacture (4-digit integer)
+          Category: Aircraft category as listed on the page (e.g. 'Transport – Airplane')
+          S/N: Manufacturer serial number
+          "Aircraft model/type": Full model/type name
           MTOM: Maximum takeoff mass; not stored
           "ARC expiry date": Airworthiness certificate expiry; not stored
           Dereg: Not evaluated (list URL pre-filters to active only)
-          Name: Operator name (stored as registrant.names[0])
-          Address: Operator street address (stored as registrant.street)
-          "Zip code, town": Postal code and city combined; numeric prefix → registrant.postal_code, text suffix → registrant.city
-          Country: Operator country (stored as registrant.country)
+          Name: Registered operator or owner name
+          Address: Operator street address
+          "Zip code, town": Combined postal code and city (e.g. '81000 Podgorica')
+          Country: Operator country
 
   mk-caa:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"
@@ -968,6 +968,9 @@ records:
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase"
+          - source: me-caa
+            page: detail
+            description: "Montenegro CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4O\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1046,6 +1049,10 @@ records:
             file: ARDIS search results (HTML table)
             field: "Registration Mark"
             description: "Full M-prefix registration mark (e.g. M-ABCD)"
+          - source: me-caa
+            page: list
+            field: "Registarska oznaka"
+            description: "Full 4O-prefix registration mark (e.g. 4O-AOM)"
 
       registrant:
         type: object
@@ -1158,6 +1165,12 @@ records:
                 transform:
                   type: collect_ordered
                   description: "All owner display_names collected in order"
+              - source: me-caa
+                page: detail
+                field: Name
+                transform:
+                  type: wrap_array
+                  description: "Single operator/owner name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1234,6 +1247,12 @@ records:
                 transform:
                   type: split_first_comma_street
                   description: "Everything after the first comma; wrapped in a one-element list"
+              - source: me-caa
+                page: detail
+                field: Address
+                transform:
+                  type: wrap_array
+                  description: "Single street address line — wrap in a one-element list"
 
           city:
             type: string
@@ -1280,6 +1299,12 @@ records:
                 transform:
                   type: parse_address_city
                   description: "Best-effort parse; word(s) on line 1 of first owner group after the postal code digits and before the first comma"
+              - source: me-caa
+                page: detail
+                field: "Zip code, town"
+                transform:
+                  type: parse_address_city
+                  description: "Text suffix after the leading numeric postal code digits (e.g. '81000 Podgorica' → 'Podgorica')"
 
           administrative_area:
             type: string
@@ -1348,6 +1373,12 @@ records:
                 transform:
                   type: parse_address_postal
                   description: "Best-effort parse; leading digit sequence before first space on line 1 of first owner group"
+              - source: me-caa
+                page: detail
+                field: "Zip code, town"
+                transform:
+                  type: parse_address_postal
+                  description: "Leading numeric digit sequence before the first space (e.g. '81000 Podgorica' → '81000')"
 
           country:
             type: string
@@ -1415,6 +1446,12 @@ records:
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'United Kingdom'→GB, 'Cayman Islands'→KY); 'Irish' normalised to IE; case-insensitive ('Cayman islands' typo handled); omitted if unmapped"
+              - source: me-caa
+                page: detail
+                field: Country
+                transform:
+                  type: decode_country_name
+                  description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Montenegro'→ME); falls back to raw name if unmapped"
 
           type:
             type: string
@@ -1638,6 +1675,19 @@ records:
                     "HOT_AIR_AIRSHIP": "Blimp/Dirigible"
                     "POWERED_GLIDER": Powered Glider
                     "Bezpilotní letadlo": Unmanned Aircraft
+              - source: me-caa
+                page: detail
+                field: Category
+                transform:
+                  type: decode_table
+                  description: "Split on em-dash; text after the dash is the type (e.g. 'Transport – Airplane' → 'Airplane')"
+                  values:
+                    "Transport – Airplane": Airplane
+                    "Transport – Helicopter": Helicopter
+                    "General Aviation – Airplane": Airplane
+                    "General Aviation – Helicopter": Helicopter
+                    "General Aviation – Glider": Glider
+                    "General Aviation – Balloon": Balloon
 
           model:
             type: string
@@ -1701,6 +1751,9 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: model
+              - source: me-caa
+                page: detail
+                field: "Aircraft model/type"
 
           seats:
             type: integer
@@ -1815,6 +1868,9 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: manufacturer
+              - source: me-caa
+                page: detail
+                field: Manufacturer
 
           type_designator:
             type: string
@@ -1912,6 +1968,9 @@ records:
               - source: cz-caa
                 endpoint: detail
                 field: serial_number
+              - source: me-caa
+                page: detail
+                field: S/N
 
           manufactured_date:
             type: datetime
@@ -2012,6 +2071,15 @@ records:
                   description: "Integer year; 0 or null treated as absent — January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: 0
+              - source: me-caa
+                page: detail
+                field: "Year Built"
+                precision: year
+                transform:
+                  type: format_string
+                  pattern: "{value}-01-01T00:00:00Z"
+                  description: "4-digit integer year; January 1 at midnight UTC assumed"
+                  skip_if_empty: true
 
           wake_turbulence_category:
             type: string
