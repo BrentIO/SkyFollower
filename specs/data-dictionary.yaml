@@ -464,13 +464,13 @@ sources:
     cadence: weekly_tuesday
     notes: "xlsx URL is date-encoded (Aircraft_Register_YYYYMMDD.xlsx) and discovered by scraping the index page; rows 0 (info) and 1 (header) skipped; column 4 holds LZ-prefix registration; no manufacturer, owner, or date stored; no ICAO hex — RediSearch lookup via Mictronics simple index; must run after Mictronics"
     fields:
-      "Рег. № (col 0)": "not stored"
-      "Дата (col 1)": "not stored (Excel serial date)"
-      "Модел (col 2)": "aircraft.model"
-      "Сериен № (col 3)": "aircraft.serial_number"
-      "Рег. знак (col 4)": "registration lookup key (LZ-prefix)"
-      "Категория ВС (col 5)": "aircraft.type (case-insensitive; mapped: Small/Large/Very Light Aeroplane→Airplane, Sailplane/Glider→Glider, Powered Sailplane→Powered Glider, Rotorcraft/Small Rotorcraft→Rotorcraft, Gyroplane→Gyroplane, Hot-air Balloon→Balloon, Motor-hanglider/Paramotor-Trike→Weight-Shift-Control, Experimental→omitted)"
-      "Основание (col 6)": "not stored"
+      "Рег. № (col 0)": "Sequence number; not stored"
+      "Дата (col 1)": "Date (Excel serial date format); not stored"
+      "Модел (col 2)": "Aircraft model designation"
+      "Сериен № (col 3)": "Manufacturer serial number"
+      "Рег. знак (col 4)": "Registration mark (LZ-prefix; lookup key)"
+      "Категория ВС (col 5)": "Aircraft category (English labels; case-insensitive)"
+      "Основание (col 6)": "Legal basis for registration; not stored"
 
   hr-ccaa:
     description: "Croatia Civil Aviation Agency aircraft register — 9A-prefix registrations"
@@ -987,6 +987,9 @@ records:
             description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
           - source: kg-caa
             description: "Kyrgyzstan CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{EX\\-XXX} against Mictronics records; enriches existing records only"
+          - source: bg-caa
+            file: "Aircraft_Register_{YYYYMMDD}.xlsx"
+            description: "Bulgaria CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LZ\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1091,6 +1094,10 @@ records:
           - source: kg-caa
             field: "3"
             description: "Full EX-prefix registration mark (e.g. EX-001)"
+          - source: bg-caa
+            file: "Aircraft_Register_{YYYYMMDD}.xlsx"
+            field: "Рег. знак (col 4)"
+            description: "Full LZ-prefix registration mark (e.g. LZ-ABC)"
 
       registrant:
         type: object
@@ -1788,6 +1795,26 @@ records:
                     "General Aviation – Helicopter": Helicopter
                     "General Aviation – Glider": Glider
                     "General Aviation – Balloon": Balloon
+              - source: bg-caa
+                file: "Aircraft_Register_{YYYYMMDD}.xlsx"
+                field: "Категория ВС (col 5)"
+                skip_if_value: Experimental
+                transform:
+                  type: decode_table
+                  description: "Case-insensitive category label"
+                  values:
+                    "Small Aeroplane": Airplane
+                    "Large Aeroplane": Airplane
+                    "Very Light Aeroplane": Airplane
+                    "Sailplane": Glider
+                    "Glider": Glider
+                    "Powered Sailplane": Powered Glider
+                    "Rotorcraft": Rotorcraft
+                    "Small Rotorcraft": Rotorcraft
+                    "Gyroplane": Gyroplane
+                    "Hot-air Balloon": Balloon
+                    "Motor-hanglider": Weight-Shift-Control
+                    "Paramotor-Trike": Weight-Shift-Control
 
           model:
             type: string
@@ -1872,6 +1899,9 @@ records:
               - source: kg-caa
                 field: "2"
                 description: "Rowspan value carried forward across spanned rows"
+              - source: bg-caa
+                file: "Aircraft_Register_{YYYYMMDD}.xlsx"
+                field: "Модел (col 2)"
 
           seats:
             type: integer
@@ -2108,6 +2138,9 @@ records:
                 field: "3"
               - source: kg-caa
                 field: "5"
+              - source: bg-caa
+                file: "Aircraft_Register_{YYYYMMDD}.xlsx"
+                field: "Сериен № (col 3)"
 
           manufactured_date:
             type: datetime
