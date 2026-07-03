@@ -479,13 +479,13 @@ sources:
     cadence: weekly_tuesday
     notes: "PDF URL is hash-based and discovered by scraping the index page for the first /file/ link; PDF contains registration suffix only (e.g. ABC) — 9A- prefix must be prepended; no ICAO hex — RediSearch lookup via Mictronics simple index; newlines in cells collapsed to spaces; must run after Mictronics"
     fields:
-      "REG. OZNAKA": "registration suffix — prepend 9A- for lookup key"
-      "REDNI BROJ U REGISTRU": "not stored"
-      "PROIZVOĐAČ": "aircraft.manufacturer"
-      "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA": "aircraft.model"
-      "SERIJSKI BROJ": "aircraft.serial_number"
-      "VLASNIK": "registrant.names[0]"
-      "ADRESA": "registrant.street (array; split by comma)"
+      "REG. OZNAKA": "Registration suffix (e.g. ABC); 9A- prefix must be prepended for full mark"
+      "REDNI BROJ U REGISTRU": "Sequence number; not stored"
+      "PROIZVOĐAČ": "Aircraft manufacturer name"
+      "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA": "Aircraft model designation"
+      "SERIJSKI BROJ": "Manufacturer serial number"
+      "VLASNIK": "Registered owner name"
+      "ADRESA": "Owner address (comma-separated)"
 
   cy-dca:
     description: "Cyprus Department of Civil Aviation aircraft register — 5B-prefix registrations"
@@ -990,6 +990,9 @@ records:
           - source: bg-caa
             file: "Aircraft_Register_{YYYYMMDD}.xlsx"
             description: "Bulgaria CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LZ\\-XXX} against Mictronics records; enriches existing records only"
+          - source: hr-ccaa
+            file: "PDF (hash-based, discovered via index page)"
+            description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1098,6 +1101,10 @@ records:
             file: "Aircraft_Register_{YYYYMMDD}.xlsx"
             field: "Рег. знак (col 4)"
             description: "Full LZ-prefix registration mark (e.g. LZ-ABC)"
+          - source: hr-ccaa
+            file: "PDF (hash-based, discovered via index page)"
+            field: "REG. OZNAKA"
+            description: "Registration suffix with 9A- prepended (e.g. 9A-ABC)"
 
       registrant:
         type: object
@@ -1254,6 +1261,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Operator/owner name; rowspan value carried forward across spanned rows — wrap in a one-element list"
+              - source: hr-ccaa
+                file: "PDF (hash-based, discovered via index page)"
+                field: VLASNIK
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1348,6 +1361,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Owner address; embedded newlines collapsed to space — wrap in a one-element list"
+              - source: hr-ccaa
+                file: "PDF (hash-based, discovered via index page)"
+                field: ADRESA
+                transform:
+                  type: split_comma
+                  description: "Comma-separated address string split into individual street lines"
 
           city:
             type: string
@@ -1902,6 +1921,9 @@ records:
               - source: bg-caa
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Модел (col 2)"
+              - source: hr-ccaa
+                file: "PDF (hash-based, discovered via index page)"
+                field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
 
           seats:
             type: integer
@@ -2022,6 +2044,9 @@ records:
               - source: gg-2reg
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "1"
+              - source: hr-ccaa
+                file: "PDF (hash-based, discovered via index page)"
+                field: "PROIZVOĐAČ"
 
           type_designator:
             type: string
@@ -2141,6 +2166,9 @@ records:
               - source: bg-caa
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Сериен № (col 3)"
+              - source: hr-ccaa
+                file: "PDF (hash-based, discovered via index page)"
+                field: "SERIJSKI BROJ"
 
           manufactured_date:
             type: datetime
