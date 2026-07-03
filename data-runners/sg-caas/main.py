@@ -134,6 +134,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from a parsed xlsx row."""
     aircraft_fields: dict = {}
+    powerplant_fields: dict = {}
     registrant_fields: dict = {}
 
     manufacturer = row.get(_COL_MANUFACTURER, "").strip()
@@ -150,11 +151,11 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
     engine_mfr = row.get(_COL_ENGINE_MFR, "").strip()
     if engine_mfr:
-        aircraft_fields["powerplant_manufacturer"] = engine_mfr
+        powerplant_fields["manufacturer"] = engine_mfr
 
     engine_model = row.get(_COL_ENGINE_MODEL, "").strip()
     if engine_model:
-        aircraft_fields["powerplant_model"] = engine_model
+        powerplant_fields["model"] = engine_model
 
     operator = row.get(_COL_OPERATOR, "").strip()
     if operator:
@@ -167,6 +168,8 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
+    if powerplant_fields:
+        record["powerplant"] = powerplant_fields
     if registrant_fields:
         record["registrant"] = registrant_fields
 

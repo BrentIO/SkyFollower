@@ -44,7 +44,7 @@ _AIRCRAFT_TYPE_MAP: dict[str, str] = {
     "Helicopter": "Helicopter",
     "Homebuilt Helicopter": "Helicopter",
     "Glider": "Glider",
-    "Powered Glider": "Glider",
+    "Powered Glider": "Powered Glider",
     "Homebuild Glider": "Glider",
     "Balloon (Hot-air)": "Balloon",
     "Balloon (Gas)": "Balloon",
