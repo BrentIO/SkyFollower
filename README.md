@@ -1,3 +1,7 @@
+# ⚠️ In Development ⚠️
+
+This repo is in active development.  Its full of bugs, incomplete implementation, invalid documentation, and just generally isn't ready for you to fork or test.  Star the repo and check back in a few weeks!
+
 # SkyFollower
 
 SkyFollower is a locally-hosted ADS-B aircraft tracking system. It receives
