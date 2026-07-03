@@ -743,11 +743,11 @@ sources:
       - name: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
         format: pdf_table
         columns:
-          "Typ lietadla":         Aircraft type/model (stored as aircraft.model)
-          "Poznávacia značka":    Registration mark in 'OM - XXXX' format; normalized to 'OM-XXXX'
-          "Výrobné číslo":        Manufacturer serial number (stored as aircraft.serial_number)
-          "Vlastník":             Registered owner (stored as registrant.names[0])
-          "Prevádzkovateľ":       Operator (stored as registrant.names[1]); omitted if identical to Vlastník
+          "Typ lietadla":         Aircraft type and model designation
+          "Poznávacia značka":    Registration mark in spaced format (e.g. 'OM - 0101')
+          "Výrobné číslo":        Manufacturer serial number
+          "Vlastník":             Registered owner name
+          "Prevádzkovateľ":       Operator name
           "Záložné právo":        Lien status; not stored
 
   tc-caa:
@@ -1010,6 +1010,9 @@ records:
             description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
           - source: rs-cad
             description: "Serbia CAD does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YU\\-XXX} against Mictronics records; enriches existing records only"
+          - source: sk-nsat
+            file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+            description: "Slovakia NSAT does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{OM\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1151,6 +1154,10 @@ records:
           - source: rs-cad
             field: registarska_oznaka
             description: "Full YU-prefix registration mark (e.g. YU-APA)"
+          - source: sk-nsat
+            file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+            field: "Poznávacia značka"
+            description: "Spaced format 'OM - XXXX' normalized to 'OM-XXXX' by stripping whitespace around hyphen"
 
       registrant:
         type: object
@@ -1347,6 +1354,14 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
+              - source: sk-nsat
+                file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+                fields:
+                  - { field: "Vlastník", description: "Registered owner" }
+                  - { field: "Prevádzkovateľ", description: "Operator; omitted if identical to Vlastník" }
+                transform:
+                  type: collect_non_empty
+                  description: "Owner and operator collected in order; duplicate operator entry discarded"
 
           street:
             type: "array[string]"
@@ -2072,6 +2087,9 @@ records:
                 field: "2"
               - source: rs-cad
                 field: proizvođačka_oznaka
+              - source: sk-nsat
+                file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+                field: "Typ lietadla"
 
           seats:
             type: integer
@@ -2346,6 +2364,9 @@ records:
                 field: "5"
               - source: rs-cad
                 field: serijski_broj
+              - source: sk-nsat
+                file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
+                field: "Výrobné číslo"
 
           manufactured_date:
             type: datetime
