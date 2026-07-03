@@ -564,10 +564,10 @@ sources:
     notes: "Index page scraped to discover date-encoded PDF URL matching /wp-content/uploads/*/Register_*.pdf; pages whose first line matches a known special-section prefix (New Registrations, Deregistrations, Ownership Changes, Registration Changes, Reserved Marks) are skipped; remaining pages parsed by grouping words into columns by x-position; ~271 records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
     columns:
       0: "Registration (x<126; 2-prefix; lookup key)"
-      1: "Aircraft Manufacturer (x<387; stored as aircraft.manufacturer)"
-      2: "Type (x<566; stored as aircraft.model)"
-      3: "MSN (x<648; stored as aircraft.serial_number)"
-      4: "Registered Owner/Charterer by demise (x<1015; stored as registrant.names[0])"
+      1: "Aircraft Manufacturer (x<387)"
+      2: "Type (x<566)"
+      3: "MSN (x<648)"
+      4: "Registered Owner/Charterer by demise (x<1015)"
       5: "Date of Registration (x≥1015; not stored)"
 
   kg-caa:
@@ -982,6 +982,9 @@ records:
             description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
           - source: ge-gcaa
             description: "Georgia GCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4L\\-XXX} against Mictronics records; enriches existing records only"
+          - source: gg-2reg
+            file: "PDF (date-encoded, discovered via index page)"
+            description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1079,6 +1082,10 @@ records:
           - source: ge-gcaa
             field: "2"
             description: "Full 4L-prefix registration mark (e.g. 4L-GAA)"
+          - source: gg-2reg
+            file: "PDF (date-encoded, discovered via index page)"
+            field: "0"
+            description: "Full 2-prefix registration mark (e.g. 2-ABCD)"
 
       registrant:
         type: object
@@ -1224,6 +1231,12 @@ records:
                 transform:
                   type: collect_ordered
                   description: "Operator from table_1 as first entry; owner from table_2 as second if different; Georgian-script names preserved as UTF-8"
+              - source: gg-2reg
+                file: "PDF (date-encoded, discovered via index page)"
+                field: "4"
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner/charterer name — wrap in a one-element list"
 
           street:
             type: "array[string]"
@@ -1843,6 +1856,9 @@ records:
                 description: "Embedded newlines collapsed to space"
               - source: ge-gcaa
                 field: "1"
+              - source: gg-2reg
+                file: "PDF (date-encoded, discovered via index page)"
+                field: "2"
 
           seats:
             type: integer
@@ -1960,6 +1976,9 @@ records:
               - source: me-caa
                 page: detail
                 field: Manufacturer
+              - source: gg-2reg
+                file: "PDF (date-encoded, discovered via index page)"
+                field: "1"
 
           type_designator:
             type: string
@@ -2071,6 +2090,9 @@ records:
                 field: "2"
               - source: ge-gcaa
                 field: "4"
+              - source: gg-2reg
+                file: "PDF (date-encoded, discovered via index page)"
+                field: "3"
 
           manufactured_date:
             type: datetime
