@@ -2758,9 +2758,10 @@ records:
                   - source: nl-ilt
                     file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                     field: EngKind
+                    skip_if_value: "Engine - not defined"
                     transform:
                       type: decode_table_passthrough
-                      description: "Mapped to canonical type; 'Engine - not defined' and blank → omit; unknown values pass through unmodified"
+                      description: "Mapped to canonical type; blank → omit; unknown values pass through unmodified"
                       values:
                         "Reciprocating piston-driven engine": Piston
                         "Reciprocating piston radial engine": Piston
@@ -2772,13 +2773,13 @@ records:
                         "Turbine-driven propeller engine": Turbo-prop
                         "Turbojet engine": Turbo-jet
                         "Wankel engine": Rotary
-                        "Engine - not defined": ~~omit~~
                   - source: au-casa
                     file: acrftreg
                     field: Engtype
+                    skip_if_value: "Not Applicable"
                     transform:
                       type: decode_table_passthrough
-                      description: "Mapped to canonical type; 'Not Applicable' → omit; unknown values pass through unmodified"
+                      description: "Mapped to canonical type; unknown values pass through unmodified"
                       values:
                         "Piston": Piston
                         "Turbofan": Turbo-fan
@@ -2788,7 +2789,6 @@ records:
                         "Electric": Electric
                         "Diesel Engine": Diesel
                         "Rotary": Rotary
-                        "Not Applicable": ~~omit~~
                   - source: ch-bazl
                     endpoint: bulk
                     field: " Engine Category"
