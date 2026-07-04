@@ -50,7 +50,7 @@ _AIRCRAFT_TYPES: dict[str, str] = {
     "Microlight Class 1": "Microlight",
     "Microlight Class 2": "Microlight",
     "Glider": "Glider",
-    "Power Glider": "Glider",
+    "Power Glider": "Powered Glider",
     "Amateur Built Glider": "Glider",
     "Gyroplane (Gyrocopter)": "Gyroplane",
     "Balloon (hot-air)": "Balloon",
