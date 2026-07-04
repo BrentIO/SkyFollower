@@ -2202,6 +2202,16 @@ records:
                     "1": Land
                     "2": Sea
                     "3": Amphibian
+              - source: uk-caa
+                endpoint: details
+                field: AircraftDetails.AircraftClass
+                transform:
+                  type: decode_table
+                  description: "Fixed-wing class determines landing category; rotorcraft and other types omitted"
+                  values:
+                    "FIXED-WING LANDPLANE": Land
+                    "FIXED-WING SEAPLANE": Sea
+                    "FIXED-WING AMPHIBIAN": Amphibian
 
           manufacturer:
             type: string
