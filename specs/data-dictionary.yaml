@@ -12,6 +12,10 @@
 #
 # persist_as — overrides the persisted shape for object fields that collapse
 # to a scalar on write (e.g. origin/destination objects → ICAO code string).
+#
+# Encoding: all string values stored in Redis are UTF-8 encoded as-is (no
+# \uXXXX escaping of non-ASCII characters). Every runner writes JSON via
+# shared.redis_json.set_json(), which serializes with ensure_ascii=False.
 
 version: "1.0"
 description: >

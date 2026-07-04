@@ -6,15 +6,23 @@ All data runners build an enrichment record as a plain dict, often leaving
 that dict straight to Redis stores literal JSON `null` for those fields,
 which forces every consumer to distinguish "null" from "missing" (issue #289).
 
+redis-py's JSON client also serializes with `json.dumps(..., ensure_ascii=True)`
+by default, which escapes every non-ASCII character (e.g. accented Latin,
+Cyrillic, Georgian script) as a `\\uXXXX` sequence. That's valid JSON but
+unreadable in Redis Insight and other tooling (issue #291).
+
 `set_json()` is the single choke point every runner writes enrichment records
-through, so the "no null values in Redis" invariant is enforced once here
-rather than needing to be re-implemented in each runner's record-building
-logic.
+through, so both invariants — no null values, UTF-8 stored as-is — are
+enforced once here rather than needing to be re-implemented in each runner's
+record-building logic.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+_ENCODER = json.JSONEncoder(ensure_ascii=False)
 
 
 def prune_none(value: Any) -> Any:
@@ -30,5 +38,6 @@ def prune_none(value: Any) -> Any:
 
 def set_json(client: Any, key: str, obj: Any, path: str = "$") -> None:
     """Write `obj` to Redis as a JSON document at `key`/`path`, omitting any
-    field whose value is None. `client` may be a redis client or a pipeline."""
-    client.json().set(key, path, prune_none(obj))
+    field whose value is None and preserving non-ASCII characters as-is.
+    `client` may be a redis client or a pipeline."""
+    client.json(encoder=_ENCODER).set(key, path, prune_none(obj))
