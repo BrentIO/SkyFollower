@@ -33,11 +33,30 @@ jobs:
           git tag ${{ inputs.version }}
           git push origin ${{ inputs.version }}
 
+      - name: Stamp spec versions
+        # specs/*.yaml carry a checked-in 9999.99.99 placeholder (see #305)
+        # so main never has a stale or manually-bumped version string. This
+        # never edits the checked-out files in place or commits anything —
+        # it writes stamped copies to dist/specs/ that are only attached to
+        # the GitHub Release below. Any spec file with the placeholder is
+        # picked up automatically; no workflow change needed to add one.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/specs
+          for spec in specs/*.yaml; do
+            if grep -q '9999\.99\.99' "$spec"; then
+              out="dist/specs/$(basename "$spec")"
+              sed 's/9999\.99\.99/${{ inputs.version }}/g' "$spec" > "$out"
+              echo "Stamped $spec -> $out"
+            fi
+          done
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.version }}
           generate_release_notes: true
+          files: dist/specs/*
 
       - name: Build and publish images
         run: gh workflow run build-images.yaml --ref ${{ inputs.version }}
