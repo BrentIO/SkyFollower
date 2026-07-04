@@ -377,10 +377,10 @@ sources:
         format: html_table
         columns:
           "Registration Number":  Full V3-prefix registration mark
-          "Manufacturer, Model":  Combined manufacturer and model (stored as aircraft.model)
-          "Serial Number":        Manufacturer serial number; '–' treated as null
-          Owner:                  Registered owner name; '(Charterer by Demise)' suffix stripped
-          Address:                Free-text address; split on first comma — part before comma stored as registrant.street (list), part after as registrant.city; if no comma, stored as registrant.city only
+          "Manufacturer, Model":  Combined manufacturer and model designation
+          "Serial Number":        Manufacturer serial number (em-dash '–' indicates no value)
+          Owner:                  Registered owner name (may include '(Charterer by Demise)' suffix)
+          Address:                Free-text address; may be comma-delimited street and city
 
   im-ardis:
     description: "Isle of Man Aircraft Registry (ARDIS) — M-prefix registrations"
@@ -1019,6 +1019,9 @@ records:
           - source: lu-dac
             file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
             description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
+          - source: bz-bdca
+            file: bdca-civil-aircraft-register (HTML page)
+            description: "Belize BDCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{V3\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1172,6 +1175,10 @@ records:
             file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
             field: Immat
             description: "Full LX-prefix registration mark (e.g. LX-AIR)"
+          - source: bz-bdca
+            file: bdca-civil-aircraft-register (HTML page)
+            field: "Registration Number"
+            description: "Full V3-prefix registration mark (e.g. V3-HBC)"
 
       registrant:
         type: object
@@ -1390,6 +1397,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Privacy placeholders excluded (EXPLOITANT PRIVÉ, PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ); Propriétaire discarded if identical to Exploitant"
+              - source: bz-bdca
+                file: bdca-civil-aircraft-register (HTML page)
+                field: Owner
+                transform:
+                  type: wrap_array
+                  description: "'(Charterer by Demise)' suffix stripped before wrapping in a one-element list"
 
           street:
             type: "array[string]"
@@ -1508,6 +1521,12 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Embedded newlines collapsed to space; comma-split; all segments except last; empty segments discarded"
+              - source: bz-bdca
+                file: bdca-civil-aircraft-register (HTML page)
+                field: Address
+                transform:
+                  type: wrap_array
+                  description: "Substring before first comma; omitted if no comma present"
 
           city:
             type: string
@@ -1640,6 +1659,10 @@ records:
               - source: is-samgongustofa
                 endpoint: bulk
                 field: operator.postcode
+              - source: bz-bdca
+                file: bdca-civil-aircraft-register (HTML page)
+                field: Address
+                description: "Substring after first comma; if no comma, entire value used"
 
           country:
             type: string
@@ -2124,6 +2147,10 @@ records:
               - source: lu-dac
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "Type d'aéronef"
+              - source: bz-bdca
+                file: bdca-civil-aircraft-register (HTML page)
+                field: "Manufacturer, Model"
+                description: "Combined manufacturer and model; no separate manufacturer field available"
 
           seats:
             type: integer
@@ -2413,6 +2440,10 @@ records:
               - source: lu-dac
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "SN aéronef"
+              - source: bz-bdca
+                file: bdca-civil-aircraft-register (HTML page)
+                field: "Serial Number"
+                skip_if_value: "–"
 
           manufactured_date:
             type: datetime
