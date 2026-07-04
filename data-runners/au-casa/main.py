@@ -61,7 +61,7 @@ _AIRCRAFT_TYPES: dict[str, str] = {
     "Rotorcraft": "Helicopter",
     "Glider": "Glider",
     "Manned Free Balloon": "Balloon",
-    "Motor-Glider": "Glider",
+    "Motor-Glider": "Powered Glider",
 }
 
 # Engtype → powerplant.type; None = omit field; pass through unknown values
