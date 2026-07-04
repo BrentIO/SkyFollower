@@ -5,7 +5,7 @@
 --
 -- ARGV[1] : icao_hex (e.g. "A8AE7F")
 --
--- Returns nil if no mictronics record exists for the given icao_hex.
+-- Returns nil only if both keys are absent for the given icao_hex.
 -- Registry fields win over mictronics fields on any overlap (same semantics as the
 -- old deep-merge-on-write pattern, but performed server-side at read time).
 --
@@ -23,16 +23,16 @@ local function deep_merge(base, update)
     end
 end
 
-local simple_raw = redis.call('JSON.GET', 'aircraft:mictronics:' .. icao_hex)
-if not simple_raw then
+local mictronics_raw = redis.call('JSON.GET', 'aircraft:mictronics:' .. icao_hex)
+local registry_raw   = redis.call('JSON.GET', 'aircraft:registry:'   .. icao_hex)
+
+if not mictronics_raw and not registry_raw then
     return nil
 end
 
-local result = cjson.decode(simple_raw)
-
-local detail_raw = redis.call('JSON.GET', 'aircraft:registry:' .. icao_hex)
-if detail_raw then
-    deep_merge(result, cjson.decode(detail_raw))
+local result = mictronics_raw and cjson.decode(mictronics_raw) or {}
+if registry_raw then
+    deep_merge(result, cjson.decode(registry_raw))
 end
 
 return cjson.encode(result)
