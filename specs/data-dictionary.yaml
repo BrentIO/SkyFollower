@@ -103,7 +103,7 @@ sources:
     url: "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/ReleaseAccessEN.aspx"
     format: zip+csv
     cadence: weekly_sunday
-    notes: "Owner data is in carsownr.txt (separate file); multiple rows per mark possible — filter ACTIVE_FLAG='A'"
+    notes: "Owner data is in carsownr.txt (separate file); multiple rows per mark possible"
     files:
       - name: carscurr.txt
         format: csv
@@ -124,7 +124,7 @@ sources:
           46: TRIMMED_MARK
       - name: carsownr.txt
         format: csv
-        description: "Owner/registrant records; joined to carscurr.txt by MARK_LINK = MARK; filter ACTIVE_FLAG='A'"
+        description: "Owner/registrant records; joined to carscurr.txt by MARK_LINK = MARK"
         join: "carsownr.txt[0] MARK_LINK = carscurr.txt[0] MARK"
         columns:
           0:  MARK_LINK
@@ -137,7 +137,10 @@ sources:
           8:  POSTAL_CODE
           9:  COUNTRY_E
           11: TYPE_OF_OWNER_E
-          13: ACTIVE_FLAG
+          13: "ACTIVE_FLAG; not stored"
+        filter:
+          field: "13"
+          skip_if_not_value: A
         notes: "TYPE_OF_OWNER_E stores decoded English strings ('Individual', 'Entity') not raw codes; COUNTRY_E stores full country name (e.g. 'CANADA') not ISO code"
 
   no-caa:
@@ -1232,7 +1235,7 @@ records:
                   - { field: TRADE_NAME,  position: 2 }
                 transform:
                   type: collect_non_empty
-                  description: "Collect FULL_NAME then TRADE_NAME; filter ACTIVE_FLAG='A' rows first"
+                  description: "Collect FULL_NAME then TRADE_NAME"
               - source: nz-caa
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Name
