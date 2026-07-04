@@ -360,11 +360,11 @@ sources:
         format: pdf
         columns:
           Immat:              Full LX-prefix registration mark
-          Constructeur:       Aircraft manufacturer (aircraft.manufacturer)
-          "Type d'aéronef":   Aircraft model designation (aircraft.model)
-          "SN aéronef":       Manufacturer serial number (aircraft.serial_number)
-          Exploitant:         Operator name (registrant.names[0]); omit if EXPLOITANT PRIVÉ
-          Propriétaire:       Owner name (registrant.names[1]); omit if PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ, or identical to Exploitant
+          Constructeur:       Aircraft manufacturer name
+          "Type d'aéronef":   Aircraft model designation
+          "SN aéronef":       Manufacturer serial number
+          Exploitant:         Operator name (may be privacy placeholder EXPLOITANT PRIVÉ)
+          Propriétaire:       Owner name (may be privacy placeholder PROPRIÉTAIRE PRIVÉ or COPROPRIÉTÉ)
 
   bz-bdca:
     description: "Belize Department of Civil Aviation (BDCA) civil aircraft register — V3-prefix registrations"
@@ -1016,6 +1016,9 @@ records:
           - source: tc-caa
             file: aircraft-register (HTML page)
             description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
+          - source: lu-dac
+            file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+            description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string
@@ -1165,6 +1168,10 @@ records:
             file: aircraft-register (HTML page)
             field: REG
             description: "Full VQ-prefix registration mark (e.g. VQ-TCA)"
+          - source: lu-dac
+            file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+            field: Immat
+            description: "Full LX-prefix registration mark (e.g. LX-AIR)"
 
       registrant:
         type: object
@@ -1375,6 +1382,14 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single owner or operator name — wrap in a one-element list"
+              - source: lu-dac
+                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                fields:
+                  - { field: Exploitant, description: "Operator name" }
+                  - { field: Propriétaire, description: "Owner name; omitted if identical to Exploitant" }
+                transform:
+                  type: collect_non_empty
+                  description: "Privacy placeholders excluded (EXPLOITANT PRIVÉ, PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ); Propriétaire discarded if identical to Exploitant"
 
           street:
             type: "array[string]"
@@ -2106,6 +2121,9 @@ records:
               - source: tc-caa
                 file: aircraft-register (HTML page)
                 field: MODEL
+              - source: lu-dac
+                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                field: "Type d'aéronef"
 
           seats:
             type: integer
@@ -2243,6 +2261,9 @@ records:
               - source: tc-caa
                 file: aircraft-register (HTML page)
                 field: "MANUFACT."
+              - source: lu-dac
+                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                field: Constructeur
 
           type_designator:
             type: string
@@ -2389,6 +2410,9 @@ records:
               - source: tc-caa
                 file: aircraft-register (HTML page)
                 field: "S/N"
+              - source: lu-dac
+                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                field: "SN aéronef"
 
           manufactured_date:
             type: datetime
