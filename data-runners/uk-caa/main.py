@@ -305,11 +305,18 @@ def run_pipeline(
     skipped = 0
     errors = 0
     retry_queue: list[int] = []
+    prefix_retry_queue: list[str] = []
 
     for c1, c2 in product(_LETTERS, _LETTERS):
         prefix = f"{c1}{c2}"
         try:
             results = _search_by_prefix(session, prefix)
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 403:
+                prefix_retry_queue.append(prefix)
+            else:
+                logger.warning("Search error for prefix %s: %s", prefix, exc)
+            continue
         except Exception as exc:
             logger.warning("Search error for prefix %s: %s", prefix, exc)
             continue
@@ -382,6 +389,57 @@ def run_pipeline(
             r.json().set(key, "$", record)
             r.expire(key, ttl)
             count += 1
+
+    if prefix_retry_queue:
+        logger.info("Retrying %d prefixes that returned 403 (500ms interval)...", len(prefix_retry_queue))
+        for prefix in prefix_retry_queue:
+            time.sleep(0.5)
+            try:
+                results = _search_by_prefix(session, prefix)
+            except Exception as exc:
+                logger.warning("Retry failed for prefix %s: %s", prefix, exc)
+                errors += 1
+                continue
+
+            aircraft_ids = [
+                item.get("AircraftID")
+                for item in results
+                if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
+            ]
+            logger.info("G-%s* (retry): %d registered.", prefix, len(aircraft_ids))
+
+            for aircraft_id in aircraft_ids:
+                try:
+                    time.sleep(request_interval)
+                    details = _get_aircraft_details(session, aircraft_id)
+                except requests.HTTPError as exc:
+                    if exc.response is not None and exc.response.status_code == 403:
+                        retry_queue.append(aircraft_id)
+                    else:
+                        logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
+                        errors += 1
+                    continue
+                except Exception as exc:
+                    logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
+                    errors += 1
+                    continue
+
+                reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
+                if reg_status != "Registered":
+                    skipped += 1
+                    continue
+
+                record = _build_record(details)
+                if record is None:
+                    logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
+                    errors += 1
+                    continue
+
+                record["source"] = "uk-caa"
+                key = aircraft_registry_key(record["icao_hex"])
+                r.json().set(key, "$", record)
+                r.expire(key, ttl)
+                count += 1
 
     logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
     return count
