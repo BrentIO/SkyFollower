@@ -2,6 +2,8 @@
 schedule = 10 5 * * 1
 container = skyfollower-runner-ourairports
 
+# uk-caa makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
+# Schedule it as the last runner of the day.
 [job-run "runner-uk-caa"]
 schedule = 10 6 * * 1
 container = skyfollower-runner-uk-caa
