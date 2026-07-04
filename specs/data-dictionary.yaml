@@ -389,17 +389,21 @@ sources:
     url: "https://ardis.iomaircraftregistry.com/register/search"
     format: html
     cadence: weekly_thursday
-    notes: "CSRF-protected HTML search form; GET page to extract __RequestVerificationToken, then POST with page size 50000 to retrieve all records; ~1449 total rows including deregistered; rows where Aircraft Status == 'Deregistered' are skipped — ~271 active records; Mode S Number column provides ICAO hex directly — no RediSearch reverse-lookup needed; Registered Owners field split on first comma: name before, street address after; Registration Mark header cell contains a sort link that causes get_text() to duplicate the column name — stripped via backreference regex; ICAO hex range: 43E000–43EFFF"
+    notes: "CSRF-protected HTML search form; GET page to extract __RequestVerificationToken, then POST with page size 50000 to retrieve all records; ~1449 total rows including deregistered; ~271 active records; Mode S Number column provides ICAO hex directly — no RediSearch reverse-lookup needed; Registered Owners field split on first comma: name before, street address after; Registration Mark header cell contains a sort link that causes get_text() to duplicate the column name — stripped via backreference regex; ICAO hex range: 43E000–43EFFF"
     files:
       - name: ARDIS search results (HTML table)
         format: html_table
         columns:
           "Registration Mark":    Full M-prefix registration mark
+          "Aircraft Status":      Registration status; not stored
           "Aircraft Manufacturer": Manufacturer name
           "Aircraft Type":        Model/type designation
           "Serial Number":        Manufacturer serial number
           "Mode S Number":        6-char uppercase ICAO hex
           "Registered Owners":    Owner name and address combined
+        filter:
+          field: "Aircraft Status"
+          skip_if_value: Deregistered
 
   es-aesa:
     description: "Spain AESA (Agencia Estatal de Seguridad Aérea) aircraft register — EC-prefix registrations"
