@@ -323,16 +323,16 @@ class TestBuildAircraftRecord:
         assert record["icao_hex"] == "A8AE7F"
         assert record["registration"] == "N659DL"
         assert record["military"] is False
-        assert "source" not in record
+        assert record["source"] == "mictronics"
         ac = record["aircraft"]
         assert ac["type_designator"] == "B763"
         assert ac["manufacturer"] == "Boeing"
         assert ac["manufacturer_model"] == "Boeing 767-332ER"
 
-    def test_no_source_field(self):
+    def test_source_field(self):
         row = self._row("A8AE7F", "N659DL", "B763", False)
         record = build_aircraft_record(row, None)
-        assert "source" not in record
+        assert record["source"] == "mictronics"
 
     def test_no_unowned_fields(self):
         """Non-data-dictionary fields must be absent from the record."""
