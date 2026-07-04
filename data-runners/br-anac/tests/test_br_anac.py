@@ -401,6 +401,34 @@ class TestBuildRecord:
         assert "type" not in record.get("aircraft", {})
         assert "powerplant" not in record
 
+    def test_aircraft_category_land_from_l(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="L1P"))
+        assert record["aircraft"]["category"] == "Land"
+
+    def test_aircraft_category_land_from_h(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="H1T"))
+        assert record["aircraft"]["category"] == "Land"
+
+    def test_aircraft_category_amphibian(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="A1P"))
+        assert record["aircraft"]["category"] == "Amphibian"
+
+    def test_aircraft_category_land_from_g(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="G1P"))
+        assert record["aircraft"]["category"] == "Land"
+
+    def test_aircraft_category_sea(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="S1P"))
+        assert record["aircraft"]["category"] == "Sea"
+
+    def test_aircraft_category_rpa_is_land(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="RPA"))
+        assert record["aircraft"]["category"] == "Land"
+
+    def test_null_cdcls_omits_category(self):
+        record = _build_record("E491A0", "PP-AJH", _make_row(cdcls=None))
+        assert "category" not in record.get("aircraft", {})
+
 
 # ---------------------------------------------------------------------------
 # Tests: write_to_redis
