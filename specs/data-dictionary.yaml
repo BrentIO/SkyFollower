@@ -231,12 +231,13 @@ sources:
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
     format: csv
     cadence: weekly_tuesday
-    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; filter suspendstatus='Suspended' rows; all marks are 3-char suffixes — prepend 'VH-'"
+    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; all marks are 3-char suffixes — prepend 'VH-'"
     files:
       - name: acrftreg
         format: csv
         columns:
           Mark:             3-character registration suffix (prepend VH-)
+          suspendstatus:    Registration suspension status
           Airframe:         aircraft category
           Manu:             aircraft manufacturer
           Model:            aircraft model designation
@@ -254,6 +255,9 @@ sources:
           regholdState:     state or territory abbreviation
           regholdPostcode:  postal code
           regholdCountry:   country name (full English)
+        filter:
+          field: suspendstatus
+          skip_if_value: Suspended
 
   nz-caa:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
