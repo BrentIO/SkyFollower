@@ -194,19 +194,18 @@ sources:
       - name: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
         format: ods
         columns:
-          Flag:             registration status (rows with blank X-Ponder are deregistered; filtered by hex validity)
-          Registration:     full PH-prefix registration mark
-          Manufacturer:     aircraft manufacturer
-          Model:            aircraft model designation
-          Serial:           manufacturer serial number
-          X-Ponder:         6-character uppercase ICAO Mode S hex (direct; no lookup required)
+          Registration:     Full PH-prefix registration mark
+          Manufacturer:     Aircraft manufacturer name
+          Model:            Aircraft model designation
+          Serial:           Manufacturer serial number
+          X-Ponder:         6-character uppercase ICAO Mode S hex
           Built:            4-digit year of manufacture
-          Group:            aircraft type category (decoded to canonical type)
+          Group:            Aircraft type category code
           ICAO-code:        ICAO 4-character type designator
-          Engines:          number of engines
-          EngKind:          engine type description (decoded to canonical type)
-          EngManufacturer:  engine manufacturer name
-          EngModel:         engine model designation
+          Engines:          Number of engines
+          EngKind:          Engine type description
+          EngManufacturer:  Engine manufacturer name
+          EngModel:         Engine model designation
 
   br-anac:
     description: "Brazil ANAC Registro Aeronáutico Brasileiro (RAB) — PP/PR/PT/PS/PU-prefix registrations"
