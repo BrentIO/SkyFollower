@@ -256,6 +256,7 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
         "icao_hex": icao_hex,
         "registration": registration,
         "military": military,
+        "source": "mictronics",
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
