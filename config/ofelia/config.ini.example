@@ -2,6 +2,10 @@
 schedule = 10 5 * * 1
 container = skyfollower-runner-ourairports
 
+[job-run "runner-uk-caa"]
+schedule = 10 6 * * 1
+container = skyfollower-runner-uk-caa
+
 [job-run "runner-mictronics"]
 schedule = 10 5 * * 2
 container = skyfollower-runner-mictronics
@@ -37,6 +41,14 @@ container = skyfollower-runner-lu-dac
 [job-run "runner-bz-bdca"]
 schedule = 10 11 * * 3
 container = skyfollower-runner-bz-bdca
+
+[job-run "runner-at-austrocontrol"]
+schedule = 10 12 * * 3
+container = skyfollower-runner-at-austrocontrol
+
+[job-run "runner-ch-bazl"]
+schedule = 10 13 * * 3
+container = skyfollower-runner-ch-bazl
 
 [job-run "runner-au-casa"]
 schedule = 10 7 * * 2
