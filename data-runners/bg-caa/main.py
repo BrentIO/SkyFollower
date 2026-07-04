@@ -57,13 +57,12 @@ BATCH_SIZE = 100
 _WHITESPACE_RE = re.compile(r"\s+")
 
 _CATEGORY_MAP = {
-    "experimental": None,
     "glider": "Glider",
     "gyroplane": "Gyroplane",
     "hot-air balloon": "Balloon",
     "large aeroplane": "Airplane",
     "motor-hanglider": "Weight-Shift-Control",
-    "paramotor-trike": "Weight-Shift-Control",
+    "paramotor-trike": "Paramotor Trike",
     "powered sailplane": "Powered Glider",
     "rotorcraft": "Rotorcraft",
     "sailplane": "Glider",

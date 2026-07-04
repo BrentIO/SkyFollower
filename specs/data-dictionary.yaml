@@ -1991,10 +1991,9 @@ records:
               - source: bg-caa
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Категория ВС (col 5)"
-                skip_if_value: Experimental
                 transform:
                   type: decode_table
-                  description: "Case-insensitive category label"
+                  description: "Case-insensitive category label; unmapped values omitted"
                   values:
                     "Small Aeroplane": Airplane
                     "Large Aeroplane": Airplane
@@ -2007,7 +2006,7 @@ records:
                     "Gyroplane": Gyroplane
                     "Hot-air Balloon": Balloon
                     "Motor-hanglider": Weight-Shift-Control
-                    "Paramotor-Trike": Weight-Shift-Control
+                    "Paramotor-Trike": Paramotor Trike
               - source: lv-caa
                 field: Aircraft_Model_Category
               - source: rs-cad
