@@ -1932,7 +1932,7 @@ records:
                     "Flugzeug": Airplane
                     "Hubschrauber": Helicopter
                     "Tragschrauber": Gyroplane
-                    "Eigenstartfähiger Motorsegler": Glider
+                    "Eigenstartfähiger Motorsegler": Powered Glider
                     "Nicht eigenstartfähiger Motorsegler": Glider
               - source: br-anac
                 file: dados_aeronaves.json

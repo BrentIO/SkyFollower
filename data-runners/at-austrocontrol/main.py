@@ -58,7 +58,7 @@ _AIRCRAFT_TYPE_MAP: dict[str, str] = {
     "Flugzeug": "Airplane",
     "Hubschrauber": "Helicopter",
     "Tragschrauber": "Gyroplane",
-    "Eigenstartfähiger Motorsegler": "Glider",
+    "Eigenstartfähiger Motorsegler": "Powered Glider",
     "Nicht eigenstartfähiger Motorsegler": "Glider",
 }
 
