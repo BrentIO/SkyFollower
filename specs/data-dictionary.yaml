@@ -292,7 +292,7 @@ sources:
         columns:
           "AIRCRAFT REGISTRATION NUMBER": full C6-prefix registration mark
           "REGISTERED OWNER OF AIRCRAFT": registered owner name
-          "AIRCRAFT TYPE - MAKE/MODEL":   combined make and model free-text (stored as aircraft.model)
+          "AIRCRAFT TYPE - MAKE/MODEL":   Combined make and model designation (single free-text field)
           "SERIAL #":                     manufacturer serial number
 
   ch-bazl:
