@@ -122,7 +122,10 @@ class SourceCapture(threading.Thread):
         self.source_tag = source_tag
         self._output_lock = output_lock
         self._output_file = output_file
-        self._stop = stop_event
+        # Not named `self._stop` — threading.Thread already defines a private
+        # `_stop()` method it calls internally during join(); overwriting it
+        # with our Event caused `TypeError: 'Event' object is not callable`.
+        self._stop_event = stop_event
         self.count = 0
         self.error: Exception | None = None
         self.connected_event = threading.Event()
@@ -131,13 +134,13 @@ class SourceCapture(threading.Thread):
         try:
             self._connect_and_capture()
         except Exception as exc:
-            if not self._stop.is_set():
+            if not self._stop_event.is_set():
                 self.error = exc
                 print(
                     f"Error on {self.host}:{self.port} (source={self.source_tag}): {exc}",
                     flush=True,
                 )
-                self._stop.set()
+                self._stop_event.set()
         finally:
             self.connected_event.set()
 
@@ -153,7 +156,7 @@ class SourceCapture(threading.Thread):
 
     def _capture_1090(self, sock: socket.socket) -> None:
         buf = bytearray()
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 data = sock.recv(4096)
             except socket.timeout:
@@ -172,7 +175,7 @@ class SourceCapture(threading.Thread):
 
     def _capture_978(self, sock: socket.socket) -> None:
         line_buf = b""
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 data = sock.recv(4096)
             except socket.timeout:
