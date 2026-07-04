@@ -237,7 +237,6 @@ sources:
         format: csv
         columns:
           Mark:             3-character registration suffix (prepend VH-)
-          suspendstatus:    filter out Suspended records
           Airframe:         aircraft category
           Manu:             aircraft manufacturer
           Model:            aircraft model designation
