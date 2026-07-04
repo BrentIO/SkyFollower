@@ -209,7 +209,7 @@ sources:
           EngModel:         Engine model designation
         filter:
           field: X-Ponder
-          skip_if_empty: true
+          skip_if_not_pattern: "^[0-9A-Fa-f]{6}$"
 
   br-anac:
     description: "Brazil ANAC Registro Aeronáutico Brasileiro (RAB) — PP/PR/PT/PS/PU-prefix registrations"
