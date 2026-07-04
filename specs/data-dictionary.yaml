@@ -777,12 +777,12 @@ sources:
       - name: "Active-Aircraft-Register.pdf"
         format: pdf
         columns:
-          "Aircraft Registration": full VP-C-prefix registration mark
-          "Registered Owner":      registered owner name
-          "Registered Address":    international free-text address; country suffix stripped (see Nationality column) then split on commas into registrant.street lines
-          "Nationality":           clean English country name (e.g. 'United Kingdom', 'Cayman Islands'); mapped to ISO 3166-1 alpha-2 for registrant.country
-          "Series Type":           combined manufacturer and model free-text (stored as aircraft.model)
-          "Serial Number":         manufacturer serial number
+          "Aircraft Registration": Full VP-C-prefix registration mark
+          "Registered Owner":      Registered owner name
+          "Registered Address":    International free-text address; country name appears as a suffix matching the Nationality column
+          "Nationality":           Clean English country name (e.g. 'United Kingdom', 'Cayman Islands')
+          "Series Type":           Combined manufacturer and model designation (single free-text field)
+          "Serial Number":         Manufacturer serial number
 
   uk-caa:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
