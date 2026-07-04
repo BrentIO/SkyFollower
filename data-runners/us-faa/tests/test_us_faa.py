@@ -627,6 +627,17 @@ class TestWriteToRedis:
         r.json().mget.assert_not_called()
         conn.close()
 
+    def test_null_fields_omitted_from_written_record(self):
+        """No matching aircraft ref (AB1234) yields aircraft=None from build_aircraft_record;
+        set_json must prune that key entirely from what actually reaches Redis."""
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis()
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["aircraft:registry:AB1234"]
+        assert "aircraft" not in record
+        conn.close()
+
     def test_source_field_set_on_all_records(self):
         """Every record written to Redis must carry source='us-faa'."""
         conn = self._make_db()

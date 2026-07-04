@@ -32,6 +32,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX, aircraft_mictronics_key, operator_key
+from shared.redis_json import set_json
 
 logger = logging.getLogger("mictronics")
 
@@ -321,7 +322,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         pipe = r.pipeline()
         for (key, new_record), existing_raw in zip(batch, existing_list):
             merged = _deep_merge(existing_raw[0], new_record) if existing_raw else new_record
-            pipe.json().set(key, "$", merged)
+            set_json(pipe, key, merged)
             pipe.expire(key, ttl)
         pipe.execute()
 
@@ -357,7 +358,7 @@ def write_operators_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: 
     for row in rows:
         record = build_operator_record(row)
         key = operator_key(record["airline_designator"])
-        pipe.json().set(key, "$", record)
+        set_json(pipe, key, record)
         pipe.expire(key, ttl)
         count += 1
         if count % 10000 == 0:

@@ -191,6 +191,14 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call[0][2]["source"] == "tc-caa"
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(owner="")]
+        r = _make_redis_with_search(icao_hex="0C1234", registration="VQ-TCA")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        record = set_call[0][2]
+        assert "registrant" not in record
+
     def test_empty_list_returns_zero(self):
         r = _make_redis_no_match()
         count = write_to_redis([], r, REDIS_TTL)

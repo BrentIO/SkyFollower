@@ -453,3 +453,16 @@ class TestWriteToRedis:
             with patch.object(_mod, "logger") as mock_logger:
                 write_to_redis(rows, r, 1209600)
         mock_logger.warning.assert_called()
+
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        rows = [_make_row(registration="LZ-ABC", model="", category="")]
+        r = MagicMock()
+        pipe = MagicMock()
+        r.pipeline.return_value = pipe
+        with patch.object(_mod, "_build_registration_map", return_value={"LZ-ABC": "42A001"}):
+            write_to_redis(rows, r, 1209600)
+        set_call = pipe.json.return_value.set.call_args
+        written = set_call[0][2]
+        assert "model" not in written["aircraft"]
+        assert "type" not in written["aircraft"]

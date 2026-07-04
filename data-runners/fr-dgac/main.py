@@ -46,6 +46,7 @@ from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
 )
+from shared.redis_json import set_json
 
 logger = logging.getLogger("fr-dgac")
 
@@ -416,7 +417,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record["source"] = "fr-dgac"
 
         key = aircraft_registry_key(icao_hex)
-        pipe.json().set(key, "$", record)
+        set_json(pipe, key, record)
         pipe.expire(key, ttl)
         pipe_size += 1
         count += 1

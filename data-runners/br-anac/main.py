@@ -42,6 +42,7 @@ from shared.redis_keys import (
     aircraft_registry_key,
     aircraft_mictronics_key,
 )
+from shared.redis_json import set_json
 
 logger = logging.getLogger("br-anac")
 
@@ -387,7 +388,7 @@ def write_to_redis(records: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             record = _build_record(icao_hex, registration, row)
             record["source"] = "br-anac"
             key = aircraft_registry_key(icao_hex)
-            r.json().set(key, "$", record)
+            set_json(r, key, record)
             r.expire(key, ttl)
             count += 1
         except Exception as exc:

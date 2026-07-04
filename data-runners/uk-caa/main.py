@@ -34,6 +34,7 @@ from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     aircraft_registry_key,
 )
+from shared.redis_json import set_json
 
 logger = logging.getLogger("uk-caa")
 
@@ -358,7 +359,7 @@ def run_pipeline(
 
             record["source"] = "uk-caa"
             key = aircraft_registry_key(record["icao_hex"])
-            r.json().set(key, "$", record)
+            set_json(r, key, record)
             r.expire(key, ttl)
             count += 1
 
@@ -409,7 +410,7 @@ def run_pipeline(
 
                 record["source"] = "uk-caa"
                 key = aircraft_registry_key(record["icao_hex"])
-                r.json().set(key, "$", record)
+                set_json(r, key, record)
                 r.expire(key, ttl)
                 count += 1
 
@@ -437,7 +438,7 @@ def run_pipeline(
 
             record["source"] = "uk-caa"
             key = aircraft_registry_key(record["icao_hex"])
-            r.json().set(key, "$", record)
+            set_json(r, key, record)
             r.expire(key, ttl)
             count += 1
 

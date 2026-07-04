@@ -339,6 +339,13 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 2
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(model="")]
+        r = _make_redis_with_search(icao_hex="4D1234", registration="HA-GZQ")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert "model" not in set_call[0][2]["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

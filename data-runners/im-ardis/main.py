@@ -30,6 +30,7 @@ from bs4 import BeautifulSoup
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.redis_keys import aircraft_registry_key
+from shared.redis_json import set_json
 
 logger = logging.getLogger("im-ardis")
 
@@ -235,7 +236,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             continue
 
         key = aircraft_registry_key(record["icao_hex"])
-        pipe.json().set(key, "$", record)
+        set_json(pipe, key, record)
         pipe.expire(key, ttl)
         count += 1
         pipe_count += 1

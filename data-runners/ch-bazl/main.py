@@ -31,6 +31,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import aircraft_registry_key, AIRCRAFT_REGISTRY_SEARCH_INDEX
+from shared.redis_json import set_json
 
 logger = logging.getLogger("ch-bazl")
 
@@ -281,7 +282,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record["source"] = "ch-bazl"
         key = aircraft_registry_key(record["icao_hex"])
         try:
-            r.json().set(key, "$", record)
+            set_json(r, key, record)
             r.expire(key, ttl)
             count += 1
         except Exception as exc:

@@ -530,6 +530,17 @@ class TestWriteToRedis:
         count = write_to_redis(items, r, REDIS_TTL)
         assert count == 1
 
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        item = _make_item(hersteller="", seriennummer="")
+        r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
+        write_to_redis([item], r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call is not None
+        written = set_call[0][2]
+        assert "manufacturer" not in written["aircraft"]
+        assert "serial_number" not in written["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

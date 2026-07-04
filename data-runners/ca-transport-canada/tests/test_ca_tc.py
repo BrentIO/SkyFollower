@@ -763,6 +763,17 @@ class TestWriteToRedis:
             assert record["source"] == "ca-transport-canada"
         conn.close()
 
+    def test_null_fields_omitted_from_written_record(self):
+        """C-XYZ has no active owner, so build_aircraft_record sets registrant=None;
+        the written record must omit the key entirely, not write it as None."""
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis()
+        write_to_redis(conn, r, REDIS_TTL)
+        calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = calls["aircraft:registry:C00002"]
+        assert "registrant" not in record
+        conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Tests: MQTT completion stats (mocked)

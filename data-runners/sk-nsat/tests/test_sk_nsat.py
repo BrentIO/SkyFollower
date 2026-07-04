@@ -237,6 +237,14 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call[0][2]["source"] == "sk-nsat"
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(type_="")]
+        r = _make_redis_with_search(icao_hex="710ABC", registration="OM-0101")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        record = set_call[0][2]
+        assert "model" not in record.get("aircraft", {})
+
     def test_empty_list_returns_zero(self):
         r = _make_redis_no_match()
         count = write_to_redis([], r, REDIS_TTL)

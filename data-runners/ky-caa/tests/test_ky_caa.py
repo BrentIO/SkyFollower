@@ -574,6 +574,18 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 2
 
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data are absent from the written record, not None."""
+        row = _make_row(series_type="", serial="")
+        r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
+        write_to_redis([row], r, REDIS_TTL)
+        pipe = r.pipeline.return_value
+        set_call = pipe.json.return_value.set.call_args
+        assert set_call[0][1] == "$"
+        written_record = set_call[0][2]
+        assert "model" not in written_record.get("aircraft", {})
+        assert "serial_number" not in written_record.get("aircraft", {})
+
     def test_searches_simple_index(self):
         """Registration lookup queries the Mictronics simple search index."""
         row = _make_row()

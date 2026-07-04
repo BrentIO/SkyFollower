@@ -223,6 +223,15 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call[0][2]["source"] == "im-ardis"
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(mode_s="43E717", model="")]
+        r = _make_redis()
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call[0][1] == "$"
+        record = set_call[0][2]
+        assert "model" not in record["aircraft"]
+
     def test_mixed_active_and_deregistered(self):
         rows = [
             _make_row(registration="M-ABCD", mode_s="43E717", status="Active"),

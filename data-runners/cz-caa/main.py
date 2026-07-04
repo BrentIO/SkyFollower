@@ -39,6 +39,7 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.redis_keys import aircraft_registry_key
+from shared.redis_json import set_json
 
 logger = logging.getLogger("cz-caa")
 
@@ -262,7 +263,7 @@ def write_to_redis(row: dict, r: redis_lib.Redis, ttl: int) -> bool:
     record = _build_record(row)
     key = aircraft_registry_key(icao_hex)
     try:
-        r.json().set(key, "$", record)
+        set_json(r, key, record)
         r.expire(key, ttl)
         return True
     except Exception as exc:
