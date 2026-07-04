@@ -512,11 +512,12 @@ sources:
     url: "https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000"
     format: rest_api
     cadence: weekly_tuesday
-    notes: "Two-step REST API: list endpoint returns {rows:[...], total:N} (filter deletion_date=null for ~3486 active); detail endpoint per record provides ICAO hex in 'transponder' field (no RediSearch needed); 250ms delay between detail requests with 3-retry exponential backoff on connection errors; records without transponder skipped; category and engine_type values use AVREG_DATA.* enum strings that are mapped to friendly names; NO_ENGINE omits powerplant entry; all owner display_names stored; operator appended to names if not already present"
+    notes: "Two-step REST API: list endpoint returns {rows:[...], total:N} (~3486 active); detail endpoint per record provides ICAO hex in 'transponder' field (no RediSearch needed); 250ms delay between detail requests with 3-retry exponential backoff on connection errors; category and engine_type values use AVREG_DATA.* enum strings that are mapped to friendly names; NO_ENGINE omits powerplant entry; all owner display_names stored; operator appended to names if not already present"
     api:
       list: "GET https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000 → {rows: [{id, category, type, registration_number, deletion_date}], total: N}"
       detail: "GET https://lr.caa.gov.cz/api/avreg/{id} → {transponder, category, manufacturer, model, serial_number, manufacture_year, engine_type, engine_count, max_on_board, owners, operators}"
     fields:
+      deletion_date: "Deregistration date (list endpoint); null = active registration; not stored"
       transponder: "ICAO Mode S hex code (6-char uppercase hex string; null if not yet assigned)"
       category: "Aircraft category code (AVREG_DATA enum: AIRPLANE, GLIDER, HELICOPTER, HOT_AIR_BALLOON, GAS_BALLOON, HOT_AIR_AIRSHIP, POWERED_GLIDER, Bezpilotní letadlo)"
       manufacturer: "Aircraft manufacturer name"
@@ -528,8 +529,12 @@ sources:
       max_on_board: "Maximum number of persons on board (integer; 0 if not applicable)"
       "owners[*].display_name": "Display name of each registered owner"
     filter:
-      field: transponder
-      skip_if_empty: true
+      - field: deletion_date
+        endpoint: list
+        skip_if_not_empty: true
+      - field: transponder
+        endpoint: detail
+        skip_if_empty: true
 
   ee-transpordiamet:
     description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"
