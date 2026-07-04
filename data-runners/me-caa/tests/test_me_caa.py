@@ -9,6 +9,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 # ---------------------------------------------------------------------------
 # Module import
@@ -283,11 +284,60 @@ class TestFetchDetailPage:
         detail = _fetch_detail_page(session, "4O-AOA")
         assert detail["Country"] == "Montenegro"
 
-    def test_returns_empty_dict_on_http_error(self):
+    def test_returns_none_on_non_retriable_http_error(self):
         session = MagicMock()
         session.get.return_value = _make_response("", 404)
         detail = _fetch_detail_page(session, "4O-AOA")
-        assert detail == {}
+        assert detail is None
+
+    def test_retries_on_403(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response("", 403), _make_response(_detail_html())]
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is not None
+        assert session.get.call_count == 2
+
+    def test_retries_on_429(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response("", 429), _make_response(_detail_html())]
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is not None
+        assert session.get.call_count == 2
+
+    def test_retries_on_503(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response("", 503), _make_response(_detail_html())]
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is not None
+        assert session.get.call_count == 2
+
+    def test_returns_none_after_retries_exhausted(self):
+        session = MagicMock()
+        session.get.return_value = _make_response("", 403)
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is None
+        assert session.get.call_count == 3  # initial + 2 retries
+
+    def test_retries_on_connection_error(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            requests.exceptions.ConnectionError("dropped"),
+            _make_response(_detail_html()),
+        ]
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is not None
+
+    def test_returns_none_after_connection_error_retries_exhausted(self):
+        session = MagicMock()
+        session.get.side_effect = requests.exceptions.ConnectionError("dropped")
+        with patch("me_caa_main.time.sleep"):
+            detail = _fetch_detail_page(session, "4O-AOA")
+        assert detail is None
 
     def test_url_uses_lowercase_registration(self):
         session = MagicMock()
@@ -352,6 +402,23 @@ class TestDownloadAndParse:
         )
         records = download_and_parse(session)
         assert records[0]["model"] == "ERJ 190-200 LR"
+
+    def test_skips_record_when_detail_fetch_fails(self):
+        """A None detail response must not produce a sparse Redis write."""
+        session = MagicMock()
+        responses = [
+            _make_response(_list_html([
+                {"Registarska oznaka": "4O-AAA", "Ime": "Owner A", "Tip": "C172"},
+                {"Registarska oznaka": "4O-BBB", "Ime": "Owner B", "Tip": "PA28"},
+            ])),
+            _make_response(_list_html([])),
+            _make_response("", 404),         # 4O-AAA detail fails
+            _make_response(_detail_html()),  # 4O-BBB detail succeeds
+        ]
+        session.get.side_effect = responses
+        records = download_and_parse(session)
+        assert len(records) == 1
+        assert records[0]["registration"] == "4O-BBB"
 
     def test_maps_all_fields(self):
         session = self._make_session(

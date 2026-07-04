@@ -57,6 +57,8 @@ _DETAIL_BASE_URL = "https://www.caa.me/en/"
 REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/me-caa"
 BATCH_SIZE = 100
+_DETAIL_MAX_RETRIES = 2
+_RETRIABLE_HTTP = frozenset({403, 429})
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -110,15 +112,52 @@ def _fetch_list_page(session: requests.Session, page: int) -> list[dict]:
     return rows
 
 
-def _fetch_detail_page(session: requests.Session, registration: str) -> dict:
-    """Fetch the detail page for one aircraft and return extracted fields."""
+def _fetch_detail_page(session: requests.Session, registration: str) -> dict | None:
+    """Fetch the detail page for one aircraft and return extracted fields.
+
+    Returns None if the page cannot be fetched after retries (caller should skip
+    the record entirely). Returns an empty dict if the page loaded but no fields
+    were parsed.
+    """
     slug = registration.lower()
     url = f"{_DETAIL_BASE_URL}{slug}"
     logger.debug("Fetching Montenegro CAA detail page from %s", url)
-    resp = session.get(url, timeout=30)
-    if not resp.ok:
-        logger.warning("Detail page for %s returned HTTP %s; skipping.", registration, resp.status_code)
-        return {}
+
+    for attempt in range(_DETAIL_MAX_RETRIES + 1):
+        try:
+            resp = session.get(url, timeout=30)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            if attempt < _DETAIL_MAX_RETRIES:
+                wait = 2 ** attempt
+                logger.warning(
+                    "Detail page for %s failed (%s); retrying in %ds (attempt %d/%d).",
+                    registration, exc, wait, attempt + 1, _DETAIL_MAX_RETRIES,
+                )
+                time.sleep(wait)
+                continue
+            logger.warning("Detail page for %s failed after %d attempts: %s", registration, _DETAIL_MAX_RETRIES + 1, exc)
+            return None
+
+        if resp.ok:
+            break
+
+        if resp.status_code in _RETRIABLE_HTTP or resp.status_code >= 500:
+            if attempt < _DETAIL_MAX_RETRIES:
+                wait = 2 ** attempt
+                logger.warning(
+                    "Detail page for %s returned HTTP %d; retrying in %ds (attempt %d/%d).",
+                    registration, resp.status_code, wait, attempt + 1, _DETAIL_MAX_RETRIES,
+                )
+                time.sleep(wait)
+                continue
+            logger.warning(
+                "Detail page for %s returned HTTP %d after %d attempts.",
+                registration, resp.status_code, _DETAIL_MAX_RETRIES + 1,
+            )
+            return None
+
+        logger.warning("Detail page for %s returned HTTP %d; skipping.", registration, resp.status_code)
+        return None
 
     soup = BeautifulSoup(resp.text, "lxml")
     fields: dict = {}
@@ -179,6 +218,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             continue
 
         detail = _fetch_detail_page(session, registration)
+        if detail is None:
+            continue
 
         records.append({
             "registration": registration,
