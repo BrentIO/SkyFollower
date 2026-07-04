@@ -404,6 +404,32 @@ class TestWriteToRedis:
         assert kjfk["phonic"] == "Kennedy"
         conn.close()
 
+    def test_null_fields_omitted_from_written_record(self):
+        # city is nullable in the staging schema (e.g. no municipality in source data).
+        # The record dict actually handed to the mocked RedisJSON `.set(...)` call must
+        # omit the "city" key entirely rather than carry it with a None value.
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO airports (icao_code, name, city, region, country, phonic) "
+            "VALUES ('KTST', 'Test Airport', NULL, 'US-NY', 'US', 'Test')"
+        )
+        conn.commit()
+
+        r = MagicMock()
+        pipe = MagicMock()
+        pipe_json = MagicMock()
+        r.pipeline.return_value = pipe
+        pipe.json.return_value = pipe_json
+        pipe.execute.return_value = []
+
+        write_to_redis(conn, r, REDIS_TTL)
+
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        assert "city" not in records["airport:KTST"]
+        conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Tests: MQTT completion stats — single JSON payload pattern

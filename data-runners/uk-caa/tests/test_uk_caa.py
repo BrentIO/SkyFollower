@@ -510,6 +510,14 @@ class TestRunPipeline:
         written = r.json.return_value.set.call_args.args[2]
         assert written["source"] == "uk-caa"
 
+    def test_null_fields_omitted_from_written_record(self):
+        r = self._make_redis()
+        session = self._make_session(_SEARCH_RESULT, _make_details(county=None))
+        with patch("time.sleep"):
+            run_pipeline(session, r, REDIS_TTL, 0.1)
+        written = r.json.return_value.set.call_args.args[2]
+        assert "administrative_area" not in written.get("registrant", {})
+
     def test_no_foreign_key_in_record(self):
         r = self._make_redis()
         session = self._make_session(_SEARCH_RESULT, _make_details())

@@ -47,6 +47,7 @@ from shared.redis_keys import (
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
 )
+from shared.redis_json import set_json
 
 logger = logging.getLogger("ky-caa")
 
@@ -359,7 +360,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
                 continue
             record = _build_record(hex_val, registration, row)
             key = aircraft_registry_key(hex_val)
-            pipe.json().set(key, "$", record)
+            set_json(pipe, key, record)
             pipe.expire(key, ttl)
             written += 1
 

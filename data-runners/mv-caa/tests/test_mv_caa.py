@@ -507,6 +507,15 @@ class TestWriteToRedis:
         write_to_redis(rows, r, REDIS_TTL)
         r.pipeline.return_value.expire.assert_called_with("aircraft:registry:900100", REDIS_TTL)
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(model="", year_built="")]
+        r = _make_redis_with_search(icao_hex="900100", registration="8Q-IAD")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        record = set_call[0][2]
+        assert "model" not in record.get("aircraft", {})
+        assert "manufactured_date" not in record.get("aircraft", {})
+
     def test_multiple_records(self):
         rows = [_make_row(registration="8Q-IAD"), _make_row(registration="8Q-MBD")]
         r = MagicMock()

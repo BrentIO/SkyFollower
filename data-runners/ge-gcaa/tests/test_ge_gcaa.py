@@ -379,6 +379,13 @@ class TestWriteToRedis:
     def test_empty_list_returns_zero(self):
         assert write_to_redis([], _make_redis_no_match(), REDIS_TTL) == 0
 
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_merged_row(serial="")]
+        r = _make_redis_with_search(icao_hex="4A1234", registration="4L-GAA")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert "serial_number" not in set_call[0][2]["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

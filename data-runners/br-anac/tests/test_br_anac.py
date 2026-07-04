@@ -521,6 +521,15 @@ class TestWriteToRedis:
             write_to_redis(rows, r, REDIS_TTL)
         r.expire.assert_called_once_with("aircraft:registry:E491A0", REDIS_TTL)
 
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        r = self._make_redis()
+        rows = [_make_row(proprietariosjson=None)]
+        with self._patch_reg_map({"PP-AJH": "E491A0"}):
+            write_to_redis(rows, r, REDIS_TTL)
+        written = r.json.return_value.set.call_args.args[2]
+        assert "registrant" not in written
+
 
 # ---------------------------------------------------------------------------
 # Tests: MQTT completion stats (mocked)

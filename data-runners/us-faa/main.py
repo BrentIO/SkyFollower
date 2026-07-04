@@ -33,6 +33,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
+from shared.redis_json import set_json
 
 logger = logging.getLogger("us-faa")
 
@@ -478,7 +479,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     def _flush():
         pipe = r.pipeline()
         for key, record in batch:
-            pipe.json().set(key, "$", record)
+            set_json(pipe, key, record)
             pipe.expire(key, ttl)
         pipe.execute()
 

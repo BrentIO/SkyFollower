@@ -464,3 +464,16 @@ class TestWriteToRedis:
             args and "%d / %d" in str(args[0]) and args[1] == 1 and args[2] == 1
             for args in (c.args for c in calls)
         )
+
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        rows = [_make_row(registration="5B-ABC", serial="", owner="")]
+        r = MagicMock()
+        pipe = MagicMock()
+        r.pipeline.return_value = pipe
+        with patch.object(_mod, "_build_registration_map", return_value={"5B-ABC": "4B0001"}):
+            write_to_redis(rows, r, 1209600)
+        set_call = pipe.json.return_value.set.call_args
+        written = set_call[0][2]
+        assert "serial_number" not in written["aircraft"]
+        assert "registrant" not in written

@@ -478,3 +478,13 @@ class TestWriteToRedis:
             with patch.object(_mod, "logger") as mock_logger:
                 write_to_redis(rows, r, 1209600)
         mock_logger.warning.assert_called()
+
+    def test_null_fields_omitted_from_written_record(self):
+        rows = [_make_row(registration="9A-ABC", manufacturer="")]
+        r = MagicMock()
+        pipe = MagicMock()
+        r.pipeline.return_value = pipe
+        with patch.object(_mod, "_build_registration_map", return_value={"9A-ABC": "501234"}):
+            write_to_redis(rows, r, 1209600)
+        set_call = pipe.json.return_value.set.call_args
+        assert "manufacturer" not in set_call[0][2]["aircraft"]

@@ -465,6 +465,14 @@ class TestWriteToRedis:
         key = r.json.return_value.set.call_args.args[0]
         assert key == "aircraft:registry:4B1916"
 
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        r = _make_redis()
+        write_to_redis([_make_row(manufacturer="", owner="")], r, REDIS_TTL)
+        written = r.json.return_value.set.call_args.args[2]
+        assert "manufacturer" not in written["aircraft"]
+        assert "registrant" not in written
+
 
 # ---------------------------------------------------------------------------
 # Tests: _ensure_search_index

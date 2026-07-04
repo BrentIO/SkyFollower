@@ -470,6 +470,24 @@ class TestWriteOperatorsToRedis:
         assert all(ttl == REDIS_TTL for ttl in expire_ttls)
         conn.close()
 
+    def test_null_fields_omitted_from_written_record(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO operators (airline_designator, name, country, callsign) "
+            "VALUES ('XYZ', NULL, NULL, NULL)"
+        )
+        conn.commit()
+        r, _, pipe_json = self._mock_redis()
+        write_operators_to_redis(conn, r, REDIS_TTL)
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        record = records["operator:XYZ"]
+        assert "name" not in record
+        assert "country" not in record
+        assert "callsign" not in record
+        conn.close()
+
     def test_empty_designator_skipped(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row

@@ -630,6 +630,13 @@ class TestWriteToRedis:
         r.json.return_value.set.side_effect = Exception("connection refused")
         assert write_to_redis(_make_row(), r, REDIS_TTL) is False
 
+    def test_null_fields_omitted_from_written_record(self):
+        r = _make_redis()
+        write_to_redis(_make_row(model="", seats=None), r, REDIS_TTL)
+        written = r.json.return_value.set.call_args[0][2]
+        assert "model" not in written["aircraft"]
+        assert "seats" not in written["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

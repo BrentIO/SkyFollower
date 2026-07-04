@@ -254,6 +254,18 @@ class TestWriteToRedis:
         write_to_redis(rows, r, REDIS_TTL)
         r.pipeline.return_value.expire.assert_called_with("aircraft:registry:0A0123", REDIS_TTL)
 
+    def test_null_fields_omitted_from_written_record(self):
+        """Optional fields with no source data must be absent from the written record, not None."""
+        rows = [_make_row(serial="", address="")]
+        r = _make_redis_with_search(icao_hex="0A0123", registration="V3-ABC")
+        write_to_redis(rows, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call is not None
+        written = set_call[0][2]
+        assert "serial_number" not in written["aircraft"]
+        assert "city" not in written["registrant"]
+        assert "street" not in written["registrant"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

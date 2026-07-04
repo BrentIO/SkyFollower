@@ -290,6 +290,17 @@ class TestWriteToRedis:
         write_to_redis(aircraft, r, REDIS_TTL)
         r.pipeline.return_value.expire.assert_called_with("aircraft:registry:4CA123", REDIS_TTL)
 
+    def test_null_fields_omitted_from_written_record(self):
+        aircraft = [_make_aircraft(aircraft_type="", serial_number="")]
+        r = _make_redis_with_search(icao_hex="4CA123", registration="TF-ABC")
+        write_to_redis(aircraft, r, REDIS_TTL)
+        set_call = r.pipeline.return_value.json.return_value.set.call_args
+        assert set_call is not None
+        assert set_call[0][1] == "$"
+        written = set_call[0][2]
+        assert "model" not in written["aircraft"]
+        assert "serial_number" not in written["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: publish_completion_stats

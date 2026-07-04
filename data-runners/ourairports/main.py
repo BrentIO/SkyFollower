@@ -31,6 +31,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import AIRPORT_SEARCH_INDEX, airport_key
+from shared.redis_json import set_json
 
 logger = logging.getLogger("ourairports")
 
@@ -275,7 +276,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     for row in rows:
         record = build_airport_record(row)
         key = airport_key(record["icao_code"])
-        pipe.json().set(key, "$", record)
+        set_json(pipe, key, record)
         pipe.expire(key, ttl)
         count += 1
         if count % 10000 == 0:

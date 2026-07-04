@@ -43,6 +43,7 @@ from shared.redis_keys import (
     aircraft_registry_key,
     aircraft_mictronics_key,
 )
+from shared.redis_json import set_json
 
 logger = logging.getLogger("au-casa")
 
@@ -398,7 +399,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record = _build_record(row, icao_hex, registration)
         record["source"] = "au-casa"
 
-        pipe.json().set(aircraft_registry_key(icao_hex), "$", record)
+        set_json(pipe, aircraft_registry_key(icao_hex), record)
         pipe.expire(aircraft_registry_key(icao_hex), ttl)
         pipe_size += 1
         count += 1
