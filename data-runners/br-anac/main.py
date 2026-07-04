@@ -243,7 +243,7 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if powerplant_fields:
-        record["powerplant"] = powerplant_fields
+        aircraft_fields["powerplant"] = powerplant_fields
     if nome:
         record["registrant"] = {"names": [nome]}
     return record

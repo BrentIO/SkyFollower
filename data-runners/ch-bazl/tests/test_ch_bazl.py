@@ -367,19 +367,19 @@ class TestBuildRecord:
 
     def test_engine_type(self):
         record = _build_record(_make_row(engine_category="Jet Engine"))
-        assert record["powerplant"]["type"] == "Turbo-jet"
+        assert record["aircraft"]["powerplant"]["type"] == "Turbo-jet"
 
     def test_engine_manufacturer(self):
         record = _build_record(_make_row(engine_manufacturer="AVCO LYCOMING"))
-        assert record["powerplant"]["manufacturer"] == "AVCO LYCOMING"
+        assert record["aircraft"]["powerplant"]["manufacturer"] == "AVCO LYCOMING"
 
     def test_engine_manufacturer_absent_when_empty(self):
         record = _build_record(_make_row(engine_manufacturer=""))
-        assert "manufacturer" not in record.get("powerplant", {})
+        assert "manufacturer" not in record.get("aircraft", {}).get("powerplant", {})
 
     def test_engine_model(self):
         record = _build_record(_make_row(engine="GE90-115BL"))
-        assert record["powerplant"]["model"] == "GE90-115BL"
+        assert record["aircraft"]["powerplant"]["model"] == "GE90-115BL"
 
     def test_registrant_name(self):
         record = _build_record(_make_row())
@@ -394,11 +394,11 @@ class TestBuildRecord:
 
     def test_no_engine_omits_powerplant(self):
         record = _build_record(_make_row(engine_category="", engine_manufacturer="", engine=""))
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
     def test_glider_no_engine_omits_powerplant(self):
         record = _build_record(_make_row(aircraft_type="Glider", engine_category="", engine_manufacturer="", engine=""))
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
 
 # ---------------------------------------------------------------------------

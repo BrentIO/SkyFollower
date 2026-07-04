@@ -402,12 +402,16 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
             "manufacturer": acft_row["engine_manufacturer"] or None,
         }
 
+    if powerplant is not None:
+        if aircraft is None:
+            aircraft = {}
+        aircraft["powerplant"] = powerplant
+
     return {
         "icao_hex": acft_row["icao_hex"],
         "registration": acft_row["registration"],
         "registrant": registrant,
         "aircraft": aircraft,
-        "powerplant": powerplant,
     }
 
 

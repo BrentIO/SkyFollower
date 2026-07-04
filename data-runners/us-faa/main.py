@@ -413,12 +413,16 @@ def build_aircraft_record(
                 "power_value": power_value,
             }
 
+    if powerplant is not None:
+        if aircraft is None:
+            aircraft = {}
+        aircraft["powerplant"] = powerplant
+
     return {
         "icao_hex": reg_row["icao_hex"],
         "registration": reg_row["registration"],
         "registrant": registrant,
         "aircraft": aircraft,
-        "powerplant": powerplant,
     }
 
 

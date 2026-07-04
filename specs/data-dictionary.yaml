@@ -2671,243 +2671,243 @@ records:
                     "M/L": "Medium/Light"
                     "-": "Unknown/None"
 
-      powerplant:
-        type: object
-        description: "Engine and powerplant specification data"
-        persisted: true
-        properties:
-
-          count:
-            type: integer
-            description: "Number of engines installed"
+          powerplant:
+            type: object
+            description: "Engine and powerplant specification data"
             persisted: true
-            sources:
-              - source: us-faa
-                file: acftref.txt
-                field: NO-ENG
-                position: 7
-              - source: ca-tc
-                file: carscurr.txt
-                field: NUMBER_OF_ENGINES
-                position: 17
-              - source: nl-ilt
-                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
-                field: Engines
-              - source: au-casa
-                file: acrftreg
-                field: engnum
-              - source: uk-caa
-                endpoint: details
-                field: "AircraftDetails.Engines[0].TotalNumberOfEngines"
-              - source: br-anac
-                file: dados_aeronaves.json
-                field: CDCLS
-                transform:
-                  type: decode_character
-                  position: 1
-                  description: "Position 2 (index 1) of CDCLS is the engine count digit; '0' or absent = omit; omitted for RPA (drone) records"
-              - source: es-aesa
-                file: aeronaves_inscritas.pdf
-                field: "Nº mot."
-                transform:
-                  type: parse_integer
-              - source: cz-caa
-                endpoint: detail
-                field: engine_count
-                skip_if_empty: true
-                skip_if_value: 0
+            properties:
 
-          type:
-            type: string
-            description: "Engine type (Reciprocating, Turbo-fan, etc.)"
-            persisted: true
-            sources:
-              - source: us-faa
-                file: acftref.txt
-                field: TYPE-ENG
-                position: 4
-                transform:
-                  type: decode_table
-                  values:
-                    "0": None
-                    "1": Piston
-                    "2": Turbo-prop
-                    "3": Turbo-shaft
-                    "4": Turbo-jet
-                    "5": Turbo-fan
-                    "6": Ramjet
-                    "7": 2 Cycle
-                    "8": 4 Cycle
-                    "9": Unknown
-                    "10": Electric
-                    "11": Rotary
-              - source: ca-tc
-                file: carscurr.txt
-                field: ENGINE_CATEGORY_E
-                position: 15
-                transform:
-                  type: decode_table
-                  values:
-                    "Piston": Piston
-                    "Turbo Fan": Turbo-fan
-                    "Turbo Prop": Turbo-prop
-                    "Turbo Shaft": Turbo-shaft
-                    "Turbo Jet": Turbo-jet
-                    "Electric": Electric
-                    "Other": Unknown
-              - source: nl-ilt
-                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
-                field: EngKind
-                transform:
-                  type: decode_table_passthrough
-                  description: "Mapped to canonical type; 'Engine - not defined' and blank → omit; unknown values pass through unmodified"
-                  values:
-                    "Reciprocating piston-driven engine": Piston
-                    "Reciprocating piston radial engine": Piston
-                    "Piston-driven shaft (rotorcraft) engine": Piston
-                    "Reciprocating piston-driven Diesel engine": Diesel
-                    "Electrical engine": Electric
-                    "Turbofan engine": Turbo-fan
-                    "Turbine-driven shaft (rotorcraft) engine": Turbo-shaft
-                    "Turbine-driven propeller engine": Turbo-prop
-                    "Turbojet engine": Turbo-jet
-                    "Wankel engine": Rotary
-                    "Engine - not defined": ~~omit~~
-              - source: au-casa
-                file: acrftreg
-                field: Engtype
-                transform:
-                  type: decode_table_passthrough
-                  description: "Mapped to canonical type; 'Not Applicable' → omit; unknown values pass through unmodified"
-                  values:
-                    "Piston": Piston
-                    "Turbofan": Turbo-fan
-                    "Turboprop": Turbo-prop
-                    "Turboshaft": Turbo-shaft
-                    "Turbojet": Turbo-jet
-                    "Electric": Electric
-                    "Diesel Engine": Diesel
-                    "Rotary": Rotary
-                    "Not Applicable": ~~omit~~
-              - source: ch-bazl
-                endpoint: bulk
-                field: " Engine Category"
-                transform:
-                  type: decode_table_passthrough
-                  description: "Mapped to canonical type; comma-separated multi-engine entries take first value; unknown values pass through unmodified"
-                  values:
-                    "Piston Engine": Piston
-                    "Turboshaft Engine": Turbo-shaft
-                    "Turboprop Engine": Turbo-prop
-                    "Jet Engine": Turbo-jet
-                    "Electrical Engine": Electric
-                    "Hydrogen-Electric": Hydrogen-Electric
-              - source: br-anac
-                file: dados_aeronaves.json
-                field: CDCLS
-                transform:
-                  type: decode_character
-                  position: 2
-                  description: "Position 3 (index 2) of CDCLS is the propulsion code; T is context-sensitive: Turbo-shaft when CDCLS[0]='H' (helicopter), otherwise Turbo-prop; omitted for RPA (drone) records or when position is '0' or absent"
-                  values:
-                    "P": Piston
-                    "J": Turbo-jet
-                    "E": Electric
-                    "T": "Turbo-prop (or Turbo-shaft for helicopters — see description)"
-              - source: cz-caa
-                endpoint: detail
-                field: engine_type
-                skip_if_value: "NO_ENGINE"
-                transform:
-                  type: decode_table
-                  values:
-                    "PISTON": Piston
-                    "TURBINE": Turbine
-                    "TURBOSHAFT": Turboshaft
-                    "ELECTRIC": Electric
+              count:
+                type: integer
+                description: "Number of engines installed"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: acftref.txt
+                    field: NO-ENG
+                    position: 7
+                  - source: ca-tc
+                    file: carscurr.txt
+                    field: NUMBER_OF_ENGINES
+                    position: 17
+                  - source: nl-ilt
+                    file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                    field: Engines
+                  - source: au-casa
+                    file: acrftreg
+                    field: engnum
+                  - source: uk-caa
+                    endpoint: details
+                    field: "AircraftDetails.Engines[0].TotalNumberOfEngines"
+                  - source: br-anac
+                    file: dados_aeronaves.json
+                    field: CDCLS
+                    transform:
+                      type: decode_character
+                      position: 1
+                      description: "Position 2 (index 1) of CDCLS is the engine count digit; '0' or absent = omit; omitted for RPA (drone) records"
+                  - source: es-aesa
+                    file: aeronaves_inscritas.pdf
+                    field: "Nº mot."
+                    transform:
+                      type: parse_integer
+                  - source: cz-caa
+                    endpoint: detail
+                    field: engine_count
+                    skip_if_empty: true
+                    skip_if_value: 0
 
-          model:
-            type: string
-            description: "Engine model designation (e.g. LEAP-1B28)"
-            persisted: true
-            sources:
-              - source: us-faa
-                file: engine.txt
-                field: MODEL
-                position: 2
-                join: "master.txt[3] → engine.txt[0]"
-              - source: nl-ilt
-                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
-                field: EngModel
-                notes: "Values containing 'not further defined' are omitted"
-              - source: au-casa
-                file: acrftreg
-                field: Engmodel
-              - source: uk-caa
-                endpoint: details
-                field: "AircraftDetails.Engines[0].Name"
-              - source: ch-bazl
-                endpoint: bulk
-                field: " Engine"
-                transform:
-                  type: split_first
-                  delimiter: ", "
-                  description: "Comma-separated multi-engine entries take first value (e.g. 'CFM56-5B4/3, CFM56-5B4/P' → 'CFM56-5B4/3')"
-              - source: es-aesa
-                file: aeronaves_inscritas.pdf
-                field: "Modelo Motor"
-              - source: sg-caas
-                file: Aircraft-Register-as-at-{MonYYYY}.xlsx
-                field: Engine Model
+              type:
+                type: string
+                description: "Engine type (Reciprocating, Turbo-fan, etc.)"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: acftref.txt
+                    field: TYPE-ENG
+                    position: 4
+                    transform:
+                      type: decode_table
+                      values:
+                        "0": None
+                        "1": Piston
+                        "2": Turbo-prop
+                        "3": Turbo-shaft
+                        "4": Turbo-jet
+                        "5": Turbo-fan
+                        "6": Ramjet
+                        "7": 2 Cycle
+                        "8": 4 Cycle
+                        "9": Unknown
+                        "10": Electric
+                        "11": Rotary
+                  - source: ca-tc
+                    file: carscurr.txt
+                    field: ENGINE_CATEGORY_E
+                    position: 15
+                    transform:
+                      type: decode_table
+                      values:
+                        "Piston": Piston
+                        "Turbo Fan": Turbo-fan
+                        "Turbo Prop": Turbo-prop
+                        "Turbo Shaft": Turbo-shaft
+                        "Turbo Jet": Turbo-jet
+                        "Electric": Electric
+                        "Other": Unknown
+                  - source: nl-ilt
+                    file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                    field: EngKind
+                    transform:
+                      type: decode_table_passthrough
+                      description: "Mapped to canonical type; 'Engine - not defined' and blank → omit; unknown values pass through unmodified"
+                      values:
+                        "Reciprocating piston-driven engine": Piston
+                        "Reciprocating piston radial engine": Piston
+                        "Piston-driven shaft (rotorcraft) engine": Piston
+                        "Reciprocating piston-driven Diesel engine": Diesel
+                        "Electrical engine": Electric
+                        "Turbofan engine": Turbo-fan
+                        "Turbine-driven shaft (rotorcraft) engine": Turbo-shaft
+                        "Turbine-driven propeller engine": Turbo-prop
+                        "Turbojet engine": Turbo-jet
+                        "Wankel engine": Rotary
+                        "Engine - not defined": ~~omit~~
+                  - source: au-casa
+                    file: acrftreg
+                    field: Engtype
+                    transform:
+                      type: decode_table_passthrough
+                      description: "Mapped to canonical type; 'Not Applicable' → omit; unknown values pass through unmodified"
+                      values:
+                        "Piston": Piston
+                        "Turbofan": Turbo-fan
+                        "Turboprop": Turbo-prop
+                        "Turboshaft": Turbo-shaft
+                        "Turbojet": Turbo-jet
+                        "Electric": Electric
+                        "Diesel Engine": Diesel
+                        "Rotary": Rotary
+                        "Not Applicable": ~~omit~~
+                  - source: ch-bazl
+                    endpoint: bulk
+                    field: " Engine Category"
+                    transform:
+                      type: decode_table_passthrough
+                      description: "Mapped to canonical type; comma-separated multi-engine entries take first value; unknown values pass through unmodified"
+                      values:
+                        "Piston Engine": Piston
+                        "Turboshaft Engine": Turbo-shaft
+                        "Turboprop Engine": Turbo-prop
+                        "Jet Engine": Turbo-jet
+                        "Electrical Engine": Electric
+                        "Hydrogen-Electric": Hydrogen-Electric
+                  - source: br-anac
+                    file: dados_aeronaves.json
+                    field: CDCLS
+                    transform:
+                      type: decode_character
+                      position: 2
+                      description: "Position 3 (index 2) of CDCLS is the propulsion code; T is context-sensitive: Turbo-shaft when CDCLS[0]='H' (helicopter), otherwise Turbo-prop; omitted for RPA (drone) records or when position is '0' or absent"
+                      values:
+                        "P": Piston
+                        "J": Turbo-jet
+                        "E": Electric
+                        "T": "Turbo-prop (or Turbo-shaft for helicopters — see description)"
+                  - source: cz-caa
+                    endpoint: detail
+                    field: engine_type
+                    skip_if_value: "NO_ENGINE"
+                    transform:
+                      type: decode_table
+                      values:
+                        "PISTON": Piston
+                        "TURBINE": Turbine
+                        "TURBOSHAFT": Turboshaft
+                        "ELECTRIC": Electric
 
-          manufacturer:
-            type: string
-            description: "Engine manufacturer name"
-            persisted: true
-            sources:
-              - source: us-faa
-                file: engine.txt
-                field: MFR
-                position: 1
-                join: "master.txt[3] → engine.txt[0]"
-              - source: ca-tc
-                file: carscurr.txt
-                field: ENGINE_MANUF_E
-                position: 13
-              - source: nl-ilt
-                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
-                field: EngManufacturer
-                notes: "Values of 'Unknown' are omitted"
-              - source: au-casa
-                file: acrftreg
-                field: Engmanu
-              - source: ch-bazl
-                endpoint: bulk
-                field: " Engine manufacturer"
-              - source: es-aesa
-                file: aeronaves_inscritas.pdf
-                field: "Marca Motor"
-              - source: sg-caas
-                file: Aircraft-Register-as-at-{MonYYYY}.xlsx
-                field: Engine Manufacturer
+              model:
+                type: string
+                description: "Engine model designation (e.g. LEAP-1B28)"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: engine.txt
+                    field: MODEL
+                    position: 2
+                    join: "master.txt[3] → engine.txt[0]"
+                  - source: nl-ilt
+                    file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                    field: EngModel
+                    notes: "Values containing 'not further defined' are omitted"
+                  - source: au-casa
+                    file: acrftreg
+                    field: Engmodel
+                  - source: uk-caa
+                    endpoint: details
+                    field: "AircraftDetails.Engines[0].Name"
+                  - source: ch-bazl
+                    endpoint: bulk
+                    field: " Engine"
+                    transform:
+                      type: split_first
+                      delimiter: ", "
+                      description: "Comma-separated multi-engine entries take first value (e.g. 'CFM56-5B4/3, CFM56-5B4/P' → 'CFM56-5B4/3')"
+                  - source: es-aesa
+                    file: aeronaves_inscritas.pdf
+                    field: "Modelo Motor"
+                  - source: sg-caas
+                    file: Aircraft-Register-as-at-{MonYYYY}.xlsx
+                    field: Engine Model
 
-          power_type:
-            type: string
-            description: "Power rating unit — Horsepower (piston/turbo-prop) or Thrust (jet)"
-            persisted: true
-            sources:
-              - source: us-faa
-                file: engine.txt
-                description: "Derived from engine TYPE; piston/prop → Horsepower; jet → Thrust"
+              manufacturer:
+                type: string
+                description: "Engine manufacturer name"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: engine.txt
+                    field: MFR
+                    position: 1
+                    join: "master.txt[3] → engine.txt[0]"
+                  - source: ca-tc
+                    file: carscurr.txt
+                    field: ENGINE_MANUF_E
+                    position: 13
+                  - source: nl-ilt
+                    file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                    field: EngManufacturer
+                    notes: "Values of 'Unknown' are omitted"
+                  - source: au-casa
+                    file: acrftreg
+                    field: Engmanu
+                  - source: ch-bazl
+                    endpoint: bulk
+                    field: " Engine manufacturer"
+                  - source: es-aesa
+                    file: aeronaves_inscritas.pdf
+                    field: "Marca Motor"
+                  - source: sg-caas
+                    file: Aircraft-Register-as-at-{MonYYYY}.xlsx
+                    field: Engine Manufacturer
 
-          power_value:
-            type: integer
-            description: "Rated power output in horsepower or pounds of thrust"
-            persisted: true
-            sources:
-              - source: us-faa
-                file: engine.txt
-                description: "HORSEPOWER or THRUST column depending on engine type"
+              power_type:
+                type: string
+                description: "Power rating unit — Horsepower (piston/turbo-prop) or Thrust (jet)"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: engine.txt
+                    description: "Derived from engine TYPE; piston/prop → Horsepower; jet → Thrust"
+
+              power_value:
+                type: integer
+                description: "Rated power output in horsepower or pounds of thrust"
+                persisted: true
+                sources:
+                  - source: us-faa
+                    file: engine.txt
+                    description: "HORSEPOWER or THRUST column depending on engine type"
 
       military:
         type: boolean

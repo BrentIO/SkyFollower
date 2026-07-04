@@ -125,8 +125,8 @@ class TestBuildRecord:
         assert record["aircraft"]["manufacturer"] == "BOEING"
         assert record["aircraft"]["model"] == "B737-832"
         assert record["aircraft"]["serial_number"] == "27671"
-        assert record["powerplant"]["manufacturer"] == "CFM International"
-        assert record["powerplant"]["model"] == "CFM56-7B27"
+        assert record["aircraft"]["powerplant"]["manufacturer"] == "CFM International"
+        assert record["aircraft"]["powerplant"]["model"] == "CFM56-7B27"
         assert record["registrant"]["names"] == ["Singapore Airlines"]
 
     def test_empty_manufacturer_omitted(self):
@@ -147,12 +147,12 @@ class TestBuildRecord:
     def test_empty_engine_mfr_omitted(self):
         row = _make_row(engine_mfr="")
         record = _build_record(row, "76CE26", "9V-SKA")
-        assert "manufacturer" not in record.get("powerplant", {})
+        assert "manufacturer" not in record.get("aircraft", {}).get("powerplant", {})
 
     def test_empty_engine_model_omitted(self):
         row = _make_row(engine_model="")
         record = _build_record(row, "76CE26", "9V-SKA")
-        assert "model" not in record.get("powerplant", {})
+        assert "model" not in record.get("aircraft", {}).get("powerplant", {})
 
     def test_empty_operator_omits_registrant(self):
         row = _make_row(operator="")
@@ -163,7 +163,7 @@ class TestBuildRecord:
         row = _make_row(manufacturer="", model="", serial="", engine_mfr="", engine_model="")
         record = _build_record(row, "76CE26", "9V-SKA")
         assert "aircraft" not in record
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
 
 # ---------------------------------------------------------------------------

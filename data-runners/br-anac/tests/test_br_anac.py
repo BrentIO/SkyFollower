@@ -377,15 +377,15 @@ class TestBuildRecord:
 
     def test_powerplant_count_from_cdcls(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="L2P"))
-        assert record["powerplant"]["count"] == 2
+        assert record["aircraft"]["powerplant"]["count"] == 2
 
     def test_powerplant_type_from_cdcls(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="H1T"))
-        assert record["powerplant"]["type"] == "Turbo-shaft"
+        assert record["aircraft"]["powerplant"]["type"] == "Turbo-shaft"
 
     def test_no_powerplant_for_glider(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="L00"))
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
     def test_registrant_from_proprietariosjson(self):
         raw = json.dumps([{"NOME": "João Silva"}]).replace('"', '/""')
@@ -399,7 +399,7 @@ class TestBuildRecord:
     def test_null_cdcls_omits_type_and_powerplant(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(cdcls=None))
         assert "type" not in record.get("aircraft", {})
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
     def test_aircraft_category_land_from_l(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(cdcls="L1P"))
