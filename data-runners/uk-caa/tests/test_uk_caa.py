@@ -49,6 +49,7 @@ def _load_main():
 _mod = _load_main()
 
 _decode_aircraft_class = _mod._decode_aircraft_class
+_decode_aircraft_category = _mod._decode_aircraft_category
 _decode_country = _mod._decode_country
 _parse_year_built = _mod._parse_year_built
 _build_record = _mod._build_record
@@ -166,6 +167,30 @@ class TestDecodeAircraftClass:
 
     def test_none_returns_none(self):
         assert _decode_aircraft_class(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: _decode_aircraft_category
+# ---------------------------------------------------------------------------
+
+class TestDecodeAircraftCategory:
+    def test_landplane(self):
+        assert _decode_aircraft_category("FIXED-WING LANDPLANE") == "Land"
+
+    def test_seaplane(self):
+        assert _decode_aircraft_category("FIXED-WING SEAPLANE") == "Sea"
+
+    def test_amphibian(self):
+        assert _decode_aircraft_category("FIXED-WING AMPHIBIAN") == "Amphibian"
+
+    def test_rotorcraft_returns_none(self):
+        assert _decode_aircraft_category("ROTORCRAFT") is None
+
+    def test_empty_returns_none(self):
+        assert _decode_aircraft_category("") is None
+
+    def test_case_insensitive(self):
+        assert _decode_aircraft_category("fixed-wing landplane") == "Land"
 
     def test_unknown_passes_through(self):
         result = _decode_aircraft_class("SOME UNKNOWN CLASS")

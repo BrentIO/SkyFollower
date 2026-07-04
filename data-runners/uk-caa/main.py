@@ -47,6 +47,12 @@ _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 # Decode tables
 # ---------------------------------------------------------------------------
 
+_AIRCRAFT_CATEGORIES: dict[str, str] = {
+    "FIXED-WING LANDPLANE": "Land",
+    "FIXED-WING SEAPLANE": "Sea",
+    "FIXED-WING AMPHIBIAN": "Amphibian",
+}
+
 _AIRCRAFT_CLASSES: dict[str, str] = {
     "FIXED-WING LANDPLANE": "Airplane",
     "FIXED-WING SEAPLANE": "Airplane",
@@ -132,6 +138,12 @@ def _decode_aircraft_class(raw: str) -> Optional[str]:
     return _AIRCRAFT_CLASSES.get(value, raw.strip().title() or None)
 
 
+def _decode_aircraft_category(raw: str) -> Optional[str]:
+    """Map UK CAA AircraftClass to canonical aircraft.category; returns None for non-fixed-wing."""
+    value = raw.strip().upper() if raw else ""
+    return _AIRCRAFT_CATEGORIES.get(value)
+
+
 def _decode_country(raw: str) -> Optional[str]:
     """Map full English country name to ISO 3166-1 alpha-2; returns raw name if unmapped."""
     value = raw.strip().upper() if raw else ""
@@ -170,8 +182,10 @@ def _build_record(details: dict) -> Optional[dict]:
 
     # aircraft sub-object
     max_pax = aircraft_details.get("MaximumPassengers")
+    aircraft_class_raw = aircraft_details.get("AircraftClass", "")
     aircraft_fields = {
-        "type": _decode_aircraft_class(aircraft_details.get("AircraftClass", "")),
+        "type": _decode_aircraft_class(aircraft_class_raw),
+        "category": _decode_aircraft_category(aircraft_class_raw),
         "manufacturer": (aircraft_details.get("Manufacturer") or "").strip() or None,
         "model": (aircraft_details.get("Type") or "").strip() or None,
         "serial_number": (aircraft_details.get("SerialNumber") or "").strip() or None,
