@@ -1879,7 +1879,7 @@ records:
                     "Rotorcraft": Helicopter
                     "Glider": Glider
                     "Manned Free Balloon": Balloon
-                    "Motor-Glider": Glider
+                    "Motor-Glider": Powered Glider
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.AircraftClass
