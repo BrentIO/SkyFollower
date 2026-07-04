@@ -498,7 +498,7 @@ sources:
     url: "https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf"
     format: pdf
     cadence: weekly_tuesday
-    notes: "Stable PDF URL; all pages parsed with pdfplumber extract_table(); rows filtered to 5B- prefix; no ICAO hex in source — RediSearch lookup by registration against Mictronics simple index; OWNER/OPERATOR column split by / to produce multiple registrant names; MTOW KGS not stored; must run after Mictronics"
+    notes: "Stable PDF URL; all pages parsed with pdfplumber extract_table(); no ICAO hex in source — RediSearch lookup by registration against Mictronics simple index; OWNER/OPERATOR column split by / to produce multiple registrant names; MTOW KGS not stored; must run after Mictronics"
     fields:
       "REGISTRATION MARK": "Registration mark (5B-prefix; lookup key)"
       "MANUFACTURER": "Aircraft manufacturer name"
@@ -506,6 +506,9 @@ sources:
       "AIRCRAFT SERIAL NO": "Manufacturer serial number"
       "MTOW KGS": "Maximum takeoff weight in kilograms; not stored"
       "AIRCRAFT OWNER/OPERATOR": "Owner and/or operator name(s); multiple entries delimited by /"
+    filter:
+      field: "REGISTRATION MARK"
+      skip_if_not_pattern: "^5B-"
 
   cz-caa:
     description: "Czech CAA aircraft register — OK-prefix and numeric registrations"
