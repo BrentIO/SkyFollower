@@ -194,6 +194,7 @@ sources:
       - name: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
         format: ods
         columns:
+          Flag:             Registration status flag; not stored
           Registration:     Full PH-prefix registration mark
           Manufacturer:     Aircraft manufacturer name
           Model:            Aircraft model designation
@@ -206,6 +207,9 @@ sources:
           EngKind:          Engine type description
           EngManufacturer:  Engine manufacturer name
           EngModel:         Engine model designation
+        filter:
+          field: X-Ponder
+          skip_if_not_pattern: "^[0-9A-Fa-f]{6}$"
 
   br-anac:
     description: "Brazil ANAC Registro Aeronáutico Brasileiro (RAB) — PP/PR/PT/PS/PU-prefix registrations"
