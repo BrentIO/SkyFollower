@@ -216,7 +216,7 @@ sources:
     url: "https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_aeronaves.json"
     format: json
     cadence: weekly_wednesday
-    notes: "JSON array, UTF-8 BOM encoded, ~43MB, ~34,551 total records; no ICAO hex — resolved via RediSearch against Mictronics records; must run after Mictronics; active filter: DTCANC is null AND CDINTERDICAO does not start with R (trademark reservation) or M (cancelled); MARCA stored without hyphen (PPAJH) — insert hyphen after position 2 (PP-AJH); CDCLS encodes aircraft type (position 1), engine count (position 2), and propulsion (position 3); PROPRIETARIOSJSON uses non-standard /\"\" escape for double-quotes"
+    notes: "JSON array, UTF-8 BOM encoded, ~43MB, ~34,551 total records; no ICAO hex — resolved via RediSearch against Mictronics records; must run after Mictronics; MARCA stored without hyphen (PPAJH) — insert hyphen after position 2 (PP-AJH); CDCLS encodes aircraft type (position 1), engine count (position 2), and propulsion (position 3); PROPRIETARIOSJSON uses non-standard /\"\" escape for double-quotes"
     fields:
       MARCA:              Registration mark without hyphen (e.g. PPAJH → PP-AJH)
       DTCANC:             Cancellation date; not stored
@@ -229,6 +229,11 @@ sources:
       NRANOFABRICACAO:    Year of manufacture (4-digit string; may be null)
       CDCLS:              Aircraft classification code
       PROPRIETARIOSJSON:  JSON array of owners; uses non-standard /\"\" escaping for double-quotes
+    filter:
+      - field: DTCANC
+        skip_if_not_empty: true
+      - field: CDINTERDICAO
+        skip_if_pattern: "^[RM]"
 
   au-casa:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
