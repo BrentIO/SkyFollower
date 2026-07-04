@@ -194,9 +194,9 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "A320"
         assert record["aircraft"]["serial_number"] == "1234"
         assert record["aircraft"]["manufactured_date"] == "2019-01-01"
-        assert record["powerplant"]["manufacturer"] == "CFM"
-        assert record["powerplant"]["model"] == "CFM56-5B"
-        assert record["powerplant"]["count"] == 2
+        assert record["aircraft"]["powerplant"]["manufacturer"] == "CFM"
+        assert record["aircraft"]["powerplant"]["model"] == "CFM56-5B"
+        assert record["aircraft"]["powerplant"]["count"] == 2
         assert record["aircraft"]["type"] == "Airplane"
 
     def test_no_registrant_key(self):
@@ -228,13 +228,13 @@ class TestBuildRecord:
     def test_powerplant_count_is_integer(self):
         row = _make_row(num_mot="4")
         record = _build_record(row, "340123", "EC-ABC")
-        assert record["powerplant"]["count"] == 4
-        assert isinstance(record["powerplant"]["count"], int)
+        assert record["aircraft"]["powerplant"]["count"] == 4
+        assert isinstance(record["aircraft"]["powerplant"]["count"], int)
 
     def test_invalid_powerplant_count_omitted(self):
         row = _make_row(num_mot="N/A")
         record = _build_record(row, "340123", "EC-ABC")
-        assert "count" not in record.get("powerplant", {})
+        assert "count" not in record.get("aircraft", {}).get("powerplant", {})
 
     def test_unknown_clase_omits_type(self):
         row = _make_row(clase="DESCONOCIDO")

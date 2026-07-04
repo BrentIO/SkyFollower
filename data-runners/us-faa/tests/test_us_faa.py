@@ -501,7 +501,7 @@ class TestBuildAircraftRecord:
     def test_powerplant_turbofan(self):
         row, acft_row, eng_row = self._fetch_rows("A8AE7F")
         record = build_aircraft_record(row, acft_row, eng_row)
-        pp = record["powerplant"]
+        pp = record["aircraft"]["powerplant"]
         assert pp["count"] == 2
         assert pp["type"] == "Turbo-fan"
         assert pp["manufacturer"] == "PRATT & WHITNEY"
@@ -512,7 +512,7 @@ class TestBuildAircraftRecord:
     def test_powerplant_piston(self):
         row, acft_row, eng_row = self._fetch_rows("AA0001")
         record = build_aircraft_record(row, acft_row, eng_row)
-        pp = record["powerplant"]
+        pp = record["aircraft"]["powerplant"]
         assert pp["type"] == "Piston"
         assert pp["manufacturer"] == "LYCOMING"
         assert pp["model"] == "O-320-D2J"
@@ -523,7 +523,7 @@ class TestBuildAircraftRecord:
         row, _, _ = self._fetch_rows("AB1234")
         record = build_aircraft_record(row, None, None)
         assert record["aircraft"] is None
-        assert record["powerplant"] is None
+        assert "powerplant" not in (record.get("aircraft") or {})
 
     def test_manufactured_year_none_gives_null_date(self):
         row, acft_row, eng_row = self._fetch_rows("AB1234")

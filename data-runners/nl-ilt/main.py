@@ -244,7 +244,7 @@ def _build_record(row: dict) -> Optional[dict]:
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if powerplant_fields:
-        record["powerplant"] = powerplant_fields
+        aircraft_fields["powerplant"] = powerplant_fields
 
     return record
 

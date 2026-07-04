@@ -219,7 +219,7 @@ def _escape_tag(value: str) -> str:
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build the enrichment record from a CASA CSV row."""
     # aircraft sub-object
-    aircraft_fields = {
+    aircraft_fields: dict = {
         "type": _decode_aircraft_type(row.get("Airframe", "")),
         "manufacturer": row.get("Manu", "").strip() or None,
         "model": row.get("Model", "").strip() or None,
@@ -227,7 +227,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "manufactured_date": _parse_manufactured_date(row.get("Yearmanu", "")),
         "type_designator": row.get("ICAOtypedesig", "").strip() or None,
     }
-    aircraft = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
     # powerplant sub-object
     powerplant_fields = {
@@ -237,6 +236,10 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "model": row.get("Engmodel", "").strip() or None,
     }
     powerplant = {k: v for k, v in powerplant_fields.items() if v is not None} or None
+    if powerplant:
+        aircraft_fields["powerplant"] = powerplant
+
+    aircraft = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
     # registrant sub-object
     name = row.get("regholdname", "").strip() or None
@@ -257,8 +260,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     record: dict = {"icao_hex": icao_hex, "registration": registration}
     if aircraft:
         record["aircraft"] = aircraft
-    if powerplant:
-        record["powerplant"] = powerplant
     if registrant:
         record["registrant"] = registrant
     return record

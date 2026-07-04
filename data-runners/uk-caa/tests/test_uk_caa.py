@@ -302,11 +302,11 @@ class TestBuildRecord:
 
     def test_powerplant_count(self):
         record = _build_record(_make_details(engine_count=2))
-        assert record["powerplant"]["count"] == 2
+        assert record["aircraft"]["powerplant"]["count"] == 2
 
     def test_powerplant_model(self):
         record = _build_record(_make_details(engine_name="ROLLS-ROYCE Trent 1000-K2"))
-        assert record["powerplant"]["model"] == "ROLLS-ROYCE Trent 1000-K2"
+        assert record["aircraft"]["powerplant"]["model"] == "ROLLS-ROYCE Trent 1000-K2"
 
     def test_registrant_name(self):
         record = _build_record(_make_details())
@@ -347,7 +347,7 @@ class TestBuildRecord:
         details = _make_details()
         details["AircraftDetails"]["Engines"] = []
         record = _build_record(details)
-        assert "powerplant" not in record
+        assert "powerplant" not in record.get("aircraft", {})
 
     def test_no_owners_omits_registrant(self):
         details = _make_details()

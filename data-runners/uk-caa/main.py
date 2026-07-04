@@ -183,7 +183,7 @@ def _build_record(details: dict) -> Optional[dict]:
     # aircraft sub-object
     max_pax = aircraft_details.get("MaximumPassengers")
     aircraft_class_raw = aircraft_details.get("AircraftClass", "")
-    aircraft_fields = {
+    aircraft_fields: dict = {
         "type": _decode_aircraft_class(aircraft_class_raw),
         "category": _decode_aircraft_category(aircraft_class_raw),
         "manufacturer": (aircraft_details.get("Manufacturer") or "").strip() or None,
@@ -193,7 +193,6 @@ def _build_record(details: dict) -> Optional[dict]:
         "manufactured_date": _parse_year_built(aircraft_details.get("YearBuild")),
         "seats": int(max_pax) + 1 if max_pax is not None else None,
     }
-    aircraft: Optional[dict] = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
     # powerplant sub-object — use first engine entry
     engines = aircraft_details.get("Engines") or []
@@ -208,6 +207,10 @@ def _build_record(details: dict) -> Optional[dict]:
         if name:
             pp_fields["model"] = name
         powerplant = pp_fields or None
+    if powerplant:
+        aircraft_fields["powerplant"] = powerplant
+
+    aircraft: Optional[dict] = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
     # registrant sub-object — use first registered owner
     owners = details.get("RegisteredAircraftOwners") or []
@@ -232,8 +235,6 @@ def _build_record(details: dict) -> Optional[dict]:
     record: dict = {"icao_hex": icao_hex, "registration": registration}
     if aircraft:
         record["aircraft"] = aircraft
-    if powerplant:
-        record["powerplant"] = powerplant
     if registrant:
         record["registrant"] = registrant
     return record
