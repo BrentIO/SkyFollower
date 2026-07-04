@@ -5,7 +5,7 @@ SkyFollower Bulgaria CAA Data Runner
 Scrapes the Bulgaria CAA aircraft register page to discover the current
 date-encoded xlsx URL, downloads and parses it with openpyxl, filters to
 LZ-prefix rows, looks up ICAO hex via the Redis simple search index
-(Mictronics), writes enrichment data to aircraft:detail:{icao_hex} with
+(Mictronics), writes enrichment data to aircraft:registry:{icao_hex} with
 14-day TTL, publishes MQTT completion stats, then exits.
 
 Xlsx columns (0-based; row 0 = info text, row 1 = header, data from row 2):
@@ -41,8 +41,8 @@ from redis.commands.search.query import Query
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.redis_keys import (
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
-    aircraft_detail_key,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    aircraft_registry_key,
 )
 
 logger = logging.getLogger("bg-caa")
@@ -205,11 +205,11 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         escaped = [_escape_tag(reg) for reg in batch]
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str).return_fields("registration").paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("aircraft:simple:", "")
+                icao_hex = doc.id.replace("aircraft:mictronics:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration.strip()] = icao_hex
@@ -251,7 +251,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if row is None:
             continue
         record = _build_record(row, icao_hex, registration)
-        key = aircraft_detail_key(icao_hex)
+        key = aircraft_registry_key(icao_hex)
         pipe.json().set(key, "$", record)
         pipe.expire(key, ttl)
         count += 1

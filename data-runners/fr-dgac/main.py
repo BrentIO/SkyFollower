@@ -4,10 +4,10 @@ SkyFollower France DGAC Data Runner
 
 Downloads the Direction Générale de l'Aviation Civile (DGAC) aircraft register
 CSV, groups rows by registration to handle co-ownership, looks up each F-
-registration in the Redis simple-aircraft search index (idx:aircraft:simple,
-populated by Mictronics) to find the ICAO hex, performs a type sanity check
-against the simple record, then writes DGAC enrichment data to
-aircraft:detail:{icao_hex} (fire-and-forget, no read-before-write).
+registration in the Mictronics search index (idx:aircraft:mictronics)
+to find the ICAO hex, performs a type sanity check against the Mictronics
+record, then writes DGAC enrichment data to
+aircraft:registry:{icao_hex} (fire-and-forget, no read-before-write).
 Publishes MQTT completion stats then exits.
 
 Important: the DGAC register does not publish ICAO hex (Mode S) addresses.
@@ -41,10 +41,10 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from shared.redis_keys import (
-    aircraft_detail_key,
-    aircraft_simple_key,
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+    aircraft_registry_key,
+    aircraft_mictronics_key,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
 )
 
 logger = logging.getLogger("fr-dgac")
@@ -262,16 +262,16 @@ def _build_record(
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -292,13 +292,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("aircraft:simple:", "")
+                icao_hex = doc.id.replace("aircraft:mictronics:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = icao_hex
@@ -375,7 +375,7 @@ def _group_by_registration(rows: list[dict]) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
-    """Write DGAC enrichment records to aircraft:detail:{icao_hex}. Returns count written."""
+    """Write DGAC enrichment records to aircraft:registry:{icao_hex}. Returns count written."""
     groups = _group_by_registration(rows)
     registrations = list(groups.keys())
     logger.info("Looking up %d registrations in Redis search index.", len(registrations))
@@ -401,7 +401,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         fr_dgac_model = group["first_row"].get("MODELE", "").strip()
 
         # Type sanity check: compare DGAC model against the simple record.
-        simple_raw = r.json().get(aircraft_simple_key(icao_hex))
+        simple_raw = r.json().get(aircraft_mictronics_key(icao_hex))
         if simple_raw is not None and not _type_check_passes(simple_raw, fr_dgac_model):
             logger.debug("Type sanity check failed for %s (%s), skipping.", registration, fr_dgac_model)
             continue
@@ -415,7 +415,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         )
         record["source"] = "fr-dgac"
 
-        key = aircraft_detail_key(icao_hex)
+        key = aircraft_registry_key(icao_hex)
         pipe.json().set(key, "$", record)
         pipe.expire(key, ttl)
         pipe_size += 1

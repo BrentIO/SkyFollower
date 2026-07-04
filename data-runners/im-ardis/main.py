@@ -5,7 +5,7 @@ SkyFollower Isle of Man ARDIS Data Runner
 Fetches the Isle of Man Aircraft Registry (ARDIS) from the search form at
 ardis.iomaircraftregistry.com, parses the HTML results table, filters out
 deregistered aircraft, and writes enrichment data to
-aircraft:detail:{icao_hex} using the Mode S Number column directly.
+aircraft:registry:{icao_hex} using the Mode S Number column directly.
 No RediSearch reverse-lookup is needed — ICAO hex is supplied in the register.
 Publishes MQTT completion stats, then exits.
 
@@ -29,7 +29,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.redis_keys import aircraft_detail_key
+from shared.redis_keys import aircraft_registry_key
 
 logger = logging.getLogger("im-ardis")
 
@@ -234,7 +234,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if record is None:
             continue
 
-        key = aircraft_detail_key(record["icao_hex"])
+        key = aircraft_registry_key(record["icao_hex"])
         pipe.json().set(key, "$", record)
         pipe.expire(key, ttl)
         count += 1

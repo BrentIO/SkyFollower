@@ -537,13 +537,13 @@ class TestBuildAircraftRecord:
 # ---------------------------------------------------------------------------
 
 class TestRedisKeys:
-    def test_aircraft_detail_key_format(self):
-        from shared.redis_keys import aircraft_detail_key
-        assert aircraft_detail_key("a8ae7f") == "aircraft:detail:A8AE7F"
+    def test_aircraft_registry_key_format(self):
+        from shared.redis_keys import aircraft_registry_key
+        assert aircraft_registry_key("a8ae7f") == "aircraft:registry:A8AE7F"
 
     def test_aircraft_detail_search_index_name(self):
-        from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX
-        assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
+        from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX
+        assert AIRCRAFT_REGISTRY_SEARCH_INDEX == "idx:aircraft:registry"
 
 
 # ---------------------------------------------------------------------------
@@ -573,12 +573,12 @@ class TestWriteToRedis:
         assert write_to_redis(conn, r, REDIS_TTL) == 3
         conn.close()
 
-    def test_aircraft_detail_key_written(self):
+    def test_aircraft_registry_key_written(self):
         conn = self._make_db()
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "aircraft:detail:A8AE7F" in keys
+        assert "aircraft:registry:A8AE7F" in keys
         conn.close()
 
     def test_json_set_uses_root_path(self):
@@ -613,7 +613,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
-        record = calls["aircraft:detail:A8AE7F"]
+        record = calls["aircraft:registry:A8AE7F"]
         assert isinstance(record, dict)
         assert record["source"] == "us-faa"
         assert record["registration"] == "N659DL"

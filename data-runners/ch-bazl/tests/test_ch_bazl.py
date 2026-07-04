@@ -426,7 +426,7 @@ class TestWriteToRedis:
         r = _make_redis()
         write_to_redis([_make_row(icao_hex="4B1916")], r, REDIS_TTL)
         key = r.json.return_value.set.call_args.args[0]
-        assert key == "aircraft:detail:4B1916"
+        assert key == "aircraft:registry:4B1916"
 
     def test_uses_root_json_path(self):
         r = _make_redis()
@@ -436,7 +436,7 @@ class TestWriteToRedis:
     def test_sets_ttl(self):
         r = _make_redis()
         write_to_redis([_make_row()], r, REDIS_TTL)
-        r.expire.assert_called_once_with("aircraft:detail:4B1916", REDIS_TTL)
+        r.expire.assert_called_once_with("aircraft:registry:4B1916", REDIS_TTL)
 
     def test_source_field_set(self):
         r = _make_redis()
@@ -463,7 +463,7 @@ class TestWriteToRedis:
         r = _make_redis()
         write_to_redis([_make_row(icao_hex="4b1916")], r, REDIS_TTL)
         key = r.json.return_value.set.call_args.args[0]
-        assert key == "aircraft:detail:4B1916"
+        assert key == "aircraft:registry:4B1916"
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +473,7 @@ class TestWriteToRedis:
 class TestEnsureSearchIndex:
     def test_skips_create_when_index_exists(self):
         r = MagicMock()
-        r.ft.return_value.info.return_value = {"index_name": "idx:aircraft:detail"}
+        r.ft.return_value.info.return_value = {"index_name": "idx:aircraft:registry"}
         _ensure_search_index(r)
         r.ft.return_value.create_index.assert_not_called()
 
@@ -489,7 +489,7 @@ class TestEnsureSearchIndex:
         _ensure_search_index(r)
         call_kwargs = r.ft.return_value.create_index.call_args.kwargs
         definition = call_kwargs["definition"]
-        assert "aircraft:detail:" in definition.args
+        assert "aircraft:registry:" in definition.args
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 SkyFollower Norway CAA Data Runner
 
 Downloads the Norwegian Civil Aviation Authority aircraft register JSON,
-normalises fields into the aircraft:detail:{hex} enrichment shape, writes
+normalises fields into the aircraft:registry:{hex} enrichment shape, writes
 to Redis with a 14-day TTL, publishes MQTT completion stats, then exits.
 
 Data source: https://data.caa.no/nlr/norgesluftfartoyregister.json
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
+from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
 
 logger = logging.getLogger("no-caa")
 
@@ -129,7 +129,7 @@ def _parse_manufactured_date(byggeaar: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _build_record(row: dict) -> Optional[dict]:
-    """Build the aircraft:detail:{hex} JSON record from a registry entry. Returns None if no ICAO hex."""
+    """Build the aircraft:registry:{hex} JSON record from a registry entry. Returns None if no ICAO hex."""
     icao_hex = _extract_icao_hex(row.get("ICAO 24-bits adresse") or [])
     if not icao_hex:
         return None
@@ -202,16 +202,16 @@ def _build_record(row: dict) -> Optional[dict]:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if record is None:
             continue
         record["source"] = "no-caa"
-        key = aircraft_detail_key(record["icao_hex"])
+        key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
         if len(batch) == 10000:

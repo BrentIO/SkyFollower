@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
+from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
 
 logger = logging.getLogger("ca-transport-canada")
 
@@ -422,16 +422,16 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +471,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         owner_rows = owner_cur.fetchall()
         record = build_aircraft_record(acft_row, owner_rows)
         record["source"] = "ca-transport-canada"
-        key = aircraft_detail_key(record["icao_hex"])
+        key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
         if len(batch) == 10000:

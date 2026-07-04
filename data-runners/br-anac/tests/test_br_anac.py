@@ -458,7 +458,7 @@ class TestWriteToRedis:
         with self._patch_reg_map({"PP-AJH": "E491A0"}):
             write_to_redis(rows, r, REDIS_TTL)
         key_arg = r.json.return_value.set.call_args.args[0]
-        assert key_arg == "aircraft:detail:E491A0"
+        assert key_arg == "aircraft:registry:E491A0"
 
     def test_writes_source_field(self):
         r = self._make_redis()
@@ -519,7 +519,7 @@ class TestWriteToRedis:
         rows = [_make_row()]
         with self._patch_reg_map({"PP-AJH": "E491A0"}):
             write_to_redis(rows, r, REDIS_TTL)
-        r.expire.assert_called_once_with("aircraft:detail:E491A0", REDIS_TTL)
+        r.expire.assert_called_once_with("aircraft:registry:E491A0", REDIS_TTL)
 
 
 # ---------------------------------------------------------------------------

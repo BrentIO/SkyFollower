@@ -77,7 +77,7 @@ def _make_aircraft(
 def _make_redis_with_search(icao_hex="4CA123", registration="TF-ABC"):
     r = MagicMock()
     doc = MagicMock()
-    doc.id = f"aircraft:simple:{icao_hex}"
+    doc.id = f"aircraft:mictronics:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
@@ -243,7 +243,7 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
         key_used = set_call[0][0]
-        assert key_used == "aircraft:detail:4CA123"
+        assert key_used == "aircraft:registry:4CA123"
 
     def test_source_field_in_written_record(self):
         aircraft = [_make_aircraft()]
@@ -274,7 +274,7 @@ class TestWriteToRedis:
             docs = []
             for reg in ["TF-ABC", "TF-XYZ"]:
                 doc = MagicMock()
-                doc.id = f"aircraft:simple:4CA12{call_count[0]}"
+                doc.id = f"aircraft:mictronics:4CA12{call_count[0]}"
                 doc.registration = reg
                 docs.append(doc)
             results.docs = docs
@@ -288,7 +288,7 @@ class TestWriteToRedis:
         aircraft = [_make_aircraft()]
         r = _make_redis_with_search(icao_hex="4CA123", registration="TF-ABC")
         write_to_redis(aircraft, r, REDIS_TTL)
-        r.pipeline.return_value.expire.assert_called_with("aircraft:detail:4CA123", REDIS_TTL)
+        r.pipeline.return_value.expire.assert_called_with("aircraft:registry:4CA123", REDIS_TTL)
 
 
 # ---------------------------------------------------------------------------

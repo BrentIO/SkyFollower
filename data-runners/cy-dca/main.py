@@ -6,7 +6,7 @@ Downloads the Cyprus Department of Civil Aviation aircraft register PDF from
 a stable URL, parses all pages using pdfplumber extract_table(), filters to
 5B-prefix rows, looks up each registration in the Redis simple search index
 to find the ICAO hex (provided by Mictronics), writes enrichment data to
-aircraft:detail:{icao_hex} with 14-day TTL, publishes MQTT completion stats,
+aircraft:registry:{icao_hex} with 14-day TTL, publishes MQTT completion stats,
 then exits.
 
 PDF columns (0-based):
@@ -44,8 +44,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.query import Query
 
 from shared.redis_keys import (
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
-    aircraft_detail_key,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    aircraft_registry_key,
 )
 
 logger = logging.getLogger("cy-dca")
@@ -184,11 +184,11 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str).return_fields("registration").paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("aircraft:simple:", "")
+                icao_hex = doc.id.replace("aircraft:mictronics:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration.strip()] = icao_hex
@@ -231,7 +231,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if row is None:
             continue
         record = _build_record(row, icao_hex, registration)
-        key = aircraft_detail_key(icao_hex)
+        key = aircraft_registry_key(icao_hex)
         pipe.json().set(key, "$", record)
         pipe.expire(key, ttl)
         count += 1

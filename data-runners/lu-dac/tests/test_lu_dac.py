@@ -76,7 +76,7 @@ def _make_word(text: str, x0: float, top: float) -> dict:
 def _make_redis_with_search(icao_hex="4A0123", registration="LX-ABC"):
     r = MagicMock()
     doc = MagicMock()
-    doc.id = f"aircraft:simple:{icao_hex}"
+    doc.id = f"aircraft:mictronics:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
@@ -325,7 +325,7 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
         key_used = set_call[0][0]
-        assert key_used == "aircraft:detail:4A0123"
+        assert key_used == "aircraft:registry:4A0123"
 
     def test_source_field_in_written_record(self):
         records = [_make_parsed()]
@@ -345,7 +345,7 @@ class TestWriteToRedis:
         records = [_make_parsed()]
         r = _make_redis_with_search(icao_hex="4A0123", registration="LX-ABC")
         write_to_redis(records, r, REDIS_TTL)
-        r.pipeline.return_value.expire.assert_called_with("aircraft:detail:4A0123", REDIS_TTL)
+        r.pipeline.return_value.expire.assert_called_with("aircraft:registry:4A0123", REDIS_TTL)
 
 
 # ---------------------------------------------------------------------------

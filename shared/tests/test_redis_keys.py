@@ -1,11 +1,11 @@
 import pytest
 
 from shared.redis_keys import (
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
     airport_key,
-    aircraft_detail_key,
-    aircraft_simple_key,
+    aircraft_mictronics_key,
+    aircraft_registry_key,
     config_areas_key,
     config_areas_version_key,
     config_rules_key,
@@ -20,19 +20,19 @@ from shared.redis_keys import (
 
 
 class TestEnrichmentKeys:
-    def test_aircraft_simple_key(self):
-        assert aircraft_simple_key("a8ae7f") == "aircraft:simple:A8AE7F"
-        assert aircraft_simple_key("A8AE7F") == "aircraft:simple:A8AE7F"
+    def test_aircraft_mictronics_key(self):
+        assert aircraft_mictronics_key("a8ae7f") == "aircraft:mictronics:A8AE7F"
+        assert aircraft_mictronics_key("A8AE7F") == "aircraft:mictronics:A8AE7F"
 
-    def test_aircraft_detail_key(self):
-        assert aircraft_detail_key("a8ae7f") == "aircraft:detail:A8AE7F"
-        assert aircraft_detail_key("A8AE7F") == "aircraft:detail:A8AE7F"
+    def test_aircraft_registry_key(self):
+        assert aircraft_registry_key("a8ae7f") == "aircraft:registry:A8AE7F"
+        assert aircraft_registry_key("A8AE7F") == "aircraft:registry:A8AE7F"
 
-    def test_aircraft_simple_search_index_name(self):
-        assert AIRCRAFT_SIMPLE_SEARCH_INDEX == "idx:aircraft:simple"
+    def test_aircraft_mictronics_search_index_name(self):
+        assert AIRCRAFT_MICTRONICS_SEARCH_INDEX == "idx:aircraft:mictronics"
 
-    def test_aircraft_detail_search_index_name(self):
-        assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
+    def test_aircraft_registry_search_index_name(self):
+        assert AIRCRAFT_REGISTRY_SEARCH_INDEX == "idx:aircraft:registry"
 
     def test_operator_key(self):
         assert operator_key("dal") == "operator:DAL"

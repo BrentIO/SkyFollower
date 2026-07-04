@@ -89,7 +89,7 @@ def _make_row(
 def _make_redis_with_search(icao_hex="4CA123", registration="2-ABCD"):
     r = MagicMock()
     doc = MagicMock()
-    doc.id = f"aircraft:simple:{icao_hex}"
+    doc.id = f"aircraft:mictronics:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
@@ -433,7 +433,7 @@ class TestWriteToRedis:
         r = _make_redis_with_search(icao_hex="4CA123", registration="2-ABCD")
         write_to_redis(rows, r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
-        assert set_call[0][0] == "aircraft:detail:4CA123"
+        assert set_call[0][0] == "aircraft:registry:4CA123"
 
     def test_source_field_in_written_record(self):
         rows = [_make_row()]
@@ -446,7 +446,7 @@ class TestWriteToRedis:
         rows = [_make_row()]
         r = _make_redis_with_search(icao_hex="4CA123", registration="2-ABCD")
         write_to_redis(rows, r, REDIS_TTL)
-        r.pipeline.return_value.expire.assert_called_with("aircraft:detail:4CA123", REDIS_TTL)
+        r.pipeline.return_value.expire.assert_called_with("aircraft:registry:4CA123", REDIS_TTL)
 
     def test_empty_list_returns_zero(self):
         count = write_to_redis([], _make_redis_no_match(), REDIS_TTL)
@@ -456,10 +456,10 @@ class TestWriteToRedis:
         rows = [_make_row(registration="2-ABCD"), _make_row(registration="2-EFGH")]
         r = MagicMock()
         doc_a = MagicMock()
-        doc_a.id = "aircraft:simple:4CA123"
+        doc_a.id = "aircraft:mictronics:4CA123"
         doc_a.registration = "2-ABCD"
         doc_b = MagicMock()
-        doc_b.id = "aircraft:simple:4CA456"
+        doc_b.id = "aircraft:mictronics:4CA456"
         doc_b.registration = "2-EFGH"
         results = MagicMock()
         results.docs = [doc_a, doc_b]
