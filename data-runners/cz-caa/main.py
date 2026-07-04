@@ -49,6 +49,7 @@ REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/cz-caa"
 REQUEST_DELAY = 0.25  # seconds between detail requests
 _DETAIL_MAX_RETRIES = 3
+_RETRIABLE_HTTP = frozenset({403, 429})
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -91,17 +92,31 @@ def _fetch_active_ids(session: requests.Session) -> list[int]:
 
 
 def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
-    """Fetch a single aircraft detail record with retry on connection errors."""
+    """Fetch a single aircraft detail record with retry on connection errors and retriable HTTP errors."""
     url = _DETAIL_URL.format(id=record_id)
     logger.debug("Downloading Czech CAA detail from %s", url)
 
     for attempt in range(_DETAIL_MAX_RETRIES + 1):
         try:
             resp = session.get(url, timeout=30)
-            if not resp.ok:
-                logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
+            if resp.ok:
+                return resp.json()
+            if resp.status_code in _RETRIABLE_HTTP or resp.status_code >= 500:
+                if attempt < _DETAIL_MAX_RETRIES:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "Detail request for id=%d returned HTTP %d; retrying in %ds (attempt %d/%d).",
+                        record_id, resp.status_code, wait, attempt + 1, _DETAIL_MAX_RETRIES,
+                    )
+                    time.sleep(wait)
+                    continue
+                logger.warning(
+                    "Detail request for id=%d returned HTTP %d after %d attempts.",
+                    record_id, resp.status_code, _DETAIL_MAX_RETRIES + 1,
+                )
                 return None
-            return resp.json()
+            logger.warning("Detail request for id=%d failed with HTTP %d.", record_id, resp.status_code)
+            return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             if attempt < _DETAIL_MAX_RETRIES:
                 wait = 2 ** attempt
