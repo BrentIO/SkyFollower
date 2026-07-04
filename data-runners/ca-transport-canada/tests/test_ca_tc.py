@@ -638,7 +638,7 @@ class TestBuildAircraftRecord:
         acft = self._fetch_acft_row("C00001", conn)
         owners = self._fetch_owner_rows("C-GABC", conn)
         record = build_aircraft_record(acft, owners)
-        pp = record["powerplant"]
+        pp = record["aircraft"]["powerplant"]
         assert pp["count"] == 1
         assert pp["type"] == "Piston"
         assert pp["manufacturer"] == "LYCOMING"
@@ -652,7 +652,7 @@ class TestBuildAircraftRecord:
         acft = self._fetch_acft_row("C00002", conn)
         owners = self._fetch_owner_rows("C-XYZ", conn)
         record = build_aircraft_record(acft, owners)
-        pp = record["powerplant"]
+        pp = record["aircraft"]["powerplant"]
         assert pp["count"] == 2
         assert pp["type"] == "Turbo-fan"
         assert pp["manufacturer"] == "CFM INTERNATIONAL"
@@ -664,13 +664,13 @@ class TestBuildAircraftRecord:
 # ---------------------------------------------------------------------------
 
 class TestRedisKeys:
-    def test_aircraft_detail_key_format(self):
-        from shared.redis_keys import aircraft_detail_key
-        assert aircraft_detail_key("c00001") == "aircraft:detail:C00001"
+    def test_aircraft_registry_key_format(self):
+        from shared.redis_keys import aircraft_registry_key
+        assert aircraft_registry_key("c00001") == "aircraft:registry:C00001"
 
     def test_aircraft_detail_search_index_name(self):
-        from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX
-        assert AIRCRAFT_DETAIL_SEARCH_INDEX == "idx:aircraft:detail"
+        from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX
+        assert AIRCRAFT_REGISTRY_SEARCH_INDEX == "idx:aircraft:registry"
 
 
 # ---------------------------------------------------------------------------
@@ -703,8 +703,8 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "aircraft:detail:C00001" in keys
-        assert "aircraft:detail:C00002" in keys
+        assert "aircraft:registry:C00001" in keys
+        assert "aircraft:registry:C00002" in keys
         conn.close()
 
     def test_inactive_icao_hex_not_written(self):
@@ -712,7 +712,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "aircraft:detail:C00003" not in keys
+        assert "aircraft:registry:C00003" not in keys
         conn.close()
 
     def test_json_set_uses_root_path(self):
@@ -747,7 +747,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
-        record = calls["aircraft:detail:C00001"]
+        record = calls["aircraft:registry:C00001"]
         assert isinstance(record, dict)
         assert record["source"] == "ca-transport-canada"
         assert record["registration"] == "C-GABC"

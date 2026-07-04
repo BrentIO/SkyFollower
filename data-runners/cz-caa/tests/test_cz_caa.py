@@ -559,7 +559,7 @@ class TestWriteToRedis:
         r = _make_redis()
         write_to_redis(_make_row(icao_hex="49B0AA"), r, REDIS_TTL)
         key = r.json.return_value.set.call_args[0][0]
-        assert key == "aircraft:detail:49B0AA"
+        assert key == "aircraft:registry:49B0AA"
 
     def test_source_field_in_record(self):
         r = _make_redis()
@@ -570,7 +570,7 @@ class TestWriteToRedis:
     def test_ttl_applied(self):
         r = _make_redis()
         write_to_redis(_make_row(icao_hex="49B0AA"), r, REDIS_TTL)
-        r.expire.assert_called_with("aircraft:detail:49B0AA", REDIS_TTL)
+        r.expire.assert_called_with("aircraft:registry:49B0AA", REDIS_TTL)
 
     def test_empty_icao_hex_returns_false(self):
         r = _make_redis()

@@ -4,7 +4,7 @@ SkyFollower Cayman Islands CAA Data Runner
 
 Downloads the Cayman Islands Civil Aviation Authority (CAA) aircraft register
 PDF, parses aircraft data, and writes enrichment records to Redis using
-the ICAO hex resolved via RediSearch against the Mictronics simple-key data.
+the ICAO hex resolved via RediSearch against the Mictronics data.
 
 The register contains owner name, registration, combined make/model ("Series
 Type"), and serial number. No manufacturer column, type designator, or
@@ -42,10 +42,10 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from shared.redis_keys import (
-    aircraft_detail_key,
-    aircraft_simple_key,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
+    aircraft_registry_key,
+    aircraft_mictronics_key,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
 )
 
 logger = logging.getLogger("ky-caa")
@@ -100,7 +100,7 @@ def _type_tokens(model_str: str) -> set:
 
 
 def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
-    """Return True if the ky-caa model string is consistent with the Mictronics simple record.
+    """Return True if the ky-caa model string is consistent with the Mictronics record.
 
     Returns True when detail_model_str is empty, when neither record contains
     recognisable type tokens, or when the token sets overlap.
@@ -261,27 +261,27 @@ def _escape_tag(value: str) -> str:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
 # Registration → icao_hex lookup
 # ---------------------------------------------------------------------------
 
-_SIMPLE_KEY_PREFIX = "aircraft:simple:"
+_MICTRONICS_KEY_PREFIX = "aircraft:mictronics:"
 
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
-    """Batch-query the Mictronics simple search index for icao_hex by registration mark.
+    """Batch-query the Mictronics search index for icao_hex by registration mark.
 
     Returns {registration → icao_hex} for registrations already in Redis.
     Registrations not found (aircraft not yet in Mictronics) are omitted.
@@ -295,13 +295,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                hex_val = doc.id[len(_SIMPLE_KEY_PREFIX):]
+                hex_val = doc.id[len(_MICTRONICS_KEY_PREFIX):]
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = hex_val
@@ -318,9 +318,9 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Cayman Islands CAA data to aircraft detail keys. Returns count written.
 
-    Looks up each registration in the Mictronics simple search index, runs a
+    Looks up each registration in the Mictronics search index, runs a
     type sanity check against the simple record, then writes to
-    aircraft:detail:{icao_hex} without reading the existing detail record
+    aircraft:registry:{icao_hex} without reading the existing detail record
     (fire-and-forget).
     """
     reg_row_map: dict[str, dict] = {}
@@ -345,7 +345,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     def _flush_pending() -> None:
         nonlocal count
-        simple_keys = [aircraft_simple_key(hex_val) for _, hex_val in pending]
+        simple_keys = [aircraft_mictronics_key(hex_val) for _, hex_val in pending]
         simple_records = r.json().mget(simple_keys, "$")
 
         pipe = r.pipeline()
@@ -358,7 +358,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
                 logger.debug("Type sanity check failed for %s, skipping", registration)
                 continue
             record = _build_record(hex_val, registration, row)
-            key = aircraft_detail_key(hex_val)
+            key = aircraft_registry_key(hex_val)
             pipe.json().set(key, "$", record)
             pipe.expire(key, ttl)
             written += 1

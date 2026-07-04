@@ -9,27 +9,27 @@ are always explicit and typos in key names are caught by the type checker.
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
 
-# RediSearch index over all aircraft:simple:{hex} JSON documents (Mictronics).
+# RediSearch index over all aircraft:mictronics:{hex} JSON documents (Mictronics).
 # Indexed fields: $.icao_hex, $.registration
-AIRCRAFT_SIMPLE_SEARCH_INDEX = "idx:aircraft:simple"
+AIRCRAFT_MICTRONICS_SEARCH_INDEX = "idx:aircraft:mictronics"
 
-# RediSearch index over all aircraft:detail:{hex} JSON documents (country runners).
+# RediSearch index over all aircraft:registry:{hex} JSON documents (country runners).
 # Indexed fields: $.icao_hex, $.registration
-AIRCRAFT_DETAIL_SEARCH_INDEX = "idx:aircraft:detail"
+AIRCRAFT_REGISTRY_SEARCH_INDEX = "idx:aircraft:registry"
 
 # RediSearch index over all airport:{icao_code} JSON documents.
 # Supports lookup by ICAO code or IATA code.
 AIRPORT_SEARCH_INDEX = "idx:airport"
 
 
-def aircraft_simple_key(icao_hex: str) -> str:
-    """Mictronics aircraft enrichment record. aircraft:simple:{icao_hex}"""
-    return f"aircraft:simple:{icao_hex.upper()}"
+def aircraft_mictronics_key(icao_hex: str) -> str:
+    """Mictronics aircraft enrichment record. aircraft:mictronics:{icao_hex}"""
+    return f"aircraft:mictronics:{icao_hex.upper()}"
 
 
-def aircraft_detail_key(icao_hex: str) -> str:
-    """Country-runner aircraft enrichment record. aircraft:detail:{icao_hex}"""
-    return f"aircraft:detail:{icao_hex.upper()}"
+def aircraft_registry_key(icao_hex: str) -> str:
+    """Country-runner aircraft enrichment record. aircraft:registry:{icao_hex}"""
+    return f"aircraft:registry:{icao_hex.upper()}"
 
 
 def operator_key(designator: str) -> str:

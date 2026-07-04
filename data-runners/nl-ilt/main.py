@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, aircraft_detail_key
+from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
 
 logger = logging.getLogger("nl-ilt")
 
@@ -256,16 +256,16 @@ def _build_record(row: dict) -> Optional[dict]:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +289,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if record is None:
             continue
         record["source"] = "nl-ilt"
-        batch.append((aircraft_detail_key(record["icao_hex"]), record))
+        batch.append((aircraft_registry_key(record["icao_hex"]), record))
         count += 1
         if len(batch) == WRITE_BATCH_SIZE:
             _flush()

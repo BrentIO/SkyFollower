@@ -31,8 +31,8 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import (
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
-    aircraft_detail_key,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    aircraft_registry_key,
 )
 
 logger = logging.getLogger("uk-caa")
@@ -167,7 +167,7 @@ def _parse_year_built(year: Optional[int]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _build_record(details: dict) -> Optional[dict]:
-    """Build the aircraft:detail:{hex} enrichment record from a G-INFO details payload."""
+    """Build the aircraft:registry:{hex} enrichment record from a G-INFO details payload."""
     aircraft_details = details.get("AircraftDetails", {})
 
     icao_addr = aircraft_details.get("ICAO24BitAircraftAddress") or {}
@@ -247,16 +247,16 @@ def _build_record(details: dict) -> Optional[dict]:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ def run_pipeline(
                 continue
 
             record["source"] = "uk-caa"
-            key = aircraft_detail_key(record["icao_hex"])
+            key = aircraft_registry_key(record["icao_hex"])
             r.json().set(key, "$", record)
             r.expire(key, ttl)
             count += 1
@@ -378,7 +378,7 @@ def run_pipeline(
                 continue
 
             record["source"] = "uk-caa"
-            key = aircraft_detail_key(record["icao_hex"])
+            key = aircraft_registry_key(record["icao_hex"])
             r.json().set(key, "$", record)
             r.expire(key, ttl)
             count += 1

@@ -6,7 +6,7 @@ Downloads the Registro Aeronáutico Brasileiro (RAB) aircraft register JSON
 from ANAC, filters for active registrations, looks up each PP/PR/PT/PS/PU-
 prefix registration in the Redis simple-aircraft search index (populated by
 Mictronics) to find the ICAO hex, performs a type sanity check, then writes
-enrichment data to aircraft:detail:{icao_hex} (fire-and-forget).
+enrichment data to aircraft:registry:{icao_hex} (fire-and-forget).
 
 Important: the ANAC register does not publish ICAO hex (Mode S) addresses.
 This runner can only enrich records already present in Redis from Mictronics.
@@ -37,10 +37,10 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from shared.redis_keys import (
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
-    aircraft_detail_key,
-    aircraft_simple_key,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    aircraft_registry_key,
+    aircraft_mictronics_key,
 )
 
 logger = logging.getLogger("br-anac")
@@ -198,7 +198,7 @@ def _parse_proprietarios(raw: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
-    """Build the aircraft:detail:{hex} enrichment record from a RAB row."""
+    """Build the aircraft:registry:{hex} enrichment record from a RAB row."""
     aircraft_type, engine_count, engine_type = _decode_cdcls(row.get("CDCLS"))
 
     cdcls_raw = (row.get("CDCLS") or "").strip().upper()
@@ -256,16 +256,16 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +297,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("aircraft:simple:", "")
+                icao_hex = doc.id.replace("aircraft:mictronics:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = icao_hex
@@ -371,7 +371,7 @@ def write_to_redis(records: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     for registration, icao_hex in icao_map.items():
         row = reg_map[registration]
 
-        simple_raw = r.json().get(aircraft_simple_key(icao_hex))
+        simple_raw = r.json().get(aircraft_mictronics_key(icao_hex))
         model_str = (row.get("DSMODELO") or "").strip()
         if simple_raw and not _type_check_passes(simple_raw, model_str):
             logger.debug(
@@ -386,7 +386,7 @@ def write_to_redis(records: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         try:
             record = _build_record(icao_hex, registration, row)
             record["source"] = "br-anac"
-            key = aircraft_detail_key(icao_hex)
+            key = aircraft_registry_key(icao_hex)
             r.json().set(key, "$", record)
             r.expire(key, ttl)
             count += 1

@@ -90,7 +90,7 @@ def _make_redis_with_search(icao_hex="440123", registration="OE-ARG", simple_rec
     """Redis mock that returns a search result and a simple aircraft record for the type check."""
     r = _make_redis()
     doc = MagicMock()
-    doc.id = f"aircraft:simple:{icao_hex}"
+    doc.id = f"aircraft:mictronics:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
@@ -431,14 +431,14 @@ class TestWriteToRedis:
         r.json.return_value.mget.assert_not_called()
 
     def test_writes_to_detail_key(self):
-        """Records must be written to aircraft:detail:{icao_hex}, not icao_hex:{icao_hex}."""
+        """Records must be written to aircraft:registry:{icao_hex}, not icao_hex:{icao_hex}."""
         item = _make_item()
         r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
         write_to_redis([item], r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
         key_used = set_call[0][0]
-        assert key_used == "aircraft:detail:440123"
+        assert key_used == "aircraft:registry:440123"
         assert "icao_hex:440123" not in key_used
 
     def test_source_field_in_written_record(self):
@@ -471,7 +471,7 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
         key_used, _, written = set_call[0]
-        assert key_used == "aircraft:detail:440123"
+        assert key_used == "aircraft:registry:440123"
         assert written.get("registration") == "OE-ARG"
 
     def test_numeric_kennzeichen_prefixed(self):
@@ -511,7 +511,7 @@ class TestWriteToRedis:
             docs = []
             for reg in ["OE-ARG", "OE-ARK"]:
                 doc = MagicMock()
-                doc.id = f"aircraft:simple:44012{call_count[0]}"
+                doc.id = f"aircraft:mictronics:44012{call_count[0]}"
                 doc.registration = reg
                 docs.append(doc)
             results.docs = docs

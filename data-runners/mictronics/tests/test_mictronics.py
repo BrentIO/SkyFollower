@@ -491,17 +491,17 @@ class TestWriteOperatorsToRedis:
 # ---------------------------------------------------------------------------
 
 class TestRedisKeys:
-    def test_aircraft_simple_key_format(self):
-        from shared.redis_keys import aircraft_simple_key
-        assert aircraft_simple_key("a8ae7f") == "aircraft:simple:A8AE7F"
+    def test_aircraft_mictronics_key_format(self):
+        from shared.redis_keys import aircraft_mictronics_key
+        assert aircraft_mictronics_key("a8ae7f") == "aircraft:mictronics:A8AE7F"
 
-    def test_aircraft_simple_key_already_upper(self):
-        from shared.redis_keys import aircraft_simple_key
-        assert aircraft_simple_key("A8AE7F") == "aircraft:simple:A8AE7F"
+    def test_aircraft_mictronics_key_already_upper(self):
+        from shared.redis_keys import aircraft_mictronics_key
+        assert aircraft_mictronics_key("A8AE7F") == "aircraft:mictronics:A8AE7F"
 
     def test_aircraft_simple_search_index_name(self):
-        from shared.redis_keys import AIRCRAFT_SIMPLE_SEARCH_INDEX
-        assert AIRCRAFT_SIMPLE_SEARCH_INDEX == "idx:aircraft:simple"
+        from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX
+        assert AIRCRAFT_MICTRONICS_SEARCH_INDEX == "idx:aircraft:mictronics"
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +533,7 @@ class TestWriteToRedis:
         r_json = MagicMock()
         r.json.return_value = r_json
         r_json.mget.side_effect = lambda keys, path: [
-            [existing] if existing and k == f"aircraft:simple:{existing['icao_hex']}" else None
+            [existing] if existing and k == f"aircraft:mictronics:{existing['icao_hex']}" else None
             for k in keys
         ]
 
@@ -555,7 +555,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
         keys = [c.args[0] for c in pipe_json.set.call_args_list]
-        assert "aircraft:simple:A8AE7F" in keys
+        assert "aircraft:mictronics:A8AE7F" in keys
         conn.close()
 
     def test_json_set_uses_root_path(self):
@@ -597,7 +597,7 @@ class TestWriteToRedis:
         r, _, pipe_json = self._mock_redis(existing=existing)
         write_to_redis(conn, r, REDIS_TTL)
         calls = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
-        record = calls["aircraft:simple:A8AE7F"]
+        record = calls["aircraft:mictronics:A8AE7F"]
         # mictronics owns military — its value (False) overwrites the existing True
         assert record["military"] is False
         # registrant is not owned by mictronics — must be preserved

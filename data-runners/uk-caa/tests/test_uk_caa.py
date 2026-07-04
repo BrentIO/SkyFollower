@@ -493,7 +493,7 @@ class TestRunPipeline:
         with patch("time.sleep"):
             run_pipeline(session, r, REDIS_TTL, 0.1)
         key_arg = r.json.return_value.set.call_args.args[0]
-        assert key_arg == "aircraft:detail:406B48"
+        assert key_arg == "aircraft:registry:406B48"
 
     def test_writes_at_root_path(self):
         r = self._make_redis()
@@ -530,7 +530,7 @@ class TestRunPipeline:
         session = self._make_session(_SEARCH_RESULT, _make_details())
         with patch("time.sleep"):
             run_pipeline(session, r, REDIS_TTL, 0.1)
-        r.expire.assert_called_with("aircraft:detail:406B48", REDIS_TTL)
+        r.expire.assert_called_with("aircraft:registry:406B48", REDIS_TTL)
 
     def test_search_error_skips_prefix_continues(self):
         r = self._make_redis()

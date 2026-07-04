@@ -359,7 +359,7 @@ class TestBuildRegistrationMap:
         doc_mocks = []
         for icao_hex, registration in docs:
             doc = MagicMock()
-            doc.id = f"aircraft:simple:{icao_hex}"
+            doc.id = f"aircraft:mictronics:{icao_hex}"
             doc.registration = registration
             doc_mocks.append(doc)
         result = MagicMock()
@@ -431,7 +431,7 @@ class TestWriteToRedis:
             count = write_to_redis(rows, r, 1209600)
         assert count == 0
 
-    def test_uses_aircraft_detail_key(self):
+    def test_uses_aircraft_registry_key(self):
         rows = [_make_row(registration="5B-ABC")]
         r = MagicMock()
         pipe = MagicMock()
@@ -439,7 +439,7 @@ class TestWriteToRedis:
         with patch.object(_mod, "_build_registration_map", return_value={"5B-ABC": "4B0001"}):
             write_to_redis(rows, r, 1209600)
         set_call = pipe.json.return_value.set.call_args
-        assert set_call[0][0] == "aircraft:detail:4B0001"
+        assert set_call[0][0] == "aircraft:registry:4B0001"
 
     def test_pipeline_error_logs_warning(self):
         rows = [_make_row(registration="5B-ABC")]

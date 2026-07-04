@@ -30,7 +30,7 @@ import requests
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import aircraft_detail_key, AIRCRAFT_DETAIL_SEARCH_INDEX
+from shared.redis_keys import aircraft_registry_key, AIRCRAFT_REGISTRY_SEARCH_INDEX
 
 logger = logging.getLogger("ch-bazl")
 
@@ -279,7 +279,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             continue
 
         record["source"] = "ch-bazl"
-        key = aircraft_detail_key(record["icao_hex"])
+        key = aircraft_registry_key(record["icao_hex"])
         try:
             r.json().set(key, "$", record)
             r.expire(key, ttl)
@@ -303,16 +303,16 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------

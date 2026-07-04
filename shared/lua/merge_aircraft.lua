@@ -1,12 +1,12 @@
 -- merge_aircraft.lua
 --
--- Merges aircraft:simple:{icao_hex} and aircraft:detail:{icao_hex} into a
+-- Merges aircraft:mictronics:{icao_hex} and aircraft:registry:{icao_hex} into a
 -- single JSON document and returns it as a string.
 --
 -- ARGV[1] : icao_hex (e.g. "A8AE7F")
 --
--- Returns nil if no simple record exists for the given icao_hex.
--- Detail fields win over simple fields on any overlap (same semantics as the
+-- Returns nil if no mictronics record exists for the given icao_hex.
+-- Registry fields win over mictronics fields on any overlap (same semantics as the
 -- old deep-merge-on-write pattern, but performed server-side at read time).
 --
 -- Called by the processor via EVALSHA so the merge is a single round-trip.
@@ -23,14 +23,14 @@ local function deep_merge(base, update)
     end
 end
 
-local simple_raw = redis.call('JSON.GET', 'aircraft:simple:' .. icao_hex)
+local simple_raw = redis.call('JSON.GET', 'aircraft:mictronics:' .. icao_hex)
 if not simple_raw then
     return nil
 end
 
 local result = cjson.decode(simple_raw)
 
-local detail_raw = redis.call('JSON.GET', 'aircraft:detail:' .. icao_hex)
+local detail_raw = redis.call('JSON.GET', 'aircraft:registry:' .. icao_hex)
 if detail_raw then
     deep_merge(result, cjson.decode(detail_raw))
 end

@@ -476,7 +476,7 @@ sources:
     url: "https://www.caa.bg/bg/category/300/17238"
     format: xlsx
     cadence: weekly_tuesday
-    notes: "xlsx URL is date-encoded (Aircraft_Register_YYYYMMDD.xlsx) and discovered by scraping the index page; rows 0 (info) and 1 (header) skipped; column 4 holds LZ-prefix registration; no manufacturer, owner, or date stored; no ICAO hex — RediSearch lookup via Mictronics simple index; must run after Mictronics"
+    notes: "xlsx URL is date-encoded (Aircraft_Register_YYYYMMDD.xlsx) and discovered by scraping the index page; rows 0 (info) and 1 (header) skipped; column 4 holds LZ-prefix registration; no manufacturer, owner, or date stored; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
     fields:
       "Рег. № (col 0)": "Sequence number; not stored"
       "Дата (col 1)": "Date (Excel serial date format); not stored"
@@ -491,7 +491,7 @@ sources:
     url: "https://www.ccaa.hr/en/list-of-registered-aircraft-94674"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is hash-based and discovered by scraping the index page for the first /file/ link; PDF contains registration suffix only (e.g. ABC) — 9A- prefix must be prepended; no ICAO hex — RediSearch lookup via Mictronics simple index; newlines in cells collapsed to spaces; must run after Mictronics"
+    notes: "PDF URL is hash-based and discovered by scraping the index page for the first /file/ link; PDF contains registration suffix only (e.g. ABC) — 9A- prefix must be prepended; no ICAO hex — RediSearch lookup via Mictronics index; newlines in cells collapsed to spaces; must run after Mictronics"
     fields:
       "REG. OZNAKA": "Registration suffix (e.g. ABC); 9A- prefix must be prepended for full mark"
       "REDNI BROJ U REGISTRU": "Sequence number; not stored"
@@ -506,7 +506,7 @@ sources:
     url: "https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf"
     format: pdf
     cadence: weekly_tuesday
-    notes: "Stable PDF URL; all pages parsed with pdfplumber extract_table(); no ICAO hex in source — RediSearch lookup by registration against Mictronics simple index; OWNER/OPERATOR column split by / to produce multiple registrant names; MTOW KGS not stored; must run after Mictronics"
+    notes: "Stable PDF URL; all pages parsed with pdfplumber extract_table(); no ICAO hex in source — RediSearch lookup by registration against Mictronics index; OWNER/OPERATOR column split by / to produce multiple registrant names; MTOW KGS not stored; must run after Mictronics"
     fields:
       "REGISTRATION MARK": "Registration mark (5B-prefix; lookup key)"
       "MANUFACTURER": "Aircraft manufacturer name"
@@ -964,7 +964,7 @@ records:
             description: "Cayman Islands CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VP\\-CXXX} against Mictronics records; enriches existing records only"
           - source: br-anac
             file: dados_aeronaves.json
-            description: "ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{PP\\-XXX} against Mictronics records; enriches existing records only"
+            description: "ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{PP\\-XXX} against Mictronics records; enriches existing records only"
           - source: uk-caa
             endpoint: details
             field: AircraftDetails.ICAO24BitAircraftAddress.Hex
@@ -991,62 +991,62 @@ records:
               description: "6-character hex string normalised to uppercase"
           - source: me-caa
             page: detail
-            description: "Montenegro CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4O\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Montenegro CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{4O\\-XXX} against Mictronics records; enriches existing records only"
           - source: is-samgongustofa
             endpoint: bulk
-            description: "Iceland Samgöngustofa does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{TF\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Iceland Samgöngustofa does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{TF\\-XXX} against Mictronics records; enriches existing records only"
           - source: kr-koca
             file: statListEn01.do (JSON datatable)
-            description: "Korea KOCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HL\\-XXXX} against Mictronics records; enriches existing records only"
+            description: "Korea KOCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{HL\\-XXXX} against Mictronics records; enriches existing records only"
           - source: hu-kozhaf
             file: "Aircraft register PDF (date-stamped, discovered via index page)"
-            description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
           - source: ge-gcaa
-            description: "Georgia GCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{4L\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Georgia GCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{4L\\-XXX} against Mictronics records; enriches existing records only"
           - source: gg-2reg
             file: "PDF (date-encoded, discovered via index page)"
-            description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
+            description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
           - source: kg-caa
-            description: "Kyrgyzstan CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{EX\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Kyrgyzstan CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{EX\\-XXX} against Mictronics records; enriches existing records only"
           - source: bg-caa
             file: "Aircraft_Register_{YYYYMMDD}.xlsx"
-            description: "Bulgaria CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LZ\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Bulgaria CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{LZ\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa
             file: "PDF (hash-based, discovered via index page)"
-            description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
           - source: cy-dca
             file: Aircraft_Register_Extract.pdf
-            description: "Cyprus DCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{5B\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Cyprus DCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{5B\\-XXX} against Mictronics records; enriches existing records only"
           - source: ee-transpordiamet
-            description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
           - source: lv-caa
-            description: "Latvia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YL\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Latvia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{YL\\-XXX} against Mictronics records; enriches existing records only"
           - source: mv-caa
             file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
-            description: "Maldives CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{8Q\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Maldives CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{8Q\\-XXX} against Mictronics records; enriches existing records only"
           - source: md-caa
             file: Registrul_Aerian_al_Republicii_Moldova.pdf
-            description: "Moldova CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{ER\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Moldova CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{ER\\-XXX} against Mictronics records; enriches existing records only"
           - source: mk-caa
             file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
-            description: "North Macedonia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{Z3\\-XXX} against Mictronics records; enriches existing records only"
+            description: "North Macedonia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{Z3\\-XXX} against Mictronics records; enriches existing records only"
           - source: pg-casapng
             file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
-            description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
           - source: rs-cad
-            description: "Serbia CAD does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{YU\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Serbia CAD does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{YU\\-XXX} against Mictronics records; enriches existing records only"
           - source: sk-nsat
             file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
-            description: "Slovakia NSAT does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{OM\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Slovakia NSAT does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{OM\\-XXX} against Mictronics records; enriches existing records only"
           - source: tc-caa
             file: aircraft-register (HTML page)
-            description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
           - source: lu-dac
             file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
-            description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
           - source: bz-bdca
             file: bdca-civil-aircraft-register (HTML page)
-            description: "Belize BDCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:simple @registration:{V3\\-XXX} against Mictronics records; enriches existing records only"
+            description: "Belize BDCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{V3\\-XXX} against Mictronics records; enriches existing records only"
 
       registration:
         type: string

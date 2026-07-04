@@ -5,7 +5,7 @@ SkyFollower Australia CASA Data Runner
 Downloads the Civil Aviation Safety Authority (CASA) aircraft register CSV,
 looks up each VH- registration in the Mictronics simple index to find the ICAO
 hex, performs a type sanity check to reject false cross-registry joins, writes
-full CASA enrichment records to aircraft:detail:{icao_hex} keys in Redis,
+full CASA enrichment records to aircraft:registry:{icao_hex} keys in Redis,
 publishes MQTT completion stats, then exits.
 
 Important: the CASA register does not publish ICAO hex (Mode S) addresses.
@@ -38,10 +38,10 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from shared.redis_keys import (
-    AIRCRAFT_DETAIL_SEARCH_INDEX,
-    AIRCRAFT_SIMPLE_SEARCH_INDEX,
-    aircraft_detail_key,
-    aircraft_simple_key,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    aircraft_registry_key,
+    aircraft_mictronics_key,
 )
 
 logger = logging.getLogger("au-casa")
@@ -272,16 +272,16 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_DETAIL_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_REGISTRY_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:detail:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:registry:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_DETAIL_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -303,13 +303,13 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
         query_str = f"@registration:{{{'|'.join(escaped)}}}"
 
         try:
-            results = r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).search(
+            results = r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).search(
                 Query(query_str)
                 .return_fields("registration")
                 .paging(0, BATCH_SIZE)
             )
             for doc in results.docs:
-                icao_hex = doc.id.replace("aircraft:simple:", "")
+                icao_hex = doc.id.replace("aircraft:mictronics:", "")
                 registration = getattr(doc, "registration", None)
                 if registration:
                     reg_map[registration] = icao_hex
@@ -386,7 +386,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         # Type sanity check: reject false joins where registries share a mark
         # for different aircraft.
         au_casa_model = row.get("Model", "").strip()
-        simple_raw = r.json().get(aircraft_simple_key(icao_hex))
+        simple_raw = r.json().get(aircraft_mictronics_key(icao_hex))
         if simple_raw is not None and not _type_check_passes(simple_raw, au_casa_model):
             logger.debug(
                 "Type sanity check failed for %s (icao_hex=%s, casa_model=%r); skipping.",
@@ -398,8 +398,8 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record = _build_record(row, icao_hex, registration)
         record["source"] = "au-casa"
 
-        pipe.json().set(aircraft_detail_key(icao_hex), "$", record)
-        pipe.expire(aircraft_detail_key(icao_hex), ttl)
+        pipe.json().set(aircraft_registry_key(icao_hex), "$", record)
+        pipe.expire(aircraft_registry_key(icao_hex), ttl)
         pipe_size += 1
         count += 1
 

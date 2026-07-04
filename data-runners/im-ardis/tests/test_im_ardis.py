@@ -208,13 +208,13 @@ class TestWriteToRedis:
         write_to_redis(rows, r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
-        assert set_call[0][0] == "aircraft:detail:43E717"
+        assert set_call[0][0] == "aircraft:registry:43E717"
 
     def test_ttl_applied(self):
         rows = [_make_row(mode_s="43E717")]
         r = _make_redis()
         write_to_redis(rows, r, REDIS_TTL)
-        r.pipeline.return_value.expire.assert_called_with("aircraft:detail:43E717", REDIS_TTL)
+        r.pipeline.return_value.expire.assert_called_with("aircraft:registry:43E717", REDIS_TTL)
 
     def test_source_field_in_written_record(self):
         rows = [_make_row()]

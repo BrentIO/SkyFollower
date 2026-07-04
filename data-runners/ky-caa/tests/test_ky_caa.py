@@ -55,7 +55,7 @@ COL_NATIONALITY = _mod.COL_NATIONALITY
 COL_SERIES_TYPE = _mod.COL_SERIES_TYPE
 COL_SERIAL = _mod.COL_SERIAL
 
-from shared.redis_keys import AIRCRAFT_DETAIL_SEARCH_INDEX, AIRCRAFT_SIMPLE_SEARCH_INDEX
+from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, AIRCRAFT_MICTRONICS_SEARCH_INDEX
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def _make_redis_with_search(icao_hex="C00001", registration="VP-CAD", simple_rec
     """
     r = _make_redis()
     doc = MagicMock()
-    doc.id = f"aircraft:simple:{icao_hex}"
+    doc.id = f"aircraft:mictronics:{icao_hex}"
     doc.registration = registration
     results = MagicMock()
     results.docs = [doc]
@@ -418,7 +418,7 @@ class TestEnsureSearchIndex:
         r = MagicMock()
         r.ft.return_value.info.side_effect = Exception("Index does not exist")
         _ensure_search_index(r)
-        r.ft.assert_called_with(AIRCRAFT_DETAIL_SEARCH_INDEX)
+        r.ft.assert_called_with(AIRCRAFT_REGISTRY_SEARCH_INDEX)
         r.ft.return_value.create_index.assert_called_once()
 
     def test_skips_creation_when_index_exists(self):
@@ -434,7 +434,7 @@ class TestEnsureSearchIndex:
             _ensure_search_index(r)
         mock_def.assert_called_once()
         call_kwargs = mock_def.call_args.kwargs
-        assert call_kwargs.get("prefix") == ["aircraft:detail:"]
+        assert call_kwargs.get("prefix") == ["aircraft:registry:"]
 
 
 # ---------------------------------------------------------------------------
@@ -511,17 +511,17 @@ class TestWriteToRedis:
         r.json.return_value.mget.assert_called_once()
         call_args = r.json.return_value.mget.call_args
         keys_arg = call_args[0][0]
-        assert all("aircraft:simple:" in k for k in keys_arg)
-        assert not any("aircraft:detail:" in k for k in keys_arg)
+        assert all("aircraft:mictronics:" in k for k in keys_arg)
+        assert not any("aircraft:registry:" in k for k in keys_arg)
 
     def test_writes_to_detail_key(self):
-        """Verified key written is aircraft:detail:{icao_hex}."""
+        """Verified key written is aircraft:registry:{icao_hex}."""
         row = _make_row()
         r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
         write_to_redis([row], r, REDIS_TTL)
         pipe = r.pipeline.return_value
         set_call = pipe.json.return_value.set.call_args
-        assert set_call[0][0] == "aircraft:detail:C00001"
+        assert set_call[0][0] == "aircraft:registry:C00001"
 
     def test_source_field_in_written_record(self):
         """Written records contain source='ky-caa'."""
@@ -562,7 +562,7 @@ class TestWriteToRedis:
             docs = []
             for reg in ["VP-CAD", "VP-CAF"]:
                 doc = MagicMock()
-                doc.id = f"aircraft:simple:C0000{call_count[0]}"
+                doc.id = f"aircraft:mictronics:C0000{call_count[0]}"
                 doc.registration = reg
                 docs.append(doc)
             results.docs = docs
@@ -579,7 +579,7 @@ class TestWriteToRedis:
         row = _make_row()
         r = _make_redis_with_search(icao_hex="C00001", registration="VP-CAD")
         write_to_redis([row], r, REDIS_TTL)
-        r.ft.assert_called_with(AIRCRAFT_SIMPLE_SEARCH_INDEX)
+        r.ft.assert_called_with(AIRCRAFT_MICTRONICS_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------

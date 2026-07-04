@@ -7,13 +7,13 @@ Two-step REST API:
   2. GET detail endpoint per record → extract ICAO hex from `transponder` field
 
 ICAO hex is available directly (no RediSearch needed). Writes enrichment
-data to aircraft:detail:{icao_hex} with 14-day TTL.
+data to aircraft:registry:{icao_hex} with 14-day TTL.
 
 List endpoint:   https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000
 Detail endpoint: https://lr.caa.gov.cz/api/avreg/{id}
 
 Field mapping:
-  transponder       → aircraft:detail:{icao_hex} key (skip if null/empty)
+  transponder       → aircraft:registry:{icao_hex} key (skip if null/empty)
   manufacturer      → aircraft.manufacturer
   model             → aircraft.model
   serial_number     → aircraft.serial_number
@@ -38,7 +38,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from shared.redis_keys import aircraft_detail_key
+from shared.redis_keys import aircraft_registry_key
 
 logger = logging.getLogger("cz-caa")
 
@@ -245,7 +245,7 @@ def write_to_redis(row: dict, r: redis_lib.Redis, ttl: int) -> bool:
     if not icao_hex:
         return False
     record = _build_record(row)
-    key = aircraft_detail_key(icao_hex)
+    key = aircraft_registry_key(icao_hex)
     try:
         r.json().set(key, "$", record)
         r.expire(key, ttl)

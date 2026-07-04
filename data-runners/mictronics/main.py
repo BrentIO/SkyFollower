@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_SIMPLE_SEARCH_INDEX, aircraft_simple_key, operator_key
+from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX, aircraft_mictronics_key, operator_key
 
 logger = logging.getLogger("mictronics")
 
@@ -281,16 +281,16 @@ def build_operator_record(row: sqlite3.Row) -> dict:
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft simple JSON search index if it does not already exist."""
     try:
-        r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).info()
+        r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).info()
     except Exception:
-        r.ft(AIRCRAFT_SIMPLE_SEARCH_INDEX).create_index(
+        r.ft(AIRCRAFT_MICTRONICS_SEARCH_INDEX).create_index(
             fields=[
                 TagField("$.icao_hex", as_name="icao_hex"),
                 TagField("$.registration", as_name="registration"),
             ],
-            definition=IndexDefinition(prefix=["aircraft:simple:"], index_type=IndexType.JSON),
+            definition=IndexDefinition(prefix=["aircraft:mictronics:"], index_type=IndexType.JSON),
         )
-        logger.info("Created search index %r.", AIRCRAFT_SIMPLE_SEARCH_INDEX)
+        logger.info("Created search index %r.", AIRCRAFT_MICTRONICS_SEARCH_INDEX)
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +327,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     for row in rows:
         types_row = row if row["manufacturer_model"] is not None else None
         record = build_aircraft_record(row, types_row)
-        key = aircraft_simple_key(record["icao_hex"])
+        key = aircraft_mictronics_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
         if len(batch) == 10000:
