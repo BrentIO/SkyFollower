@@ -249,6 +249,55 @@ class TestFetchDetail:
             _DETAIL_URL.format(id=99), timeout=30
         )
 
+    def test_retries_on_403(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response(status_code=403), _detail_response()]
+        with patch("cz_caa_main.time.sleep"):
+            result = _fetch_detail(session, 1)
+        assert result is not None
+        assert session.get.call_count == 2
+
+    def test_retries_on_429(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response(status_code=429), _detail_response()]
+        with patch("cz_caa_main.time.sleep"):
+            result = _fetch_detail(session, 1)
+        assert result is not None
+        assert session.get.call_count == 2
+
+    def test_retries_on_503(self):
+        session = MagicMock()
+        session.get.side_effect = [_make_response(status_code=503), _detail_response()]
+        with patch("cz_caa_main.time.sleep"):
+            result = _fetch_detail(session, 1)
+        assert result is not None
+        assert session.get.call_count == 2
+
+    def test_returns_none_after_all_http_retries_exhausted(self):
+        session = MagicMock()
+        session.get.return_value = _make_response(status_code=403)
+        with patch("cz_caa_main.time.sleep"):
+            assert _fetch_detail(session, 1) is None
+        assert session.get.call_count == 4  # initial + 3 retries
+
+    def test_non_retriable_http_not_retried(self):
+        session = MagicMock()
+        session.get.return_value = _make_response(status_code=404)
+        assert _fetch_detail(session, 1) is None
+        assert session.get.call_count == 1
+
+    def test_retriable_http_uses_exponential_backoff(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            _make_response(status_code=429),
+            _make_response(status_code=429),
+            _detail_response(),
+        ]
+        with patch("cz_caa_main.time.sleep") as mock_sleep:
+            _fetch_detail(session, 1)
+        assert mock_sleep.call_args_list[0] == call(1)
+        assert mock_sleep.call_args_list[1] == call(2)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _first_display_name
@@ -397,7 +446,7 @@ class TestDownloadAndParse:
         session = MagicMock()
         session.get.side_effect = [
             _list_response([_list_record(id=1), _list_record(id=2)]),
-            _make_response(status_code=500),
+            _make_response(status_code=404),
             _detail_response(transponder="AAAAAA"),
         ]
         records = self._collect(session)
