@@ -62,6 +62,14 @@ _AIRCRAFT_TYPE_MAP: dict[str, str] = {
     "S": "Seaplane",
 }
 
+_AIRCRAFT_CATEGORY_MAP: dict[str, str] = {
+    "L": "Land",
+    "H": "Land",
+    "A": "Amphibian",
+    "G": "Land",
+    "S": "Sea",
+}
+
 _ENGINE_TYPE_MAP: dict[str, str] = {
     "P": "Piston",
     "J": "Turbo-jet",
@@ -193,9 +201,17 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build the aircraft:detail:{hex} enrichment record from a RAB row."""
     aircraft_type, engine_count, engine_type = _decode_cdcls(row.get("CDCLS"))
 
+    cdcls_raw = (row.get("CDCLS") or "").strip().upper()
+    if cdcls_raw == "RPA":
+        aircraft_category: Optional[str] = "Land"
+    else:
+        aircraft_category = _AIRCRAFT_CATEGORY_MAP.get(cdcls_raw[:1]) if cdcls_raw else None
+
     aircraft_fields: dict = {}
     if aircraft_type:
         aircraft_fields["type"] = aircraft_type
+    if aircraft_category:
+        aircraft_fields["category"] = aircraft_category
     manufacturer = (row.get("NMFABRICANTE") or "").strip()
     if manufacturer:
         aircraft_fields["manufacturer"] = manufacturer

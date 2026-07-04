@@ -2202,6 +2202,18 @@ records:
                     "1": Land
                     "2": Sea
                     "3": Amphibian
+              - source: br-anac
+                field: CDCLS
+                transform:
+                  type: decode_table
+                  description: "Position 1 (index 0) of CDCLS is the landing type; special value 'RPA' maps to Land"
+                  values:
+                    "L": Land
+                    "H": Land
+                    "A": Amphibian
+                    "G": Land
+                    "S": Sea
+                    "RPA": Land
               - source: uk-caa
                 endpoint: details
                 field: AircraftDetails.AircraftClass
