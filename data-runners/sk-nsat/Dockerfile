@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 WORKDIR /app
 COPY shared/requirements.txt shared_requirements.txt
 COPY data-runners/sk-nsat/requirements.txt .
