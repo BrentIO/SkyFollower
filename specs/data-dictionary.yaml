@@ -122,10 +122,6 @@ sources:
           31: DATE_MANUFACTURE_ASSEMBLY
           42: MODE_S_TRANSPONDER_BINARY
           46: TRIMMED_MARK
-        transforms:
-          MODE_S_TRANSPONDER_BINARY: "24-char binary string — format(int(value, 2), '06X') → ICAO hex"
-          TRIMMED_MARK: "MARK without leading spaces; prepend 'C-' to form full registration"
-          DATE_MANUFACTURE_ASSEMBLY: "YYYY/MM/DD — replace '/' with '-' for ISO 8601"
       - name: carsownr.txt
         format: csv
         description: "Owner/registrant records; joined to carscurr.txt by MARK_LINK = MARK; filter ACTIVE_FLAG='A'"
