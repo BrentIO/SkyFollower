@@ -286,6 +286,7 @@ def main() -> None:
         deadline = (start + args.duration) if args.duration else None
         print("Receiving data...")
 
+        last_total = 0
         try:
             while not stop_event.is_set():
                 stop_event.wait(30)
@@ -300,7 +301,8 @@ def main() -> None:
 
                 counts = ", ".join(f"{t.source_tag}={t.count}" for t in threads)
                 total = sum(t.count for t in threads)
-                print(f"[{int(elapsed):5d}s] {total} messages captured  ({counts})", flush=True)
+                print(f"[{int(elapsed):5d}s] {total - last_total} messages captured  ({counts})", flush=True)
+                last_total = total
         except KeyboardInterrupt:
             stop_event.set()
 
