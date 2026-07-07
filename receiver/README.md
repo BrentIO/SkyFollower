@@ -30,16 +30,23 @@ reconnect. One receiver container handles all configured sources concurrently
 | `port` | integer | TCP port of the readsb raw output (e.g. `30002` for 1090 MHz, `30978` for 978 MHz UAT). |
 | `source` | string | Tag applied to every message from this stream. One of `"1090"`, `"978"`, or `"MLAT"`. |
 
-Example with two sources:
+Example with three sources:
 
 ```json
 {
   "sources": [
     { "host": "192.168.1.10", "port": 30002, "source": "1090" },
-    { "host": "192.168.1.10", "port": 30978, "source": "978" }
+    { "host": "192.168.1.10", "port": 30978, "source": "978" },
+    { "host": "mlat-server.example.com", "port": 30105, "source": "MLAT" }
   ]
 }
 ```
+
+An `MLAT` source does not need to be co-located with the receiver's SDR
+hardware — it's a plain TCP connection like any other source, so `host` can
+point at a remote MLAT-results feed (e.g. a readsb instance receiving results
+from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
+so no separate parsing is required.
 
 ### `rabbitmq` object
 
@@ -103,10 +110,13 @@ All topics use the root `SkyFollower`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `messages_1090_per_second` | float | Average 1090 MHz message rate since last report |
-| `messages_978_per_second` | float | Average 978 MHz UAT message rate since last report; `0.0` if no UAT source configured |
+| `messages_978_per_second` | float | Average 978 MHz UAT message rate since last report; only present if a `978` source is configured |
+| `messages_MLAT_per_second` | float | Average MLAT message rate since last report; only present if an `MLAT` source is configured |
 | `local_queue_depth` | integer | Messages queued in the local SQLite fallback (`queue.db`) |
 | `rabbitmq_connected` | boolean | `true` when an active RabbitMQ connection is held |
 | `started_at` | string | UTC ISO-8601 timestamp of process start |
+
+A `messages_{source}_per_second` field is generated for every source tag present in `sources[]` — the table above lists the currently supported tags, not a fixed schema.
 
 All statistics are published as a single retained JSON payload. Telemetry is published every `telemetry_interval_seconds`.
 
