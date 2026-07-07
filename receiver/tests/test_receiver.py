@@ -10,7 +10,9 @@ Covers:
 
 from __future__ import annotations
 
+import socket
 import tempfile
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +21,7 @@ import pytest
 from receiver.main import (
     _FallbackQueue,
     _RateTracker,
+    parse_978_line,
     parse_tcp_stream,
 )
 
@@ -122,6 +125,139 @@ class TestParseTcpStream:
 
 
 # ---------------------------------------------------------------------------
+# 978 line parser
+# ---------------------------------------------------------------------------
+
+class TestParse978Line:
+    """Tests for parse_978_line — the dump978-fa line-protocol parser."""
+
+    _DOWNLINK = "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
+    _UPLINK = "+08a3d3e328a75f8c653204e900742e4028066a0025ed2d0b1aa4c0a0000530000000;rssi=1.4;t=1782561038.701;"
+
+    def test_downlink_frame_parsed(self):
+        result = parse_978_line(self._DOWNLINK)
+        assert result is not None
+        raw_hex, icao_hex, received_at = result
+        assert raw_hex == "-00A3D3E328A71F8C647004E9009C2D401A00"
+        assert icao_hex == "A3D3E3"
+        assert received_at == 1782561034.334
+
+    def test_uplink_frame_parsed(self):
+        result = parse_978_line(self._UPLINK)
+        assert result is not None
+        raw_hex, icao_hex, received_at = result
+        assert raw_hex.startswith("+")
+        assert received_at == 1782561038.701
+
+    def test_preamble_line_skipped(self):
+        line = "!fecfix=1;program=dump978-fa;version=11.0~bpo12+1;"
+        assert parse_978_line(line) is None
+
+    def test_blank_line_skipped(self):
+        assert parse_978_line("") is None
+        assert parse_978_line("   ") is None
+
+    def test_invalid_prefix_skipped(self):
+        assert parse_978_line("*00a3d3e328a71f8c647004e9009c2d401a00;") is None
+
+    def test_short_hex_payload_skipped(self):
+        assert parse_978_line("-1234;t=1782561034.334;") is None
+
+    def test_non_hex_payload_skipped(self):
+        assert parse_978_line("-00zzzzzz28a71f8c647004e9009c2d401a00;t=1.0;") is None
+
+    def test_raw_hex_uppercased(self):
+        result = parse_978_line("-00a3d3e328a71f8c647004e9009c2d401a00;t=1.0;")
+        assert result is not None
+        raw_hex, _, _ = result
+        assert raw_hex == raw_hex.upper()
+
+    def test_timestamp_defaults_to_wallclock_when_t_missing(self):
+        before = time.time()
+        result = parse_978_line("-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;")
+        after = time.time()
+        assert result is not None
+        _, _, received_at = result
+        assert before <= received_at <= after
+
+    def test_malformed_t_field_falls_back_to_wallclock(self):
+        before = time.time()
+        result = parse_978_line("-00a3d3e328a71f8c647004e9009c2d401a00;t=notanumber;")
+        after = time.time()
+        assert result is not None
+        _, _, received_at = result
+        assert before <= received_at <= after
+
+
+# ---------------------------------------------------------------------------
+# _source_loop dispatch — 978 vs. 1090
+# ---------------------------------------------------------------------------
+
+class TestSourceLoopDispatch:
+    """Confirms _source_loop routes to the 978-specific reader only for
+    source == "978", and 1090/other sources are unaffected."""
+
+    def _make_receiver(self, source: str):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": source}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg, 0)
+
+    def _run_dispatch(self, r, source: str):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        # Setting _shutdown from within the mocked reader is what ends
+        # _source_loop's outer reconnect loop -- otherwise it would spin
+        # forever trying to reconnect after the mocked "read" returns.
+        calls = []
+
+        def _record_1090(*a, **k):
+            calls.append("1090")
+            r._shutdown.set()
+
+        def _record_978(*a, **k):
+            calls.append("978")
+            r._shutdown.set()
+
+        r._read_1090_stream = _record_1090
+        r._read_978_stream = _record_978
+
+        r._source_loop({"host": host, "port": port, "source": source})
+        acceptor.join(timeout=5)
+        server.close()
+        return calls
+
+    def test_978_source_dispatches_to_978_reader(self):
+        r = self._make_receiver("978")
+        calls = self._run_dispatch(r, "978")
+        assert calls == ["978"]
+
+    def test_1090_source_dispatches_to_1090_reader(self):
+        r = self._make_receiver("1090")
+        calls = self._run_dispatch(r, "1090")
+        assert calls == ["1090"]
+
+    def test_mlat_source_dispatches_to_1090_reader(self):
+        r = self._make_receiver("MLAT")
+        calls = self._run_dispatch(r, "MLAT")
+        assert calls == ["1090"]
+
+
+# ---------------------------------------------------------------------------
 # ICAO extraction and queue routing
 # ---------------------------------------------------------------------------
 
@@ -193,6 +329,39 @@ class TestIcaoRoutingIntegration:
         msg_dict = json.loads(payload)
         assert msg_dict["source"] == "MLAT"
         assert len(msg_dict["icao_hex"]) == 6
+
+    def test_handle_978_message_routes_correctly(self):
+        """978 UAT messages skip pyModeS entirely -- icao_hex/received_at come
+        from parse_978_line, not from decoding raw as Mode S."""
+        r = self._make_receiver(processor_count=4)
+
+        raw_hex, icao_hex, received_at = parse_978_line(
+            "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
+        )
+        published: list[tuple] = []
+        r._publish = lambda q, p: published.append((q, p))
+        r._rates["978"] = _RateTracker()
+
+        r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"])
+
+        assert len(published) == 1
+        _, payload = published[0]
+
+        import json
+        msg_dict = json.loads(payload)
+        assert msg_dict["source"] == "978"
+        assert msg_dict["icao_hex"] == "A3D3E3"
+        assert msg_dict["raw"] == "-00A3D3E328A71F8C647004E9009C2D401A00"
+        assert msg_dict["received_at"] == 1782561034.334
+
+    def test_handle_978_message_discards_bad_icao_length(self):
+        r = self._make_receiver()
+        published: list = []
+        r._publish = lambda q, p: published.append((q, p))
+        r._rates["978"] = _RateTracker()
+
+        r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"])
+        assert published == []
 
     def test_handle_message_discards_bad_message(self):
         """Messages that yield no ICAO are discarded silently."""
