@@ -10,7 +10,9 @@ Covers:
 
 from __future__ import annotations
 
+import socket
 import tempfile
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +21,7 @@ import pytest
 from receiver.main import (
     _FallbackQueue,
     _RateTracker,
+    parse_978_line,
     parse_tcp_stream,
 )
 
@@ -122,6 +125,79 @@ class TestParseTcpStream:
 
 
 # ---------------------------------------------------------------------------
+# _source_loop dispatch — 978 vs. 1090
+#
+# parse_978_line's own parsing correctness is covered in
+# shared/tests/test_uat.py, since receiver/main.py imports it from
+# shared.uat rather than defining its own copy. These tests only cover
+# receiver-specific behavior: dispatch and message routing.
+# ---------------------------------------------------------------------------
+
+class TestSourceLoopDispatch:
+    """Confirms _source_loop routes to the 978-specific reader only for
+    source == "978", and 1090/other sources are unaffected."""
+
+    def _make_receiver(self, source: str):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": source}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg, 0)
+
+    def _run_dispatch(self, r, source: str):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        # Setting _shutdown from within the mocked reader is what ends
+        # _source_loop's outer reconnect loop -- otherwise it would spin
+        # forever trying to reconnect after the mocked "read" returns.
+        calls = []
+
+        def _record_1090(*a, **k):
+            calls.append("1090")
+            r._shutdown.set()
+
+        def _record_978(*a, **k):
+            calls.append("978")
+            r._shutdown.set()
+
+        r._read_1090_stream = _record_1090
+        r._read_978_stream = _record_978
+
+        r._source_loop({"host": host, "port": port, "source": source})
+        acceptor.join(timeout=5)
+        server.close()
+        return calls
+
+    def test_978_source_dispatches_to_978_reader(self):
+        r = self._make_receiver("978")
+        calls = self._run_dispatch(r, "978")
+        assert calls == ["978"]
+
+    def test_1090_source_dispatches_to_1090_reader(self):
+        r = self._make_receiver("1090")
+        calls = self._run_dispatch(r, "1090")
+        assert calls == ["1090"]
+
+    def test_mlat_source_dispatches_to_1090_reader(self):
+        r = self._make_receiver("MLAT")
+        calls = self._run_dispatch(r, "MLAT")
+        assert calls == ["1090"]
+
+
+# ---------------------------------------------------------------------------
 # ICAO extraction and queue routing
 # ---------------------------------------------------------------------------
 
@@ -193,6 +269,39 @@ class TestIcaoRoutingIntegration:
         msg_dict = json.loads(payload)
         assert msg_dict["source"] == "MLAT"
         assert len(msg_dict["icao_hex"]) == 6
+
+    def test_handle_978_message_routes_correctly(self):
+        """978 UAT messages skip pyModeS entirely -- icao_hex/received_at come
+        from parse_978_line, not from decoding raw as Mode S."""
+        r = self._make_receiver(processor_count=4)
+
+        raw_hex, icao_hex, received_at = parse_978_line(
+            "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
+        )
+        published: list[tuple] = []
+        r._publish = lambda q, p: published.append((q, p))
+        r._rates["978"] = _RateTracker()
+
+        r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"])
+
+        assert len(published) == 1
+        _, payload = published[0]
+
+        import json
+        msg_dict = json.loads(payload)
+        assert msg_dict["source"] == "978"
+        assert msg_dict["icao_hex"] == "A3D3E3"
+        assert msg_dict["raw"] == "-00A3D3E328A71F8C647004E9009C2D401A00"
+        assert msg_dict["received_at"] == 1782561034.334
+
+    def test_handle_978_message_discards_bad_icao_length(self):
+        r = self._make_receiver()
+        published: list = []
+        r._publish = lambda q, p: published.append((q, p))
+        r._rates["978"] = _RateTracker()
+
+        r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"])
+        assert published == []
 
     def test_handle_message_discards_bad_message(self):
         """Messages that yield no ICAO are discarded silently."""
