@@ -174,6 +174,26 @@ class TestIcaoRoutingIntegration:
         assert len(msg_dict["icao_hex"]) == 6
         assert msg_dict["raw"] == raw_hex.upper() or msg_dict["raw"] == raw_hex
 
+    def test_handle_message_routes_mlat_same_as_1090(self):
+        """MLAT frames use the same raw Mode S format as 1090 — no special
+        handling is needed; the source tag is simply carried through."""
+        r = self._make_receiver(processor_count=4)
+
+        raw_hex = "8D4840D6202CC371C32CE0576098"
+        published: list[tuple] = []
+        r._publish = lambda q, p: published.append((q, p))
+        r._rates["MLAT"] = _RateTracker()
+
+        r._handle_message(raw_hex, "MLAT", r._rates["MLAT"])
+
+        assert len(published) == 1
+        _, payload = published[0]
+
+        import json
+        msg_dict = json.loads(payload)
+        assert msg_dict["source"] == "MLAT"
+        assert len(msg_dict["icao_hex"]) == 6
+
     def test_handle_message_discards_bad_message(self):
         """Messages that yield no ICAO are discarded silently."""
         r = self._make_receiver()
@@ -440,6 +460,7 @@ class TestTelemetryPayload:
             "sources": [
                 {"host": "localhost", "port": 30002, "source": "1090"},
                 {"host": "localhost", "port": 30978, "source": "978"},
+                {"host": "localhost", "port": 30105, "source": "MLAT"},
             ],
             "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
@@ -483,6 +504,7 @@ class TestTelemetryPayload:
         payload = json.loads(mock_mqtt.publish.call_args[0][1])
         assert "messages_1090_per_second" in payload
         assert "messages_978_per_second" in payload
+        assert "messages_MLAT_per_second" in payload
         assert "local_queue_depth" in payload
         assert "rabbitmq_connected" in payload
         assert "started_at" in payload

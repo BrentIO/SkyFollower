@@ -528,7 +528,7 @@ components:
         source:
           type: string
           enum: ["1090", "978", "MLAT"]
-          description: Receive source. MLAT support is tracked in issue #32
+          description: Receive source
         first_message:
           type: string
           format: date-time
