@@ -282,7 +282,8 @@ class TestStageData:
 
 class TestBuildAirportRecord:
     def _row(self, icao_code="KJFK", name="JFK", city="New York",
-             region="US-NY", country="US", phonic="Kennedy"):
+             region="US-NY", country="US", phonic="Kennedy",
+             iata_code=None, latitude=None, longitude=None):
         # Returns a dict that behaves like sqlite3.Row for field access
         return {
             "icao_code": icao_code,
@@ -291,6 +292,9 @@ class TestBuildAirportRecord:
             "region": region,
             "country": country,
             "phonic": phonic,
+            "iata_code": iata_code,
+            "latitude": latitude,
+            "longitude": longitude,
         }
 
     def test_all_fields_present(self):
@@ -307,6 +311,28 @@ class TestBuildAirportRecord:
         assert record["region"] == "US-NY"
         assert record["country"] == "US"
         assert record["phonic"] == "Kennedy"
+
+    def test_iata_code_included_when_present(self):
+        row = self._row(iata_code="JFK")
+        record = build_airport_record(row)
+        assert record["iata_code"] == "JFK"
+
+    def test_iata_code_omitted_when_falsy(self):
+        row = self._row(iata_code="")
+        record = build_airport_record(row)
+        assert "iata_code" not in record
+
+    def test_lat_lon_included_when_present(self):
+        row = self._row(latitude=40.6398, longitude=-73.7789)
+        record = build_airport_record(row)
+        assert record["latitude"] == 40.6398
+        assert record["longitude"] == -73.7789
+
+    def test_lat_lon_omitted_when_none(self):
+        row = self._row()
+        record = build_airport_record(row)
+        assert "latitude" not in record
+        assert "longitude" not in record
 
 
 # ---------------------------------------------------------------------------
@@ -352,50 +378,52 @@ class TestWriteToRedis:
     def _mock_redis(self):
         r = MagicMock()
         pipe = MagicMock()
+        pipe_json = MagicMock()
         r.pipeline.return_value = pipe
+        pipe.json.return_value = pipe_json
         pipe.execute.return_value = []
-        pipe.set.return_value = pipe
-        return r, pipe
+        return r, pipe, pipe_json
 
     def test_count_matches_airports(self):
         conn = self._make_db()
-        r, _ = self._mock_redis()
+        r, _, _ = self._mock_redis()
         assert write_to_redis(conn, r, REDIS_TTL) == 2
         conn.close()
 
     def test_airport_key_written(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        keys = [c.args[0] for c in pipe.set.call_args_list]
+        keys = [c.args[0] for c in pipe_json.set.call_args_list]
         assert "airport:KJFK" in keys
         assert "airport:EGLL" in keys
         conn.close()
 
     def test_correct_ttl(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, pipe, _ = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        for c in pipe.set.call_args_list:
-            assert c.kwargs.get("ex") == REDIS_TTL
+        assert len(pipe.expire.call_args_list) == 2
+        for c in pipe.expire.call_args_list:
+            assert c.args[1] == REDIS_TTL
         conn.close()
 
     def test_value_is_valid_json_with_phonic(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        for c in pipe.set.call_args_list:
-            parsed = json.loads(c.args[1])
-            assert "icao_code" in parsed
-            assert "phonic" in parsed
+        for c in pipe_json.set.call_args_list:
+            record = c.args[2]
+            assert "icao_code" in record
+            assert "phonic" in record
         conn.close()
 
     def test_correct_record_content(self):
         conn = self._make_db()
-        r, pipe = self._mock_redis()
+        r, _, pipe_json = self._mock_redis()
         write_to_redis(conn, r, REDIS_TTL)
-        calls_by_key = {c.args[0]: c.args[1] for c in pipe.set.call_args_list}
-        kjfk = json.loads(calls_by_key["airport:KJFK"])
+        calls_by_key = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        kjfk = calls_by_key["airport:KJFK"]
         assert kjfk["icao_code"] == "KJFK"
         assert kjfk["name"] == "John F Kennedy International Airport"
         assert kjfk["city"] == "New York"
