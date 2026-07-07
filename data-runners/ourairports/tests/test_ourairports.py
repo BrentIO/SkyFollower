@@ -144,9 +144,10 @@ class TestIsValidIcao:
 # ---------------------------------------------------------------------------
 
 class TestOverridesPath:
-    def test_defaults_to_app_root(self):
-        # Not nested under /app/data -- mounts as a single file, like settings.json.
-        assert _mod._OVERRIDES_PATH == "/app/phonic_overrides.json"
+    def test_defaults_to_config_dir(self):
+        # Lives alongside settings.json in a mounted *directory*, not a
+        # single-file mount -- see docker-compose.server.yaml for why.
+        assert _mod._OVERRIDES_PATH == "/app/config/phonic_overrides.json"
 
     def test_respects_overrides_path_env_var(self, tmp_path):
         override_file = tmp_path / "custom_overrides.json"
@@ -158,6 +159,14 @@ class TestOverridesPath:
 
     def test_missing_file_at_custom_path_silently_ignored(self, tmp_path):
         override_file = tmp_path / "does_not_exist.json"
+        with patch.dict(os.environ, {"OVERRIDES_PATH": str(override_file)}):
+            fresh_mod = _load_main()
+        assert fresh_mod._PHONIC_OVERRIDES == {}
+
+    def test_missing_parent_directory_silently_ignored(self, tmp_path):
+        # Covers the case where nothing is mounted at /app/config at all
+        # (e.g. a bare `docker run` without the compose volume).
+        override_file = tmp_path / "nonexistent-dir" / "phonic_overrides.json"
         with patch.dict(os.environ, {"OVERRIDES_PATH": str(override_file)}):
             fresh_mod = _load_main()
         assert fresh_mod._PHONIC_OVERRIDES == {}

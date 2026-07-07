@@ -115,10 +115,11 @@ services:
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
-      # Optional: override spoken airport names without rebuilding the image.
-      # Copy config/runners/ourairports-phonic-overrides.json.example to
-      # ourairports-phonic-overrides.json (same convention as settings.json).
-      - ./config/runners/ourairports-phonic-overrides.json:/app/phonic_overrides.json:ro
+      # Mounted as a directory (not a single file) so an optional
+      # phonic_overrides.json placed alongside settings.json here can be
+      # added, edited, or removed without needing to recreate the container --
+      # a single-file mount would fail to start if its source were deleted.
+      - ./config/runners:/app/config:ro
     depends_on:
       - redis
 
