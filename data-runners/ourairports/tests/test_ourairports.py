@@ -432,11 +432,11 @@ class TestWriteToRedis:
 
 
 # ---------------------------------------------------------------------------
-# Tests: MQTT completion stats — single JSON payload pattern
+# Tests: MQTT completion stats — per-stat retained topic pattern
 # ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
-    _stats_topic = f"{MQTT_ROOT}/statistics"
+    _base_topic = f"{MQTT_ROOT}/statistic"
 
     def _setup_mock_client(self):
         mock_client = MagicMock()
@@ -447,17 +447,16 @@ class TestMqttCompletionStats:
         mock_client.connect.side_effect = fake_connect
         return mock_client
 
-    def test_single_json_payload_published(self):
+    def test_publishes_records_imported(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 42, "success")
-        # The stats topic should be in published calls
         topics = [c.args[0] for c in mc.publish.call_args_list]
-        assert self._stats_topic in topics
+        assert f"{self._base_topic}/records_imported" in topics
 
-    def test_payload_contains_all_fields(self):
+    def test_records_imported_value(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
@@ -465,12 +464,18 @@ class TestMqttCompletionStats:
                 publish_completion_stats(cfg, 77, "success")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
-        payload = json.loads(calls[self._stats_topic])
-        assert payload["records_imported"] == 77
-        assert payload["last_run_status"] == "success"
-        assert "last_run_at" in payload
+        assert calls[f"{self._base_topic}/records_imported"] == "77"
 
-    def test_failure_status_in_payload(self):
+    def test_last_run_at_present(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch("ourairports_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, 77, "success")
+        topics = [c.args[0] for c in mc.publish.call_args_list]
+        assert f"{self._base_topic}/last_run_at" in topics
+
+    def test_failure_status_published(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
@@ -478,8 +483,19 @@ class TestMqttCompletionStats:
                 publish_completion_stats(cfg, 0, "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
-        payload = json.loads(calls[self._stats_topic])
-        assert payload["last_run_status"] == "failure"
+        assert calls[f"{self._base_topic}/last_run_status"] == "failure"
+
+    def test_stat_topics_retained(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch("ourairports_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, 42, "success")
+        stat_calls = [c for c in mc.publish.call_args_list
+                      if c.args[0].startswith(self._base_topic)]
+        assert len(stat_calls) == 3
+        for call in stat_calls:
+            assert call.kwargs.get("retain") is True
 
     def test_no_mqtt_config_skips(self):
         cfg = {}
@@ -488,7 +504,7 @@ class TestMqttCompletionStats:
             publish_completion_stats(cfg, 0, "success")
         mc.connect.assert_not_called()
 
-    def test_ha_autodiscovery_uses_value_template(self):
+    def test_ha_autodiscovery_uses_direct_state_topic(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("ourairports_main.mqtt.Client", return_value=mc):
@@ -499,5 +515,6 @@ class TestMqttCompletionStats:
         assert len(ha_calls) == 3
         for call in ha_calls:
             cfg_payload = json.loads(call.args[1])
-            assert "value_template" in cfg_payload
-            assert cfg_payload["state_topic"] == self._stats_topic
+            assert "value_template" not in cfg_payload
+            assert cfg_payload["state_topic"].startswith(self._base_topic)
+            assert call.kwargs.get("retain") is True

@@ -80,17 +80,14 @@ TTL: `redis_ttl_days × 86400` seconds (default 14 days).
 
 ## MQTT Topics
 
-| Topic | Payload | Retained |
-|-------|---------|----------|
-| `SkyFollower/runner/ourairports/statistics` | JSON (see below) | No |
+Published once, at the end of a run, to `SkyFollower/runner/ourairports/statistic/{name}` (all retained):
 
-**Statistics payload:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `records_imported` | integer | Number of airport records written to Redis |
+| Topic suffix | Value | Description |
+|---|---|---|
+| `records_imported` | integer as string | Number of airport records written to Redis |
 | `last_run_at` | string | UTC ISO-8601 timestamp of run completion |
 | `last_run_status` | string | `success` or `failure` |
 
-Home Assistant autodiscovery payloads are published to
-`homeassistant/sensor/SkyFollower_runner_ourairports_{name}/config` on connect.
+Home Assistant autodiscovery payloads (retained) are published to
+`homeassistant/sensor/SkyFollower_runner_ourairports_{name}/config` on connect,
+each with a `state_topic` pointing directly at its own stat topic above.
