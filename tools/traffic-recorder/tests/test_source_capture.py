@@ -8,12 +8,15 @@ thread has finished, so joining a completed SourceCapture always raised
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import io
 import os
 import socket
 import sys
 import threading
+
+import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _TOOL_DIR = os.path.dirname(_HERE)
@@ -32,6 +35,7 @@ def _load_main():
 
 _mod = _load_main()
 SourceCapture = _mod.SourceCapture
+_parse_source = _mod._parse_source
 
 
 class TestSourceCaptureJoin:
@@ -100,3 +104,48 @@ class TestSourceCaptureJoin:
         acceptor.join(timeout=5)
 
         assert not capture.is_alive()
+
+
+class TestParseSource:
+    def test_mlat_tag_accepted(self):
+        assert _parse_source("localhost:30105:MLAT") == ("localhost", 30105, "MLAT")
+
+    def test_lowercase_mlat_rejected(self):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_source("localhost:30105:mlat")
+
+
+class TestMLATRouting:
+    def test_mlat_routes_to_capture_1090(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        stop_event = threading.Event()
+        capture = SourceCapture(
+            host=host,
+            port=port,
+            source_tag="MLAT",
+            output_lock=threading.Lock(),
+            output_file=io.StringIO(),
+            stop_event=stop_event,
+        )
+
+        calls = []
+        capture._capture_1090 = lambda sock: calls.append(sock)
+
+        capture.start()
+        capture.join(timeout=5)
+        acceptor.join(timeout=5)
+
+        assert not capture.is_alive()
+        assert capture.error is None
+        assert len(calls) == 1
