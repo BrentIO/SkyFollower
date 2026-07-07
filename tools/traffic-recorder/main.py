@@ -26,36 +26,8 @@ import pyModeS as pms
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
+from shared.adsb_1090 import parse_tcp_stream as parse_1090_stream
 from shared.uat import parse_978_line
-
-# ---------------------------------------------------------------------------
-# 1090 TCP stream parser  (*hex;\n  — readsb raw format)
-# ---------------------------------------------------------------------------
-
-_STAR = 0x2A
-_SEMI = 0x3B
-_HEX_BYTES = frozenset(
-    list(range(0x30, 0x3A))
-    + list(range(0x41, 0x47))
-    + list(range(0x61, 0x67))
-)
-
-
-def parse_1090_stream(data: bytes, buf: bytearray) -> list[str]:
-    messages: list[str] = []
-    for byte in data:
-        if byte == _STAR:
-            buf.clear()
-        elif byte == _SEMI:
-            if buf:
-                messages.append(buf.decode("ascii").upper())
-                buf.clear()
-        elif byte in _HEX_BYTES:
-            buf.extend([byte])
-        else:
-            buf.clear()
-    return messages
-
 
 # ---------------------------------------------------------------------------
 # Per-source capture thread
