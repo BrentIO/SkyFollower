@@ -2,10 +2,12 @@
 """
 SkyFollower Receiver
 
-Connects to one or more readsb TCP ports (raw ADS-B format), extracts ICAO hex
-from each message using pyModeS, and routes it to the appropriate RabbitMQ queue
-based on a modulo-bucketing scheme.  Falls back to a local SQLite queue when
-RabbitMQ is unavailable, and drains the fallback on reconnect.
+Connects to one or more TCP sources — readsb (1090 MHz Mode S / MLAT) or
+dump978-fa (978 MHz UAT) — extracts each message's ICAO hex (via pyModeS for
+1090/MLAT, directly from the UAT payload for 978), and routes it to the
+appropriate RabbitMQ queue based on a modulo-bucketing scheme.  Falls back to
+a local SQLite queue when RabbitMQ is unavailable, and drains the fallback on
+reconnect.
 
 One container handles all configured sources concurrently (one thread per source).
 """
@@ -32,6 +34,7 @@ import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.models import InboundMessage
+from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
 
@@ -216,20 +219,10 @@ class Receiver:
                 with socket.create_connection((host, port), timeout=10) as sock:
                     sock.settimeout(5.0)
                     logger.info("Connected to %s:%s (source=%s).", host, port, source)
-                    buf = bytearray()
-                    while not self._shutdown.is_set():
-                        try:
-                            chunk = sock.recv(4096)
-                        except socket.timeout:
-                            continue
-                        if not chunk:
-                            logger.warning(
-                                "readsb %s:%s closed connection — reconnecting.", host, port
-                            )
-                            break
-
-                        for raw_hex in parse_tcp_stream(chunk, buf):
-                            self._handle_message(raw_hex, source, rate_tracker)
+                    if source == "978":
+                        self._read_978_stream(sock, host, port, source, rate_tracker)
+                    else:
+                        self._read_1090_stream(sock, host, port, source, rate_tracker)
 
             except OSError as exc:
                 logger.warning(
@@ -243,10 +236,51 @@ class Receiver:
             if not self._shutdown.is_set():
                 time.sleep(5)
 
+    def _read_1090_stream(
+        self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
+    ) -> None:
+        buf = bytearray()
+        while not self._shutdown.is_set():
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not chunk:
+                logger.warning(
+                    "readsb %s:%s closed connection — reconnecting.", host, port
+                )
+                break
+
+            for raw_hex in parse_tcp_stream(chunk, buf):
+                self._handle_message(raw_hex, source, rate_tracker)
+
+    def _read_978_stream(
+        self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
+    ) -> None:
+        line_buf = b""
+        while not self._shutdown.is_set():
+            try:
+                chunk = sock.recv(4096)
+            except socket.timeout:
+                continue
+            if not chunk:
+                logger.warning(
+                    "readsb %s:%s closed connection — reconnecting.", host, port
+                )
+                break
+
+            line_buf += chunk
+            while b"\n" in line_buf:
+                raw_line, line_buf = line_buf.split(b"\n", 1)
+                result = parse_978_line(raw_line.decode("ascii", errors="ignore"))
+                if result:
+                    raw_hex, icao_hex, received_at = result
+                    self._handle_978_message(raw_hex, icao_hex, received_at, source, rate_tracker)
+
     def _handle_message(
         self, raw_hex: str, source: str, rate_tracker: _RateTracker
     ) -> None:
-        """Extract ICAO, compute queue, and publish or enqueue."""
+        """Extract ICAO from a 1090 Mode S message, then route it."""
         try:
             decoded = pms.decode(raw_hex)
             icao_hex = decoded.get("icao") if decoded else None
@@ -261,13 +295,40 @@ class Receiver:
         if len(icao_hex) != 6:
             return
 
+        self._route_message(raw_hex, icao_hex, time.time(), source, rate_tracker)
+
+    def _handle_978_message(
+        self,
+        raw_hex: str,
+        icao_hex: str,
+        received_at: float,
+        source: str,
+        rate_tracker: _RateTracker,
+    ) -> None:
+        """Route an already-parsed 978 UAT message (icao_hex/received_at
+        extracted by parse_978_line — no pyModeS decode needed, UAT is not
+        Mode S)."""
+        if len(icao_hex) != 6:
+            return
+
+        self._route_message(raw_hex, icao_hex, received_at, source, rate_tracker)
+
+    def _route_message(
+        self,
+        raw: str,
+        icao_hex: str,
+        received_at: float,
+        source: str,
+        rate_tracker: _RateTracker,
+    ) -> None:
+        """Compute the target queue, build the InboundMessage envelope, and publish."""
         processor_count = self._cfg.get("processor_count", 1)
         queue_name = f"adsb-{int(icao_hex, 16) % processor_count}"
 
         msg = InboundMessage(
-            raw=raw_hex,
+            raw=raw,
             icao_hex=icao_hex,
-            received_at=time.time(),
+            received_at=received_at,
             source=source,  # type: ignore[arg-type]
         )
         payload = msg.model_dump_json()
