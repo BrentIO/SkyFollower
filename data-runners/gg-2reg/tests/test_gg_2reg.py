@@ -381,10 +381,15 @@ class TestBuildRecord:
         record = _build_record(row, "4CA123", "2-ABCD")
         assert "registrant" not in record
 
-    def test_private_owner_stored(self):
+    def test_private_owner_omitted(self):
         row = _make_row(owner="(private)")
         record = _build_record(row, "4CA123", "2-ABCD")
-        assert record["registrant"]["names"] == ["(private)"]
+        assert "registrant" not in record
+
+    def test_private_owner_omitted_case_insensitive(self):
+        row = _make_row(owner="(PRIVATE)")
+        record = _build_record(row, "4CA123", "2-ABCD")
+        assert "registrant" not in record
 
     def test_no_aircraft_fields_omits_aircraft_key(self):
         row = _make_row(manufacturer="", model="", serial="")

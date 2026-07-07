@@ -79,6 +79,9 @@ _SKIP_PREFIXES = (
     "ALL CURRENT RESERVED OR UNAVAILABLE REGISTRATION MARKS",
 )
 
+# Owner values that are privacy placeholders, not real names (matched case-insensitively)
+_PRIVATE_PLACEHOLDERS = {"(PRIVATE)", "PRIVATE"}
+
 
 # ---------------------------------------------------------------------------
 # PDF word → column assignment
@@ -182,7 +185,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["serial_number"] = serial
 
     owner = _WHITESPACE_RE.sub(" ", row.get("owner", "").strip())
-    if owner:
+    if owner and owner.upper() not in _PRIVATE_PLACEHOLDERS:
         registrant_fields["names"] = [owner]
 
     record: dict = {
