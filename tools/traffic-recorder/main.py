@@ -8,7 +8,7 @@ traffic-replayer tool.
 
 Usage:
     python main.py --output capture.ndjson --duration 7200 \
-        --sources "localhost:30002:1090" "localhost:30978:978"
+        --sources "localhost:30002:1090" "localhost:30978:978" "localhost:30105:MLAT"
 """
 
 from __future__ import annotations
@@ -151,7 +151,7 @@ class SourceCapture(threading.Thread):
             sock.settimeout(1.0)
             if self.source_tag == "978":
                 self._capture_978(sock)
-            elif self.source_tag == "1090":
+            elif self.source_tag in ("1090", "MLAT"):
                 self._capture_1090(sock)
 
     def _capture_1090(self, sock: socket.socket) -> None:
@@ -208,7 +208,7 @@ class SourceCapture(threading.Thread):
 # Entry point
 # ---------------------------------------------------------------------------
 
-_VALID_SOURCE_TAGS = {"1090", "978"}
+_VALID_SOURCE_TAGS = {"1090", "978", "MLAT"}
 
 
 def _parse_source(s: str) -> tuple[str, int, str]:
@@ -243,7 +243,7 @@ def main() -> None:
         nargs="+",
         required=True,
         metavar="HOST:PORT:SOURCE_TAG",
-        help='One or more sources, e.g. "localhost:30002:1090" "localhost:30978:978"',
+        help='One or more sources, e.g. "localhost:30002:1090" "localhost:30978:978" "localhost:30105:MLAT"',
     )
     args = parser.parse_args()
 
