@@ -24,34 +24,9 @@ import time
 
 import pyModeS as pms
 
-# ---------------------------------------------------------------------------
-# 1090 TCP stream parser  (*hex;\n  — readsb raw format)
-# ---------------------------------------------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
-_STAR = 0x2A
-_SEMI = 0x3B
-_HEX_BYTES = frozenset(
-    list(range(0x30, 0x3A))
-    + list(range(0x41, 0x47))
-    + list(range(0x61, 0x67))
-)
-
-
-def parse_1090_stream(data: bytes, buf: bytearray) -> list[str]:
-    messages: list[str] = []
-    for byte in data:
-        if byte == _STAR:
-            buf.clear()
-        elif byte == _SEMI:
-            if buf:
-                messages.append(buf.decode("ascii").upper())
-                buf.clear()
-        elif byte in _HEX_BYTES:
-            buf.extend([byte])
-        else:
-            buf.clear()
-    return messages
-
+from shared.adsb_1090 import parse_tcp_stream as parse_1090_stream
 
 # ---------------------------------------------------------------------------
 # 978 line parser  (-hex;rs=N;rssi=N;t=N.NNN;  — dump978-fa format)
