@@ -11,7 +11,9 @@ COPY data-runners/ourairports/ ./ourairports/
 
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
+ENV OVERRIDES_PATH=/app/phonic_overrides.json
 
 RUN touch /app/settings.json
+RUN echo '{}' > /app/phonic_overrides.json
 
 CMD ["python", "ourairports/main.py"]

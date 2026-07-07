@@ -140,6 +140,30 @@ class TestIsValidIcao:
 
 
 # ---------------------------------------------------------------------------
+# Tests: overrides file path resolution
+# ---------------------------------------------------------------------------
+
+class TestOverridesPath:
+    def test_defaults_to_app_root(self):
+        # Not nested under /app/data -- mounts as a single file, like settings.json.
+        assert _mod._OVERRIDES_PATH == "/app/phonic_overrides.json"
+
+    def test_respects_overrides_path_env_var(self, tmp_path):
+        override_file = tmp_path / "custom_overrides.json"
+        override_file.write_text(json.dumps({"KXYZ": "Custom Name"}))
+        with patch.dict(os.environ, {"OVERRIDES_PATH": str(override_file)}):
+            fresh_mod = _load_main()
+        assert fresh_mod._OVERRIDES_PATH == str(override_file)
+        assert fresh_mod._PHONIC_OVERRIDES == {"KXYZ": "Custom Name"}
+
+    def test_missing_file_at_custom_path_silently_ignored(self, tmp_path):
+        override_file = tmp_path / "does_not_exist.json"
+        with patch.dict(os.environ, {"OVERRIDES_PATH": str(override_file)}):
+            fresh_mod = _load_main()
+        assert fresh_mod._PHONIC_OVERRIDES == {}
+
+
+# ---------------------------------------------------------------------------
 # Tests: compute_phonic
 # ---------------------------------------------------------------------------
 

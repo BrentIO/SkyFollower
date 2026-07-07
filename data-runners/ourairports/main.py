@@ -71,10 +71,12 @@ CREATE TABLE airports (
 #       ...
 #   }
 #
-# Place the file at the path below on the host (same mounted volume as the
-# staging database). Loaded once at startup; a container restart is required
-# to pick up changes. Missing file is silently ignored (empty overrides).
-_OVERRIDES_PATH = "/app/data/phonic_overrides.json"
+# Mounted as a single file, same as settings.json; path defaults to
+# /app/phonic_overrides.json and can be overridden with the OVERRIDES_PATH
+# environment variable. Loaded once at startup; a container restart is
+# required to pick up changes. Missing file is silently ignored (empty
+# overrides).
+_OVERRIDES_PATH = os.environ.get("OVERRIDES_PATH", "/app/phonic_overrides.json")
 
 
 def _load_phonics_overrides() -> dict:
