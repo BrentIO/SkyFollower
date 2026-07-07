@@ -27,13 +27,14 @@ used by downstream systems for overhead announcements. "International" and
 
 ### Override file
 
-Create `config/runners/ourairports-data/phonic_overrides.json` on the host
-(relative to `docker-compose.server.yaml`). The directory must be created
-manually if it does not exist:
-
-```bash
-mkdir -p config/runners/ourairports-data
-```
+Copy `config/runners/phonic_overrides.json.example` to
+`config/runners/phonic_overrides.json` — the same directory `settings.json`
+already lives in (relative to `docker-compose.server.yaml`) — and edit it.
+That directory is mounted onto `/app/config`; the path defaults to
+`/app/config/phonic_overrides.json` and can be overridden with the
+`OVERRIDES_PATH` environment variable. Mounting the directory (rather than
+the file directly) means the override file can be added, edited, or removed
+without needing to recreate the container.
 
 **Format:**
 ```json
