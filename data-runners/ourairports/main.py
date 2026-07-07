@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
@@ -298,19 +299,13 @@ def publish_completion_stats(
     records_imported: int,
     status: str,
 ) -> None:
-    """Publish completion statistics as a single JSON payload to MQTT."""
+    """Publish completion statistics to MQTT, one retained topic per stat."""
     mc = cfg.get("mqtt")
     if not mc:
         logger.info("No MQTT config; skipping stats publish.")
         return
 
     run_at = datetime.now(timezone.utc).isoformat()
-    stats_payload = {
-        "records_imported": records_imported,
-        "last_run_at": run_at,
-        "last_run_status": status,
-    }
-    stats_topic = f"{MQTT_ROOT}/statistics"
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     connected = False
@@ -325,7 +320,6 @@ def publish_completion_stats(
         client.connect(mc["host"], port=mc.get("port", 1883), keepalive=60)
         client.loop_start()
 
-        import time
         deadline = time.monotonic() + 5
         while not connected and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -335,8 +329,12 @@ def publish_completion_stats(
             client.loop_stop()
             return
 
-        client.publish(stats_topic, json.dumps(stats_payload))
-        _publish_ha_autodiscovery(client, stats_topic)
+        base = MQTT_ROOT + "/statistic"
+        client.publish(f"{base}/records_imported", str(records_imported), retain=True)
+        client.publish(f"{base}/last_run_at", run_at, retain=True)
+        client.publish(f"{base}/last_run_status", status, retain=True)
+
+        _publish_ha_autodiscovery(client)
 
         time.sleep(0.5)
         client.loop_stop()
@@ -351,24 +349,20 @@ def publish_completion_stats(
             pass
 
 
-def _publish_ha_autodiscovery(client: mqtt.Client, stats_topic: str) -> None:
+def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
         "ids": "SkyFollower_runner_ourairports",
         "name": "SkyFollower OurAirports Runner",
         "manufacturer": "P5Software, LLC",
     }
-    sensors = [
-        ("records_imported", "OurAirports Records Imported", "mdi:airport",
-         "total_increasing", None, "{{ value_json.records_imported }}"),
-        ("last_run_at", "OurAirports Last Run At", "mdi:clock",
-         None, None, "{{ value_json.last_run_at }}"),
-        ("last_run_status", "OurAirports Last Run Status", "mdi:check-circle",
-         None, None, "{{ value_json.last_run_status }}"),
+    stats = [
+        ("records_imported", "OurAirports Records Imported", "mdi:airport", "total_increasing", None),
+        ("last_run_at", "OurAirports Last Run At", "mdi:clock", None, None),
+        ("last_run_status", "OurAirports Last Run Status", "mdi:check-circle", None, None),
     ]
-    for name, friendly_name, icon, state_class, unit, tmpl in sensors:
+    for name, friendly_name, icon, state_class, unit in stats:
         payload: dict = {
-            "state_topic": stats_topic,
-            "value_template": tmpl,
+            "state_topic": f"{MQTT_ROOT}/statistic/{name}",
             "name": friendly_name,
             "unique_id": f"SkyFollower_runner_ourairports_{name}",
             "object_id": f"SkyFollower_runner_ourairports_{name}",
