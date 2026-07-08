@@ -33,6 +33,7 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX, aircraft_mictronics_key, operator_key
 from shared.redis_json import set_json
+from shared.mqtt import build_mqtt_client
 
 logger = logging.getLogger("mictronics")
 
@@ -389,7 +390,7 @@ def publish_completion_stats(
 
     run_at = datetime.now(timezone.utc).isoformat()
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client = build_mqtt_client(mc)
     connected = False
 
     def _on_connect(c, userdata, flags, reason_code, properties):

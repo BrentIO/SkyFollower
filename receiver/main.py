@@ -34,6 +34,7 @@ import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.models import InboundMessage
+from shared.mqtt import build_mqtt_client
 from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
@@ -443,9 +444,8 @@ class Receiver:
         if not mc:
             return
 
-        self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        self._mqtt.will_set(
-            f"SkyFollower/receiver/{self._id}/status", "OFFLINE", retain=True
+        self._mqtt = build_mqtt_client(
+            mc, will_topic=f"SkyFollower/receiver/{self._id}/status"
         )
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect

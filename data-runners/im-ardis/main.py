@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.redis_keys import aircraft_registry_key
 from shared.redis_json import set_json
+from shared.mqtt import build_mqtt_client
 
 logger = logging.getLogger("im-ardis")
 
@@ -273,7 +274,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
         return
 
     run_at = datetime.now(timezone.utc).isoformat()
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client = build_mqtt_client(mc)
     connected = False
 
     def _on_connect(c, userdata, flags, reason_code, properties):

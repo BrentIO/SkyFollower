@@ -44,6 +44,7 @@ from shared.redis_keys import (
     aircraft_mictronics_key,
 )
 from shared.redis_json import set_json
+from shared.mqtt import build_mqtt_client
 
 logger = logging.getLogger("au-casa")
 
@@ -430,7 +431,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
     run_at = datetime.now(timezone.utc).isoformat()
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client = build_mqtt_client(mc)
     connected = False
 
     def _on_connect(c, userdata, flags, reason_code, properties):
