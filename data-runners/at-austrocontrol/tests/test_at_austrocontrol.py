@@ -116,7 +116,7 @@ class TestDecodeAircraftType:
         assert _decode_aircraft_type("Tragschrauber") == "Gyroplane"
 
     def test_eigenstartfaehiger_motorsegler(self):
-        assert _decode_aircraft_type("Eigenstartfähiger Motorsegler") == "Glider"
+        assert _decode_aircraft_type("Eigenstartfähiger Motorsegler") == "Powered Glider"
 
     def test_nicht_eigenstartfaehiger_motorsegler(self):
         assert _decode_aircraft_type("Nicht eigenstartfähiger Motorsegler") == "Glider"
@@ -277,8 +277,13 @@ class TestBuildRecord:
         record = _build_record(item, "440123", "OE-ARG")
         assert record["aircraft"]["type"] == "Helicopter"
 
-    def test_glider_type(self):
+    def test_powered_glider_type(self):
         item = _make_item(luftfahrzeugart="Eigenstartfähiger Motorsegler")
+        record = _build_record(item, "440123", "OE-9522")
+        assert record["aircraft"]["type"] == "Powered Glider"
+
+    def test_glider_type(self):
+        item = _make_item(luftfahrzeugart="Nicht eigenstartfähiger Motorsegler")
         record = _build_record(item, "440123", "OE-9522")
         assert record["aircraft"]["type"] == "Glider"
 
