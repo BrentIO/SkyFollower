@@ -63,6 +63,8 @@ so no separate parsing is required.
 |-------|------|---------|-------------|
 | `host` | string | — | MQTT broker hostname or IP. |
 | `port` | integer | `1883` | MQTT broker port. |
+| `username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
+| `password` | string | — | MQTT password. |
 
 ## `RECEIVER_ID` Environment Variable
 

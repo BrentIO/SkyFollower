@@ -44,6 +44,7 @@ from shared.models import (
     Velocity,
     generate_flight_id,
 )
+from shared.mqtt import build_mqtt_client
 from shared.redis_keys import (
     config_areas_version_key,
     config_rules_version_key,
@@ -809,9 +810,8 @@ class Processor:
         mc = self._cfg.get("mqtt")
         if not mc:
             return
-        self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         lwtopic = f"SkyFollower/processor/{self._id}/status"
-        self._mqtt.will_set(lwtopic, "OFFLINE", retain=True)
+        self._mqtt = build_mqtt_client(mc, will_topic=lwtopic)
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
         try:

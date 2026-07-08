@@ -36,6 +36,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.models import CompletedFlight
+from shared.mqtt import build_mqtt_client
 from shared.redis_keys import metrics_flights_archived_key
 
 logger = logging.getLogger("archive-processor")
@@ -491,8 +492,7 @@ class ArchiveProcessor:
         mc = self._cfg.get("mqtt")
         if not mc:
             return
-        self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        self._mqtt.will_set("SkyFollower/archive/status", "OFFLINE", retain=True)
+        self._mqtt = build_mqtt_client(mc, will_topic="SkyFollower/archive/status")
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
         try:

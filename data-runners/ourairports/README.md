@@ -14,6 +14,8 @@ publishes MQTT completion statistics, and exits. Scheduled via ofelia.
 | `redis_ttl_days` | integer | `14` | TTL applied to every `airport:` key written |
 | `mqtt.host` | string | — | MQTT broker hostname (omit key to disable MQTT) |
 | `mqtt.port` | integer | `1883` | MQTT broker port |
+| `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
+| `mqtt.password` | string | — | MQTT password |
 | `log_level` | string | `"info"` | Log verbosity |
 
 The settings file path defaults to `/app/settings.json` and can be overridden

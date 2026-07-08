@@ -13,7 +13,9 @@
     },
     "mqtt": {
         "host": "192.168.1.x",
-        "port": 1883
+        "port": 1883,
+        "username": "change_me",
+        "password": "change_me"
     },
     "telemetry_interval_seconds": 30,
     "data_dir": "/app/data",

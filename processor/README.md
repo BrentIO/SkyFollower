@@ -20,6 +20,8 @@ horizontally by adding processor containers on separate hosts.
 | `redis.port` | integer | `6379` | Redis port |
 | `mqtt.host` | string | — | MQTT broker hostname (omit key to disable MQTT) |
 | `mqtt.port` | integer | `1883` | MQTT broker port |
+| `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
+| `mqtt.password` | string | — | MQTT password |
 | `flight_ttl_seconds` | integer | `300` | Seconds of silence before a flight is considered complete and sent to the archive queue. Too short fragments flights; too long merges back-to-back flights on quick-turn aircraft. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
 | `home_latitude` | float | — | Receiver home latitude (decimal degrees). Required for single-message CPR position decoding (DF 17, TC 5–18). Omit if position decoding is not needed. |
