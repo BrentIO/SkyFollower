@@ -128,7 +128,7 @@ Reads `settings.json` (mounted at `/app/settings.json`):
 | `redis.port` | ❌ | `6379` | |
 | `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
 | `mqtt.port` | ❌ | `1883` | |
-| `mqtt.username` | ❌ | — | Optional MQTT auth (added in #328); omit for an anonymous broker |
+| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
 | `mqtt.password` | ❌ | — | |
 | `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:registry:{icao_hex}` key written by this runner |
 

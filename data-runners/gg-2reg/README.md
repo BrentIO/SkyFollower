@@ -26,7 +26,7 @@ detection does not reliably find the column boundaries in this PDF.
 | Aircraft Manufacturer | ✅ | → `aircraft.manufacturer` |
 | Type | ✅ | → `aircraft.model` |
 | MSN | ✅ | → `aircraft.serial_number` |
-| Registered Owner | ✅ | → `registrant.names[0]`; privacy placeholders (e.g. `(private)`) are filtered, not stored (#321) |
+| Registered Owner | ✅ | → `registrant.names[0]`; privacy placeholders (e.g. `(private)`) are filtered, not stored |
 | Date of Registration | ❌ | Parsed but not stored |
 
 See `specs/data-dictionary.yaml` (`gg-2reg` entry) for full column semantics and cross-source schema notes.
@@ -51,17 +51,12 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     },
     "icao_hex": "43EC60",
     "military": false,
-    "registrant": {
-        "names": [
-            "(private)"
-        ]
-    },
     "registration": "2-GOLD",
     "source": "gg-2reg"
 }
 ```
 
-Note: this example was captured before #321 landed. `(private)` is now filtered at write time — a fresh run would omit `registrant.names` entirely for this aircraft instead.
+Note: `registrant` is entirely absent here — this aircraft's owner is recorded as `(private)` in the source PDF, which is filtered at write time rather than stored.
 
 ## Configuration
 
@@ -73,7 +68,7 @@ Reads `settings.json` (mounted at `/app/settings.json`):
 | `redis.port` | ❌ | `6379` | |
 | `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
 | `mqtt.port` | ❌ | `1883` | |
-| `mqtt.username` | ❌ | — | Optional MQTT auth (added in #328); omit for an anonymous broker |
+| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
 | `mqtt.password` | ❌ | — | |
 | `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:registry:{icao_hex}` key written by this runner |
 
