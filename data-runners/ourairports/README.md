@@ -1,31 +1,84 @@
-# SkyFollower OurAirports Data Runner
+# ourairports
 
-Downloads the [OurAirports airports CSV](https://davidmegginson.github.io/ourairports-data/airports.csv),
-filters to 4-character ICAO codes, computes a voice-friendly phonic name for
-each airport, stages records in local SQLite, writes enrichment data to Redis,
-publishes MQTT completion statistics, and exits. Scheduled via ofelia.
+| | |
+|---|---|
+| **Coverage** | Global — airport metadata, not aircraft (different domain from every other data runner) |
+| **Data source** | https://davidmegginson.github.io/ourairports-data/airports.csv |
+| **Format** | CSV (fixed URL) |
+| **Run frequency** | Weekly (Monday, 05:10 UTC) |
+| **Depends on Mictronics for ICAO hex** | N/A — this runner writes `airport:{icao_code}` records, not aircraft enrichment, and has no relationship to the Mictronics-provided `icao_hex` lookup used by the country aircraft-register runners. |
 
-## Configuration (`settings.json`)
+## How it works
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `redis.host` | string | — | Redis hostname or IP |
-| `redis.port` | integer | `6379` | Redis port |
-| `redis_ttl_days` | integer | `14` | TTL applied to every `airport:` key written |
-| `mqtt.host` | string | — | MQTT broker hostname (omit key to disable MQTT) |
-| `mqtt.port` | integer | `1883` | MQTT broker port |
-| `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
-| `mqtt.password` | string | — | MQTT password |
-| `log_level` | string | `"info"` | Log verbosity |
+The OurAirports CSV is downloaded whole from a fixed URL (no index page or scraping involved) and parsed with `csv.DictReader`. Rows are filtered to those whose `ident` is exactly 4 characters (a valid ICAO airport code — 3-character IATA-only idents and other lengths are dropped) and staged into a fresh local SQLite database (the file is deleted and recreated on every run) before being bulk-written to Redis in batches of 10,000. Each staged row also gets a computed `phonic` field — a voice-friendly spoken name — via `compute_phonic()`, which supports a host-provided JSON override file for exact per-airport overrides (see below).
 
-The settings file path defaults to `/app/settings.json` and can be overridden
-with the `SETTINGS_PATH` environment variable.
+## Columns
+
+| Source column | Imported | Notes |
+|---|---|---|
+| `ident` | ✅ | Filtered to 4-character ICAO codes; non-4-char rows dropped; used as `icao_code` and the Redis key |
+| `iata_code` | ✅ | → `iata_code`; omitted from the record if blank |
+| `name` | ✅ | → `name`; also used as input to phonic computation |
+| `municipality` | ✅ | → `city`; also used as input to phonic computation |
+| `iso_region` | ✅ | → `region` |
+| `iso_country` | ✅ | → `country` |
+| `latitude_deg` | ✅ | → `latitude` (float) |
+| `longitude_deg` | ✅ | → `longitude` (float) |
+
+See `specs/data-dictionary.yaml` (`ourairports` entry) for full column semantics and cross-source schema notes.
+
+## Example Output
+
+This runner writes `airport:{icao_code}` records, not aircraft data, so `merge_aircraft.lua` does not apply here. Read a record directly with `JSON.GET`:
+
+```bash
+docker run --rm --network host redis:latest redis-cli JSON.GET airport:KATL | python3 -m json.tool --sort-keys --no-ensure-ascii
+```
+
+```json
+{
+    "icao_code": "KATL",
+    "name": "Hartsfield-Jackson Atlanta International Airport",
+    "city": "Atlanta",
+    "region": "US-GA",
+    "country": "US",
+    "phonic": "Atlanta Hartsfield-Jackson"
+}
+```
+
+TTL: `redis_ttl_days × 86400` seconds (default 14 days).
+
+## Configuration
+
+Reads `settings.json` (mounted at `/app/settings.json`):
+
+| Parameter | Required | Default | Notes |
+|---|---|---|---|
+| `redis.host` | ✅ | — | Redis connection host |
+| `redis.port` | ❌ | `6379` | |
+| `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
+| `mqtt.port` | ❌ | `1883` | |
+| `mqtt.username` | ❌ | — | Optional MQTT auth (added in #328); omit for an anonymous broker |
+| `mqtt.password` | ❌ | — | |
+| `redis_ttl_days` | ❌ | `14` | TTL applied to each `airport:{icao_code}` key written by this runner |
+
+The settings file path defaults to `/app/settings.json` and can be overridden with the `SETTINGS_PATH` environment variable.
+
+## MQTT
+
+Published once, at the end of a run, to `SkyFollower/runner/ourairports/statistic/{name}` (all retained):
+
+| Topic suffix | Value | Format |
+|---|---|---|
+| `records_imported` | e.g. `271` | Integer as string |
+| `last_run_at` | e.g. `2026-07-07T14:32:01.123456+00:00` | ISO 8601 UTC |
+| `last_run_status` | `success` or `failure` | String |
+
+Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_ourairports_{name}/config` for each of the three stats above.
 
 ## Phonic Names
 
-Each airport record includes a `phonic` field — a voice-friendly spoken name
-used by downstream systems for overhead announcements. "International" and
-"Airport" are stripped from every computed phonic.
+Each airport record includes a `phonic` field — a voice-friendly spoken name used by downstream systems for overhead announcements. "International" and "Airport" are stripped from every computed phonic.
 
 ### Override file
 
@@ -61,36 +114,3 @@ the next run. A missing file is silently ignored.
 4. Strip trailing `/` or `-` artifacts (common in names like "City/Town Airport").
 5. Normalise `/` and `-` to spaces; collapse extra spaces.
 6. Strip "International" and "Airport" from the result.
-
-## Redis Output
-
-Key pattern: `airport:{ICAO_CODE}` (uppercased)
-
-Payload shape (matches legacy AROI):
-
-```json
-{
-    "icao_code": "KATL",
-    "name": "Hartsfield-Jackson Atlanta International Airport",
-    "city": "Atlanta",
-    "region": "US-GA",
-    "country": "US",
-    "phonic": "Atlanta Hartsfield-Jackson"
-}
-```
-
-TTL: `redis_ttl_days × 86400` seconds (default 14 days).
-
-## MQTT Topics
-
-Published once, at the end of a run, to `SkyFollower/runner/ourairports/statistic/{name}` (all retained):
-
-| Topic suffix | Value | Description |
-|---|---|---|
-| `records_imported` | integer as string | Number of airport records written to Redis |
-| `last_run_at` | string | UTC ISO-8601 timestamp of run completion |
-| `last_run_status` | string | `success` or `failure` |
-
-Home Assistant autodiscovery payloads (retained) are published to
-`homeassistant/sensor/SkyFollower_runner_ourairports_{name}/config` on connect,
-each with a `state_topic` pointing directly at its own stat topic above.
