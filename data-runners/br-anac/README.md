@@ -28,6 +28,25 @@ The full Registro Aeronáutico Brasileiro (RAB) JSON dump is downloaded from a f
 | `NRASSENTOS` | ✅ | → `aircraft.seats` |
 | `NRANOFABRICACAO` | ✅ | → `aircraft.manufactured_date` (4-digit year → `YYYY-01-01T00:00:00Z`) |
 | `PROPRIETARIOSJSON` | ✅ | → `registrant.names[0]`; embedded JSON with a non-standard quote escape; placeholder names (e.g. `Indisponível`) are filtered |
+| `CDPROPOSITOCAVE` | ❌ | Present in source; not read by this runner |
+| `CDTIPO` | ❌ | Present in source; not read by this runner |
+| `CFOPERACIONAL` | ❌ | Present in source; not read by this runner |
+| `DSCATEGORIAHOMOLOGACAO` | ❌ | Present in source; not read by this runner |
+| `DSGRAVAME` | ❌ | Present in source; not read by this runner |
+| `DSMOTIVOCANC` | ❌ | Present in source; not read by this runner |
+| `DTVALIDADECA` | ❌ | Present in source; not read by this runner |
+| `DTVALIDADECVA` | ❌ | Present in source; not read by this runner |
+| `DT_MATRICULA` | ❌ | Present in source; not read by this runner |
+| `NRCERTMATRICULA` | ❌ | Present in source; not read by this runner |
+| `NRPASSAGEIROSMAX` | ❌ | Present in source; not read by this runner |
+| `NRPMD` | ❌ | Present in source; not read by this runner |
+| `NRTRIPULACAOMIN` | ❌ | Present in source; not read by this runner |
+| `OPERADORESJSON` | ❌ | Present in source; not read by this runner |
+| `QTMOTOR` | ❌ | Present in source; not read by this runner |
+| `TPCA` | ❌ | Present in source; not read by this runner |
+| `TPMOTOR` | ❌ | Present in source; not read by this runner |
+| `TPOPERADOR` | ❌ | Present in source; not read by this runner |
+| `TPPOUSO` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`br-anac` entry) for full column semantics and cross-source schema notes.
 

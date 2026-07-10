@@ -18,18 +18,30 @@ The Norway CAA register is downloaded whole from a fixed URL as a single JSON pa
 | Source column | Imported | Notes |
 |---|---|---|
 | `ICAO 24-bits adresse` (`Heksadesimal`) | ✅ | ICAO hex; record is dropped entirely if missing |
+| `ICAO 24-bits adresse` (`Desimal`) | ❌ | Present in source; not read by this runner |
+| `ICAO 24-bits adresse` (`Binær`) | ❌ | Present in source; not read by this runner |
+| `ICAO 24-bits adresse` (`Oktal`) | ❌ | Present in source; not read by this runner |
 | `Registreringsmerke` | ✅ | → `registration` |
 | `Kategori` | ✅ | → `aircraft.type`, decoded (Fly/Helikopter/Seilfly/Ballong → English) |
 | `Produsent` | ✅ | → `aircraft.manufacturer` |
 | `Type` | ✅ | → `aircraft.model` |
 | `Serienummer` | ✅ | → `aircraft.serial_number` |
 | `Byggeår` | ✅ | → `aircraft.manufactured_date` (4-digit year converted to ISO 8601 UTC) |
+| `Registreringsdato` | ❌ | Present in source; not read by this runner |
+| `Luftdyktighetskategori` | ❌ | Present in source; not read by this runner |
+| `Startmasse MTOM` | ❌ | Present in source; not read by this runner |
+| `Eier/Kontakt` (top-level string) | ❌ | Present in source; not read by this runner — distinct from the `Eier(e)` array's `Eier/Kontakt`-flagged entry, which is used |
+| `Organisasjonsnummer eier/kontakt` | ❌ | Present in source; not read by this runner |
+| `Operatør` | ❌ | Present in source; not read by this runner |
+| `Organisasjonsnummer operatør` | ❌ | Present in source; not read by this runner |
 | `Eier(e)` → `Eier type` | ✅ | Used to select the `Eier/Kontakt` entry for address fields |
+| `Eier(e)` → `Eier siden` | ❌ | Present in source; not read by this runner |
 | `Eier(e)` → `Navn` | ✅ | → `registrant.names[]` (contact first, then other owners, de-duplicated) |
 | `Eier(e)` → `Gateadresse` | ✅ | → `registrant.street[]` |
 | `Eier(e)` → `Poststed` | ✅ | → `registrant.city` |
 | `Eier(e)` → `Postnummer` | ✅ | → `registrant.postal_code` |
 | `Eier(e)` → `Land` | ✅ | → `registrant.country`, decoded to ISO 3166-1 alpha-2 where known |
+| `Eier(e)` → `Organisasjonsnummer` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`no-caa` entry) for full column semantics and cross-source schema notes.
 

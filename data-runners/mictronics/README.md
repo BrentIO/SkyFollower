@@ -37,21 +37,42 @@ written by an earlier one.
 
 ## Columns
 
+The ZIP archive contains four data files that are inspected independently below (a fifth entry, `LICENSE`, is the Open Data Commons license text and carries no data columns). Only `aircrafts.json`, `types.json`, and `operators.json` are joined into the records this runner writes; `dbversion.json` is a separate file that this runner never opens at all.
+
+### `aircrafts.json`
+
 | Source column | Imported | Notes |
 |---|---|---|
-| `aircrafts.json` key (icao_hex) | ✅ | → `icao_hex`; primary key of `aircraft:mictronics:{icao_hex}` |
-| `aircrafts.json` values[0] (registration) | ✅ | → `registration` |
-| `aircrafts.json` values[1] (type_designator) | ✅ | → `aircraft.type_designator`; also the join key into `types.json` |
-| `aircrafts.json` values[2] flags[0] (military) | ✅ | → `military` boolean |
-| `aircrafts.json` values[2] flags[1] (interesting) | ❌ | Staged in SQLite but not written to the Redis record |
-| `types.json` key (type_designator) | ✅ | Join key only |
-| `types.json` values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer`; full string also kept as `aircraft.manufacturer_model` |
-| `types.json` values[1] (description) | ❌ | Parsed but not stored |
-| `types.json` values[2] (wtc code) | ✅ | Decoded (`J`/`H`/`M`/`L`/`M/L`/`-` → full name) → `aircraft.wake_turbulence_category` |
-| `operators.json` key (airline_designator) | ✅ | → `operator:{designator}` key and `airline_designator` field |
-| `operators.json` values[0] (name) | ✅ | → `operator.name` |
-| `operators.json` values[1] (country) | ✅ | → `operator.country` |
-| `operators.json` values[2] (callsign) | ✅ | → `operator.callsign` |
+| key (icao_hex) | ✅ | → `icao_hex`; primary key of `aircraft:mictronics:{icao_hex}` |
+| values[0] (registration) | ✅ | → `registration` |
+| values[1] (type_designator) | ✅ | → `aircraft.type_designator`; also the join key into `types.json` |
+| values[2] flags[0] (military) | ✅ | → `military` boolean |
+| values[2] flags[1] (interesting) | ❌ | Staged in SQLite but not written to the Redis record |
+| values[3] (free-text type description) | ❌ | Present for ~6.8% of records (443,798 total; ~30,310 with a 4th array element), almost entirely on generic/non-ICAO type designators (`BALL`, `GLID`, `ULAC`, `GLIM`, `DRON`, `ZZZZ`, `PARA`, `GYRO`, `UHEL`, `SHIP`, `FFLO`, `VFHC`, `SERV`) — e.g. `["ZS-GBP", "GLID", "00", "Jonker Sailplanes JS-1 C Revelation"]`. Never read by this runner. |
+
+### `types.json`
+
+| Source column | Imported | Notes |
+|---|---|---|
+| key (type_designator) | ✅ | Join key only |
+| values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer`; full string also kept as `aircraft.manufacturer_model` |
+| values[1] (ICAO aircraft description code, e.g. `L2J`, `H2T`, `L1P`) | ❌ | Never read by this runner — the `powerplant`/`category` columns declared in the local SQLite schema are never populated from it |
+| values[2] (wtc code) | ✅ | Decoded (`J`/`H`/`M`/`L`/`M/L`/`-` → full name) → `aircraft.wake_turbulence_category` |
+
+### `operators.json`
+
+| Source column | Imported | Notes |
+|---|---|---|
+| key (airline_designator) | ✅ | → `operator:{designator}` key and `airline_designator` field |
+| values[0] (name) | ✅ | → `operator.name` |
+| values[1] (country) | ✅ | → `operator.country` |
+| values[2] (callsign) | ✅ | → `operator.callsign` |
+
+### `dbversion.json`
+
+| Source column | Imported | Notes |
+|---|---|---|
+| `version` | ❌ | Present in the ZIP alongside the three files above (e.g. `{"version":512}`); this runner never opens `dbversion.json` |
 
 See `specs/data-dictionary.yaml` (`mictronics` entry) for full column semantics and cross-source schema notes.
 

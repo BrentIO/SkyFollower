@@ -28,22 +28,46 @@ digits) and `city` (remainder).
 
 ## Columns
 
+The list page and each per-aircraft detail page are separate fetches joined on
+registration (the list page's `Registarska oznaka` is used as the lookup key,
+and is also lower-cased into the detail-page URL slug), so columns are
+enumerated per source below.
+
+### List page
+
 | Source column | Imported | Notes |
 |---|---|---|
-| Registarska oznaka (Registration) | ✅ | 4O-prefix; used as the Mictronics lookup key |
-| Redni broj u registru (sequence) | ❌ | Parsed but not stored |
-| Ime (operator name, list page) | ❌ | Parsed but not stored; superseded by the detail page's `Name` field |
-| Tip (short type code, list page) | ✅ | → `aircraft.model`, only if the detail page's `Aircraft model/type` is empty |
-| Aircraft model/type (detail) | ✅ | → `aircraft.model`; preferred over the list page's `Tip` |
-| Manufacturer (detail) | ✅ | → `aircraft.manufacturer` |
-| Category (detail) | ✅ | → `aircraft.type`; decoded from `"<category> – <type>"` |
-| S/N (detail) | ✅ | → `aircraft.serial_number` |
-| Year Built (detail) | ✅ | → `aircraft.manufactured_date` (`YYYY-01-01`), only if a 4-digit year |
-| ARC expiry date (detail) | ❌ | Parsed but not stored |
-| Name (operator, detail) | ✅ | → `registrant.names[0]` |
-| Address (operator, detail) | ✅ | → `registrant.street` |
-| Zip code, town (operator, detail) | ✅ | Split into `registrant.postal_code` and `registrant.city` |
-| Country (operator, detail) | ✅ | → `registrant.country` |
+| Registarska oznaka | ✅ | 4O-prefix; used as the Mictronics lookup key and as the detail-page join key |
+| Redni broj u registru | ❌ | Parsed but not stored |
+| Ime | ❌ | Parsed but not stored; superseded by the detail page's `Name` field |
+| Tip | ✅ | → `aircraft.model`, only if the detail page's `Aircraft model/type` is empty |
+
+### Detail page
+
+| Source column | Imported | Notes |
+|---|---|---|
+| Aircraft | ❌ | Drupal section-header field; static placeholder text, not per-aircraft data |
+| Manufacturer | ✅ | → `aircraft.manufacturer` |
+| Year Built | ✅ | → `aircraft.manufactured_date` (`YYYY-01-01`), only if a 4-digit year |
+| MTOM | ❌ | Present in source (maximum takeoff mass); not read by this runner |
+| Category | ✅ | → `aircraft.type`; decoded from `"<category> – <type>"` |
+| S/N | ✅ | → `aircraft.serial_number` |
+| Aircraft model/type | ✅ | → `aircraft.model`; preferred over the list page's `Tip` |
+| ARC expiry date | ❌ | Parsed but not stored |
+| Registration Details | ❌ | Drupal section-header field; static placeholder text, not per-aircraft data |
+| Issue Date | ❌ | Present in source; not read by this runner |
+| Registration | ❌ | Duplicate of the list page's `Registarska oznaka`; the detail page's own copy is never read (registration comes from the list page) |
+| Insert in register | ❌ | Duplicate of the list page's `Redni broj u registru`; not read by this runner |
+| Dereg | ❌ | Present in source; not read by this runner (the list URL is already pre-filtered to active registrations) |
+| Operator details | ❌ | Drupal section-header field; static placeholder text, not per-aircraft data |
+| Name | ✅ | → `registrant.names[0]` |
+| Address | ✅ | → `registrant.street` |
+| Zip code, town | ✅ | Split into `registrant.postal_code` and `registrant.city` |
+| Country | ✅ | → `registrant.country` |
+| Information about previous registration | ❌ | Drupal section-header field; static placeholder text, not per-aircraft data |
+| Previous country of register | ❌ | Present in source; not read by this runner |
+| Previous registration marks | ❌ | Present in source; not read by this runner (only present when the aircraft had a prior foreign registration) |
+| Deregistration date | ❌ | Present in source; not read by this runner (only present when the aircraft had a prior foreign registration) |
 
 See `specs/data-dictionary.yaml` (`me-caa` entry) for full column semantics and cross-source schema notes.
 

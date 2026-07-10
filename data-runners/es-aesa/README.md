@@ -30,6 +30,7 @@ available in this register at all.
 | Source column | Imported | Notes |
 |---|---|---|
 | Matrícula | ✅ | EC-prefix; used as the Mictronics lookup key |
+| Fecha matric. | ❌ | Present in source; not read by this runner |
 | Fabricante | ✅ | → `aircraft.manufacturer` |
 | Modelo | ✅ | → `aircraft.model` |
 | Nº serie | ✅ | → `aircraft.serial_number`; `NO DISPONIBLE` placeholder is filtered, not stored |

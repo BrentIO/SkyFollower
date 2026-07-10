@@ -20,6 +20,12 @@ detection does not reliably find the column boundaries in this PDF.
 
 ## Columns
 
+The main register table (all pages before the special sections) has six columns.
+The special sections at the end of the PDF (New Registrations, Deregistrations,
+Ownership Changes, Registration Changes, Reserved Marks) are skipped entirely by
+this runner, but several of them present additional columns not found in the
+main table; those are listed below too, since they genuinely exist in the source.
+
 | Source column | Imported | Notes |
 |---|---|---|
 | Registration | ✅ | 2-prefix; used as the Mictronics lookup key |
@@ -28,6 +34,13 @@ detection does not reliably find the column boundaries in this PDF.
 | MSN | ✅ | → `aircraft.serial_number` |
 | Registered Owner | ✅ | → `registrant.names[0]`; privacy placeholders (e.g. `(private)`) are filtered, not stored |
 | Date of Registration | ❌ | Parsed but not stored |
+| Deregistered on | ❌ | Only present in the "Deregistrations" special section; entire page is skipped by this runner |
+| Exported to | ❌ | Only present in the "Deregistrations" special section; entire page is skipped by this runner |
+| Previous Owner/Charterer by Demise | ❌ | Only present in the "Registration Ownership Changes" special section; entire page is skipped by this runner |
+| Ownership Changed | ❌ | Only present in the "Registration Ownership Changes" special section; entire page is skipped by this runner |
+| Previous Marks | ❌ | Only present in the "Registration Changes" special section; entire page is skipped by this runner |
+| Effective date | ❌ | Only present in the "Registration Changes" special section; entire page is skipped by this runner |
+| Reserved/Unavailable Registration Marks list | ❌ | The "All Current Reserved or Unavailable Registration Marks" page is skipped entirely; it is a plain list of marks with no owner/aircraft data |
 
 See `specs/data-dictionary.yaml` (`gg-2reg` entry) for full column semantics and cross-source schema notes.
 

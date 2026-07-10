@@ -22,6 +22,7 @@ Unlike most runners, there is no index page or file to discover — the register
 | MODEL | ✅ | → `aircraft.model` |
 | S/N | ✅ | → `aircraft.serial_number` |
 | OWNER /OPERATOR | ✅ | → `registrant.names[0]` |
+| D.O.R | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`tc-caa` entry) for full column semantics and cross-source schema notes.
 

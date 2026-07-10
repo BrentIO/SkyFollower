@@ -22,14 +22,27 @@ The list endpoint (`.../avreg/filtered?start=0&length=10000`) returns all record
 | transponder | ✅ | → `icao_hex` (skipped if null/empty) |
 | registration_number | ✅ | `OK-` prefix prepended → `registration` |
 | category | ✅ | Decoded via a category map (e.g. `AVREG_DATA.CATEGORIES.AIRPLANE` → `Airplane`) → `aircraft.type` |
+| type (detail endpoint) | ❌ | Free-text type/model designation (e.g. `SZD-45A`) distinct from the coded `category` field; present in source, not read by this runner |
 | manufacturer | ✅ | → `aircraft.manufacturer` |
 | model | ✅ | → `aircraft.model` |
 | serial_number | ✅ | → `aircraft.serial_number` |
 | manufacture_year | ✅ | Integer year (1900–2100) → `aircraft.manufactured_date` (`YYYY-01-01`) |
+| registration_date | ❌ | Present in source; not read by this runner |
+| mtow | ❌ | Present in source; not read by this runner |
+| color | ❌ | Present in source; not read by this runner |
+| pledge | ❌ | Present in source; not read by this runner |
+| pledge_text | ❌ | Present in source; not read by this runner |
+| sanctions | ❌ | Present in source; not read by this runner |
+| sanctions_text | ❌ | Present in source; not read by this runner |
+| transfer_of_rights | ❌ | Present in source; not read by this runner |
+| transfer_of_rights_text | ❌ | Present in source; not read by this runner |
 | engine_type | ✅ | Decoded via an engine-type map; `NO_ENGINE` omitted entirely → `aircraft.powerplant.type` |
 | engine_count | ✅ | → `aircraft.powerplant.count` |
 | max_on_board | ✅ | → `aircraft.seats` |
 | owners[].display_name | ✅ | All non-empty display names → `registrant.names[]` |
+| owners[].legal_id | ❌ | Present in source; not read by this runner |
+| operators[].display_name | ❌ | Present in source; not read by this runner |
+| operators[].legal_id | ❌ | Present in source; not read by this runner |
 
 See specs/data-dictionary.yaml (`cz-caa` entry) for full column semantics and cross-source schema notes.
 

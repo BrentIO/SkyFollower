@@ -21,39 +21,75 @@ This runner supports the 2017+ column layout only. Numeric FAA type codes (engin
 
 ## Columns
 
+The FAA ZIP contains eight files (`ardata.pdf`, `ACFTREF.txt`, `ENGINE.txt`,
+`DEALER.txt`, `DOCINDEX.txt`, `MASTER.txt`, `RESERVED.txt`, `DEREG.txt`); this
+runner reads only `acftref.txt`, `engine.txt`, and `master.txt`, joined via
+the codes below. Column names below are verbatim from each file's real
+header row.
+
+### engine.txt
+
 | Source column | Imported | Notes |
 |---|---|---|
-| `engine.txt`: CODE | ✅ | Join key to `master.txt`'s engine-code column |
-| `engine.txt`: MFR | ✅ | → `aircraft.powerplant.manufacturer` |
-| `engine.txt`: MODEL | ✅ | → `aircraft.powerplant.model` |
-| `engine.txt`: TYPE | ✅ | → `aircraft.powerplant.type` (decoded) |
-| `engine.txt`: HORSEPOWER | ✅ | → `aircraft.powerplant.power_value` (piston/turboprop/turboshaft/2-4-cycle/rotary types) |
-| `engine.txt`: THRUST | ✅ | → `aircraft.powerplant.power_value` (turbo-jet/turbo-fan/ramjet types) |
-| `acftref.txt`: CODE | ✅ | Join key to `master.txt`'s aircraft-code column |
-| `acftref.txt`: MFG | ✅ | → `aircraft.manufacturer` |
-| `acftref.txt`: MODEL | ✅ | → `aircraft.model` |
-| `acftref.txt`: TYPE-ACFT | ✅ | → `aircraft.type` (decoded) |
-| `acftref.txt`: TYPE-ENG | ✅ | → `aircraft.powerplant.type` (decoded; used if no matching `engine.txt` row) |
-| `acftref.txt`: CLASS | ✅ | → `aircraft.category` (decoded) |
-| `acftref.txt`: RULES | ❌ | Parsed but not stored |
-| `acftref.txt`: NO-ENG | ✅ | → `aircraft.powerplant.count` |
-| `acftref.txt`: NO-SEATS | ✅ | → `aircraft.seats` |
-| `acftref.txt`: AC-WEIGHT | ❌ | Parsed but not stored |
-| `acftref.txt`: SPEED | ❌ | Parsed but not stored |
-| `master.txt`: N-NUMBER | ✅ | → `registration` (prefixed with `N`) |
-| `master.txt`: SERIAL NUMBER | ✅ | → `aircraft.serial_number` |
-| `master.txt`: MFR MDL CODE | ✅ | Join key to `acftref.txt` |
-| `master.txt`: ENG MFR MDL CODE | ✅ | Join key to `engine.txt` |
-| `master.txt`: YEAR MFR | ✅ | → `aircraft.manufactured_date` |
-| `master.txt`: TYPE REGISTRANT | ✅ | → `registrant.type` (decoded) |
-| `master.txt`: NAME | ✅ | → `registrant.names[0]` |
-| `master.txt`: STREET / STREET2 | ✅ | → `registrant.street` |
-| `master.txt`: CITY | ✅ | → `registrant.city` |
-| `master.txt`: STATE | ✅ | → `registrant.administrative_area` |
-| `master.txt`: ZIP CODE | ✅ | → `registrant.postal_code` |
-| `master.txt`: COUNTRY | ✅ | → `registrant.country` (defaults to `US`) |
-| `master.txt`: OTHER NAMES (1-5) | ✅ | → `registrant.names[1:]` |
-| `master.txt`: MODE S CODE HEX | ✅ | → `icao_hex`; rows without a well-formed 6-character hex are discarded |
+| CODE | ✅ | Join key to `master.txt`'s engine-code column |
+| MFR | ✅ | → `aircraft.powerplant.manufacturer` |
+| MODEL | ✅ | → `aircraft.powerplant.model` |
+| TYPE | ✅ | → `aircraft.powerplant.type` (decoded) |
+| HORSEPOWER | ✅ | → `aircraft.powerplant.power_value` (piston/turboprop/turboshaft/2-4-cycle/rotary types) |
+| THRUST | ✅ | → `aircraft.powerplant.power_value` (turbo-jet/turbo-fan/ramjet types) |
+
+### acftref.txt
+
+| Source column | Imported | Notes |
+|---|---|---|
+| CODE | ✅ | Join key to `master.txt`'s aircraft-code column |
+| MFR | ✅ | → `aircraft.manufacturer` |
+| MODEL | ✅ | → `aircraft.model` |
+| TYPE-ACFT | ✅ | → `aircraft.type` (decoded) |
+| TYPE-ENG | ✅ | → `aircraft.powerplant.type` (decoded; used if no matching `engine.txt` row) |
+| AC-CAT | ✅ | → `aircraft.category` (decoded) |
+| BUILD-CERT-IND | ❌ | Present in source; not read by this runner |
+| NO-ENG | ✅ | → `aircraft.powerplant.count` |
+| NO-SEATS | ✅ | → `aircraft.seats` |
+| AC-WEIGHT | ❌ | Present in source; not read by this runner |
+| SPEED | ❌ | Present in source; not read by this runner |
+| TC-DATA-SHEET | ❌ | Present in source; not read by this runner |
+| TC-DATA-HOLDER | ❌ | Present in source; not read by this runner |
+
+### master.txt
+
+| Source column | Imported | Notes |
+|---|---|---|
+| N-NUMBER | ✅ | → `registration` (prefixed with `N`) |
+| SERIAL NUMBER | ✅ | → `aircraft.serial_number` |
+| MFR MDL CODE | ✅ | Join key to `acftref.txt` |
+| ENG MFR MDL | ✅ | Join key to `engine.txt` |
+| YEAR MFR | ✅ | → `aircraft.manufactured_date` |
+| TYPE REGISTRANT | ✅ | → `registrant.type` (decoded) |
+| NAME | ✅ | → `registrant.names[0]` |
+| STREET | ✅ | → `registrant.street` |
+| STREET2 | ✅ | → `registrant.street` |
+| CITY | ✅ | → `registrant.city` |
+| STATE | ✅ | → `registrant.administrative_area` |
+| ZIP CODE | ✅ | → `registrant.postal_code` |
+| REGION | ❌ | Present in source; not read by this runner |
+| COUNTY | ❌ | Present in source; not read by this runner |
+| COUNTRY | ✅ | → `registrant.country` (defaults to `US`) |
+| LAST ACTION DATE | ❌ | Present in source; not read by this runner |
+| CERT ISSUE DATE | ❌ | Present in source; not read by this runner |
+| CERTIFICATION | ❌ | Present in source; not read by this runner |
+| TYPE AIRCRAFT | ❌ | Present in source; not read by this runner |
+| TYPE ENGINE | ❌ | Present in source; not read by this runner |
+| STATUS CODE | ❌ | Present in source; not read by this runner |
+| MODE S CODE | ❌ | Present in source; not read by this runner (distinct from `MODE S CODE HEX`, below, which is used) |
+| FRACT OWNER | ❌ | Present in source; not read by this runner |
+| AIR WORTH DATE | ❌ | Present in source; not read by this runner |
+| OTHER NAMES(1-5) | ✅ | → `registrant.names[1:]` |
+| EXPIRATION DATE | ❌ | Present in source; not read by this runner |
+| UNIQUE ID | ❌ | Present in source; not read by this runner |
+| KIT MFR | ❌ | Present in source; not read by this runner |
+| KIT MODEL | ❌ | Present in source; not read by this runner |
+| MODE S CODE HEX | ✅ | → `icao_hex`; rows without a well-formed 6-character hex are discarded |
 
 See `specs/data-dictionary.yaml` (`us-faa` entry) for full column semantics and cross-source schema notes.
 

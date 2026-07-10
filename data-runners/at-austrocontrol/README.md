@@ -24,6 +24,10 @@ The Austrocontrol JSON API is queried directly at a fixed URL (no index-page dis
 | `baumuster` | ✅ | → `aircraft.model`; also used for the type sanity check against Mictronics |
 | `seriennummer` | ✅ | → `aircraft.serial_number` |
 | `halter` | ✅ | → `registrant.names[0]`, `street`, `city`, `postal_code`, `country`; only the first owner group of a multi-owner string is parsed |
+| `oid` | ❌ | Present in source; not read by this runner |
+| `ordnungszahl` | ❌ | Present in source; not read by this runner |
+| `luftfahrzeugartOid` | ❌ | Present in source; not read by this runner |
+| `mtom` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`at-austrocontrol` entry) for full column semantics and cross-source schema notes.
 

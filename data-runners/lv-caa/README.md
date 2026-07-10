@@ -24,10 +24,12 @@ it is stored as `manufactured_date` with a synthetic `-01-01` day/month
 
 | Source column | Imported | Notes |
 |---|---|---|
+| _id | ❌ | CKAN datastore internal row identifier; not read by this runner |
 | Registration_Mark | ✅ | YL-prefix filter; used as the Mictronics lookup key |
 | Model | ✅ | Whitespace-collapsed → `aircraft.model` |
-| Serial_No | ✅ | → `aircraft.serial_number` |
 | Construction_Year | ✅ | Bare year → `aircraft.manufactured_date` as `{year}-01-01`; ignored if outside 1900–2100 |
+| Serial_No | ✅ | → `aircraft.serial_number` |
+| Registered_on | ❌ | Present in source; not read by this runner |
 | Aircraft_Model_Category | ✅ | Whitespace-collapsed → `aircraft.type` |
 
 See `specs/data-dictionary.yaml` (`lv-caa` entry) for full column semantics and cross-source schema notes.

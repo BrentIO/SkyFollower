@@ -18,23 +18,45 @@ The CASA register CSV is downloaded from a fixed URL and parsed with `csv.DictRe
 | Source column | Imported | Notes |
 |---|---|---|
 | `Mark` | ✅ | Combined with `VH-` prefix; used as the Mictronics lookup key |
-| `suspendstatus` | ✅ | Used only as a filter (`suspended` rows are dropped); not stored |
-| `Airframe` | ✅ | → `aircraft.type`, decoded from CASA's category names |
 | `Manu` | ✅ | → `aircraft.manufacturer` |
+| `Type` | ❌ | Present in source; not read by this runner |
 | `Model` | ✅ | → `aircraft.model`; also used for the type sanity check against Mictronics |
 | `Serial` | ✅ | → `aircraft.serial_number` |
-| `Yearmanu` | ✅ | → `aircraft.manufactured_date` (4-digit year → `YYYY-01-01T00:00:00Z`) |
-| `ICAOtypedesig` | ✅ | → `aircraft.type_designator` |
+| `MTOW` | ❌ | Present in source; not read by this runner |
 | `engnum` | ✅ | → `aircraft.powerplant.count` |
 | `Engmanu` | ✅ | → `aircraft.powerplant.manufacturer` |
 | `Engtype` | ✅ | → `aircraft.powerplant.type`, decoded (e.g. `Turboprop` → `Turbo-prop`); `Not Applicable` omits the field |
 | `Engmodel` | ✅ | → `aircraft.powerplant.model` |
+| `Fueltype` | ❌ | Present in source; not read by this runner |
+| `regType` | ❌ | Present in source; not read by this runner |
 | `regholdname` | ✅ | → `registrant.names[0]` |
 | `regholdadd1` / `regholdadd2` | ✅ | → `registrant.street[]` |
 | `regholdSuburb` | ✅ | → `registrant.city` |
 | `regholdState` | ✅ | → `registrant.administrative_area` |
 | `regholdPostcode` | ✅ | → `registrant.postal_code` |
 | `regholdCountry` | ✅ | → `registrant.country`, mapped to ISO 3166-1 alpha-2 |
+| `regholdCommdate` | ❌ | Present in source; not read by this runner |
+| `regopName` | ❌ | Present in source; not read by this runner |
+| `regopadd1` / `regopadd2` | ❌ | Present in source; not read by this runner |
+| `regopSuburb` | ❌ | Present in source; not read by this runner |
+| `regopState` | ❌ | Present in source; not read by this runner |
+| `regopPostcode` | ❌ | Present in source; not read by this runner |
+| `regopCountry` | ❌ | Present in source; not read by this runner |
+| `regopCommdate` | ❌ | Present in source; not read by this runner |
+| `Datefirstreg` | ❌ | Present in source; not read by this runner |
+| `gear` | ❌ | Present in source; not read by this runner |
+| `Airframe` | ✅ | → `aircraft.type`, decoded from CASA's category names |
+| `CoAcata` / `CoAcatb` / `CoAcatc` | ❌ | Present in source; not read by this runner |
+| `Propmanu` | ❌ | Present in source; not read by this runner |
+| `Propmodel` | ❌ | Present in source; not read by this runner |
+| `Typecert` | ❌ | Present in source; not read by this runner |
+| `Countrymanu` | ❌ | Present in source; not read by this runner |
+| `Yearmanu` | ✅ | → `aircraft.manufactured_date` (4-digit year → `YYYY-01-01T00:00:00Z`) |
+| `Regexpirydate` | ❌ | Present in source; not read by this runner |
+| `suspendstatus` | ✅ | Used only as a filter (`suspended` rows are dropped); not stored |
+| `suspenddate` | ❌ | Present in source; not read by this runner |
+| `ICAOtypedesig` | ✅ | → `aircraft.type_designator` |
+| `IDERA_Authorised_Party` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`au-casa` entry) for full column semantics and cross-source schema notes.
 

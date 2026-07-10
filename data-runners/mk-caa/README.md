@@ -23,7 +23,8 @@ kept.
 
 | Source column | Imported | Notes |
 |---|---|---|
-| Columns 0–1 (unlabeled, precede Registration) | ❌ | No table header row is present; these leading columns are never read by the parser |
+| Certifi. No. (position 0) | ❌ | Certificate/registration-record number; not read by the parser |
+| Date of Registration (position 1) | ❌ | Not read by the parser |
 | Registration (position 2) | ✅ | Z3-prefix; used as the Mictronics lookup key |
 | Model (position 3) | ✅ | → `aircraft.model` |
 | Manufacturer (position 4) | ✅ | → `aircraft.manufacturer` |

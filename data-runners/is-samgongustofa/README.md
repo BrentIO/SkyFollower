@@ -21,11 +21,14 @@ The register is fetched in a single request as an Apollo Persisted Query GraphQL
 | type | ✅ | → `aircraft.model` |
 | serialNumber | ✅ | → `aircraft.serial_number` |
 | productionYear | ✅ | → `aircraft.manufactured_date` (stored as `YYYY-01-01`; `0`/blank skipped) |
+| maxWeight | ❌ | Present in source; not read by this runner |
+| registrationNumber | ❌ | Present in source; not read by this runner |
 | operator.name | ✅ | → `registrant.names[0]` |
 | operator.address | ✅ | → `registrant.street[0]` |
 | operator.city | ✅ | → `registrant.city` |
 | operator.postcode | ✅ | → `registrant.postal_code` |
 | operator.country | ✅ | → `registrant.country`; mapped to ISO 3166-1 alpha-2 via a lookup table (e.g. `Ísland`/`Iceland` → `IS`) |
+| owners | ❌ | Present in source (array of the same person/org shape as `operator`); not read by this runner |
 
 See `specs/data-dictionary.yaml` (`is-samgongustofa` entry) for full column semantics and cross-source schema notes.
 

@@ -22,6 +22,7 @@ The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page
 | Výrobné číslo (Serial Number) | ✅ | → `aircraft.serial_number` |
 | Vlastník (Owner) | ✅ | → `registrant.names[0]` |
 | Prevádzkovateľ (Operator) | ✅ | → `registrant.names[1]`, appended only when different from the owner |
+| Záložné právo (Lien) | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`sk-nsat` entry) for full column semantics and cross-source schema notes.
 

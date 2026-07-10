@@ -31,6 +31,7 @@ Address` before the remaining address is split into street lines.
 | Source column | Imported | Notes |
 |---|---|---|
 | Aircraft Registration | ✅ | VP-C-prefix; used as the Mictronics lookup key |
+| Date Registered | ❌ | Present in source; not read by this runner |
 | Registered Owner | ✅ | → `registrant.names[0]` |
 | Registered Address | ✅ | Country suffix stripped, then split on commas → `registrant.street[]` |
 | Nationality | ✅ | Mapped via fixed table to ISO 3166-1 alpha-2 → `registrant.country`; also used to strip the address suffix |

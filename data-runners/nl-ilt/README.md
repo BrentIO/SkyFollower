@@ -27,22 +27,70 @@ valid 6-hex ICAO code and `Registration` is non-empty.
 
 | Source column | Imported | Notes |
 |---|---|---|
-| X-Ponder | ✅ | Validated as a 6-hex ICAO code; used directly as `icao_hex` (no Mictronics lookup needed) |
+| Flag | ❌ | Present in source; not read by this runner |
 | Registration | ✅ | → top-level `registration` |
+| Registered | ❌ | Present in source; not read by this runner |
+| LatestOwnerChange | ❌ | Present in source; not read by this runner |
+| PrevCountry | ❌ | Present in source; not read by this runner |
+| PrevMark | ❌ | Present in source; not read by this runner |
 | Manufacturer | ✅ | → `aircraft.manufacturer` |
+| ManufacturedIn | ❌ | Present in source; not read by this runner |
 | Model | ✅ | → `aircraft.model` |
 | Serial | ✅ | → `aircraft.serial_number` |
+| X-Ponder | ✅ | Validated as a 6-hex ICAO code; used directly as `icao_hex` (no Mictronics lookup needed) |
 | Built | ✅ | → `aircraft.manufactured_date` (`YYYY-01-01T00:00:00Z`), only if a 4-digit year |
 | Group | ✅ | → `aircraft.type`, mapped through a fixed table (e.g. `Small aeroplane` → `Airplane`, `Rotorcraft` → `Helicopter`); unmapped values pass through unchanged |
+| Configuration | ❌ | Present in source; not read by this runner |
+| MTOM | ❌ | Present in source; not read by this runner |
+| MLM | ❌ | Present in source; not read by this runner |
 | ICAO-code | ✅ | → `aircraft.type_designator` |
+| AOC | ❌ | Present in source; not read by this runner |
+| 83Bis | ❌ | Present in source; not read by this runner |
+| Representative | ❌ | Present in source; not read by this runner |
+| Mortgage | ❌ | Present in source; not read by this runner |
+| Volume | ❌ | Present in source; not read by this runner |
+| LegalBase | ❌ | Present in source; not read by this runner |
 | Engines | ✅ | → `aircraft.powerplant.count`, only if numeric |
 | EngKind | ✅ | → `aircraft.powerplant.type`, mapped through a fixed table; `"Engine - not defined"` is dropped rather than stored |
 | EngManufacturer | ✅ | → `aircraft.powerplant.manufacturer`; the literal value `"Unknown"` is filtered out |
 | EngModel | ✅ | → `aircraft.powerplant.model`; values containing `"not further defined"` are filtered out |
+| Props | ❌ | Present in source; not read by this runner |
+| PropKind | ❌ | Present in source; not read by this runner |
+| PropManufacturer | ❌ | Present in source; not read by this runner |
+| PropModel | ❌ | Present in source; not read by this runner |
+| NoiseRequirements | ❌ | Present in source; not read by this runner |
+| NoiseCat | ❌ | Present in source; not read by this runner |
+| NoiseRcrd | ❌ | Present in source; not read by this runner |
+| LevelApp | ❌ | Present in source; not read by this runner |
+| LevelFo | ❌ | Present in source; not read by this runner |
+| LevelOf | ❌ | Present in source; not read by this runner |
+| LevelSl | ❌ | Present in source; not read by this runner |
+| LevelTo | ❌ | Present in source; not read by this runner |
+| RegistrIssued | ❌ | Present in source; not read by this runner |
+| RegistrExpiry | ❌ | Present in source; not read by this runner |
+| CofA (Form24/25)_Iss. | ❌ | Present in source; not read by this runner |
+| AirwIssued | ❌ | Present in source; not read by this runner |
+| AirwExpiry | ❌ | Present in source; not read by this runner |
+| AirwKind | ❌ | Present in source; not read by this runner |
+| AirwVal | ❌ | Present in source; not read by this runner |
+| NoiseIssued | ❌ | Present in source; not read by this runner |
+| NoiseExpiry | ❌ | Present in source; not read by this runner |
+| RegBlock | ❌ | Present in source; not read by this runner |
+| Site2Title | ❌ | Present in source; not read by this runner |
+| Site2Descr1 | ❌ | Present in source; not read by this runner |
+| Site2Descr2 | ❌ | Present in source; not read by this runner |
+| Site2Tech1 | ❌ | Present in source; not read by this runner |
+| Site2Tech2 | ❌ | Present in source; not read by this runner |
+| Site2Tech3 | ❌ | Present in source; not read by this runner |
+| Site2Tech4 | ❌ | Present in source; not read by this runner |
+| Site2Tech5 | ❌ | Present in source; not read by this runner |
+| Site2Noise1 | ❌ | Present in source; not read by this runner |
+| Site2Noise2 | ❌ | Present in source; not read by this runner |
+| Site2Doc1 | ❌ | Present in source; not read by this runner |
+| Site2Doc2 | ❌ | Present in source; not read by this runner |
+| Site2Doc3 | ❌ | Present in source; not read by this runner |
 
-The runner only reads the columns listed above; any other columns present in
-the ILT ODS file are not referenced by the parser. See
-`specs/data-dictionary.yaml` (`nl-ilt` entry) for full column semantics and
+See `specs/data-dictionary.yaml` (`nl-ilt` entry) for full column semantics and
 cross-source schema notes.
 
 ## Example Output

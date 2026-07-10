@@ -35,7 +35,9 @@ the street address (joined as a list).
 | Owner Name+Address | ✅ | Multi-line: first line → `registrant.names[0]`, last line → `registrant.country`, middle lines → `registrant.street` (list) |
 | Legal Owner | ❌ | Parsed but not stored |
 | Registration Basis | ❌ | Parsed but not stored |
-| Mortgage / AREDI (3 columns) | ❌ | Parsed but not stored |
+| Basis of Registration, Other Specifics | ❌ | Present in source; not read by this runner |
+| Mortgage | ❌ | Parsed but not stored |
+| IDERA | ❌ | Present in source; not read by this runner |
 | Original Issue Date | ❌ | Parsed but not stored |
 | Last Revision Date | ❌ | Parsed but not stored |
 | Status | ❌ | Used as a filter — only rows with status `"Valid"` are kept; the status value itself is not stored |

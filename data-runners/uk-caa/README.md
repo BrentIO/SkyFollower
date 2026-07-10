@@ -17,27 +17,98 @@ G-INFO has no bulk-export endpoint, so this runner enumerates the entire registe
 
 ## Columns
 
+Fields below are grouped by the payload they come from: the `POST /api/aircraft/search` response (list of match summaries) and the `GET /api/aircraft/details/{id}` response (full nested record). Field names are otherwise unique except where noted as a duplicate.
+
+### Search response (`POST /api/aircraft/search`)
+
+| Source field | Imported | Notes |
+|---|---|---|
+| `AircraftID` | ✅ | Used to fetch the details payload; not stored |
+| `RegistrationStatus` | ✅ | Filters which `AircraftID`s get a details fetch (`"R"` only); not stored |
+| `Mark` | ❌ | Duplicate of `RegistrationDetails.Mark`, which is read from the details payload instead |
+| `SerialNo` | ❌ | Duplicate of `AircraftDetails.SerialNumber`, which is read from the details payload instead |
+| `MilitarySerialNo` | ❌ | Present in source; never read (no equivalent field exists in the details payload) |
+| `AircraftType` | ❌ | Duplicate of `AircraftDetails.Type`, which is read from the details payload instead |
+
+### Details response (`GET /api/aircraft/details/{id}`)
+
 | Source field | Imported | Notes |
 |---|---|---|
 | `RegistrationDetails.Mark` | ✅ | → `registration` (prefixed with `G-`) |
 | `RegistrationDetails.Status` | ✅ | Filtered to `"Registered"` only; not stored |
-| `AircraftDetails.ICAO24BitAircraftAddress.Hex` | ✅ | → `icao_hex`; records without a 6-character hex are discarded |
-| `AircraftDetails.AircraftClass` | ✅ | → `aircraft.type` / `aircraft.category` (decoded) |
+| `RegistrationDetails.PreviousID` | ❌ | Present in source; not read by this runner |
+| `RegistrationDetails.CurrentRegistrationDate` | ❌ | Present in source; not read by this runner |
+| `RegistrationDetails.DeRegistrationDate` | ❌ | Present in source; not read by this runner |
+| `RegistrationDetails.Reason` | ❌ | Present in source; not read by this runner |
+| `RegistrationDetails.To` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.Manufacturer` | ✅ | → `aircraft.manufacturer` |
 | `AircraftDetails.Type` | ✅ | → `aircraft.model` |
 | `AircraftDetails.SerialNumber` | ✅ | → `aircraft.serial_number` |
+| `AircraftDetails.ICAO24BitAircraftAddress.Hex` | ✅ | → `icao_hex`; records without a 6-character hex are discarded |
+| `AircraftDetails.ICAO24BitAircraftAddress.Binary` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.ICAO24BitAircraftAddress.Octal` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.PopularName` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.ICAOAircraftTypeDesignator` | ✅ | → `aircraft.type_designator` |
-| `AircraftDetails.YearBuild` | ✅ | → `aircraft.manufactured_date` |
-| `AircraftDetails.MaximumPassengers` | ✅ | → `aircraft.seats` (`MaximumPassengers + 1`) |
+| `AircraftDetails.AircraftClass` | ✅ | → `aircraft.type` / `aircraft.category` (decoded) |
+| `AircraftDetails.BuildCategory` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.EasaCategory` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.Engines[0].TotalNumberOfEngines` | ✅ | → `aircraft.powerplant.count` |
 | `AircraftDetails.Engines[0].Name` | ✅ | → `aircraft.powerplant.model`; only the first engine entry is used |
+| `AircraftDetails.Engines[0].NumberOfEngines` | ❌ | Distinct field from `TotalNumberOfEngines` (which is used); present in source, not read |
+| `AircraftDetails.Engines[0].IsPropeller` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.Mtow` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.TotalAirframeHours` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.YearBuild` | ✅ | → `aircraft.manufactured_date` |
+| `AircraftDetails.MaintenanceProgramme` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.Expiry` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.OwnershipStatus` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.MaximumPassengers` | ✅ | → `aircraft.seats` (`MaximumPassengers + 1`) |
+| `AircraftDetails.MaximumTakeOffMass` | ❌ | Present in source; not read by this runner (numeric duplicate of `Mtow`) |
+| `AircraftDetails.CofaDetails.CofaCategory` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.CofaDetails.CofaValidityExpiryLabel` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.CofaDetails.CofaValidityExpiry` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.CofaDetails.CofaValidityReference` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.CofaDetails.CofaOperatingLimitations` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.CofaDetails.ShowOperatingLimitations` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.IsPotentialChangeOfOwnership` | ❌ | Present in source; not read by this runner |
+| `AircraftDetails.EmergencyBallisticDeviceFitted` | ❌ | Present in source; not read by this runner |
+| `MortgageDetails[].EntryDateAndTime` | ❌ | Present in source; not read by this runner |
+| `MortgageDetails[].EntryType` | ❌ | Present in source; not read by this runner |
+| `MortgageDetails[].ReferenceType` | ❌ | Present in source; not read by this runner |
 | `RegisteredAircraftOwners[0].RegisteredOwner` | ✅ | → `registrant.names[0]`; only the first owner is used |
+| `RegisteredAircraftOwners[0].AddressIndicatorID` | ❌ | Present in source; not read by this runner |
+| `RegisteredAircraftOwners[0].AddressIndicator` | ❌ | Present in source; not read by this runner |
+| `RegisteredAircraftOwners[0].TradingAs` | ❌ | Present in source; not read by this runner |
+| `RegisteredAircraftOwners[0].TrusteeOf` | ❌ | Present in source; not read by this runner |
 | `RegisteredAircraftOwners[0].Address1` / `Address2` | ✅ | → `registrant.street` |
 | `RegisteredAircraftOwners[0].Town` | ✅ | → `registrant.city` |
 | `RegisteredAircraftOwners[0].County` | ✅ | → `registrant.administrative_area` |
 | `RegisteredAircraftOwners[0].PostCode` | ✅ | → `registrant.postal_code` |
 | `RegisteredAircraftOwners[0].Country` | ✅ | → `registrant.country` (decoded to ISO 3166-1 alpha-2 where known) |
-| `AircraftID` (search result) | ✅ | Used to fetch the details payload; not stored |
+| `AircraftOperatedByAocHolder.showSection` | ❌ | Present in source; not read by this runner |
+| `AircraftOperatedByAocHolder.OperatorName` | ❌ | Present in source; not read by this runner (operator enrichment for G-registered aircraft is not sourced from here) |
+| `AircraftOperatedByAocHolder.OperatorTrandingAs` | ❌ | Present in source (sic — typo in the live API); not read by this runner |
+| `InsuranceSummaryDetails.EvidenceVerifiedDate` | ❌ | Present in source; not read by this runner |
+| `InsuranceSummaryDetails.NoFlyDate` | ❌ | Present in source; not read by this runner |
+| `InsuranceSummaryDetails.AircraftMarkStatusID` | ❌ | Present in source; not read by this runner |
+| `InsuranceSummaryDetails.AircraftID` | ❌ | Present in source; not read by this runner (duplicate of the search result's `AircraftID`) |
+| `InsuranceSummaryDetails.Mark` | ❌ | Present in source; not read by this runner (duplicate of `RegistrationDetails.Mark`) |
+| `NoiseSummaryDetails.NoiseCertificateIssueDate` | ❌ | Present in source; not read by this runner |
+| `NoiseSummaryDetails.NoiseCertificateNumber` | ❌ | Present in source; not read by this runner |
+| `NoiseSummaryDetails.NoiseChapter` | ❌ | Present in source; not read by this runner |
+| `RegistrationMarkExemption.IssueDate` | ❌ | Present in source; not read by this runner |
+| `RegistrationMarkExemption.Origin` | ❌ | Present in source; not read by this runner |
+| `RegistrationMarkExemption.CodeCarried` | ❌ | Present in source; not read by this runner |
+| `RegistrationMarkExemption.SerialCarried` | ❌ | Present in source; not read by this runner |
+| `OpenRegistrationCases[].CaseName` | ❌ | Present in source; not read by this runner |
+| `OpenRegistrationCases[].OpenDate` | ❌ | Present in source; not read by this runner |
+| `OpenRegistrationCases[].ReviewDate` | ❌ | Present in source; not read by this runner |
+| `OpenRegistrationCases[].PotentialChangeOfOwnership` | ❌ | Present in source; not read by this runner |
+| `OpenApplicationsAndApprovalsCases[].CaseName` | ❌ | Present in source; not read by this runner |
+| `OpenApplicationsAndApprovalsCases[].OpenDate` | ❌ | Present in source; not read by this runner |
+| `OpenApplicationsAndApprovalsCases[].ReviewDate` | ❌ | Present in source; not read by this runner |
+| `OpenApplicationsAndApprovalsCases[].PotentialChangeOfOwnership` | ❌ | Present in source; not read by this runner |
+| `ExtractDate` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`uk-caa` entry) for full column semantics and cross-source schema notes.
 

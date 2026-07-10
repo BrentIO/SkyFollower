@@ -17,21 +17,45 @@ A single `POST` request to the fixed FOCA/BAZL backend endpoint (`page_result_li
 
 | Source column | Imported | Notes |
 |---|---|---|
+| LfrID | ❌ | Present in source; not read by this runner |
 | Registration | ✅ | HB-prefix → `registration` |
-| Aircraft Address HEX | ✅ | → `icao_hex` |
 | Status | ❌ | Used to filter to `Registered` rows only; value itself is not stored |
-| Aircraft Type | ✅ | Decoded via a type map (e.g. `Homebuilt Airplane` → `Airplane`) → `aircraft.type` |
+| Date of Registration | ❌ | Present in source; not read by this runner |
+| Date of Deregistration | ❌ | Present in source; not read by this runner |
 | Manufacturer | ✅ | → `aircraft.manufacturer` |
 | Aicraft Model (sic, source typo) | ✅ | → `aircraft.model` |
 | ICAO Aircraft Type | ✅ | → `aircraft.type_designator` |
+| Marketing Designation | ❌ | Present in source; not read by this runner |
+| Aircraft Type | ✅ | Decoded via a type map (e.g. `Homebuilt Airplane` → `Airplane`) → `aircraft.type` |
+| Certification Basis | ❌ | Present in source; not read by this runner |
+| Airworthiness Category | ❌ | Present in source; not read by this runner |
+| Legal Basis | ❌ | Present in source; not read by this runner |
+| TCDS | ❌ | Present in source; not read by this runner |
+| ELA | ❌ | Present in source; not read by this runner |
+| Aircraft Address DEC | ❌ | Present in source; not read by this runner |
+| Aircraft Address HEX | ✅ | → `icao_hex` |
+| Aircraft Address OCT | ❌ | Present in source; not read by this runner |
+| Aircraft Address BIN | ❌ | Present in source; not read by this runner |
+| ELT Code | ❌ | Present in source; not read by this runner |
 | Year of Manufacture | ✅ | 4-digit year → `aircraft.manufactured_date` (`YYYY-01-01`) |
 | Serial Number | ✅ | → `aircraft.serial_number` |
+| BRS | ❌ | Present in source; not read by this runner |
 | MOPSC | ✅ | Summed with Minimum Crew → `aircraft.seats` |
 | Minimum Crew | ✅ | Summed with MOPSC → `aircraft.seats` |
-| Engine Category | ✅ | First comma-separated value decoded via engine map → `aircraft.powerplant.type` |
+| MTOM | ❌ | Present in source; not read by this runner |
 | Engine manufacturer | ✅ | → `aircraft.powerplant.manufacturer` |
 | Engine | ✅ | First comma-separated value → `aircraft.powerplant.model` |
+| Engine Category | ✅ | First comma-separated value decoded via engine map → `aircraft.powerplant.type` |
+| Propeller manufacturer | ❌ | Present in source; not read by this runner |
+| Propeller | ❌ | Present in source; not read by this runner |
+| Noise Standard | ❌ | Present in source; not read by this runner |
+| Noise Level | ❌ | Present in source; not read by this runner |
+| Noise Class | ❌ | Present in source; not read by this runner |
 | Main Owner | ✅ | Best-effort parsed into `registrant.names`/`street`/`city`/`postal_code`; `registrant.country` is hardcoded `CH` |
+| Main Operator | ❌ | Present in source; not read by this runner |
+| Part Owners | ❌ | Present in source; not read by this runner |
+| Part Operators | ❌ | Present in source; not read by this runner |
+| Billing Address | ❌ | Present in source; not read by this runner |
 
 See specs/data-dictionary.yaml (`ch-bazl` entry) for full column semantics and cross-source schema notes.
 

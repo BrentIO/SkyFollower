@@ -24,6 +24,17 @@ The OurAirports CSV is downloaded whole from a fixed URL (no index page or scrap
 | `iso_country` | ✅ | → `country` |
 | `latitude_deg` | ✅ | → `latitude` (float) |
 | `longitude_deg` | ✅ | → `longitude` (float) |
+| `id` | ❌ | Present in source; not read by this runner |
+| `type` | ❌ | Present in source; not read by this runner |
+| `elevation_ft` | ❌ | Present in source; not read by this runner |
+| `continent` | ❌ | Present in source; not read by this runner |
+| `scheduled_service` | ❌ | Present in source; not read by this runner |
+| `icao_code` | ❌ | Present in source; not read by this runner — the runner instead derives its own `icao_code` from the (4-character-filtered) `ident` column, not from this field |
+| `gps_code` | ❌ | Present in source; not read by this runner |
+| `local_code` | ❌ | Present in source; not read by this runner |
+| `home_link` | ❌ | Present in source; not read by this runner |
+| `wikipedia_link` | ❌ | Present in source; not read by this runner |
+| `keywords` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`ourairports` entry) for full column semantics and cross-source schema notes.
 

@@ -24,6 +24,10 @@ The KoZHAF (National Transport Authority) index page is scraped with a browser `
 | Owner Name | ✅ | → `registrant.names[0]` |
 | Owner Address | ✅ | → `registrant.street` |
 | Operator Name | ✅ | → `registrant.names[1]` when different from owner name |
+| Operator Address (Üzembentaró címe) | ❌ | Present in source; not read by this runner |
+| Date of Registry (Lajstromba vétel) | ❌ | Present in source; not read by this runner |
+| ARC Date of Expiry (ARC érv.vége) | ❌ | Present in source; not read by this runner |
+| ARC Date of Issue (ARC érv.kezd.) | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`hu-kozhaf` entry) for full column semantics and cross-source schema notes.
 

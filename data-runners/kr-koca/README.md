@@ -28,6 +28,20 @@ are given as `YY.MM.DD` with a pivot year of 50 (`>= 50` → 1900s, `< 50` →
 | `AIR_BUILD_NO` (Serial Number) | ✅ | → `aircraft.serial_number` |
 | `AIR_BUILD_DATE` (Build Date) | ✅ | Parsed `YY.MM.DD` (pivot year 50) → `aircraft.manufactured_date` |
 | `REG_CUSER` (Registered User/Owner) | ✅ | → `registrant.names[0]` |
+| `SEQ` (Sequence Number) | ❌ | Present in source; not read by this runner |
+| `AIR_AGE` (Aircraft Age) | ❌ | Present in source; not read by this runner |
+| `REG_DATE` (Registration Date) | ❌ | Present in source; not read by this runner |
+| `AIR_LIMIT_MAN` (Passenger/Seating Limit) | ❌ | Present in source; not read by this runner |
+| `AIR_FLY_WEIGHT` (Max Flying Weight) | ❌ | Present in source; not read by this runner |
+| `REG_JANG` (Registration Location) | ❌ | Present in source; not read by this runner |
+| `PROC_TYPE` (Acquisition Type, e.g. purchase/lease) | ❌ | Present in source; not read by this runner |
+| `ETC` (Miscellaneous flag) | ❌ | Present in source; not read by this runner |
+| `SNO` (Internal record number) | ❌ | Present in source; not read by this runner |
+| `IMAGE1` (Aircraft photo filename) | ❌ | Present in source; not read by this runner |
+| `IMAGE2` (Aircraft photo filename) | ❌ | Present in source; not read by this runner |
+| `IMAGE3` (Aircraft photo filename) | ❌ | Present in source; not read by this runner |
+| `AWC_VP` (Unclear; empty in observed data) | ❌ | Present in source; not read by this runner |
+| `PRJ_GBN` (Business/project classification) | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`kr-koca` entry) for full column semantics and cross-source schema notes.
 

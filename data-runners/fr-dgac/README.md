@@ -35,8 +35,15 @@ pointing at the wrong Mictronics record).
 | CONSTRUCTEUR | ✅ | → `aircraft.manufacturer` |
 | MODELE | ✅ | → `aircraft.model`; also used for the pre-write type sanity check against Mictronics |
 | NUMERO_SERIE | ✅ | → `aircraft.serial_number` |
+| AERODROME_ATTACHE | ❌ | Present in source; not read by this runner |
 | PROPRIETAIRE | ✅ | → `registrant.names[]`; deduplicated across co-ownership rows, order preserved |
 | ADRESSE_PROPRIETAIRE | ✅ | Parsed into `registrant.street`/`city`/`postal_code`/`country`; country decoded from French name to ISO 3166-1 alpha-2 |
+| LOCATAIRE | ❌ | Present in source; not read by this runner |
+| ADRESSE_LOCATAIRE | ❌ | Present in source; not read by this runner |
+| CREANCIER_HYPOTHEQUE | ❌ | Present in source; not read by this runner |
+| ADRESSE_CREANCIER | ❌ | Present in source; not read by this runner |
+| PERSONNE_SAISISSANTE | ❌ | Present in source; not read by this runner |
+| ADRESSE_PERSONNE_SAISISSANTE | ❌ | Present in source; not read by this runner |
 
 Other columns present in the DGAC export are not read by this runner.
 

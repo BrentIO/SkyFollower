@@ -25,6 +25,10 @@ The CSV is downloaded whole from a fixed URL and decoded as `utf-8-sig` (the fil
 | `Serial No.` | ✅ | → `aircraft.serial_number` |
 | `Owner Name` | ✅ | → `registrant.names[0]` |
 | `Owner Address` | ✅ | Free-text parsed into `registrant.street[]` / `city` / `postal_code` / `country` |
+| `Registered on` | ❌ | Present in source; not read by this runner |
+| `MCTOW (Kg)` | ❌ | Present in source; not read by this runner |
+| `Mode S Code Binary` | ❌ | Present in source; not read by this runner |
+| `Flight manual no.` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`nz-caa` entry) for full column semantics and cross-source schema notes.
 
