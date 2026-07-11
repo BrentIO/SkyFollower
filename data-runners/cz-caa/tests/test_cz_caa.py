@@ -410,6 +410,14 @@ class TestDownloadAndParse:
         records = self._collect(session)
         assert records[0]["owners"] == ["Alice", "Bob", "Carol"]
 
+    def test_operators_not_collected(self):
+        session = self._session_with(
+            [_list_record(id=1)],
+            [_detail_response(operators=[{"display_name": "Dave"}])],
+        )
+        records = self._collect(session)
+        assert "operators" not in records[0]
+
     def test_skips_null_transponder(self):
         session = self._session_with(
             [_list_record(id=1)],
