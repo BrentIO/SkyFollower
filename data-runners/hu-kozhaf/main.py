@@ -164,7 +164,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     if model:
         aircraft_fields["model"] = model
 
-    serial = row.get("serial", "").strip()
+    serial = _WHITESPACE_RE.sub(" ", row.get("serial", "").strip())
     if serial:
         aircraft_fields["serial_number"] = serial
 

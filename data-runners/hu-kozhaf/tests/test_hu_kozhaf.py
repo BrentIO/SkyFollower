@@ -171,6 +171,11 @@ class TestBuildRecord:
         record = _build_record(row, "4D1234", "HA-GZQ")
         assert "serial_number" not in record.get("aircraft", {})
 
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="1728\n1234")
+        record = _build_record(row, "4D1234", "HA-GZQ")
+        assert record["aircraft"]["serial_number"] == "1728 1234"
+
     def test_no_aircraft_fields_omits_aircraft_key(self):
         row = _make_row(model="", serial="", year="")
         record = _build_record(row, "4D1234", "HA-GZQ")
