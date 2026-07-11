@@ -7,6 +7,12 @@ operators, and types JSON files, stages records in local SQLite, writes
 enrichment data to Redis with a 14-day TTL, publishes MQTT completion stats,
 then exits.
 
+types.json is used both internally (joined against aircrafts.json to enrich
+each aircraft:mictronics:{icao_hex} record) and published standalone as
+aircraft:type:{designator} — a type-designator reference table other runners
+can look up directly for hexes Mictronics itself has no data for. Entries
+with no manufacturer_model are skipped.
+
 Data source: https://github.com/Mictronics/aircraft-database/raw/refs/heads/main/indexedDB.zip
 """
 
@@ -31,7 +37,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX, aircraft_mictronics_key, operator_key
+from shared.redis_keys import (
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    aircraft_mictronics_key,
+    aircraft_type_key,
+    operator_key,
+)
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 
@@ -277,6 +288,17 @@ def build_operator_record(row: sqlite3.Row) -> dict:
     return record
 
 
+def build_type_record(row: sqlite3.Row) -> dict:
+    """Build the aircraft:type:{designator} JSON record from a staged types row."""
+    record: dict = {
+        "type_designator": row["type_designator"],
+        "manufacturer_model": row["manufacturer_model"],
+    }
+    if row["wake_turbulence_category"]:
+        record["wake_turbulence_category"] = row["wake_turbulence_category"]
+    return record
+
+
 # ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
@@ -372,6 +394,34 @@ def write_operators_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: 
     return count
 
 
+def write_types_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> int:
+    """Write all staged type-designator reference records to Redis. Returns count written."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT type_designator, manufacturer_model, wake_turbulence_category FROM types "
+        "WHERE manufacturer_model IS NOT NULL AND manufacturer_model != ''"
+    )
+    rows = cur.fetchall()
+    logger.info("Writing %d aircraft type reference records to Redis.", len(rows))
+
+    count = 0
+    pipe = r.pipeline()
+    for row in rows:
+        record = build_type_record(row)
+        key = aircraft_type_key(row["type_designator"])
+        set_json(pipe, key, record)
+        pipe.expire(key, ttl)
+        count += 1
+        if count % 10000 == 0:
+            pipe.execute()
+            pipe = r.pipeline()
+            logger.info("  ... %d type records written.", count)
+
+    pipe.execute()
+    logger.info("Finished writing %d type reference records to Redis.", count)
+    return count
+
+
 # ---------------------------------------------------------------------------
 # MQTT
 # ---------------------------------------------------------------------------
@@ -380,6 +430,7 @@ def publish_completion_stats(
     cfg: dict,
     records_imported: int,
     operators_imported: int,
+    types_imported: int,
     status: str,
 ) -> None:
     """Publish completion statistics to MQTT and HA autodiscovery."""
@@ -417,6 +468,7 @@ def publish_completion_stats(
         base = MQTT_ROOT + "/statistic"
         client.publish(f"{base}/records_imported", str(records_imported), retain=True)
         client.publish(f"{base}/operators_imported", str(operators_imported), retain=True)
+        client.publish(f"{base}/types_imported", str(types_imported), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status, retain=True)
 
@@ -427,8 +479,8 @@ def publish_completion_stats(
         client.loop_stop()
         client.disconnect()
         logger.info(
-            "MQTT stats published (status=%s, records=%d, operators=%d).",
-            status, records_imported, operators_imported,
+            "MQTT stats published (status=%s, records=%d, operators=%d, types=%d).",
+            status, records_imported, operators_imported, types_imported,
         )
 
     except Exception as exc:
@@ -448,6 +500,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     stats = [
         ("records_imported", "Mictronics Records Imported", "mdi:airplane", "total_increasing", None),
         ("operators_imported", "Mictronics Operators Imported", "mdi:account-group", "total_increasing", None),
+        ("types_imported", "Mictronics Types Imported", "mdi:shape", "total_increasing", None),
         ("last_run_at", "Mictronics Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Mictronics Last Run Status", "mdi:check-circle", None, None),
     ]
@@ -513,6 +566,7 @@ def main() -> None:
     status = "failure"
     records_imported = 0
     operators_imported = 0
+    types_imported = 0
 
     try:
         # 1. Download and extract
@@ -525,12 +579,13 @@ def main() -> None:
         _ensure_search_index(r)
         records_imported = write_to_redis(conn, r, ttl)
         operators_imported = write_operators_to_redis(conn, r, ttl)
+        types_imported = write_types_to_redis(conn, r, ttl)
         conn.close()
 
         status = "success"
         logger.info(
-            "Mictronics runner completed successfully. Records imported: %d, Operators imported: %d",
-            records_imported, operators_imported,
+            "Mictronics runner completed successfully. Records imported: %d, Operators imported: %d, Types imported: %d",
+            records_imported, operators_imported, types_imported,
         )
 
     except Exception as exc:
@@ -540,7 +595,7 @@ def main() -> None:
     finally:
         # 4. Publish MQTT stats regardless of success/failure
         try:
-            publish_completion_stats(cfg, records_imported, operators_imported, status)
+            publish_completion_stats(cfg, records_imported, operators_imported, types_imported, status)
         except Exception as exc:
             logger.warning("Failed to publish MQTT stats: %s", exc)
 
