@@ -17,7 +17,7 @@ The FAA Releasable Aircraft Database ZIP is downloaded from a fixed URL and extr
 - `acftref.txt` — aircraft make/model/seats/category reference, keyed by aircraft code
 - `master.txt` — one row per registered tail, keyed by `icao_hex` (only rows with a well-formed 6-character Mode S hex are kept)
 
-This runner supports the 2017+ column layout only. Numeric FAA type codes (engine type, aircraft type, aircraft class, registrant type) are decoded via lookup tables into human-readable strings. Powerplant power is reported as thrust for jet/fan/ramjet engine types and as horsepower for piston/turboprop/turboshaft/2-4-cycle/rotary types. The final Redis write is driven by a single `LEFT JOIN` query across the staged tables and flushed to Redis in batches of 10,000.
+This runner supports the 2017+ column layout only. Numeric FAA type codes (engine type, aircraft type, aircraft class, registrant type) are decoded via lookup tables into human-readable strings. Powerplant power is reported as thrust for jet/fan/ramjet engine types and as horsepower for piston/turboprop/turboshaft/2-4-cycle/rotary types. The final Redis write is driven by a single `LEFT JOIN` query across the staged tables and flushed to Redis in batches of 10,000. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

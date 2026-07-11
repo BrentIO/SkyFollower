@@ -346,6 +346,7 @@ class TestBuildRecord:
         record = _build_record("E491A0", "PP-AJH", _make_row())
         assert record["icao_hex"] == "E491A0"
         assert record["registration"] == "PP-AJH"
+        assert record["military"] is False
 
     def test_aircraft_manufacturer(self):
         record = _build_record("E491A0", "PP-AJH", _make_row(nmfabricante="CESSNA"))

@@ -24,7 +24,10 @@ Drupal `field-label`/`field-item` div pairs, then generic `<table>` rows, then
 nothing. The `Category` field (e.g. `"Transport – Airplane"`) is decoded by
 splitting on the first em-dash or hyphen to derive `aircraft.type`. The
 combined `Zip code, town` field is split via regex into `postal_code` (leading
-digits) and `city` (remainder).
+digits) and `city` (remainder). Every written record explicitly sets
+`military: false` — this register is exclusively civil, and the explicit
+value ensures a stale `military: true` flag (from Mictronics or a prior
+record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

@@ -286,6 +286,7 @@ class TestBuildRecord:
         assert record["icao_hex"] == "42A001"
         assert record["registration"] == "LZ-ABC"
         assert record["source"] == "bg-caa"
+        assert record["military"] is False
 
     def test_aircraft_model(self):
         record = _build_record(_make_row(model="Cessna 172"), "42A001", "LZ-ABC")

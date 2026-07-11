@@ -450,7 +450,7 @@ class TestBuildAircraftRecord:
         assert record["icao_hex"] == "A8AE7F"
         assert record["registration"] == "N659DL"
         assert "source" not in record
-        assert "military" not in record
+        assert record["military"] is False
 
     def test_registrant_names(self):
         row, acft_row, eng_row = self._fetch_rows("A8AE7F")

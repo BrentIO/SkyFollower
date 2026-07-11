@@ -241,7 +241,7 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
 
     nome = _parse_proprietarios(row.get("PROPRIETARIOSJSON"))
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration}
+    record: dict = {"icao_hex": icao_hex, "registration": registration, "military": False}
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if powerplant_fields:

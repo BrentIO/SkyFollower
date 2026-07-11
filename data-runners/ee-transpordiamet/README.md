@@ -16,7 +16,10 @@ directly (no index-page discovery needed — the URL is fixed) and its single
 HTML table is parsed with BeautifulSoup. The first two rows are header rows
 and are skipped. Each data row's registration mark has internal whitespace
 stripped (e.g. `ES- FCC` → `ES-FCC`) before it's used as the RediSearch lookup
-key against Mictronics.
+key against Mictronics. Every written record explicitly sets `military: false`
+— this register is exclusively civil, and the explicit value ensures a stale
+`military: true` flag (from Mictronics or a prior record on a reused hex) is
+corrected on re-registration.
 
 ## Columns
 

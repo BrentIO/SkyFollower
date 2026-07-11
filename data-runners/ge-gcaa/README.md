@@ -18,6 +18,10 @@ aircraft fields (type, serial number, year of manufacture) are taken from
 whichever table supplies them first, and `registrant.names` is built from
 `table_1`'s operator followed by `table_2`'s owner — the owner is omitted if
 it's identical to the operator, so single-name entries don't duplicate.
+Every written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 
 ## Columns
 

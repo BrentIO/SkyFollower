@@ -19,7 +19,10 @@ whose status column reads exactly `"Valid"` are kept. The combined
 Manufacturer+Designation column has embedded newlines collapsed to single
 spaces. The Owner Name+Address column is multi-line: the first line is taken
 as the owner name, the last line as the country, and any lines in between as
-the street address (joined as a list).
+the street address (joined as a list). Every written record explicitly sets
+`military: false` — this register is exclusively civil, and the explicit
+value ensures a stale `military: true` flag (from Mictronics or a prior
+record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

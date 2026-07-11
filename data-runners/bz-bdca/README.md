@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register page is fetched directly (no index/discovery step — the URL is fixed). The page contains several navigation tables before the actual register, so the runner scans all `<table>` elements on the page and picks the first whose header row contains "Registration Number". Header names are read from that row and zipped with each subsequent row's cells to build one dict per aircraft. Registrations are then resolved to ICAO hex in batches of 100 via a RediSearch query against the Mictronics index; only rows that resolve are written.
+The register page is fetched directly (no index/discovery step — the URL is fixed). The page contains several navigation tables before the actual register, so the runner scans all `<table>` elements on the page and picks the first whose header row contains "Registration Number". Header names are read from that row and zipped with each subsequent row's cells to build one dict per aircraft. Registrations are then resolved to ICAO hex in batches of 100 via a RediSearch query against the Mictronics index; only rows that resolve are written. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

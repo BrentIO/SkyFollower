@@ -11,7 +11,7 @@
 
 ## How it works
 
-Unlike most runners, there is no index page or file to discover — the register lives directly on a fixed static HTML page. The page is parsed with BeautifulSoup: every `<table>` on the page is inspected, and the first one whose first row's text contains `REG` is taken as the register table. Header cells become dict keys and each subsequent row is zipped into a `{header: value}` record.
+Unlike most runners, there is no index page or file to discover — the register lives directly on a fixed static HTML page. The page is parsed with BeautifulSoup: every `<table>` on the page is inspected, and the first one whose first row's text contains `REG` is taken as the register table. Header cells become dict keys and each subsequent row is zipped into a `{header: value}` record. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

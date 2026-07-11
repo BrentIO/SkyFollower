@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register is fetched in a single request as an Apollo Persisted Query GraphQL call (`GetAllAircrafts`, `pageSize: 10000`) against `island.is/api/graphql` — no scraping or pagination is needed. Each returned aircraft entry's `identifiers` field is treated as the registration mark and looked up in batches against the Mictronics RediSearch index to resolve an ICAO hex, since the API response itself carries no hex/Mode S field. Country names in the operator address (e.g. `"Ísland"`) are normalized to ISO 3166-1 alpha-2 codes via a small lookup table; unrecognized country strings are passed through unchanged.
+The register is fetched in a single request as an Apollo Persisted Query GraphQL call (`GetAllAircrafts`, `pageSize: 10000`) against `island.is/api/graphql` — no scraping or pagination is needed. Each returned aircraft entry's `identifiers` field is treated as the registration mark and looked up in batches against the Mictronics RediSearch index to resolve an ICAO hex, since the API response itself carries no hex/Mode S field. Country names in the operator address (e.g. `"Ísland"`) are normalized to ISO 3166-1 alpha-2 codes via a small lookup table; unrecognized country strings are passed through unchanged. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page is scraped for the first `.pdf` link found. Tables are extracted with `pdfplumber`; a row is treated as a data row when its second cell, after stripping all whitespace, starts with `OM-` (registration marks appear in the PDF in a spaced format, e.g. `OM - 0101`, and are normalized to `OM-0101`). Once a header row has been seen, the four Slovak column values are re-assigned positionally onto internal column-name constants rather than trusting the header dict directly, since `pdfplumber` can introduce newline/Unicode artifacts into the extracted header text that would otherwise mismatch the constants.
+The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page is scraped for the first `.pdf` link found. Tables are extracted with `pdfplumber`; a row is treated as a data row when its second cell, after stripping all whitespace, starts with `OM-` (registration marks appear in the PDF in a spaced format, e.g. `OM - 0101`, and are normalized to `OM-0101`). Once a header row has been seen, the four Slovak column values are re-assigned positionally onto internal column-name constants rather than trusting the header dict directly, since `pdfplumber` can introduce newline/Unicode artifacts into the extracted header text that would otherwise mismatch the constants. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

@@ -22,7 +22,11 @@ subsequent rows without an `LX-` value are treated as continuation lines and
 appended to the current record's fields (handling multi-line cells).
 Registrant/operator values matching known privacy-placeholder strings
 (`EXPLOITANT PRIVÉ`, `PROPRIÉTAIRE PRIVÉ`, `COPROPRIÉTÉ`) are omitted from the
-names list, and a duplicate operator/owner value is not repeated.
+names list, and a duplicate operator/owner value is not repeated. Every
+written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 
 ## Columns
 

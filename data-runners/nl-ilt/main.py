@@ -242,7 +242,7 @@ def _build_record(row: dict) -> Optional[dict]:
     if eng_model and "not further defined" not in eng_model.lower():
         powerplant_fields["model"] = eng_model
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration}
+    record: dict = {"icao_hex": icao_hex, "registration": registration, "military": False}
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if powerplant_fields:

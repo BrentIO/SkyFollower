@@ -18,7 +18,11 @@ whose `Registration_Mark` does not start with `YL-` are discarded during
 parsing. Free-text fields (`Model`, `Aircraft_Model_Category`) have internal
 whitespace collapsed to single spaces. `Construction_Year` is a bare year, so
 it is stored as `manufactured_date` with a synthetic `-01-01` day/month
-(only if it parses as an integer in the range 1900–2100).
+(only if it parses as an integer in the range 1900–2100). Every written
+record explicitly sets `military: false` — this register is exclusively
+civil, and the explicit value ensures a stale `military: true` flag (from
+Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 
 ## Columns
 

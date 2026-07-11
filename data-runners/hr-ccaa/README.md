@@ -11,7 +11,7 @@
 
 ## How it works
 
-The Croatia CCAA index page is scraped for the first anchor tag whose `href` contains `/file/`, which is followed to download the current register PDF. Each page is parsed with `pdfplumber`'s built-in table extraction (`extract_table()`), which works reliably on this PDF. Rows are matched against a strict suffix pattern (`^[A-Z0-9]{2,4}$`) before the `9A-` prefix is prepended, filtering out header/footer noise rows that don't contain a real registration suffix.
+The Croatia CCAA index page is scraped for the first anchor tag whose `href` contains `/file/`, which is followed to download the current register PDF. Each page is parsed with `pdfplumber`'s built-in table extraction (`extract_table()`), which works reliably on this PDF. Rows are matched against a strict suffix pattern (`^[A-Z0-9]{2,4}$`) before the `9A-` prefix is prepended, filtering out header/footer noise rows that don't contain a real registration suffix. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

@@ -169,7 +169,12 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     if owner:
         registrant_fields["names"] = [owner]
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration, "source": "bs-caa"}
+    record: dict = {
+        "icao_hex": icao_hex,
+        "registration": registration,
+        "source": "bs-caa",
+        "military": False,
+    }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if registrant_fields:

@@ -259,7 +259,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     }
     registrant = {k: v for k, v in registrant_fields.items() if v is not None} or None
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration}
+    record: dict = {"icao_hex": icao_hex, "registration": registration, "military": False}
     if aircraft:
         record["aircraft"] = aircraft
     if registrant:

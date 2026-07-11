@@ -211,6 +211,7 @@ def _build_record(row: dict) -> dict | None:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "im-ardis",
+        "military": False,
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields

@@ -21,7 +21,10 @@ OpenDocument's `numbercolumnsrepeated` attribute are expanded so that
 merged/repeated blank cells don't shift later columns out of alignment (with
 a guard against implausibly large repeat counts on trailing empty cells,
 which are collapsed back to one). A row is only written if `X-Ponder` is a
-valid 6-hex ICAO code and `Registration` is non-empty.
+valid 6-hex ICAO code and `Registration` is non-empty. Every written record
+explicitly sets `military: false` — this register is exclusively civil, and
+the explicit value ensures a stale `military: true` flag (from Mictronics or
+a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

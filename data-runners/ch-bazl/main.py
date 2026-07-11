@@ -238,7 +238,7 @@ def _build_record(row: dict) -> Optional[dict]:
 
     registrant = _parse_registrant(row.get(" Main Owner", ""))
 
-    record: dict = {"icao_hex": raw_hex, "registration": registration}
+    record: dict = {"icao_hex": raw_hex, "registration": registration, "military": False}
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if powerplant_fields:
