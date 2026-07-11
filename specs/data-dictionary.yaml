@@ -700,7 +700,7 @@ sources:
     url: "https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped (AIRCRAFT-REGISTER-DD.MM.YYYY.pdf) and discovered by scraping the index page each run; ~6 pages, ~67 Z3- records; pdfplumber extract_table() used; no header row — columns identified by position; columns 0 (entry number) and 1 (date) not stored; owner name and address may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C4000–4C47FF"
+    notes: "PDF URL is date-stamped (AIRCRAFT-REGISTER-DD.MM.YYYY.pdf) and discovered by scraping the index page each run; ~6 pages, ~67 Z3- records; pdfplumber extract_table() used; no header row — columns identified by position; columns 0 (entry number) and 1 (date) not stored; model, manufacturer, owner name, and owner address may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4C4000–4C47FF"
     files:
       - name: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
         format: pdf_table
@@ -708,11 +708,11 @@ sources:
           0: Entry number; not stored
           1: Registration date; not stored
           2: Registration mark (Z3-prefix; lookup key)
-          3: Aircraft model designation (may contain embedded newlines)
-          4: Manufacturer name
-          5: Manufacturer serial number
-          6: Owner name (may contain embedded newlines)
-          7: Owner address (may contain embedded newlines)
+          3: "Aircraft model designation (may contain embedded newlines; collapsed to single space)"
+          4: "Manufacturer name (may contain embedded newlines; collapsed to single space)"
+          5: "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
+          6: "Owner name (may contain embedded newlines; collapsed to single space)"
+          7: "Owner address (may contain embedded newlines; collapsed to single space)"
 
   pg-casapng:
     description: "Papua New Guinea CASA PNG (Civil Aviation Safety Authority) aircraft register — P2-prefix registrations"

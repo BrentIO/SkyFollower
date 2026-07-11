@@ -119,6 +119,21 @@ class TestBuildRecord:
         record = _build_record(row, "4C4000", "Z3-AAA")
         assert record["registrant"]["street"] == "Street 1 City Country"
 
+    def test_manufacturer_newlines_collapsed(self):
+        row = _make_row(manufacturer="The New Piper\nAircraft INC")
+        record = _build_record(row, "4C4000", "Z3-AAA")
+        assert record["aircraft"]["manufacturer"] == "The New Piper Aircraft INC"
+
+    def test_model_newlines_collapsed(self):
+        row = _make_row(model="PIPER\nPA-28R-201")
+        record = _build_record(row, "4C4000", "Z3-AAA")
+        assert record["aircraft"]["model"] == "PIPER PA-28R-201"
+
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="28R\n787120")
+        record = _build_record(row, "4C4000", "Z3-AAA")
+        assert record["aircraft"]["serial_number"] == "28R 787120"
+
     def test_empty_manufacturer_omitted(self):
         row = _make_row(manufacturer="")
         record = _build_record(row, "4C4000", "Z3-AAA")
