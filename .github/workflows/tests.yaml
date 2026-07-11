@@ -1,0 +1,40 @@
+name: 🧪 Tests
+run-name: "Tests ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
+
+# Runs every pytest suite in the repo. Dependencies are installed by
+# concatenating every component's requirements.txt found via `find` — so
+# adding a new component (data runner or otherwise) with its own
+# requirements.txt and tests/ directory is picked up automatically, with no
+# workflow change needed, mirroring the discovery convention already
+# established in build-images.yaml's discover-images job. See #398.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # pytest + pyyaml are test-only — kept out of shared/requirements.txt
+          # so they don't get pulled into every runner's Docker image.
+          python -m pip install pytest pyyaml
+          find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0 \
+            | xargs -0 -I{} python -m pip install -r {}
+
+      - name: Run tests
+        run: python -m pytest -q
