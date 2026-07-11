@@ -299,15 +299,15 @@ sources:
     url: "https://caabahamas.com/registers/"
     format: pdf
     cadence: weekly_friday
-    notes: "PDF generated from Microsoft Excel; ~139 rows across 3 pages; URL is date-stamped and changes with each update — runner scrapes the CAA registers page to discover the current link; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; no manufacturer column (combined with model in AIRCRAFT TYPE - MAKE/MODEL); no powerplant or address data available"
+    notes: "PDF generated from Microsoft Excel; ~139 rows across 3 pages; URL is date-stamped and changes with each update — runner scrapes the CAA registers page to discover the current link; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; no manufacturer column (combined with model in AIRCRAFT TYPE - MAKE/MODEL); no powerplant or address data available; owner name, make/model, and serial number may contain embedded newlines — collapsed to single space"
     files:
       - name: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
         format: pdf
         columns:
           "AIRCRAFT REGISTRATION NUMBER": full C6-prefix registration mark
-          "REGISTERED OWNER OF AIRCRAFT": registered owner name
-          "AIRCRAFT TYPE - MAKE/MODEL":   Combined make and model designation (single free-text field)
-          "SERIAL #":                     manufacturer serial number
+          "REGISTERED OWNER OF AIRCRAFT": "registered owner name (may contain embedded newlines; collapsed to single space)"
+          "AIRCRAFT TYPE - MAKE/MODEL":   "Combined make and model designation (single free-text field; may contain embedded newlines; collapsed to single space)"
+          "SERIAL #":                     "manufacturer serial number (may contain embedded newlines; collapsed to single space)"
 
   ch-bazl:
     description: "Switzerland Federal Office of Civil Aviation (FOCA/BAZL) aircraft register — HB-prefix registrations"
