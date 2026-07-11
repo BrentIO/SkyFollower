@@ -462,17 +462,17 @@ sources:
     url: "https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; SSL certificate has untrusted issuer chain in Docker — verify=False used; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; SSL certificate has untrusted issuer chain in Docker — verify=False used; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; serial number may also contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
     files:
       - name: "Aircraft register PDF (date-stamped, discovered via index page)"
         format: pdf_table
         columns:
           0: Registration mark in HA-prefix format (stray space after hyphen present in source)
-          1: Model designation (may contain embedded newlines)
-          2: Manufacturer serial number
+          1: "Model designation (may contain embedded newlines; collapsed to single space)"
+          2: "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
           3: Year of manufacture (4-digit integer)
-          4: Owner name (may contain embedded newlines)
-          5: Owner address (may contain embedded newlines)
+          4: "Owner name (may contain embedded newlines; collapsed to single space)"
+          5: "Owner address (may contain embedded newlines; collapsed to single space)"
           6: Operator name; may be identical to owner
 
   bg-caa:

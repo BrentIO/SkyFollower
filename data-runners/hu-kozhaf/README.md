@@ -11,7 +11,7 @@
 
 ## How it works
 
-The KoZHAF (National Transport Authority) index page is scraped with a browser `User-Agent` for a link containing the stable path fragment `/documents/66238/342548/` and `download=true`, since the actual filename and query string change on every publish. The PDF is parsed page-by-page with `pdfplumber`'s `extract_table()`; because the table header is bilingual (Hungarian/English) and unreliable, columns are identified by fixed position instead. Registration marks in the source PDF have a stray space after the hyphen (e.g. `HA- GZQ`), which is normalized to `HA-GZQ` before the Mictronics lookup. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The KoZHAF (National Transport Authority) index page is scraped with a browser `User-Agent` for a link containing the stable path fragment `/documents/66238/342548/` and `download=true`, since the actual filename and query string change on every publish. The PDF is parsed page-by-page with `pdfplumber`'s `extract_table()`; because the table header is bilingual (Hungarian/English) and unreliable, columns are identified by fixed position instead. Registration marks in the source PDF have a stray space after the hyphen (e.g. `HA- GZQ`), which is normalized to `HA-GZQ` before the Mictronics lookup. Serial number is whitespace-collapsed like model, owner name, operator name, and owner address already are, since `pdfplumber` can represent a wrapped cell's text with an embedded newline rather than a space. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
@@ -19,7 +19,7 @@ The KoZHAF (National Transport Authority) index page is scraped with a browser `
 |---|---|---|
 | Registration | ✅ | `HA-` prefix; stray space after hyphen stripped; used as the Mictronics lookup key |
 | Type/Model | ✅ | → `aircraft.model` |
-| Serial Number | ✅ | → `aircraft.serial_number` |
+| Serial Number | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | Year | ✅ | → `aircraft.manufactured_date` (stored as `YYYY-01-01` when a valid 4-digit year) |
 | Owner Name | ✅ | → `registrant.names[0]` |
 | Owner Address | ✅ | → `registrant.street` |
