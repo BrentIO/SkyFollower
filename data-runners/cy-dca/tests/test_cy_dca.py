@@ -281,6 +281,10 @@ class TestBuildRecord:
         record = _build_record(_make_row(serial="17280001"), "4B0001", "5B-ABC")
         assert record["aircraft"]["serial_number"] == "17280001"
 
+    def test_serial_newlines_collapsed(self):
+        record = _build_record(_make_row(serial="1728\n0001"), "4B0001", "5B-ABC")
+        assert record["aircraft"]["serial_number"] == "1728 0001"
+
     def test_single_owner_stored_as_list(self):
         record = _build_record(_make_row(owner="ACME Aviation Ltd"), "4B0001", "5B-ABC")
         assert record["registrant"]["names"] == ["ACME Aviation Ltd"]
