@@ -17,7 +17,10 @@ table header row at all, so `pdfplumber`'s `extract_table()` output is read
 purely by fixed column position rather than by column name: registration is
 at index 2, model at 3, manufacturer at 4, serial number at 5, owner name at
 6, and owner address at 7. Only rows whose registration starts with `Z3-` are
-kept.
+kept. Model, manufacturer, serial number, owner name, and owner address are
+run through the same whitespace-collapsing transform, since `pdfplumber`
+sometimes represents a single cell's text with an embedded newline rather
+than a space (e.g. a wrapped manufacturer name).
 
 ## Columns
 
@@ -26,11 +29,11 @@ kept.
 | Certifi. No. (position 0) | ❌ | Certificate/registration-record number; not read by the parser |
 | Date of Registration (position 1) | ❌ | Not read by the parser |
 | Registration (position 2) | ✅ | Z3-prefix; used as the Mictronics lookup key |
-| Model (position 3) | ✅ | → `aircraft.model` |
-| Manufacturer (position 4) | ✅ | → `aircraft.manufacturer` |
-| Serial Number (position 5) | ✅ | → `aircraft.serial_number` |
-| Owner Name (position 6) | ✅ | → `registrant.names[0]` |
-| Owner Address (position 7) | ✅ | → `registrant.street` |
+| Model (position 3) | ✅ | → `aircraft.model`; embedded newlines collapsed to a single space |
+| Manufacturer (position 4) | ✅ | → `aircraft.manufacturer`; embedded newlines collapsed to a single space |
+| Serial Number (position 5) | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
+| Owner Name (position 6) | ✅ | → `registrant.names[0]`; embedded newlines collapsed to a single space |
+| Owner Address (position 7) | ✅ | → `registrant.street`; embedded newlines collapsed to a single space |
 
 See `specs/data-dictionary.yaml` (`mk-caa` entry) for full column semantics and cross-source schema notes.
 
@@ -45,9 +48,9 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
-        "manufacturer": "The New Piper\nAircraft INC",
+        "manufacturer": "The New Piper Aircraft INC",
         "manufacturer_model": "PIPER PA-28R-180/200/201",
-        "model": "PIPER\nPA-28R-201",
+        "model": "PIPER PA-28R-201",
         "serial_number": "28R-787120",
         "type_designator": "P28R",
         "wake_turbulence_category": "Light"

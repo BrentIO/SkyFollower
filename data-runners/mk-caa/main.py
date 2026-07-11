@@ -129,15 +129,15 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     aircraft_fields: dict = {}
     registrant_fields: dict = {}
 
-    manufacturer = row.get("manufacturer", "").strip()
+    manufacturer = _WHITESPACE_RE.sub(" ", row.get("manufacturer", "").strip())
     if manufacturer:
         aircraft_fields["manufacturer"] = manufacturer
 
-    model = row.get("model", "").strip()
+    model = _WHITESPACE_RE.sub(" ", row.get("model", "").strip())
     if model:
         aircraft_fields["model"] = model
 
-    serial = row.get("serial", "").strip()
+    serial = _WHITESPACE_RE.sub(" ", row.get("serial", "").strip())
     if serial:
         aircraft_fields["serial_number"] = serial
 
