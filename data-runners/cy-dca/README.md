@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register PDF is fetched from a fixed URL (TLS verification is disabled — the server's certificate chain is not fully trusted) and every page is parsed with `pdfplumber`'s built-in `extract_table()`, which works reliably on this PDF's table layout (unlike some other PDF-based runners that must fall back to grouping words by x-position). Rows are filtered to those whose registration mark column starts with `5B-`. Registrations are then resolved to ICAO hex in batches of 100 via a RediSearch query against the Mictronics index; only rows that resolve are written. The owner/operator column can contain multiple `/`-separated entries with `OWNER:`/`TRUSTEE:` header labels and `LESSOR`/`LESSEE` qualifiers, all of which are stripped during cleanup. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The register PDF is fetched from a fixed URL (TLS verification is disabled — the server's certificate chain is not fully trusted) and every page is parsed with `pdfplumber`'s built-in `extract_table()`, which works reliably on this PDF's table layout (unlike some other PDF-based runners that must fall back to grouping words by x-position). Rows are filtered to those whose registration mark column starts with `5B-`. Registrations are then resolved to ICAO hex in batches of 100 via a RediSearch query against the Mictronics index; only rows that resolve are written. The owner/operator column can contain multiple `/`-separated entries with `OWNER:`/`TRUSTEE:` header labels and `LESSOR`/`LESSEE` qualifiers, all of which are stripped during cleanup. Manufacturer, model, and serial number all pass through the same whitespace-collapsing helper, since `pdfplumber` sometimes represents a wrapped cell's text with an embedded newline rather than a space. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
@@ -20,7 +20,7 @@ The register PDF is fetched from a fixed URL (TLS verification is disabled — t
 | REGISTRATION MARK | ✅ | 5B-prefix; used as the Mictronics lookup key and stored as `registration` |
 | MANUFACTURER | ✅ | → `aircraft.manufacturer` |
 | AIRCRAFT TYPE | ✅ | → `aircraft.model` |
-| AIRCRAFT SERIAL NO | ✅ | → `aircraft.serial_number` |
+| AIRCRAFT SERIAL NO | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | MTOW KGS | ❌ | Parsed but not stored |
 | AIRCRAFT OWNER/OPERATOR | ✅ | Split on `/`; `OWNER`/`TRUSTEE` header labels and `LESSOR`/`LESSEE` qualifiers removed → `registrant.names[]` |
 
