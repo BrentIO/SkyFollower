@@ -109,6 +109,21 @@ class TestBuildRecord:
         assert record["registrant"]["street"] == "PO Box 7186, Boroko NCD"
         assert record["registrant"]["country"] == "Papua New Guinea"
 
+    def test_manufacturer_newlines_collapsed(self):
+        row = _make_row(manufacturer="Ces\nsna")
+        record = _build_record(row, "898A00", "P2-ANG")
+        assert record["aircraft"]["manufacturer"] == "Ces sna"
+
+    def test_model_newlines_collapsed(self):
+        row = _make_row(model="17\n2S")
+        record = _build_record(row, "898A00", "P2-ANG")
+        assert record["aircraft"]["model"] == "17 2S"
+
+    def test_operator_newlines_collapsed(self):
+        row = _make_row(operator="Air\nNiugini")
+        record = _build_record(row, "898A00", "P2-ANG")
+        assert record["registrant"]["names"] == ["Air Niugini"]
+
     def test_png_country_normalized(self):
         row = _make_row(address="PO Box 1, Port Moresby, PNG")
         record = _build_record(row, "898A00", "P2-ANG")

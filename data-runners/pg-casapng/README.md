@@ -11,16 +11,16 @@
 
 ## How it works
 
-The CASA PNG index page is scraped with BeautifulSoup for the first link ending in `.pdf` — that is always the current register. The PDF has no header row, so `pdfplumber`'s `extract_table()` result is read by fixed column position (registration, manufacturer, model, operator, address) rather than by name; only rows whose registration starts with `P2-` are kept. Registrations are then looked up in batches of 100 against the Redis Mictronics search index (RediSearch `TagField` query) to resolve `icao_hex` — any registration not yet present in Mictronics is silently skipped for this run. The address field is comma-delimited with embedded newlines (collapsed to spaces); the last comma-separated segment is treated as the country (`PNG` is expanded to `Papua New Guinea`) and the remainder as the street. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The CASA PNG index page is scraped with BeautifulSoup for the first link ending in `.pdf` — that is always the current register. The PDF has no header row, so `pdfplumber`'s `extract_table()` result is read by fixed column position (registration, manufacturer, model, operator, address) rather than by name; only rows whose registration starts with `P2-` are kept. Registrations are then looked up in batches of 100 against the Redis Mictronics search index (RediSearch `TagField` query) to resolve `icao_hex` — any registration not yet present in Mictronics is silently skipped for this run. The address field is comma-delimited with embedded newlines (collapsed to spaces); the last comma-separated segment is treated as the country (`PNG` is expanded to `Papua New Guinea`) and the remainder as the street. Manufacturer, model, and operator are also whitespace-collapsed like the address field, since `pdfplumber` can represent a wrapped cell's text with an embedded newline rather than a space. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
 | Source column | Imported | Notes |
 |---|---|---|
 | Registration (col 0) | ✅ | `P2-` filter; used as the Mictronics lookup key |
-| Manufacturer (col 1) | ✅ | → `aircraft.manufacturer` |
-| Model (col 2) | ✅ | → `aircraft.model` |
-| Operator (col 3) | ✅ | → `registrant.names[0]` |
+| Manufacturer (col 1) | ✅ | → `aircraft.manufacturer`; embedded newlines collapsed to a single space |
+| Model (col 2) | ✅ | → `aircraft.model`; embedded newlines collapsed to a single space |
+| Operator (col 3) | ✅ | → `registrant.names[0]`; embedded newlines collapsed to a single space |
 | Address (col 4) | ✅ | Comma-delimited; last segment → `registrant.country` (PNG expanded), remainder → `registrant.street` |
 
 See `specs/data-dictionary.yaml` (`pg-casapng` entry) for full column semantics and cross-source schema notes.
