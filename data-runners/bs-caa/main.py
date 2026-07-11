@@ -57,6 +57,8 @@ REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/bs-caa"
 BATCH_SIZE = 100
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
 
 # ---------------------------------------------------------------------------
 # URL discovery
@@ -155,9 +157,9 @@ def parse_pdf(file_path: str) -> list[dict]:
 
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build enrichment record from a PDF row."""
-    owner = row.get("REGISTERED OWNER OF AIRCRAFT", "").strip() or None
-    make_model = row.get("AIRCRAFT TYPE - MAKE/MODEL", "").strip() or None
-    serial = row.get("SERIAL #", "").strip() or None
+    owner = _WHITESPACE_RE.sub(" ", row.get("REGISTERED OWNER OF AIRCRAFT", "").strip()) or None
+    make_model = _WHITESPACE_RE.sub(" ", row.get("AIRCRAFT TYPE - MAKE/MODEL", "").strip()) or None
+    serial = _WHITESPACE_RE.sub(" ", row.get("SERIAL #", "").strip()) or None
 
     aircraft_fields: dict = {}
     if make_model:

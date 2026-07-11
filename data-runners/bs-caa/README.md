@@ -11,16 +11,16 @@
 
 ## How it works
 
-The Bahamas CAA registers index page is scraped for a link matching `Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER*.pdf` (tried first as an absolute URL, then as a relative `href`), and that PDF is downloaded to a temp file. Unlike the other PDF-based runners in this project, this one relies on `pdfplumber`'s built-in `extract_table()` rather than manual x-position grouping — the Bahamas PDF is Excel-generated with clean table borders, so `pdfplumber` detects columns reliably. Because the header row repeats on every page, any row that matches the captured header exactly is skipped. Registrations are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index, then a type sanity check compares tokens from the combined make/model column against the existing Mictronics record, rejecting the match only when both sides have tokens and none overlap. The Bahamas register carries only owner name, registration, a single combined make/model string, and serial number — no manufacturer, type designator, or powerplant fields are available at the source. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The Bahamas CAA registers index page is scraped for a link matching `Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER*.pdf` (tried first as an absolute URL, then as a relative `href`), and that PDF is downloaded to a temp file. Unlike the other PDF-based runners in this project, this one relies on `pdfplumber`'s built-in `extract_table()` rather than manual x-position grouping — the Bahamas PDF is Excel-generated with clean table borders, so `pdfplumber` detects columns reliably. Because the header row repeats on every page, any row that matches the captured header exactly is skipped. Registrations are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index, then a type sanity check compares tokens from the combined make/model column against the existing Mictronics record, rejecting the match only when both sides have tokens and none overlap. The Bahamas register carries only owner name, registration, a single combined make/model string, and serial number — no manufacturer, type designator, or powerplant fields are available at the source. Owner, make/model, and serial number are all whitespace-collapsed, since `pdfplumber` can represent a wrapped cell's text with an embedded newline rather than a space. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
 | Source column | Imported | Notes |
 |---|---|---|
 | `AIRCRAFT REGISTRATION NUMBER` | ✅ | `C6-`-prefix; used as the Mictronics lookup key |
-| `AIRCRAFT TYPE - MAKE/MODEL` | ✅ | → `aircraft.model` (combined make/model, not split); also used for the type sanity check against Mictronics |
-| `SERIAL #` | ✅ | → `aircraft.serial_number` |
-| `REGISTERED OWNER OF AIRCRAFT` | ✅ | → `registrant.names[0]` |
+| `AIRCRAFT TYPE - MAKE/MODEL` | ✅ | → `aircraft.model` (combined make/model, not split); embedded newlines collapsed to a single space; also used for the type sanity check against Mictronics |
+| `SERIAL #` | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
+| `REGISTERED OWNER OF AIRCRAFT` | ✅ | → `registrant.names[0]`; embedded newlines collapsed to a single space |
 
 See `specs/data-dictionary.yaml` (`bs-caa` entry) for full column semantics and cross-source schema notes.
 
