@@ -37,6 +37,11 @@ def operator_key(designator: str) -> str:
     return f"operator:{designator.upper()}"
 
 
+def aircraft_type_key(designator: str) -> str:
+    """Aircraft type-designator reference record. aircraft:type:{designator}"""
+    return f"aircraft:type:{designator.upper()}"
+
+
 def flight_key(ident: str) -> str:
     """Origin/destination enrichment record. flight:{ident}"""
     return f"flight:{ident.upper()}"

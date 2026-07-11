@@ -54,9 +54,11 @@ _decode_wtc = _mod._decode_wtc
 _split_manufacturer_model = _mod._split_manufacturer_model
 build_aircraft_record = _mod.build_aircraft_record
 build_operator_record = _mod.build_operator_record
+build_type_record = _mod.build_type_record
 stage_data = _mod.stage_data
 write_to_redis = _mod.write_to_redis
 write_operators_to_redis = _mod.write_operators_to_redis
+write_types_to_redis = _mod.write_types_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.REDIS_TTL
 MQTT_ROOT = _mod.MQTT_ROOT
@@ -505,6 +507,128 @@ class TestWriteOperatorsToRedis:
 
 
 # ---------------------------------------------------------------------------
+# Tests: build_type_record
+# ---------------------------------------------------------------------------
+
+class TestBuildTypeRecord:
+    def _row(self, designator, manufacturer_model, wake_turbulence_category=None):
+        return {
+            "type_designator": designator,
+            "manufacturer_model": manufacturer_model,
+            "wake_turbulence_category": wake_turbulence_category,
+        }
+
+    def test_full_record(self):
+        row = self._row("B763", "Boeing 767-332ER", "Heavy")
+        record = build_type_record(row)
+        assert record == {
+            "type_designator": "B763",
+            "manufacturer_model": "Boeing 767-332ER",
+            "wake_turbulence_category": "Heavy",
+        }
+
+    def test_null_wtc_omitted(self):
+        row = self._row("C172", "Cessna 172 Skyhawk", wake_turbulence_category=None)
+        record = build_type_record(row)
+        assert record == {
+            "type_designator": "C172",
+            "manufacturer_model": "Cessna 172 Skyhawk",
+        }
+        assert "wake_turbulence_category" not in record
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_types_to_redis
+# ---------------------------------------------------------------------------
+
+class TestWriteTypesToRedis:
+    def _make_db(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
+            "VALUES ('B763', 'Boeing 767-332ER', 'Heavy')"
+        )
+        conn.execute(
+            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
+            "VALUES ('C172', 'Cessna 172 Skyhawk', 'Light')"
+        )
+        conn.commit()
+        return conn
+
+    def _mock_redis(self):
+        r = MagicMock()
+        pipe = MagicMock()
+        pipe_json = MagicMock()
+        r.pipeline.return_value = pipe
+        pipe.json.return_value = pipe_json
+        pipe.execute.return_value = []
+        return r, pipe, pipe_json
+
+    def test_count_matches_types(self):
+        conn = self._make_db()
+        r, _, _ = self._mock_redis()
+        assert write_types_to_redis(conn, r, REDIS_TTL) == 2
+        conn.close()
+
+    def test_type_key_written(self):
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis()
+        write_types_to_redis(conn, r, REDIS_TTL)
+        keys = [c.args[0] for c in pipe_json.set.call_args_list]
+        assert "aircraft:type:B763" in keys
+        assert "aircraft:type:C172" in keys
+        conn.close()
+
+    def test_json_set_uses_root_path(self):
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis()
+        write_types_to_redis(conn, r, REDIS_TTL)
+        for c in pipe_json.set.call_args_list:
+            assert c.args[1] == "$"
+        conn.close()
+
+    def test_expire_called_with_correct_ttl(self):
+        conn = self._make_db()
+        r, pipe, _ = self._mock_redis()
+        write_types_to_redis(conn, r, REDIS_TTL)
+        expire_ttls = [c.args[1] for c in pipe.expire.call_args_list]
+        assert all(ttl == REDIS_TTL for ttl in expire_ttls)
+        conn.close()
+
+    def test_empty_manufacturer_model_skipped(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
+            "VALUES ('ZZZZ', '', NULL)"
+        )
+        conn.commit()
+        r, _, pipe_json = self._mock_redis()
+        count = write_types_to_redis(conn, r, REDIS_TTL)
+        assert count == 0
+        pipe_json.set.assert_not_called()
+        conn.close()
+
+    def test_null_manufacturer_model_skipped(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
+            "VALUES ('ZZZZ', NULL, NULL)"
+        )
+        conn.commit()
+        r, _, pipe_json = self._mock_redis()
+        count = write_types_to_redis(conn, r, REDIS_TTL)
+        assert count == 0
+        pipe_json.set.assert_not_called()
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Tests: Redis key construction
 # ---------------------------------------------------------------------------
 
@@ -520,6 +644,14 @@ class TestRedisKeys:
     def test_aircraft_simple_search_index_name(self):
         from shared.redis_keys import AIRCRAFT_MICTRONICS_SEARCH_INDEX
         assert AIRCRAFT_MICTRONICS_SEARCH_INDEX == "idx:aircraft:mictronics"
+
+    def test_aircraft_type_key_format(self):
+        from shared.redis_keys import aircraft_type_key
+        assert aircraft_type_key("b763") == "aircraft:type:B763"
+
+    def test_aircraft_type_key_already_upper(self):
+        from shared.redis_keys import aircraft_type_key
+        assert aircraft_type_key("B763") == "aircraft:type:B763"
 
 
 # ---------------------------------------------------------------------------
@@ -647,7 +779,7 @@ class TestMqttCompletionStats:
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 42, 10, "success")
+                publish_completion_stats(cfg, 42, 10, 3, "success")
         topics = [c.args[0] for c in mc.publish.call_args_list]
         assert f"{MQTT_ROOT}/statistic/records_imported" in topics
 
@@ -656,7 +788,7 @@ class TestMqttCompletionStats:
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 99, 5, "success")
+                publish_completion_stats(cfg, 99, 5, 3, "success")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
         assert calls[f"{MQTT_ROOT}/statistic/records_imported"] == "99"
 
@@ -665,16 +797,25 @@ class TestMqttCompletionStats:
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, 77, "success")
+                publish_completion_stats(cfg, 0, 77, 3, "success")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
         assert calls[f"{MQTT_ROOT}/statistic/operators_imported"] == "77"
+
+    def test_publishes_types_imported(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch("mictronics_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, 0, 0, 2774, "success")
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
+        assert calls[f"{MQTT_ROOT}/statistic/types_imported"] == "2774"
 
     def test_publishes_last_run_at(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, 0, "success")
+                publish_completion_stats(cfg, 0, 0, 0, "success")
         topics = [c.args[0] for c in mc.publish.call_args_list]
         assert f"{MQTT_ROOT}/statistic/last_run_at" in topics
 
@@ -683,7 +824,7 @@ class TestMqttCompletionStats:
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, 0, "failure")
+                publish_completion_stats(cfg, 0, 0, 0, "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
         assert calls[f"{MQTT_ROOT}/statistic/last_run_status"] == "failure"
 
@@ -691,21 +832,22 @@ class TestMqttCompletionStats:
         cfg = {}
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
-            publish_completion_stats(cfg, 0, 0, "success")
+            publish_completion_stats(cfg, 0, 0, 0, "success")
         mc.connect.assert_not_called()
 
-    def test_ha_autodiscovery_four_sensors(self):
+    def test_ha_autodiscovery_five_sensors(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
         with patch("mictronics_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
-                publish_completion_stats(cfg, 100, 10, "success")
+                publish_completion_stats(cfg, 100, 10, 3, "success")
         ha_topics = [
             c.args[0] for c in mc.publish.call_args_list
             if c.args[0].startswith("homeassistant/")
         ]
-        assert len(ha_topics) == 4
+        assert len(ha_topics) == 5
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_records_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_operators_imported/config" in ha_topics
+        assert "homeassistant/sensor/SkyFollower_runner_mictronics_types_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_last_run_at/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_last_run_status/config" in ha_topics

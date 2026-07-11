@@ -6,6 +6,7 @@ from shared.redis_keys import (
     airport_key,
     aircraft_mictronics_key,
     aircraft_registry_key,
+    aircraft_type_key,
     config_areas_key,
     config_areas_version_key,
     config_rules_key,
@@ -37,6 +38,10 @@ class TestEnrichmentKeys:
     def test_operator_key(self):
         assert operator_key("dal") == "operator:DAL"
         assert operator_key("DAL") == "operator:DAL"
+
+    def test_aircraft_type_key(self):
+        assert aircraft_type_key("b763") == "aircraft:type:B763"
+        assert aircraft_type_key("B763") == "aircraft:type:B763"
 
     def test_flight_key(self):
         assert flight_key("dal659") == "flight:DAL659"

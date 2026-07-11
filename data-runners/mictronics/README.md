@@ -35,6 +35,17 @@ each new record is deep-merged into whatever already exists at that key
 (rather than overwritten wholesale) so a partial re-run cannot drop fields
 written by an earlier one.
 
+`types.json` is also published standalone as `aircraft:type:{designator}` —
+one JSON key per type designator, holding `type_designator`,
+`manufacturer_model`, and (when decodable) `wake_turbulence_category`.
+This is a plain lookup table, not merged into any per-hex record: it exists
+so a country registry runner that only knows a `type_designator` (not a full
+`manufacturer_model`) can resolve one directly via `JSON.GET
+aircraft:type:{designator}`, including for hexes Mictronics itself has no
+`aircrafts.json` entry for — no RediSearch index is needed since the
+designator is already the exact key. Entries with no `manufacturer_model`
+are skipped.
+
 ## Columns
 
 The ZIP archive contains four data files that are inspected independently below (a fifth entry, `LICENSE`, is the Open Data Commons license text and carries no data columns). Only `aircrafts.json`, `types.json`, and `operators.json` are joined into the records this runner writes; `dbversion.json` is a separate file that this runner never opens at all.
@@ -54,10 +65,12 @@ The ZIP archive contains four data files that are inspected independently below 
 
 | Source column | Imported | Notes |
 |---|---|---|
-| key (type_designator) | ✅ | Join key only |
-| values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer`; full string also kept as `aircraft.manufacturer_model` |
+| key (type_designator) | ✅ | Join key into `aircrafts.json`; also the Redis key suffix for the standalone `aircraft:type:{designator}` record |
+| values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer` (per-hex record); full string kept as `aircraft.manufacturer_model` (per-hex) and `manufacturer_model` (standalone `aircraft:type:{designator}` record) |
 | values[1] (ICAO aircraft description code, e.g. `L2J`, `H2T`, `L1P`) | ❌ | Never read by this runner — the `powerplant`/`category` columns declared in the local SQLite schema are never populated from it |
-| values[2] (wtc code) | ✅ | Decoded (`J`/`H`/`M`/`L`/`M/L`/`-` → full name) → `aircraft.wake_turbulence_category` |
+| values[2] (wtc code) | ✅ | Decoded (`J`/`H`/`M`/`L`/`M/L`/`-` → full name) → `aircraft.wake_turbulence_category` (per-hex) and `wake_turbulence_category` (standalone `aircraft:type:{designator}` record) |
+
+Every `types.json` entry with a non-empty `manufacturer_model` is written to its own `aircraft:type:{designator}` key, independent of whether that designator appears anywhere in `aircrafts.json`.
 
 ### `operators.json`
 
@@ -78,15 +91,15 @@ See `specs/data-dictionary.yaml` (`mictronics` entry) for full column semantics 
 
 ## Example Output
 
-`Runner Data Test.md` has no dedicated example section for `mictronics` since
-it never writes a fully standalone record a user would look up directly —
-its data is only ever seen merged underneath a country runner's own fields.
-The example below (from `gg-2reg`'s `43EC60`) illustrates this: `manufacturer`,
-`manufacturer_model`, `type_designator`, and `wake_turbulence_category` are
-Mictronics's own contributions from `aircraft:mictronics:43EC60` (written by
-this runner), present before or independent of any country-specific
-enrichment; `model` and `serial_number` are `gg-2reg`'s own additions from a
-separate `aircraft:registry:43EC60` key, merged in at read time.
+`aircraft:mictronics:{icao_hex}` records are never looked up directly by a
+user — their data is only ever seen merged underneath a country runner's own
+fields. The example below (from `gg-2reg`'s `43EC60`) illustrates this:
+`manufacturer`, `manufacturer_model`, `type_designator`, and
+`wake_turbulence_category` are Mictronics's own contributions from
+`aircraft:mictronics:43EC60` (written by this runner), present before or
+independent of any country-specific enrichment; `model` and `serial_number`
+are `gg-2reg`'s own additions from a separate `aircraft:registry:43EC60` key,
+merged in at read time.
 
 ```bash
 docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/merge_aircraft.lua)" 0 43EC60 | python3 -m json.tool --sort-keys --no-ensure-ascii
@@ -109,6 +122,20 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 }
 ```
 
+The `aircraft:type:{designator}` reference records this runner writes standalone are looked up directly, not merged:
+
+```bash
+docker run --rm --network host redis:latest redis-cli JSON.GET aircraft:type:B763 | python3 -m json.tool --sort-keys --no-ensure-ascii
+```
+
+```json
+{
+    "manufacturer_model": "BOEING 767-300",
+    "type_designator": "B763",
+    "wake_turbulence_category": "Heavy"
+}
+```
+
 ## Configuration
 
 Reads `settings.json` (mounted at `/app/settings.json`):
@@ -121,17 +148,18 @@ Reads `settings.json` (mounted at `/app/settings.json`):
 | `mqtt.port` | ❌ | `1883` | |
 | `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
 | `mqtt.password` | ❌ | — | |
-| `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:mictronics:{icao_hex}` and `operator:{designator}` key written by this runner |
+| `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:mictronics:{icao_hex}`, `operator:{designator}`, and `aircraft:type:{designator}` key written by this runner |
 
 ## MQTT
 
-Published once, at the end of a run, to `SkyFollower/runner/mictronics/statistic/{name}` (all retained). Unlike most runners, this one publishes an extra `operators_imported` stat alongside the standard three:
+Published once, at the end of a run, to `SkyFollower/runner/mictronics/statistic/{name}` (all retained). Unlike most runners, this one publishes two extra stats — `operators_imported` and `types_imported` — alongside the standard three:
 
 | Topic suffix | Value | Format |
 |---|---|---|
 | `records_imported` | e.g. `271` | Integer as string |
 | `operators_imported` | e.g. `842` | Integer as string |
+| `types_imported` | e.g. `2774` | Integer as string |
 | `last_run_at` | e.g. `2026-07-07T14:32:01.123456+00:00` | ISO 8601 UTC |
 | `last_run_status` | `success` or `failure` | String |
 
-Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_mictronics_{name}/config` for each of the four stats above.
+Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_mictronics_{name}/config` for each of the five stats above.
