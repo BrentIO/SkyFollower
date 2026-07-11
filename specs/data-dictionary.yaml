@@ -654,15 +654,15 @@ sources:
     url: "https://www.caa.md/modules/filemanager/files/documentum/Registrul_Aerian_al_Republicii_Moldova.pdf"
     format: pdf
     cadence: weekly_tuesday
-    notes: "Static PDF URL (does not appear date-stamped); ~2 pages, ~77 ER- records; pdfplumber extract_table() used; no header row — columns identified by position; operator field contains 3-letter codes only — not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    notes: "Static PDF URL (does not appear date-stamped); ~2 pages, ~77 ER- records; pdfplumber extract_table() used; no header row — columns identified by position; operator field contains 3-letter codes only — not stored; aircraft type and serial number may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     files:
       - name: "Registrul_Aerian_al_Republicii_Moldova.pdf"
         format: pdf_table
     columns:
       0: Sequence number; not stored
-      1: Aircraft type designation
+      1: "Aircraft type designation (may contain embedded newlines; collapsed to single space)"
       2: Registration mark (ER-prefix; lookup key)
-      3: Manufacturer serial number
+      3: "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
       4: Operator ICAO 3-letter code; not stored
 
   me-caa:
