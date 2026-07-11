@@ -214,7 +214,10 @@ def _build_record(details: dict) -> Optional[dict]:
 
     aircraft: Optional[dict] = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
-    # registrant sub-object — use first registered owner
+    # registrant sub-object — use first registered owner. The details payload
+    # also includes AircraftOperatedByAocHolder (the commercial operator flying
+    # under an Air Operator Certificate, which can differ from the owner) —
+    # intentionally not captured; only the registered owner is tracked.
     owners = details.get("RegisteredAircraftOwners") or []
     registrant: Optional[dict] = None
     if owners:

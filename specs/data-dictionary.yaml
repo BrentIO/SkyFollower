@@ -818,7 +818,7 @@ sources:
     url: "https://ginfoapi.caa.co.uk"
     format: api
     cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no Redis dependency — runs independently of Mictronics"
+    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no Redis dependency — runs independently of Mictronics; details payload also includes AircraftOperatedByAocHolder (commercial operator, can differ from owner) — intentionally not captured, only RegisteredAircraftOwners is tracked"
     endpoints:
       search:
         method: POST
