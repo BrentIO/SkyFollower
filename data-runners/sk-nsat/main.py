@@ -148,16 +148,16 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     aircraft_fields: dict = {}
     registrant_fields: dict = {}
 
-    model = row.get(_COL_TYPE, "").strip()
+    model = _WHITESPACE_RE.sub(" ", row.get(_COL_TYPE, "").strip())
     if model:
         aircraft_fields["model"] = model
 
-    serial = row.get(_COL_SERIAL, "").strip()
+    serial = _WHITESPACE_RE.sub(" ", row.get(_COL_SERIAL, "").strip())
     if serial:
         aircraft_fields["serial_number"] = serial
 
-    owner = row.get(_COL_OWNER, "").strip()
-    operator = row.get(_COL_OPERATOR, "").strip()
+    owner = _WHITESPACE_RE.sub(" ", row.get(_COL_OWNER, "").strip())
+    operator = _WHITESPACE_RE.sub(" ", row.get(_COL_OPERATOR, "").strip())
     names = [owner] if owner else []
     if operator and operator != owner:
         names.append(operator)

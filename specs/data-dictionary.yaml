@@ -767,16 +767,16 @@ sources:
     url: "https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — not hardcoded; ~31 pages, ~818 records; pdfplumber extract_tables() used; registration marks in PDF use spaced format 'OM - 0101' — normalized to 'OM-0101' by stripping all whitespace; both Vlastník (owner) and Prevádzkovateľ (operator) stored as registrant.names — deduplicated if identical; Záložné právo (lien) column not stored; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 510000–51FFFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — not hardcoded; ~31 pages, ~818 records; pdfplumber extract_tables() used; registration marks in PDF use spaced format 'OM - 0101' — normalized to 'OM-0101' by stripping all whitespace; both Vlastník (owner) and Prevádzkovateľ (operator) stored as registrant.names — deduplicated if identical; Záložné právo (lien) column not stored; type, serial number, owner, and operator may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 510000–51FFFF"
     files:
       - name: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
         format: pdf_table
         columns:
-          "Typ lietadla":         Aircraft type and model designation
+          "Typ lietadla":         "Aircraft type and model designation (may contain embedded newlines; collapsed to single space)"
           "Poznávacia značka":    Registration mark in spaced format (e.g. 'OM - 0101')
-          "Výrobné číslo":        Manufacturer serial number
-          "Vlastník":             Registered owner name
-          "Prevádzkovateľ":       Operator name
+          "Výrobné číslo":        "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
+          "Vlastník":             "Registered owner name (may contain embedded newlines; collapsed to single space)"
+          "Prevádzkovateľ":       "Operator name (may contain embedded newlines; collapsed to single space)"
           "Záložné právo":        Lien status; not stored
 
   tc-caa:

@@ -130,6 +130,26 @@ class TestBuildRecord:
         assert record["aircraft"]["serial_number"] == "912526"
         assert record["registrant"]["names"] == ["Slovak Air Lines s.r.o."]
 
+    def test_model_newlines_collapsed(self):
+        row = _make_row(type_="Let\nL-410UVP-E20")
+        record = _build_record(row, "710ABC", "OM-0101")
+        assert record["aircraft"]["model"] == "Let L-410UVP-E20"
+
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="9125\n26")
+        record = _build_record(row, "710ABC", "OM-0101")
+        assert record["aircraft"]["serial_number"] == "9125 26"
+
+    def test_owner_newlines_collapsed(self):
+        row = _make_row(owner="Slovak Air\nLines s.r.o.", operator="")
+        record = _build_record(row, "710ABC", "OM-0101")
+        assert record["registrant"]["names"] == ["Slovak Air Lines s.r.o."]
+
+    def test_operator_newlines_collapsed(self):
+        row = _make_row(owner="Owner Corp", operator="Operator\nLtd")
+        record = _build_record(row, "710ABC", "OM-0101")
+        assert record["registrant"]["names"] == ["Owner Corp", "Operator Ltd"]
+
     def test_owner_and_operator_deduplicated(self):
         row = _make_row(owner="Owner Corp", operator="Owner Corp")
         record = _build_record(row, "710ABC", "OM-0101")
