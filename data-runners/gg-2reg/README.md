@@ -16,8 +16,10 @@ The index page is scraped to discover the current register PDF (matches
 special-section heading (New Registrations, Deregistrations, Ownership Changes,
 Registration Changes, Reserved Marks) are skipped. Remaining pages are parsed by
 grouping extracted words into columns by x-position, since `pdfplumber`'s table
-detection does not reliably find the column boundaries in this PDF. Every
-written record explicitly sets `military: false` — this register is
+detection does not reliably find the column boundaries in this PDF. MSN
+(serial number) is whitespace-collapsed like manufacturer, model, and owner
+already are, since a word-position-grouped cell can end up with an embedded
+newline rather than a space. Every written record explicitly sets `military: false` — this register is
 exclusively civil, and the explicit value ensures a stale `military: true`
 flag (from Mictronics or a prior record on a reused hex) is corrected on
 re-registration.
@@ -35,7 +37,7 @@ main table; those are listed below too, since they genuinely exist in the source
 | Registration | ✅ | 2-prefix; used as the Mictronics lookup key |
 | Aircraft Manufacturer | ✅ | → `aircraft.manufacturer` |
 | Type | ✅ | → `aircraft.model` |
-| MSN | ✅ | → `aircraft.serial_number` |
+| MSN | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | Registered Owner | ✅ | → `registrant.names[0]`; privacy placeholders (e.g. `(private)`) are filtered, not stored |
 | Date of Registration | ❌ | Parsed but not stored |
 | Deregistered on | ❌ | Only present in the "Deregistrations" special section; entire page is skipped by this runner |

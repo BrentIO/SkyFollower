@@ -583,12 +583,12 @@ sources:
     url: "https://www.2-reg.com/legislation/register/"
     format: pdf
     cadence: weekly_tuesday
-    notes: "Index page scraped to discover date-encoded PDF URL matching /wp-content/uploads/*/Register_*.pdf; pages whose first line matches a known special-section prefix (New Registrations, Deregistrations, Ownership Changes, Registration Changes, Reserved Marks) are skipped; remaining pages parsed by grouping words into columns by x-position; ~271 records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
+    notes: "Index page scraped to discover date-encoded PDF URL matching /wp-content/uploads/*/Register_*.pdf; pages whose first line matches a known special-section prefix (New Registrations, Deregistrations, Ownership Changes, Registration Changes, Reserved Marks) are skipped; remaining pages parsed by grouping words into columns by x-position; ~271 records; MSN may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch; must run after Mictronics"
     columns:
       0: "Registration (x<126; 2-prefix; lookup key)"
       1: "Aircraft Manufacturer (x<387)"
       2: "Type (x<566)"
-      3: "MSN (x<648)"
+      3: "MSN (x<648; may contain embedded newlines; collapsed to single space)"
       4: "Registered Owner/Charterer by demise (x<1015)"
       5: "Date of Registration (x≥1015; not stored)"
 
