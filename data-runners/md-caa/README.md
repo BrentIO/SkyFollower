@@ -16,7 +16,9 @@ The register PDF is downloaded from a static URL and parsed with
 header row, so columns are addressed by fixed 0-based position
 (`Nr.`, `Type of aircraft`, `Registration`, `Serial No.`, `Operator`) rather
 than by name. Rows whose registration column does not start with `ER-` are
-discarded during parsing. Every written record explicitly sets
+discarded during parsing. Type of aircraft and serial number are both
+whitespace-collapsed, since `pdfplumber` can represent a wrapped cell's text
+with an embedded newline rather than a space. Every written record explicitly sets
 `military: false` — this register is exclusively civil, and the explicit
 value ensures a stale `military: true` flag (from Mictronics or a prior
 record on a reused hex) is corrected on re-registration.
@@ -28,7 +30,7 @@ record on a reused hex) is corrected on re-registration.
 | Nr. (position 0) | ❌ | Sequence number; parsed but not stored |
 | Type of aircraft (position 1) | ✅ | Whitespace-collapsed → `aircraft.model` |
 | Registration (position 2) | ✅ | ER-prefix filter; used as the Mictronics lookup key |
-| Serial No. (position 3) | ✅ | → `aircraft.serial_number` |
+| Serial No. (position 3) | ✅ | Whitespace-collapsed → `aircraft.serial_number` |
 | Operator (position 4) | ❌ | 3-letter operator code only; parsed but not stored |
 
 See `specs/data-dictionary.yaml` (`md-caa` entry) for full column semantics and cross-source schema notes.

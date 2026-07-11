@@ -114,6 +114,11 @@ class TestBuildRecord:
         record = _build_record(row, "4B4100", "ER-AXA")
         assert record["aircraft"]["model"] == "Boeing 737 800"
 
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="3501\n4")
+        record = _build_record(row, "4B4100", "ER-AXA")
+        assert record["aircraft"]["serial_number"] == "3501 4"
+
     def test_empty_model_omitted(self):
         row = _make_row(model="")
         record = _build_record(row, "4B4100", "ER-AXA")
