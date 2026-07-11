@@ -527,7 +527,7 @@ sources:
     url: "https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000"
     format: rest_api
     cadence: weekly_tuesday
-    notes: "Two-step REST API: list endpoint returns {rows:[...], total:N} (~3486 active); detail endpoint per record provides ICAO hex in 'transponder' field (no RediSearch needed); 250ms delay between detail requests with 3-retry exponential backoff on connection errors; category and engine_type values use AVREG_DATA.* enum strings that are mapped to friendly names; NO_ENGINE omits powerplant entry; all owner display_names stored; operator appended to names if not already present"
+    notes: "Two-step REST API: list endpoint returns {rows:[...], total:N} (~3486 active); detail endpoint per record provides ICAO hex in 'transponder' field (no RediSearch needed); 250ms delay between detail requests with 3-retry exponential backoff on connection errors; category and engine_type values use AVREG_DATA.* enum strings that are mapped to friendly names; NO_ENGINE omits powerplant entry; all owner display_names stored; detail record also includes a distinct operators field, intentionally not tracked — only owners is used for registrant identity"
     api:
       list: "GET https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000 → {rows: [{id, category, type, registration_number, deletion_date}], total: N}"
       detail: "GET https://lr.caa.gov.cz/api/avreg/{id} → {transponder, category, manufacturer, model, serial_number, manufacture_year, engine_type, engine_count, max_on_board, owners, operators}"

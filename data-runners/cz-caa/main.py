@@ -18,8 +18,12 @@ Field mapping:
   model             → aircraft.model
   serial_number     → aircraft.serial_number
   manufacture_year  → aircraft.manufactured_date (integer year → YYYY-01-01)
-  owners[0]         → registrant.names[0]
-  operators[0]      → registrant.names[1] (omitted if identical to owner)
+  owners[]          → registrant.names[] (all entries, in order)
+
+Note: the detail record also includes an `operators` field, distinct from
+`owners` on many records (e.g. an aeroclub that owns a glider operated by a
+separate flying school) — this is intentionally not read. Only `owners` is
+tracked for registrant identity.
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@
 
 ## How it works
 
-The list endpoint (`.../avreg/filtered?start=0&length=10000`) returns all records, which are filtered client-side to those with `deletion_date == null` (i.e. still active). Each active record's `id` is then used to fetch a full detail record from a per-aircraft endpoint, with a 0.25s delay between requests and retry-with-backoff (up to 3 attempts) on `403`/`429`/5xx responses and connection errors. Records without a non-empty `transponder` value are skipped, since that field becomes the Redis key. The detail record's `owners` list is used in full (every `display_name` present, not just the first) to populate `registrant.names`; the module docstring describes an `operators[0]` fallback field but the current code does not read or reference any `operators` field at all — only `owners`. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The list endpoint (`.../avreg/filtered?start=0&length=10000`) returns all records, which are filtered client-side to those with `deletion_date == null` (i.e. still active). Each active record's `id` is then used to fetch a full detail record from a per-aircraft endpoint, with a 0.25s delay between requests and retry-with-backoff (up to 3 attempts) on `403`/`429`/5xx responses and connection errors. Records without a non-empty `transponder` value are skipped, since that field becomes the Redis key. The detail record's `owners` list is used in full (every `display_name` present, not just the first) to populate `registrant.names`; the detail record also carries a distinct `operators` field (e.g. an aeroclub that owns a glider operated by a separate flying school) but it is intentionally not read — only `owners` is tracked for registrant identity. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
@@ -41,7 +41,7 @@ The list endpoint (`.../avreg/filtered?start=0&length=10000`) returns all record
 | max_on_board | ✅ | → `aircraft.seats` |
 | owners[].display_name | ✅ | All non-empty display names → `registrant.names[]` |
 | owners[].legal_id | ❌ | Present in source; not read by this runner |
-| operators[].display_name | ❌ | Present in source; not read by this runner |
+| operators[].display_name | ❌ | Distinct from owners on many records; present in source, intentionally not read |
 | operators[].legal_id | ❌ | Present in source; not read by this runner |
 
 See specs/data-dictionary.yaml (`cz-caa` entry) for full column semantics and cross-source schema notes.
