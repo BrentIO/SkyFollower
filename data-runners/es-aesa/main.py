@@ -22,6 +22,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -52,7 +53,9 @@ REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/es-aesa"
 BATCH_SIZE = 100
 
-_NO_SERIAL = "NO\nDISPONIBLE"
+_NO_SERIAL = "NO DISPONIBLE"
+
+_WHITESPACE_RE = re.compile(r"\s+")
 
 # pdfplumber sometimes extracts Unicode hyphen variants instead of ASCII '-'.
 # Normalize them all so EC- prefix checks and RediSearch lookups work correctly.
@@ -66,7 +69,7 @@ _CLASE_MAP = {
     "HELICOPTERO (VTOL)": "Helicopter",
     "AUTOGIRO": "Gyroplane",
     "GLOBO": "Balloon",
-    "PLANEADOR/MOTOPL\nANEADOR": "Glider",
+    "PLANEADOR/MOTOPL ANEADOR": "Glider",
     "ULM-AVION": "Airplane",
     "ULM-AUTOGIRO": "Gyroplane",
     "AFI-AVION": "Airplane",
@@ -139,15 +142,15 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from a parsed PDF row."""
     aircraft_fields: dict = {}
 
-    manufacturer = row.get("Fabricante", "").strip()
+    manufacturer = _WHITESPACE_RE.sub(" ", row.get("Fabricante", "").strip())
     if manufacturer:
         aircraft_fields["manufacturer"] = manufacturer
 
-    model = row.get("Modelo", "").strip()
+    model = _WHITESPACE_RE.sub(" ", row.get("Modelo", "").strip())
     if model:
         aircraft_fields["model"] = model
 
-    serial = row.get("Nº serie", "").strip()
+    serial = _WHITESPACE_RE.sub(" ", row.get("Nº serie", "").strip())
     if serial and serial != _NO_SERIAL:
         aircraft_fields["serial_number"] = serial
 
@@ -162,11 +165,11 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
     powerplant_fields: dict = {}
 
-    powerplant_manufacturer = row.get("Marca Motor", "").strip()
+    powerplant_manufacturer = _WHITESPACE_RE.sub(" ", row.get("Marca Motor", "").strip())
     if powerplant_manufacturer:
         powerplant_fields["manufacturer"] = powerplant_manufacturer
 
-    powerplant_model = row.get("Modelo Motor", "").strip()
+    powerplant_model = _WHITESPACE_RE.sub(" ", row.get("Modelo Motor", "").strip())
     if powerplant_model:
         powerplant_fields["model"] = powerplant_model
 
@@ -177,7 +180,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         except ValueError:
             pass
 
-    clase = row.get("Clase", "").strip()
+    clase = _WHITESPACE_RE.sub(" ", row.get("Clase", "").strip())
     decoded_clase = _decode_clase(clase)
     if decoded_clase:
         aircraft_fields["type"] = decoded_clase
