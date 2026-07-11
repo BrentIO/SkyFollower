@@ -11,7 +11,7 @@
 
 ## How it works
 
-The Norway CAA register is downloaded whole from a fixed URL as a single JSON payload (`{headers, data: [...]}`); no index page or scraping is involved. Each record's ICAO hex is pulled from the `Heksadesimal` field inside the `ICAO 24-bits adresse` array. Aircraft category (`Kategori`) and owner country (`Land`) are decoded via lookup tables — Norwegian names are used for Norway/Sweden/Denmark and English names for everything else — with unmapped values passed through as-is rather than dropped. Owners (`Eier(e)`) is an array that may hold multiple entries; the one flagged `Eier/Kontakt` supplies the registrant's address, while names are collected from every owner entry (contact first, then any others, de-duplicated).
+The Norway CAA register is downloaded whole from a fixed URL as a single JSON payload (`{headers, data: [...]}`); no index page or scraping is involved. Each record's ICAO hex is pulled from the `Heksadesimal` field inside the `ICAO 24-bits adresse` array. Aircraft category (`Kategori`) and owner country (`Land`) are decoded via lookup tables — Norwegian names are used for Norway/Sweden/Denmark and English names for everything else — with unmapped values passed through as-is rather than dropped. Owners (`Eier(e)`) is an array that may hold multiple entries; the one flagged `Eier/Kontakt` supplies the registrant's address, while names are collected from every owner entry (contact first, then any others, de-duplicated). Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

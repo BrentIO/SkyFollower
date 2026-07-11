@@ -11,7 +11,7 @@
 
 ## How it works
 
-The Bulgaria CAA index page is scraped for a link matching `Aircraft_Register_\d+.xlsx`, then that xlsx is downloaded and parsed with `openpyxl` in read-only mode. The first two rows (an info line and the header row) are skipped; data starts at row 2. Columns are addressed by fixed 0-based position rather than by header name, and only rows whose registration column starts with `LZ-` are kept. Registrations are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index — unlike the other runners in this batch, `bg-caa` does not run a model/type sanity check against the existing Mictronics record before writing.
+The Bulgaria CAA index page is scraped for a link matching `Aircraft_Register_\d+.xlsx`, then that xlsx is downloaded and parsed with `openpyxl` in read-only mode. The first two rows (an info line and the header row) are skipped; data starts at row 2. Columns are addressed by fixed 0-based position rather than by header name, and only rows whose registration column starts with `LZ-` are kept. Registrations are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index — unlike the other runners in this batch, `bg-caa` does not run a model/type sanity check against the existing Mictronics record before writing. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

@@ -11,7 +11,7 @@
 
 ## How it works
 
-A single GET request to the Serbia CAD ORDS REST endpoint (`?...&limit=10000`) returns the entire register in one response's `items[]` array — no pagination or index-page discovery needed. The endpoint's TLS certificate has an untrusted issuer chain, so requests are made with `verify=False` and urllib3's `InsecureRequestWarning` is disabled globally. Only items whose `registarska_oznaka` starts with `YU-` are kept. Aircraft type (`vrsta_vazduhoplova`) is decoded from Serbian via a lookup table, passing through unmapped values. As with `pg-casapng`, registrations are resolved to `icao_hex` in batches of 100 via a RediSearch `TagField` query against the Mictronics index; unmatched registrations are skipped for this run.
+A single GET request to the Serbia CAD ORDS REST endpoint (`?...&limit=10000`) returns the entire register in one response's `items[]` array — no pagination or index-page discovery needed. The endpoint's TLS certificate has an untrusted issuer chain, so requests are made with `verify=False` and urllib3's `InsecureRequestWarning` is disabled globally. Only items whose `registarska_oznaka` starts with `YU-` are kept. Aircraft type (`vrsta_vazduhoplova`) is decoded from Serbian via a lookup table, passing through unmapped values. As with `pg-casapng`, registrations are resolved to `icao_hex` in batches of 100 via a RediSearch `TagField` query against the Mictronics index; unmatched registrations are skipped for this run. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

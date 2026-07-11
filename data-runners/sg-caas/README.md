@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register xlsx's filename includes a UUID component that changes every month, so the download URL is discovered fresh each run by scraping the CAAS certificate-of-registration page for a link on the `isomer-user-content.by.gov.sg` CDN ending in `.xlsx`. The CDN rejects requests without a browser `User-Agent` and a `Referer` header pointing back to the index page. The workbook is opened read-only with `openpyxl`; the first non-blank row is treated as the header row, and subsequent rows are kept only if their first cell starts with `9V-`.
+The register xlsx's filename includes a UUID component that changes every month, so the download URL is discovered fresh each run by scraping the CAAS certificate-of-registration page for a link on the `isomer-user-content.by.gov.sg` CDN ending in `.xlsx`. The CDN rejects requests without a browser `User-Agent` and a `Referer` header pointing back to the index page. The workbook is opened read-only with `openpyxl`; the first non-blank row is treated as the header row, and subsequent rows are kept only if their first cell starts with `9V-`. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

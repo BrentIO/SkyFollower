@@ -485,6 +485,7 @@ class TestBuildRecord:
         record = _build_record(row)
         assert record["icao_hex"] == "49B0AA"
         assert record["source"] == "cz-caa"
+        assert record["military"] is False
         assert record["aircraft"]["type"] == "Airplane"
         assert record["aircraft"]["manufacturer"] == "Airbus"
         assert record["aircraft"]["model"] == "A320"

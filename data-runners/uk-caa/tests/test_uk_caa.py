@@ -258,6 +258,7 @@ class TestBuildRecord:
         record = _build_record(_make_details())
         assert record["icao_hex"] == "406B48"
         assert record["registration"] == "G-VAHH"
+        assert record["military"] is False
 
     def test_icao_hex_uppercased(self):
         record = _build_record(_make_details(icao_hex="406b48"))

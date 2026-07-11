@@ -237,7 +237,12 @@ def _build_record(item: dict, icao_hex: str, registration: str) -> dict:
 
     registrant = _parse_halter(item.get("halter") or "")
 
-    record: dict = {"icao_hex": icao_hex, "registration": registration, "source": "at-austrocontrol"}
+    record: dict = {
+        "icao_hex": icao_hex,
+        "registration": registration,
+        "source": "at-austrocontrol",
+        "military": False,
+    }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields
     if registrant:

@@ -123,6 +123,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "rs-cad",
+        "military": False,
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields

@@ -412,6 +412,7 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
     return {
         "icao_hex": acft_row["icao_hex"],
         "registration": acft_row["registration"],
+        "military": False,
         "registrant": registrant,
         "aircraft": aircraft,
     }

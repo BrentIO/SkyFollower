@@ -21,6 +21,10 @@ into street/city/postal-code/country: known French country names are stripped
 from the end (multi-word names like `PAYS BAS` checked before single-word
 ones), then a 5-digit postal code is located in the remainder to split
 street/city; if no postal code is found, only the decoded country is kept.
+Every written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 Before writing, a **type sanity check** compares tokens extracted from the
 DGAC `MODELE` string against the existing Mictronics record's type designator
 and model — if both sides yield tokens and they don't intersect, the record is

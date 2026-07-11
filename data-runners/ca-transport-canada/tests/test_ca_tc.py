@@ -567,7 +567,7 @@ class TestBuildAircraftRecord:
         assert record["icao_hex"] == "C00001"
         assert record["registration"] == "C-GABC"
         assert "source" not in record
-        assert "military" not in record
+        assert record["military"] is False
         conn.close()
 
     def test_registrant_with_active_owner(self):

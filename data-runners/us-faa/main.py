@@ -423,6 +423,7 @@ def build_aircraft_record(
     return {
         "icao_hex": reg_row["icao_hex"],
         "registration": reg_row["registration"],
+        "military": False,
         "registrant": registrant,
         "aircraft": aircraft,
     }

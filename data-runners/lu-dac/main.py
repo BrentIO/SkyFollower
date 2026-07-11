@@ -260,6 +260,7 @@ def _build_record(parsed: dict, icao_hex: str) -> dict:
         "icao_hex": icao_hex,
         "registration": parsed["registration"],
         "source": "lu-dac",
+        "military": False,
     }
     if aircraft_fields:
         record["aircraft"] = aircraft_fields

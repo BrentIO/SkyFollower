@@ -21,6 +21,10 @@ this PDF: `pdfplumber` sometimes extracts Unicode hyphen variants (en-dash,
 em-dash, non-breaking hyphen, etc.) instead of ASCII `-`, so every cell value
 is translated through a Unicode-hyphen-to-ASCII table before use — this
 matters both for the `EC-` prefix check and for the RediSearch lookup key.
+Every written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 The Spanish `Clase` (aircraft class) column is decoded through a fixed
 Spanish→English map (e.g. `AVION` → `Airplane`). No registrant data is
 available in this register at all.

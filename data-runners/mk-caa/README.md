@@ -20,7 +20,10 @@ at index 2, model at 3, manufacturer at 4, serial number at 5, owner name at
 kept. Model, manufacturer, serial number, owner name, and owner address are
 run through the same whitespace-collapsing transform, since `pdfplumber`
 sometimes represents a single cell's text with an embedded newline rather
-than a space (e.g. a wrapped manufacturer name).
+than a space (e.g. a wrapped manufacturer name). Every written record
+explicitly sets `military: false` — this register is exclusively civil, and
+the explicit value ensures a stale `military: true` flag (from Mictronics or
+a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

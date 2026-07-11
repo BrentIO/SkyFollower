@@ -108,6 +108,7 @@ class TestBuildRecord:
         assert record["icao_hex"] == "43E717"
         assert record["registration"] == "M-ABCD"
         assert record["source"] == "im-ardis"
+        assert record["military"] is False
         assert record["aircraft"]["manufacturer"] == "Cessna"
         assert record["aircraft"]["model"] == "172S"
         assert record["aircraft"]["serial_number"] == "172S12345"

@@ -241,6 +241,7 @@ def _build_record(row: dict) -> dict:
     record: dict = {
         "icao_hex": icao_hex,
         "source": "cz-caa",
+        "military": False,
     }
     if registration:
         record["registration"] = registration

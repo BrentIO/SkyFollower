@@ -329,6 +329,10 @@ class TestBuildRecord:
         record = _build_record(_make_row())
         assert record["registration"] == "HB-JNA"
 
+    def test_military_false(self):
+        record = _build_record(_make_row())
+        assert record["military"] is False
+
     def test_aircraft_type(self):
         record = _build_record(_make_row(aircraft_type="Aeroplane"))
         assert record["aircraft"]["type"] == "Airplane"

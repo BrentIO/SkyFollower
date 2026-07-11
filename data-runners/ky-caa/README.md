@@ -24,7 +24,11 @@ tokens and they don't overlap, the row is skipped rather than written, to
 avoid overwriting a correct Mictronics record with a mismatched one. The
 `Nationality` column is mapped to an ISO 3166-1 alpha-2 code via a fixed
 lookup table, and the country name is stripped from the end of `Registered
-Address` before the remaining address is split into street lines.
+Address` before the remaining address is split into street lines. Every
+written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 
 ## Columns
 

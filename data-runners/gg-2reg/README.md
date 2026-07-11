@@ -16,7 +16,11 @@ The index page is scraped to discover the current register PDF (matches
 special-section heading (New Registrations, Deregistrations, Ownership Changes,
 Registration Changes, Reserved Marks) are skipped. Remaining pages are parsed by
 grouping extracted words into columns by x-position, since `pdfplumber`'s table
-detection does not reliably find the column boundaries in this PDF.
+detection does not reliably find the column boundaries in this PDF. Every
+written record explicitly sets `military: false` — this register is
+exclusively civil, and the explicit value ensures a stale `military: true`
+flag (from Mictronics or a prior record on a reused hex) is corrected on
+re-registration.
 
 ## Columns
 

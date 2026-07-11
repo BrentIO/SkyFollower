@@ -11,7 +11,7 @@
 
 ## How it works
 
-The KoZHAF (National Transport Authority) index page is scraped with a browser `User-Agent` for a link containing the stable path fragment `/documents/66238/342548/` and `download=true`, since the actual filename and query string change on every publish. The PDF is parsed page-by-page with `pdfplumber`'s `extract_table()`; because the table header is bilingual (Hungarian/English) and unreliable, columns are identified by fixed position instead. Registration marks in the source PDF have a stray space after the hyphen (e.g. `HA- GZQ`), which is normalized to `HA-GZQ` before the Mictronics lookup.
+The KoZHAF (National Transport Authority) index page is scraped with a browser `User-Agent` for a link containing the stable path fragment `/documents/66238/342548/` and `download=true`, since the actual filename and query string change on every publish. The PDF is parsed page-by-page with `pdfplumber`'s `extract_table()`; because the table header is bilingual (Hungarian/English) and unreliable, columns are identified by fixed position instead. Registration marks in the source PDF have a stray space after the hyphen (e.g. `HA- GZQ`), which is normalized to `HA-GZQ` before the Mictronics lookup. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

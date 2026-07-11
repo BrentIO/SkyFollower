@@ -17,7 +17,10 @@ it returns a Korean-language error page instead of JSON. The response body is
 itself a JSON string containing the real JSON object, so it is decoded twice
 (`json.loads` applied a second time if the first decode yields a `str`). Dates
 are given as `YY.MM.DD` with a pivot year of 50 (`>= 50` → 1900s, `< 50` →
-2000s).
+2000s). Every written record explicitly sets `military: false` — this
+register is exclusively civil, and the explicit value ensures a stale
+`military: true` flag (from Mictronics or a prior record on a reused hex) is
+corrected on re-registration.
 
 ## Columns
 

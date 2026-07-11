@@ -16,7 +16,10 @@ The register PDF is downloaded from a static URL and parsed with
 header row, so columns are addressed by fixed 0-based position
 (`Nr.`, `Type of aircraft`, `Registration`, `Serial No.`, `Operator`) rather
 than by name. Rows whose registration column does not start with `ER-` are
-discarded during parsing.
+discarded during parsing. Every written record explicitly sets
+`military: false` — this register is exclusively civil, and the explicit
+value ensures a stale `military: true` flag (from Mictronics or a prior
+record on a reused hex) is corrected on re-registration.
 
 ## Columns
 

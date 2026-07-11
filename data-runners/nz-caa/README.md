@@ -11,7 +11,7 @@
 
 ## How it works
 
-The CSV is downloaded whole from a fixed URL and decoded as `utf-8-sig` (the file carries a BOM), then parsed with `csv.DictReader`. The genuinely tricky part is `Owner Address`: it's a single free-text field shaped like `"Street 1[, Street 2, ...], City PostalCode, Country"`. `_parse_address` splits on `", "`, treats the last segment as the country and the second-to-last as a combined "City PostalCode" pair (matched with a regex), and falls back to treating everything but the last segment as street lines when the city/postal pattern doesn't match or the candidate city looks like a PO box.
+The CSV is downloaded whole from a fixed URL and decoded as `utf-8-sig` (the file carries a BOM), then parsed with `csv.DictReader`. The genuinely tricky part is `Owner Address`: it's a single free-text field shaped like `"Street 1[, Street 2, ...], City PostalCode, Country"`. `_parse_address` splits on `", "`, treats the last segment as the country and the second-to-last as a combined "City PostalCode" pair (matched with a regex), and falls back to treating everything but the last segment as street lines when the city/postal pattern doesn't match or the candidate city looks like a PO box. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
