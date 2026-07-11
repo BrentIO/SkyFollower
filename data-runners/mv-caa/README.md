@@ -19,7 +19,10 @@ whose status column reads exactly `"Valid"` are kept. The combined
 Manufacturer+Designation column has embedded newlines collapsed to single
 spaces. The Owner Name+Address column is multi-line: the first line is taken
 as the owner name, the last line as the country, and any lines in between as
-the street address (joined as a list). Every written record explicitly sets
+the street address (joined as a list). Serial number is also
+whitespace-collapsed like the Manufacturer+Designation column, since
+`pdfplumber` can represent a wrapped cell's text with an embedded newline
+rather than a space. Every written record explicitly sets
 `military: false` — this register is exclusively civil, and the explicit
 value ensures a stale `military: true` flag (from Mictronics or a prior
 record on a reused hex) is corrected on re-registration.
@@ -33,7 +36,7 @@ record on a reused hex) is corrected on re-registration.
 | Registration | ✅ | 8Q-prefix; used as the Mictronics lookup key |
 | Manufacturer+Designation | ✅ | → `aircraft.model`; embedded newlines collapsed to spaces |
 | MTOW | ❌ | Parsed but not stored |
-| Serial Number | ✅ | → `aircraft.serial_number` |
+| Serial Number | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | Year Built | ✅ | → `aircraft.manufactured_date` (`YYYY-01-01`), only if a 4-digit year |
 | Owner Name+Address | ✅ | Multi-line: first line → `registrant.names[0]`, last line → `registrant.country`, middle lines → `registrant.street` (list) |
 | Legal Owner | ❌ | Parsed but not stored |

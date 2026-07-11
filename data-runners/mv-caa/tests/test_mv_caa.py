@@ -221,6 +221,11 @@ class TestBuildRecord:
         record = _build_record(row, "900100", "8Q-IAD")
         assert "serial_number" not in record.get("aircraft", {})
 
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="50\n1")
+        record = _build_record(row, "900100", "8Q-IAD")
+        assert record["aircraft"]["serial_number"] == "50 1"
+
     def test_year_stored_as_date(self):
         row = _make_row(year_built="2005")
         record = _build_record(row, "900100", "8Q-IAD")
