@@ -627,7 +627,7 @@ sources:
     url: "https://www.caa.gov.mv/operations/registration-of-aircraft-and-mortgages"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL discovered by scraping index page each run (filename is an opaque hash); landscape-format PDF; ~8 pages, ~138 records; pdfplumber extract_table() used; owner field is multiline — first line stored as registrant.names[0], remaining lines joined and stored as registrant.street; Legal Owner, MTOW, mortgage/AREDI columns not stored; manufacturer/model and serial number may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
+    notes: "PDF URL discovered by scraping index page each run (filename is an opaque hash); landscape-format PDF; ~8 pages, ~138 records; pdfplumber extract_table() used; owner field is multiline — first line stored as registrant.names[0], remaining lines joined and stored as registrant.street; Legal Owner, MTOW, Basis of Registration/Mortgage/IDERA columns not stored; manufacturer/model and serial number may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics"
     files:
       - name: "Aircraft register PDF (opaque hash filename; discovered via index page)"
         format: pdf_table
@@ -642,7 +642,9 @@ sources:
           7: "Owner name and address (multiline; first line is name, last line is country, middle lines are street address)"
           8: "Legal owner; not stored"
           9: "Registration basis; not stored"
-          "10-12": "Mortgage and AREDI columns; not stored"
+          10: "Basis of Registration, Other Specifics; not stored"
+          11: "Mortgage; not stored"
+          12: "IDERA (Irrevocable De-Registration and Export Request Authorisation); not stored"
           13: "Original issue date; not stored"
           14: "Last revision date; not stored"
           15: "Registration status; not stored"
