@@ -719,15 +719,15 @@ sources:
     url: "https://casapng.gov.pg/safety-regulatory/airworthiness/Aircraft-Registers/"
     format: pdf
     cadence: monthly
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — first PDF link is most recent; ~15 pages, ~217 P2- records; pdfplumber extract_table() used; no header row — columns identified by position; address field contains embedded newlines (collapsed to space) and is comma-delimited — last element is country (PNG expanded to Papua New Guinea), remainder is street; registrants may be located in Australia or PNG provinces; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 898000–89FFFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — first PDF link is most recent; ~15 pages, ~217 P2- records; pdfplumber extract_table() used; no header row — columns identified by position; address field contains embedded newlines (collapsed to space) and is comma-delimited — last element is country (PNG expanded to Papua New Guinea), remainder is street; manufacturer, model, and operator may also contain embedded newlines — collapsed to single space; registrants may be located in Australia or PNG provinces; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 898000–89FFFF"
     files:
       - name: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
         format: pdf_table
         columns:
           0: Registration mark (P2-prefix; lookup key)
-          1: Manufacturer name
-          2: Aircraft model designation
-          3: Operator name
+          1: "Manufacturer name (may contain embedded newlines; collapsed to single space)"
+          2: "Aircraft model designation (may contain embedded newlines; collapsed to single space)"
+          3: "Operator name (may contain embedded newlines; collapsed to single space)"
           4: "Address string; comma-delimited; may contain embedded newlines"
 
   rs-cad:
