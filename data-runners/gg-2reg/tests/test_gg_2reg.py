@@ -377,6 +377,11 @@ class TestBuildRecord:
         record = _build_record(row, "4CA123", "2-ABCD")
         assert "serial_number" not in record.get("aircraft", {})
 
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="12\n34")
+        record = _build_record(row, "4CA123", "2-ABCD")
+        assert record["aircraft"]["serial_number"] == "12 34"
+
     def test_empty_owner_omits_registrant(self):
         row = _make_row(owner="")
         record = _build_record(row, "4CA123", "2-ABCD")
