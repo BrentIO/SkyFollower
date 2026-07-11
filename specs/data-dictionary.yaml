@@ -345,7 +345,7 @@ sources:
     url: "https://island.is/api/graphql"
     format: api
     cadence: weekly_wednesday
-    notes: "Apollo Persisted Query (GET with operationName=GetAllAircrafts, pageSize=10000); returns all active registered TF- aircraft in a single response (~355 records); no ICAO hex — icao_hex resolved via RediSearch reverse-lookup by TF- registration against Mictronics records; must run after Mictronics; registration mark stored in 'identifiers' field; operator object may be null; productionYear=0 treated as absent; country names are Icelandic (Ísland) and are mapped to ISO 3166-1 alpha-2"
+    notes: "Apollo Persisted Query (GET with operationName=GetAllAircrafts, pageSize=10000); returns all active registered TF- aircraft in a single response (~355 records); no ICAO hex — icao_hex resolved via RediSearch reverse-lookup by TF- registration against Mictronics records; must run after Mictronics; registration mark stored in 'identifiers' field; each aircraft carries both an operator object and a structurally identical owners array — only owners is used (operator intentionally not tracked; live data confirms the two differ on ~20% of records, e.g. leased aircraft); owners may be empty; all owner names collected, but street/city/postcode/country taken from the first owner only (co-ownership is common); productionYear=0 treated as absent; country names are Icelandic (Ísland) and are mapped to ISO 3166-1 alpha-2"
     endpoints:
       bulk:
         method: GET
@@ -357,11 +357,12 @@ sources:
       type:                    Aircraft model/type name
       serialNumber:            Manufacturer serial number
       productionYear:          Year of manufacture (integer; 0 = absent)
-      operator.name:           Registered operator/owner name
-      operator.address:        Street address
-      operator.city:           City
-      operator.postcode:       Postal code
-      operator.country:        Country name (Icelandic or English)
+      operator.name:           "Structurally identical to owners[]; present in source, intentionally not read"
+      "owners[*].name":        Registered owner name (all entries collected)
+      "owners[*].address":     Street address (first owner only)
+      "owners[*].city":        City (first owner only)
+      "owners[*].postcode":    Postal code (first owner only)
+      "owners[*].country":     Country name (Icelandic or English; first owner only)
 
   lu-dac:
     description: "Luxembourg Directorate of Civil Aviation (DAC) aircraft register — LX-prefix registrations"

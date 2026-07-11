@@ -12,6 +12,10 @@ Important: the Samgöngustofa register does not publish ICAO hex (Mode S)
 addresses. This runner can only enrich records that already exist in Redis from
 Mictronics. Schedule it AFTER the Mictronics runner.
 
+Each aircraft entry carries both an `operator` object and an `owners` array,
+structurally identical but not always redundant in practice. Only `owners` is
+used for registrant identity; `operator` is intentionally not read.
+
 Data source: https://island.is/api/graphql (Apollo Persisted Query)
 """
 
@@ -109,26 +113,34 @@ def _build_record(aircraft: dict, icao_hex: str, registration: str) -> dict:
     if year and str(year).strip() and str(year) != "0":
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
+    # registrant sub-object — built from owners[], not the structurally
+    # identical operator field, per policy: only registered owners are
+    # tracked. Multiple co-owners are common (e.g. gliders); all names are
+    # collected, but street/city/postal_code/country come from the first
+    # owner only, since the record shape has no room for a full address per
+    # co-owner.
     registrant: dict = {}
-    operator = aircraft.get("operator") or {}
+    owners = aircraft.get("owners") or []
 
-    name = (operator.get("name") or "").strip()
-    if name:
-        registrant["names"] = [name]
+    names = [n for o in owners if (n := (o.get("name") or "").strip())]
+    if names:
+        registrant["names"] = names
 
-    address = (operator.get("address") or "").strip()
+    primary = owners[0] if owners else {}
+
+    address = (primary.get("address") or "").strip()
     if address:
         registrant["street"] = [address]
 
-    city = (operator.get("city") or "").strip()
+    city = (primary.get("city") or "").strip()
     if city:
         registrant["city"] = city
 
-    postal_code = (operator.get("postcode") or "").strip()
+    postal_code = (primary.get("postcode") or "").strip()
     if postal_code:
         registrant["postal_code"] = postal_code
 
-    country = _decode_country(operator.get("country"))
+    country = _decode_country(primary.get("country"))
     if country:
         registrant["country"] = country
 

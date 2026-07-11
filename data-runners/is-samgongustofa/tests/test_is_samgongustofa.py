@@ -53,24 +53,37 @@ def _make_aircraft(
     serial_number="12345",
     production_year=2010,
     aircraft_type="Cessna 172",
-    operator_name="Íslandsflug hf",
-    operator_address="Flugvellir 1",
-    operator_city="Reykjavik",
-    operator_postcode="101",
-    operator_country="Ísland",
+    owner_name="Íslandsflug hf",
+    owner_address="Flugvellir 1",
+    owner_city="Reykjavik",
+    owner_postcode="101",
+    owner_country="Ísland",
+    owners=None,
+    operator_name="Some Other Operator",
 ) -> dict:
+    if owners is None:
+        owners = [{
+            "name": owner_name,
+            "address": owner_address,
+            "city": owner_city,
+            "postcode": owner_postcode,
+            "country": owner_country,
+        }]
     return {
         "identifiers": identifiers,
         "serialNumber": serial_number,
         "productionYear": production_year,
         "type": aircraft_type,
+        # Structurally identical to owners but intentionally not read by
+        # _build_record; present here to prove it's ignored, not just absent.
         "operator": {
             "name": operator_name,
-            "address": operator_address,
-            "city": operator_city,
-            "postcode": operator_postcode,
-            "country": operator_country,
+            "address": "Some Other Address",
+            "city": "Some Other City",
+            "postcode": "000",
+            "country": "Ísland",
         },
+        "owners": owners,
     }
 
 
@@ -171,21 +184,50 @@ class TestBuildRecord:
         record = _build_record(aircraft, "4CA123", "TF-ABC")
         assert "manufactured_date" not in record.get("aircraft", {})
 
-    def test_missing_operator_name_omitted(self):
-        aircraft = _make_aircraft(operator_name="")
+    def test_missing_owner_name_omitted(self):
+        aircraft = _make_aircraft(owner_name="")
         record = _build_record(aircraft, "4CA123", "TF-ABC")
         assert "names" not in record.get("registrant", {})
 
-    def test_missing_operator_city_omitted(self):
-        aircraft = _make_aircraft(operator_city="")
+    def test_missing_owner_city_omitted(self):
+        aircraft = _make_aircraft(owner_city="")
         record = _build_record(aircraft, "4CA123", "TF-ABC")
         assert "city" not in record.get("registrant", {})
 
-    def test_null_operator_produces_no_registrant(self):
-        aircraft = _make_aircraft()
-        aircraft["operator"] = None
+    def test_empty_owners_produces_no_registrant(self):
+        aircraft = _make_aircraft(owners=[])
         record = _build_record(aircraft, "4CA123", "TF-ABC")
         assert "registrant" not in record or not record["registrant"]
+
+    def test_null_owners_produces_no_registrant(self):
+        aircraft = _make_aircraft()
+        aircraft["owners"] = None
+        record = _build_record(aircraft, "4CA123", "TF-ABC")
+        assert "registrant" not in record or not record["registrant"]
+
+    def test_operator_field_ignored(self):
+        """operator is structurally identical to owners but must never be used."""
+        aircraft = _make_aircraft(owner_name="Real Owner", operator_name="Ignored Operator")
+        record = _build_record(aircraft, "4CA123", "TF-ABC")
+        assert record["registrant"]["names"] == ["Real Owner"]
+        assert "Ignored Operator" not in record["registrant"]["names"]
+
+    def test_multiple_owners_all_names_collected(self):
+        aircraft = _make_aircraft(owners=[
+            {"name": "Alice", "address": "Street 1", "city": "Reykjavik", "postcode": "101", "country": "Ísland"},
+            {"name": "Bob", "address": "Street 2", "city": "Akureyri", "postcode": "600", "country": "Ísland"},
+        ])
+        record = _build_record(aircraft, "4CA123", "TF-ABC")
+        assert record["registrant"]["names"] == ["Alice", "Bob"]
+
+    def test_multiple_owners_address_from_first_only(self):
+        aircraft = _make_aircraft(owners=[
+            {"name": "Alice", "address": "Street 1", "city": "Reykjavik", "postcode": "101", "country": "Ísland"},
+            {"name": "Bob", "address": "Street 2", "city": "Akureyri", "postcode": "600", "country": "Ísland"},
+        ])
+        record = _build_record(aircraft, "4CA123", "TF-ABC")
+        assert record["registrant"]["street"] == ["Street 1"]
+        assert record["registrant"]["city"] == "Reykjavik"
 
     def test_no_aircraft_fields_omits_aircraft_key(self):
         aircraft = _make_aircraft(aircraft_type="", serial_number="", production_year=0)
