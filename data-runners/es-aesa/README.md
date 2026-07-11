@@ -27,7 +27,14 @@ flag (from Mictronics or a prior record on a reused hex) is corrected on
 re-registration.
 The Spanish `Clase` (aircraft class) column is decoded through a fixed
 Spanish→English map (e.g. `AVION` → `Airplane`). No registrant data is
-available in this register at all.
+available in this register at all. Manufacturer, model, serial number,
+powerplant manufacturer, powerplant model, and `Clase` are all
+whitespace-collapsed before use, since `pdfplumber` sometimes represents a
+wrapped cell's text with an embedded newline rather than a space — including
+mid-word (e.g. `Clase` values like `PLANEADOR/MOTOPLANEADOR` can arrive
+wrapped as `PLANEADOR/MOTOPL` + newline + `ANEADOR`), which is why the
+`_CLASE_MAP` lookup key and the `NO DISPONIBLE` serial-number placeholder are
+both written in already-collapsed (space-joined) form.
 
 ## Columns
 
@@ -35,14 +42,14 @@ available in this register at all.
 |---|---|---|
 | Matrícula | ✅ | EC-prefix; used as the Mictronics lookup key |
 | Fecha matric. | ❌ | Present in source; not read by this runner |
-| Fabricante | ✅ | → `aircraft.manufacturer` |
-| Modelo | ✅ | → `aircraft.model` |
-| Nº serie | ✅ | → `aircraft.serial_number`; `NO DISPONIBLE` placeholder is filtered, not stored |
+| Fabricante | ✅ | → `aircraft.manufacturer`; embedded newlines collapsed to a single space |
+| Modelo | ✅ | → `aircraft.model`; embedded newlines collapsed to a single space |
+| Nº serie | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space; `NO DISPONIBLE` placeholder is filtered, not stored |
 | Año cons. | ✅ | → `aircraft.manufactured_date` (as `YYYY-01-01`); sentinel year `1900` is filtered, not stored |
-| Marca Motor | ✅ | → `aircraft.powerplant.manufacturer` |
-| Modelo Motor | ✅ | → `aircraft.powerplant.model` |
+| Marca Motor | ✅ | → `aircraft.powerplant.manufacturer`; embedded newlines collapsed to a single space |
+| Modelo Motor | ✅ | → `aircraft.powerplant.model`; embedded newlines collapsed to a single space |
 | Nº mot. | ✅ | → `aircraft.powerplant.count` |
-| Clase | ✅ | Decoded via a Spanish→English map → `aircraft.type` |
+| Clase | ✅ | Whitespace-collapsed, then decoded via a Spanish→English map → `aircraft.type` |
 
 See `specs/data-dictionary.yaml` (`es-aesa` entry) for full column semantics and cross-source schema notes.
 

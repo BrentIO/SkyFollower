@@ -160,8 +160,8 @@ class TestDecodeClase:
     def test_globo(self):
         assert _decode_clase("GLOBO") == "Balloon"
 
-    def test_planeador_with_newline(self):
-        assert _decode_clase("PLANEADOR/MOTOPL\nANEADOR") == "Glider"
+    def test_planeador(self):
+        assert _decode_clase("PLANEADOR/MOTOPL ANEADOR") == "Glider"
 
     def test_ulm_avion(self):
         assert _decode_clase("ULM-AVION") == "Airplane"
@@ -215,6 +215,31 @@ class TestBuildRecord:
         row = _make_row(serial="NO\nDISPONIBLE")
         record = _build_record(row, "340123", "EC-ABC")
         assert "serial_number" not in record.get("aircraft", {})
+
+    def test_manufacturer_newlines_collapsed(self):
+        row = _make_row(fabricante="The New Piper\nAircraft Inc")
+        record = _build_record(row, "340123", "EC-ABC")
+        assert record["aircraft"]["manufacturer"] == "The New Piper Aircraft Inc"
+
+    def test_model_newlines_collapsed(self):
+        row = _make_row(modelo="PIPER\nPA-28R-201")
+        record = _build_record(row, "340123", "EC-ABC")
+        assert record["aircraft"]["model"] == "PIPER PA-28R-201"
+
+    def test_serial_newlines_collapsed(self):
+        row = _make_row(serial="28R\n7871")
+        record = _build_record(row, "340123", "EC-ABC")
+        assert record["aircraft"]["serial_number"] == "28R 7871"
+
+    def test_powerplant_manufacturer_newlines_collapsed(self):
+        row = _make_row(marca_motor="CFM\nInternational")
+        record = _build_record(row, "340123", "EC-ABC")
+        assert record["aircraft"]["powerplant"]["manufacturer"] == "CFM International"
+
+    def test_powerplant_model_newlines_collapsed(self):
+        row = _make_row(modelo_motor="CFM56\n5B")
+        record = _build_record(row, "340123", "EC-ABC")
+        assert record["aircraft"]["powerplant"]["model"] == "CFM56 5B"
 
     def test_year_1900_omits_manufactured_date(self):
         row = _make_row(ano="1900")

@@ -422,21 +422,21 @@ sources:
     url: "https://www.seguridadaerea.gob.es/sites/default/files/aeronaves_inscritas.pdf"
     format: pdf
     cadence: weekly_thursday
-    notes: "Static PDF URL (~4 MB, ~314 pages, ~241 EC- records); pdfplumber extract_table() works reliably; header row repeats each page — data rows identified by EC- prefix in first column; no registrant data available; Nº serie value 'NO\\nDISPONIBLE' (with embedded newline) treated as null; Año cons. value 1900 is a placeholder for unknown year — omit manufactured_date; Clase column decoded to English aircraft type; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 340000–34FFFF"
+    notes: "Static PDF URL (~4 MB, ~314 pages, ~241 EC- records); pdfplumber extract_table() works reliably; header row repeats each page — data rows identified by EC- prefix in first column; no registrant data available; manufacturer, model, serial number, powerplant manufacturer, powerplant model, and Clase may contain embedded newlines (including mid-word, e.g. Clase's PLANEADOR/MOTOPLANEADOR wrapping as PLANEADOR/MOTOPL + newline + ANEADOR) — collapsed to single space before use; Nº serie value 'NO DISPONIBLE' (post-collapse) treated as null; Año cons. value 1900 is a placeholder for unknown year — omit manufactured_date; Clase column decoded to English aircraft type; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 340000–34FFFF"
     files:
       - name: aeronaves_inscritas.pdf
         format: pdf_table
         columns:
           Matrícula:      Full EC-prefix registration mark
           "Fecha matric.": Date of registration; not stored
-          Fabricante:     Manufacturer name
-          Modelo:         Model/type designation
-          "Nº serie":     Manufacturer serial number; omit if 'NO\\nDISPONIBLE'
+          Fabricante:     "Manufacturer name (may contain embedded newlines; collapsed to single space)"
+          Modelo:         "Model/type designation (may contain embedded newlines; collapsed to single space)"
+          "Nº serie":     "Manufacturer serial number (may contain embedded newlines; collapsed to single space); omit if 'NO DISPONIBLE'"
           "Año cons.":    Construction year (4-digit); 1900 is a placeholder for unknown year
-          "Marca Motor":  Powerplant manufacturer
-          "Modelo Motor": Powerplant model
+          "Marca Motor":  "Powerplant manufacturer (may contain embedded newlines; collapsed to single space)"
+          "Modelo Motor": "Powerplant model (may contain embedded newlines; collapsed to single space)"
           "Nº mot.":      Number of powerplants (integer string)
-          Clase:          Aircraft category code
+          Clase:          "Aircraft category code (may contain embedded newlines, including mid-word; collapsed to single space)"
 
   kr-koca:
     description: "South Korea Korea Office of Civil Aviation (KOCA) aircraft register — HL-prefix registrations"
