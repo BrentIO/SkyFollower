@@ -33,6 +33,7 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     aircraft_registry_key,
+    aircraft_type_key,
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
@@ -245,6 +246,35 @@ def _build_record(details: dict) -> Optional[dict]:
     return record
 
 
+def _apply_manufacturer_model(record: dict, r: redis_lib.Redis) -> None:
+    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
+    and set aircraft.manufacturer_model when found.
+
+    Unconditional: this runner's own type_designator is sourced directly from the
+    CAA and is authoritative, so the lookup happens regardless of whether Mictronics
+    also has data for the same hex — merge_aircraft.lua's "registry wins over
+    mictronics" precedence rule already guarantees this value takes priority at read
+    time. The reference table is not a hard dependency: a lookup failure or a missing
+    entry leaves the record exactly as _build_record produced it.
+    """
+    aircraft = record.get("aircraft")
+    if not aircraft:
+        return
+    type_designator = aircraft.get("type_designator")
+    if not type_designator:
+        return
+    try:
+        type_doc = r.json().get(aircraft_type_key(type_designator))
+    except Exception as exc:
+        logger.warning("aircraft:type lookup failed for %s: %s", type_designator, exc)
+        return
+    if not type_doc:
+        return
+    manufacturer_model = (type_doc.get("manufacturer_model") or "").strip()
+    if manufacturer_model:
+        aircraft["manufacturer_model"] = manufacturer_model
+
+
 # ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
@@ -361,6 +391,7 @@ def run_pipeline(
                 errors += 1
                 continue
 
+            _apply_manufacturer_model(record, r)
             record["source"] = "uk-caa"
             key = aircraft_registry_key(record["icao_hex"])
             set_json(r, key, record)
@@ -412,6 +443,7 @@ def run_pipeline(
                     errors += 1
                     continue
 
+                _apply_manufacturer_model(record, r)
                 record["source"] = "uk-caa"
                 key = aircraft_registry_key(record["icao_hex"])
                 set_json(r, key, record)
@@ -440,6 +472,7 @@ def run_pipeline(
                 errors += 1
                 continue
 
+            _apply_manufacturer_model(record, r)
             record["source"] = "uk-caa"
             key = aircraft_registry_key(record["icao_hex"])
             set_json(r, key, record)
