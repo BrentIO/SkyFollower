@@ -2400,7 +2400,9 @@ records:
                 field: "AircraftDetails.ICAOAircraftTypeDesignator"
                 transform:
                   type: redis_lookup
-                  description: "Unconditional aircraft:type:{type_designator} lookup against the mictronics-populated reference table (see records.aircraft_type); written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2704,7 +2706,9 @@ records:
                 field: "AircraftDetails.ICAOAircraftTypeDesignator"
                 transform:
                   type: redis_lookup
-                  description: "Unconditional aircraft:type:{type_designator} lookup against the mictronics-populated reference table (see records.aircraft_type); already-decoded value copied as-is; written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object
