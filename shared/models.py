@@ -75,8 +75,11 @@ class PowerplantInfo(BaseModel):
 class AircraftRecord(BaseModel):
     """
     Aircraft registration and type enrichment.
-    Stored in Redis at icao_hex:{icao_hex}. Shape matches the AROI
-    /registration/icao_hex/{hex} response.
+    Written across two Redis keys — aircraft:mictronics:{icao_hex} (Mictronics)
+    and aircraft:registry:{icao_hex} (country registry runners) — and
+    deep-merged at read time by shared/lua/merge_aircraft.lua, registry
+    winning on any field overlap. This shape is the merged result. Field
+    names match the AROI /registration/icao_hex/{hex} response.
     """
 
     icao_hex: str

@@ -366,7 +366,7 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) -> dict:
-    """Build the icao_hex:{hex} JSON record from staged rows."""
+    """Build the aircraft:registry:{icao_hex} JSON record from staged rows."""
     # registrant — use first active owner record
     registrant: Optional[dict] = None
     if owner_rows:

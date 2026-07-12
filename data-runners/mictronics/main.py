@@ -243,7 +243,7 @@ def stage_data(
 # ---------------------------------------------------------------------------
 
 def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) -> dict:
-    """Build the icao_hex:{hex} JSON record from staged rows."""
+    """Build the aircraft:mictronics:{icao_hex} JSON record from staged rows."""
     icao_hex = row["icao_hex"]
     registration = row["registration"] or None
     type_designator = row["type_designator"] or None

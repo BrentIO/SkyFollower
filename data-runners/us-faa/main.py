@@ -357,7 +357,7 @@ def build_aircraft_record(
     acft_row: Optional[sqlite3.Row],
     eng_row: Optional[sqlite3.Row] = None,
 ) -> dict:
-    """Build the icao_hex:{hex} JSON record from staged rows."""
+    """Build the aircraft:registry:{icao_hex} JSON record from staged rows."""
     # registrant
     names = [reg_row[f"name_{i}"] for i in range(1, 7) if reg_row[f"name_{i}"]]
     streets = [s for s in [reg_row["street_1"], reg_row["street_2"]] if s]
