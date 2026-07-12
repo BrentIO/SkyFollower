@@ -34,6 +34,7 @@ import pyModeS as pms
 import redis as redis_lib
 
 from processor.rules_engine import RulesEngine
+from shared.logging_setup import configure_logging
 from shared.models import (
     AircraftRecord,
     CompletedFlight,
@@ -459,14 +460,7 @@ class Processor:
         self._consume_loop()
 
     def _setup_logging(self) -> None:
-        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
-        h = logging.StreamHandler(sys.stdout)
-        h.setFormatter(fmt)
-        logging.getLogger().addHandler(h)
-        logging.getLogger().setLevel(
-            logging.DEBUG if self._cfg.get("log_level", "info") == "debug"
-            else logging.INFO
-        )
+        configure_logging(self._cfg.get("log_level"))
 
     def _claim_processor_id(self) -> None:
         """Prevent two processors with the same ID running simultaneously."""

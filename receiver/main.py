@@ -33,6 +33,7 @@ import pika
 import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
+from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
 from shared.uat import parse_978_line
@@ -194,14 +195,7 @@ class Receiver:
         self._shutdown.wait()
 
     def _setup_logging(self) -> None:
-        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s - %(message)s")
-        h = logging.StreamHandler(sys.stdout)
-        h.setFormatter(fmt)
-        logging.getLogger().addHandler(h)
-        logging.getLogger().setLevel(
-            logging.DEBUG if self._cfg.get("log_level", "info") == "debug"
-            else logging.INFO
-        )
+        configure_logging(self._cfg.get("log_level"))
 
     # ------------------------------------------------------------------
     # Source TCP loop
