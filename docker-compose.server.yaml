@@ -87,6 +87,9 @@ services:
   #
   # To initialise before first scheduled run:
   #   docker compose -f docker-compose.server.yaml --profile runners up --no-start
+  # To bulk-load every runner once (e.g. right after the above, on a fresh
+  # install, so Redis isn't empty until each runner's first scheduled run):
+  #   data-runners/bootstrap.sh
   # To run a runner manually:
   #   docker compose -f docker-compose.server.yaml run --rm runner-ourairports
   # ---------------------------------------------------------------------------
