@@ -2774,6 +2774,56 @@ records:
                   lookup_field: wake_turbulence_category
                   description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
+          aircraft_type:
+            type: object
+            description: >
+              ICAO type-designator reference record from Mictronics, keyed by
+              type_designator (aircraft:type:{designator}). Standalone lookup
+              table, not merged into per-hex enrichment records by
+              merge_aircraft.lua — published so other runners (e.g. country
+              registries that only know a type_designator, not a full
+              manufacturer_model) can look up a designator directly via
+              JSON.GET, including for hexes Mictronics itself has no
+              aircrafts.json entry for. Entries with no manufacturer_model are
+              skipped at write time. Distinct from this aircraft object's own
+              type_designator/manufacturer_model/wake_turbulence_category
+              fields above, which are the per-hex values merged from
+              aircraft:mictronics:{hex} and aircraft:registry:{hex} by
+              merge_aircraft.lua — this block describes the separate global
+              lookup table, not any specific aircraft's merged enrichment.
+            persisted: true
+            properties:
+              type_designator:
+                type: string
+                description: "ICAO aircraft type designator (e.g. B763); also the Redis key suffix"
+                sources:
+                  - source: mictronics
+                    file: types.json
+                    field: "key (type_designator)"
+              manufacturer_model:
+                type: string
+                description: "Full manufacturer + model string (e.g. Boeing 767-332ER)"
+                sources:
+                  - source: mictronics
+                    file: types.json
+                    field: "values[0]"
+              wake_turbulence_category:
+                type: string
+                description: "ICAO wake turbulence category (Light, Medium, Heavy, Super); omitted if undecodable"
+                sources:
+                  - source: mictronics
+                    file: types.json
+                    field: "values[2]"
+                    transform:
+                      type: decode_table
+                      values:
+                        "J": Super
+                        "H": Heavy
+                        "M": Medium
+                        "L": Light
+                        "M/L": "Medium/Light"
+                        "-": "Unknown/None"
+
           powerplant:
             type: object
             description: "Engine and powerplant specification data"
@@ -3256,51 +3306,6 @@ records:
               - source: mictronics
                 file: operators.json
                 field: "values[2]"
-
-      aircraft_type:
-        type: object
-        description: >
-          ICAO type-designator reference record from Mictronics, keyed by
-          type_designator (aircraft:type:{designator}). Standalone lookup
-          table, not merged into per-hex enrichment records by
-          merge_aircraft.lua — published so other runners (e.g. country
-          registries that only know a type_designator, not a full
-          manufacturer_model) can look up a designator directly via
-          JSON.GET, including for hexes Mictronics itself has no
-          aircrafts.json entry for. Entries with no manufacturer_model are
-          skipped at write time.
-        persisted: true
-        properties:
-          type_designator:
-            type: string
-            description: "ICAO aircraft type designator (e.g. B763); also the Redis key suffix"
-            sources:
-              - source: mictronics
-                file: types.json
-                field: "key (type_designator)"
-          manufacturer_model:
-            type: string
-            description: "Full manufacturer + model string (e.g. Boeing 767-332ER)"
-            sources:
-              - source: mictronics
-                file: types.json
-                field: "values[0]"
-          wake_turbulence_category:
-            type: string
-            description: "ICAO wake turbulence category (Light, Medium, Heavy, Super); omitted if undecodable"
-            sources:
-              - source: mictronics
-                file: types.json
-                field: "values[2]"
-                transform:
-                  type: decode_table
-                  values:
-                    "J": Super
-                    "H": Heavy
-                    "M": Medium
-                    "L": Light
-                    "M/L": "Medium/Light"
-                    "-": "Unknown/None"
 
       squawk:
         type: string
