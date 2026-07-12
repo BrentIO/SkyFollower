@@ -173,11 +173,8 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
     owner_name = _WHITESPACE_RE.sub(" ", row.get("owner_name", "").strip())
-    operator_name = _WHITESPACE_RE.sub(" ", row.get("operator_name", "").strip())
 
     names = [owner_name] if owner_name else []
-    if operator_name and operator_name != owner_name:
-        names.append(operator_name)
     if names:
         registrant_fields["names"] = names
 

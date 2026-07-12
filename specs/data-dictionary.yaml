@@ -464,7 +464,7 @@ sources:
     url: "https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; SSL certificate has untrusted issuer chain in Docker — verify=False used; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator stored only if different from owner; ARC/registry dates not stored; serial number may also contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — stable path fragment /documents/66238/342548/ with download=true; index page requires browser User-Agent; SSL certificate has untrusted issuer chain in Docker — verify=False used; ~74 pages, ~1397 HA- records; pdfplumber extract_table() used; bilingual Hungarian/English header row present but not relied upon — columns identified by position; registration marks have stray space after hyphen (HA- GZQ) — normalized to HA-GZQ; operator name (col 6) present in source but not read — only owner data is imported; ARC/registry dates not stored; serial number may also contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 4D0000–4D7FFF"
     files:
       - name: "Aircraft register PDF (date-stamped, discovered via index page)"
         format: pdf_table
@@ -475,7 +475,7 @@ sources:
           3: Year of manufacture (4-digit integer)
           4: "Owner name (may contain embedded newlines; collapsed to single space)"
           5: "Owner address (may contain embedded newlines; collapsed to single space)"
-          6: Operator name; may be identical to owner
+          6: "Operator name; not stored"
 
   bg-caa:
     description: "Bulgaria CAA aircraft register — LZ-prefix registrations"
@@ -1344,12 +1344,10 @@ records:
                   description: "Single registered owner name (Korean UTF-8 text) — wrap in a one-element list"
               - source: hu-kozhaf
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
-                fields:
-                  - { field: "4" }
-                  - { field: "6" }
+                field: "4"
                 transform:
-                  type: collect_non_empty
-                  description: "Owner name (col 4) and operator name (col 6); col 6 omitted if identical to col 4; embedded newlines collapsed to space"
+                  type: wrap_array
+                  description: "Owner name (col 4); embedded newlines collapsed to space; wrapped in a one-element list"
               - source: ge-gcaa
                 fields:
                   - { field: "0", table: table_1, description: "Operator" }
