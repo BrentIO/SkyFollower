@@ -1,5 +1,5 @@
-name: 🏃🧪 Runner Tests
-run-name: "Runner Tests ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
+name: 🧪 Tests
+run-name: "Tests ${{ github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
 
 # Runs every pytest suite in the repo. Dependencies are installed by
 # concatenating every component's requirements.txt found via `find` — so
