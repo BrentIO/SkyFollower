@@ -19,6 +19,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # RedisJSON + Lua scripting support, matching docker-compose.server.yaml.
+    # Exposed on the default port; shared/tests/test_merge_aircraft_lua.py
+    # already defaults to localhost:6379, which is where Actions exposes a
+    # job-scoped service container. Without the healthcheck, that suite would
+    # intermittently skip (not fail) on a cold container instead of running.
+    services:
+      redis:
+        image: redis/redis-stack-server:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
