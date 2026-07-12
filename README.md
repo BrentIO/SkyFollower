@@ -47,6 +47,13 @@ RTL-SDR 978  ──► readsb :30978 ──┤
          Rules editor, Areas editor
 ```
 
+<!--
+  The #region/#endregion comments below are consumed by docs/getting-started/
+  and docs/deployment/ via VitePress's `@include` directive, so this stays
+  the single source of truth instead of forking into duplicated docs-site
+  content. Don't remove a region marker without checking those pages first.
+-->
+<!-- #region host-topology -->
 ## Host Topology
 
 | Host | Role | Containers |
@@ -55,7 +62,9 @@ RTL-SDR 978  ──► readsb :30978 ──┤
 | Host B — Central server | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, data runners |
 | Host C — Processor host | Flight state + rules | `processor-0` (one per host; scale by adding hosts) |
 | Host D — Archive host | Long-term storage + UI | `archive-processor`, `ui` |
+<!-- #endregion host-topology -->
 
+<!-- #region compose-files -->
 ## Compose Files
 
 Each host runs exactly one compose file. Clone the repo on each host, populate
@@ -67,7 +76,9 @@ the relevant `config/` settings files, then bring up the appropriate file:
 | `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all data runners |
 | `docker-compose.processor.yaml` | Host C — Processor host | `processor-0` |
 | `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`, `ui` |
+<!-- #endregion compose-files -->
 
+<!-- #region quick-start -->
 ## Quick Start
 
 ```bash
@@ -110,7 +121,9 @@ for svc in $(docker compose -f docker-compose.server.yaml config --services \
   docker compose -f docker-compose.server.yaml run --rm "$svc"
 done
 ```
+<!-- #endregion quick-start -->
 
+<!-- #region components -->
 ## Components
 
 | Container | Description | Default port |
@@ -128,7 +141,9 @@ done
 | `ca-transport-canada` runner | Imports Transport Canada detailed registration data into Redis | — |
 | `ourairports` runner | Imports airport metadata into Redis | — |
 | `flightaware` runner | Imports flight origin/destination data into Redis (paid; optional) | — |
+<!-- #endregion components -->
 
+<!-- #region configuration -->
 ## Configuration
 
 Each component reads its settings from `/app/settings.json` inside the
@@ -143,6 +158,7 @@ on the host. Example files for every component are in `config/`:
 | `config/ui/settings.json.example` | `docker-compose.archive.yaml` |
 | `config/runners/settings.json.example` | All runners in `docker-compose.server.yaml` |
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
+<!-- #endregion configuration -->
 
 See the component READMEs for the full list of settings fields:
 

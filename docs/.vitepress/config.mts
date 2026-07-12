@@ -8,6 +8,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Getting Started", link: "/getting-started/" },
+      { text: "Deployment", link: "/deployment/" },
       { text: "Architecture", link: "/architecture/" },
       { text: "Components", link: "/components/" },
       { text: "Specs", link: "/specs/" },
@@ -18,6 +19,7 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "Getting Started", link: "/getting-started/" },
+          { text: "Deployment", link: "/deployment/" },
           { text: "Architecture", link: "/architecture/" },
         ],
       },
