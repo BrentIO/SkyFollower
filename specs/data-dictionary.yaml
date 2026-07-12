@@ -325,7 +325,7 @@ sources:
     url: "https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv"
     format: api
     cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; returns UTF-16 BE encoded semicolon-delimited CSV via POST with JSON body; single bulk download of all registered aircraft (~3,100 records); 'Main Owner' address is a single unstructured string parsed best-effort (Name[, Canton]?, Street, PostalCode City, Switzerland); canton abbreviation (2-letter) stripped from name; when only one non-canton segment remains after extracting the postal line it is treated as the name (no street present); MOPSC = Maximum Operational Passenger Seating Configuration; seats = MOPSC + Minimum Crew; aircraft without a Mode S transponder have no ICAO hex in the registry and are skipped"
+    notes: "Undocumented public REST API; no auth required; returns UTF-16 BE encoded semicolon-delimited CSV via POST with JSON body; single bulk download of all registered aircraft (~3,100 records); 'Main Owner' address is a single unstructured string parsed best-effort (Name[, Canton]?, Street, PostalCode City, Switzerland); canton abbreviation (2-letter) stripped from name; when only one non-canton segment remains after extracting the postal line it is treated as the name (no street present); MOPSC = Maximum Operational Passenger Seating Configuration; seats = MOPSC + Minimum Crew; aircraft without a Mode S transponder have no ICAO hex in the registry and are skipped; no hard dependency on the aircraft:type reference table — completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAO Aircraft Type against that mictronics-populated reference table to set aircraft.manufacturer_model and aircraft.wake_turbulence_category when found (independently — a type entry with only one of the two still sets that one)"
     endpoints:
       bulk:
         method: POST
@@ -2419,6 +2419,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: ch-bazl
+                endpoint: bulk
+                field: "ICAO Aircraft Type"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2741,6 +2749,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: ch-bazl
+                endpoint: bulk
+                field: "ICAO Aircraft Type"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object
