@@ -47,6 +47,7 @@ from shared.redis_keys import (
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.logging_setup import configure_logging
 
 logger = logging.getLogger("ee-transpordiamet")
 
@@ -344,17 +345,14 @@ def _load_config() -> dict:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-        stream=sys.stdout,
-    )
-
     try:
         cfg = _load_config()
     except FileNotFoundError as exc:
+        configure_logging()
         logger.critical("Settings file not found: %s", exc)
         sys.exit(1)
+
+    configure_logging(cfg.get("log_level"))
 
     rc = cfg["redis"]
     r = redis_lib.Redis(

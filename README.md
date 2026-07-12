@@ -148,7 +148,7 @@ See the component READMEs for the full list of settings fields:
 
 - [receiver/README.md](receiver/README.md)
 - [processor/README.md](processor/README.md)
-- [data-runners/ourairports/README.md](data-runners/ourairports/README.md)
+- [data-runners/README.md](data-runners/README.md) — logging convention, plus per-runner READMEs (e.g. [data-runners/ourairports/README.md](data-runners/ourairports/README.md))
 
 ## Scaling Processors
 
