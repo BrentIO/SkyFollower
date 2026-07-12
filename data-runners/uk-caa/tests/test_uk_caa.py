@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -489,6 +490,15 @@ class TestSearchByPrefix:
         results = _search_by_prefix(session, "ZZ")
         assert results == []
 
+    def test_logs_url_and_prefix_at_debug(self, caplog):
+        session = self._make_session(_SEARCH_RESULT)
+        with caplog.at_level(logging.DEBUG, logger="uk-caa"):
+            _search_by_prefix(session, "VA")
+        assert any(
+            "/api/aircraft/search" in r.message and "VA" in r.message
+            for r in caplog.records
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: _get_aircraft_details
@@ -514,6 +524,14 @@ class TestGetAircraftDetails:
         session = self._make_session(details)
         result = _get_aircraft_details(session, 66819)
         assert result == details
+
+    def test_logs_url_at_debug(self, caplog):
+        session = self._make_session(_make_details())
+        with caplog.at_level(logging.DEBUG, logger="uk-caa"):
+            _get_aircraft_details(session, 66819)
+        assert any(
+            "/api/aircraft/details/66819" in r.message for r in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

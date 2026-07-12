@@ -307,8 +307,10 @@ def _search_by_prefix(session: requests.Session, prefix: str) -> list[dict]:
 
     Returns the raw result list; may include non-registered aircraft.
     """
+    url = f"{API_BASE}/api/aircraft/search"
+    logger.debug("Searching UK CAA G-INFO for prefix=%s at %s", prefix, url)
     resp = session.post(
-        f"{API_BASE}/api/aircraft/search",
+        url,
         json={"Registration": prefix},
         timeout=30,
     )
@@ -318,8 +320,10 @@ def _search_by_prefix(session: requests.Session, prefix: str) -> list[dict]:
 
 def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Optional[dict]:
     """GET /api/aircraft/details/{aircraft_id}. Returns the parsed JSON payload."""
+    url = f"{API_BASE}/api/aircraft/details/{aircraft_id}"
+    logger.debug("Fetching UK CAA aircraft details from %s", url)
     resp = session.get(
-        f"{API_BASE}/api/aircraft/details/{aircraft_id}",
+        url,
         timeout=30,
     )
     resp.raise_for_status()
