@@ -234,7 +234,7 @@ sources:
     url: "https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_aeronaves.json"
     format: json
     cadence: weekly_wednesday
-    notes: "JSON array, UTF-8 BOM encoded, ~43MB, ~34,551 total records; no ICAO hex — resolved via RediSearch against Mictronics records; must run after Mictronics; MARCA stored without hyphen (PPAJH) — insert hyphen after position 2 (PP-AJH); CDCLS encodes aircraft type (position 1), engine count (position 2), and propulsion (position 3); PROPRIETARIOSJSON uses non-standard /\"\" escape for double-quotes"
+    notes: "JSON array, UTF-8 BOM encoded, ~43MB, ~34,551 total records; no ICAO hex — resolved via RediSearch against Mictronics records; must run after Mictronics; MARCA stored without hyphen (PPAJH) — insert hyphen after position 2 (PP-AJH); CDCLS encodes aircraft type (position 1), engine count (position 2), and propulsion (position 3); PROPRIETARIOSJSON uses non-standard /\"\" escape for double-quotes; no hard dependency on the aircraft:type reference table — completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own CDTIPOICAO against that mictronics-populated reference table to set aircraft.manufacturer_model and aircraft.wake_turbulence_category when found (independently — a type entry with only one of the two still sets that one)"
     fields:
       MARCA:              Registration mark without hyphen (e.g. PPAJH → PP-AJH)
       DTCANC:             Cancellation date; not stored
@@ -2427,6 +2427,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDTIPOICAO
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2757,6 +2765,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: br-anac
+                file: dados_aeronaves.json
+                field: CDTIPOICAO
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object
