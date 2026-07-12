@@ -14,6 +14,9 @@ hero:
       link: https://github.com/BrentIO/SkyFollower
 
 features:
+  - title: Deployment
+    details: Host topology, compose-file mapping, and the full component list.
+    link: /deployment/
   - title: Architecture
     details: Pipeline topology from receiver through to archive.
     link: /architecture/
