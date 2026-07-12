@@ -370,7 +370,7 @@ sources:
     url: "https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html"
     format: pdf
     cadence: weekly_wednesday
-    notes: "~20-page PDF, ~298 records; URL is date-stamped (relev-aronefs-DD-MM-YYYY.pdf) and changes with each update — runner scrapes the index page to discover the current link; pdfplumber.extract_table() does not correctly detect the 6th column — uses word-position extraction instead; column x0 boundaries: [44,98,256,421,489,639,842]; rows where immat starts with 'LX-' begin a new record; subsequent rows without LX- are continuation rows for multi-line cells; privacy placeholders excluded from registrant.names: EXPLOITANT PRIVÉ, PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ; Propriétaire omitted if identical to Exploitant; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics; must run after Mictronics; no address/city/country data available; ICAO hex range: 4A0000–4AFFFF"
+    notes: "~20-page PDF, ~298 records; URL is date-stamped (relev-aronefs-DD-MM-YYYY.pdf) and changes with each update — runner scrapes the index page to discover the current link; pdfplumber.extract_table() does not correctly detect the 6th column — uses word-position extraction instead; column x0 boundaries: [44,98,256,421,489,639,842]; rows where immat starts with 'LX-' begin a new record; subsequent rows without LX- are continuation rows for multi-line cells; only Propriétaire (owner) stored as registrant.names — Exploitant (operator) present in source but not read; privacy placeholders excluded from registrant.names: PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics; must run after Mictronics; no address/city/country data available; ICAO hex range: 4A0000–4AFFFF"
     files:
       - name: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
         format: pdf
@@ -379,7 +379,7 @@ sources:
           Constructeur:       Aircraft manufacturer name
           "Type d'aéronef":   Aircraft model designation
           "SN aéronef":       Manufacturer serial number
-          Exploitant:         Operator name (may be privacy placeholder EXPLOITANT PRIVÉ)
+          Exploitant:         "Operator name; not stored"
           Propriétaire:       Owner name (may be privacy placeholder PROPRIÉTAIRE PRIVÉ or COPROPRIÉTÉ)
 
   bz-bdca:
@@ -1419,12 +1419,10 @@ records:
                   description: "Single owner or operator name — wrap in a one-element list"
               - source: lu-dac
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
-                fields:
-                  - { field: Exploitant, description: "Operator name" }
-                  - { field: Propriétaire, description: "Owner name; omitted if identical to Exploitant" }
+                field: Propriétaire
                 transform:
-                  type: collect_non_empty
-                  description: "Privacy placeholders excluded (EXPLOITANT PRIVÉ, PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ); Propriétaire discarded if identical to Exploitant"
+                  type: wrap_array
+                  description: "Owner name; privacy placeholders excluded (PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ); wrapped in a one-element list"
               - source: bz-bdca
                 file: bdca-civil-aircraft-register (HTML page)
                 field: Owner

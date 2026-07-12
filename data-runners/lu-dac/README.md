@@ -20,9 +20,10 @@ tolerance) and then into named columns by fixed x0 boundaries, since
 PDF. Rows whose `immat` column starts with `LX-` begin a new record;
 subsequent rows without an `LX-` value are treated as continuation lines and
 appended to the current record's fields (handling multi-line cells).
-Registrant/operator values matching known privacy-placeholder strings
-(`EXPLOITANT PRIVÉ`, `PROPRIÉTAIRE PRIVÉ`, `COPROPRIÉTÉ`) are omitted from the
-names list, and a duplicate operator/owner value is not repeated. Every
+Only `proprietaire` (owner) values are imported into `registrant.names`;
+`exploitant` (operator) is present in source but not read. Owner values
+matching known privacy-placeholder strings (`PROPRIÉTAIRE PRIVÉ`,
+`COPROPRIÉTÉ`) are omitted from the names list. Every
 written record explicitly sets `military: false` — this register is
 exclusively civil, and the explicit value ensures a stale `military: true`
 flag (from Mictronics or a prior record on a reused hex) is corrected on
@@ -36,8 +37,8 @@ re-registration.
 | constructeur (Manufacturer) | ✅ | → `aircraft.manufacturer` |
 | type (Type) | ✅ | → `aircraft.model` |
 | sn (Serial Number) | ✅ | → `aircraft.serial_number` |
-| exploitant (Operator) | ✅ | → `registrant.names[]`; privacy placeholders (e.g. `EXPLOITANT PRIVÉ`) are filtered, not stored |
-| proprietaire (Owner) | ✅ | → `registrant.names[]`; privacy placeholders (e.g. `PROPRIÉTAIRE PRIVÉ`, `COPROPRIÉTÉ`) are filtered, not stored; omitted if identical to `exploitant` |
+| exploitant (Operator) | ❌ | Present in source; not read by this runner |
+| proprietaire (Owner) | ✅ | → `registrant.names[]`; privacy placeholders (e.g. `PROPRIÉTAIRE PRIVÉ`, `COPROPRIÉTÉ`) are filtered, not stored |
 
 See `specs/data-dictionary.yaml` (`lu-dac` entry) for full column semantics and cross-source schema notes.
 

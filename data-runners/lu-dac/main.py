@@ -63,8 +63,9 @@ BATCH_SIZE = 100
 _COL_BOUNDS = [44, 98, 256, 421, 489, 639, 842]
 _COL_NAMES = ["immat", "constructeur", "type", "sn", "proprietaire", "exploitant"]
 
-# Multi-word strings that represent privacy placeholders — omit from names list
-_PRIVATE_PLACEHOLDERS = {"EXPLOITANT PRIVÉ", "PROPRIÉTAIRE PRIVÉ", "COPROPRIÉTÉ"}
+# Multi-word strings that represent privacy placeholders in the proprietaire
+# (owner) column — omit from names list
+_PRIVATE_PLACEHOLDERS = {"PROPRIÉTAIRE PRIVÉ", "COPROPRIÉTÉ"}
 
 # Tolerance (points) for grouping words into the same row
 _ROW_TOLERANCE = 5
@@ -226,11 +227,9 @@ def parse_pdf(pdf_bytes: bytes) -> list[dict]:
 # Record builder
 # ---------------------------------------------------------------------------
 
-def _build_names(exploitant: str, proprietaire: str) -> list[str]:
+def _build_names(proprietaire: str) -> list[str]:
     names: list[str] = []
-    if exploitant and exploitant not in _PRIVATE_PLACEHOLDERS:
-        names.append(exploitant)
-    if proprietaire and proprietaire not in _PRIVATE_PLACEHOLDERS and proprietaire != exploitant:
+    if proprietaire and proprietaire not in _PRIVATE_PLACEHOLDERS:
         names.append(proprietaire)
     return names
 
@@ -251,10 +250,7 @@ def _build_record(parsed: dict, icao_hex: str) -> dict:
     if serial:
         aircraft_fields["serial_number"] = serial
 
-    names = _build_names(
-        parsed.get("exploitant", "").strip(),
-        parsed.get("proprietaire", "").strip(),
-    )
+    names = _build_names(parsed.get("proprietaire", "").strip())
 
     record: dict = {
         "icao_hex": icao_hex,

@@ -190,41 +190,21 @@ class TestClusterRows:
 # ---------------------------------------------------------------------------
 
 class TestBuildNames:
-    def test_both_provided_different(self):
-        names = _build_names("Luxair SA", "Holding SARL")
-        assert names == ["Luxair SA", "Holding SARL"]
-
-    def test_same_exploitant_and_proprietaire(self):
-        names = _build_names("Luxair SA", "Luxair SA")
-        assert names == ["Luxair SA"]
-
-    def test_exploitant_placeholder_excluded(self):
-        names = _build_names("EXPLOITANT PRIVÉ", "Owner Corp")
-        assert names == ["Owner Corp"]
+    def test_proprietaire_provided(self):
+        names = _build_names("Holding SARL")
+        assert names == ["Holding SARL"]
 
     def test_proprietaire_placeholder_excluded(self):
-        names = _build_names("Luxair SA", "PROPRIÉTAIRE PRIVÉ")
-        assert names == ["Luxair SA"]
+        names = _build_names("PROPRIÉTAIRE PRIVÉ")
+        assert names == []
 
     def test_copropriete_excluded(self):
-        names = _build_names("Luxair SA", "COPROPRIÉTÉ")
-        assert names == ["Luxair SA"]
-
-    def test_both_placeholders_returns_empty(self):
-        names = _build_names("EXPLOITANT PRIVÉ", "PROPRIÉTAIRE PRIVÉ")
+        names = _build_names("COPROPRIÉTÉ")
         assert names == []
 
-    def test_empty_strings_return_empty(self):
-        names = _build_names("", "")
+    def test_empty_string_returns_empty(self):
+        names = _build_names("")
         assert names == []
-
-    def test_exploitant_only(self):
-        names = _build_names("Luxair SA", "")
-        assert names == ["Luxair SA"]
-
-    def test_proprietaire_only(self):
-        names = _build_names("", "Owner Corp")
-        assert names == ["Owner Corp"]
 
 
 # ---------------------------------------------------------------------------
@@ -244,13 +224,13 @@ class TestBuildRecord:
         assert record["aircraft"]["serial_number"] == "28-1234"
         assert record["registrant"]["names"] == ["Luxair SA"]
 
-    def test_different_exploitant_and_proprietaire_both_in_names(self):
+    def test_different_exploitant_not_imported(self):
         parsed = _make_parsed(exploitant="Luxair SA", proprietaire="Holding SARL")
         record = _build_record(parsed, "4A0123")
-        assert record["registrant"]["names"] == ["Luxair SA", "Holding SARL"]
+        assert record["registrant"]["names"] == ["Holding SARL"]
 
-    def test_private_exploitant_excluded(self):
-        parsed = _make_parsed(exploitant="EXPLOITANT PRIVÉ", proprietaire="")
+    def test_exploitant_alone_does_not_populate_names(self):
+        parsed = _make_parsed(exploitant="Luxair SA", proprietaire="")
         record = _build_record(parsed, "4A0123")
         assert "registrant" not in record
 
