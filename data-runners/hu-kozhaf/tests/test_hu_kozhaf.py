@@ -126,20 +126,10 @@ class TestBuildRecord:
         assert record["registrant"]["names"] == ["Magyar Airlines Kft."]
         assert record["registrant"]["street"] == "1234 Budapest, Fő utca 1."
 
-    def test_operator_different_from_owner_included(self):
+    def test_operator_name_not_imported(self):
         row = _make_row(owner_name="Owner Kft.", operator_name="Operator Zrt.")
         record = _build_record(row, "4D1234", "HA-GZQ")
-        assert record["registrant"]["names"] == ["Owner Kft.", "Operator Zrt."]
-
-    def test_operator_same_as_owner_not_duplicated(self):
-        row = _make_row(owner_name="Owner Kft.", operator_name="Owner Kft.")
-        record = _build_record(row, "4D1234", "HA-GZQ")
         assert record["registrant"]["names"] == ["Owner Kft."]
-
-    def test_empty_operator_omitted(self):
-        row = _make_row(operator_name="")
-        record = _build_record(row, "4D1234", "HA-GZQ")
-        assert record["registrant"]["names"] == ["Magyar Airlines Kft."]
 
     def test_model_newlines_collapsed(self):
         row = _make_row(model="Cessna\n172S")
