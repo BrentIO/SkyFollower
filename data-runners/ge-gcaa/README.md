@@ -16,8 +16,9 @@ laid-out HTML tables are parsed by element id: `table_1` (operator data) and
 `table_2` (owner data). Rows from both tables are merged by registration mark:
 aircraft fields (type, serial number, year of manufacture) are taken from
 whichever table supplies them first, and `registrant.names` is built from
-`table_1`'s operator followed by `table_2`'s owner — the owner is omitted if
-it's identical to the operator, so single-name entries don't duplicate.
+`table_2`'s owner only — per team decision, only ownership data is imported,
+not operator data, so `table_1`'s party column is never read for names (it is
+still fetched and parsed for its aircraft fields).
 Every written record explicitly sets `military: false` — this register is
 exclusively civil, and the explicit value ensures a stale `military: true`
 flag (from Mictronics or a prior record on a reused hex) is corrected on
@@ -29,7 +30,8 @@ Both tables share the same column layout.
 
 | Source column | Imported | Notes |
 |---|---|---|
-| Operator (table_1 col 0) / Owner (table_2 col 0) | ✅ | → `registrant.names[0]` (operator) and `registrant.names[1]` (owner, omitted if same as operator) |
+| Operator (table_1 col 0) | ❌ | Present in source; not read by this runner |
+| Owner (table_2 col 0) | ✅ | → `registrant.names[0]` |
 | Aircraft type (col 1) | ✅ | → `aircraft.model`; merged from whichever table provides it |
 | Registration (col 2) | ✅ | 4L-prefix; used as the Mictronics lookup key |
 | Registration date (col 3) | ❌ | Parsed but not stored |

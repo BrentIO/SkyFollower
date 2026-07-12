@@ -571,9 +571,9 @@ sources:
     url: "https://gcaa.ge/civil-aircraft-register/"
     format: html_table
     cadence: weekly_tuesday
-    notes: "Single page with two pre-rendered HTML tables (table_1: operator data; table_2: owner data); both share the same 6-column layout; records merged by registration mark — aircraft fields taken from whichever table provides them; operator stored as registrant.names[0], owner as registrant.names[1] (omitted if identical to operator); Georgian-script company names preserved as UTF-8; year of manufacture → YYYY-01-01; ~63 unique 4L- records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
+    notes: "Single page with two pre-rendered HTML tables (table_1: operator data; table_2: owner data); both share the same 6-column layout; records merged by registration mark — aircraft fields taken from whichever table provides them; only table_2's owner is stored as registrant.names[0] — table_1's operator column is present in source but not read; Georgian-script company names preserved as UTF-8; year of manufacture → YYYY-01-01; ~63 unique 4L- records; no ICAO hex — resolved via RediSearch; must run after Mictronics"
     columns:
-      0: "Operator (table_1) / Owner (table_2) — Georgian and English text"
+      0: "Operator (table_1) / Owner (table_2) — Georgian and English text; only table_2 (owner) is read"
       1: "Aircraft type"
       2: "Registration (4L-prefix; lookup key)"
       3: "Registration date; not stored"
@@ -1349,12 +1349,11 @@ records:
                   type: wrap_array
                   description: "Owner name (col 4); embedded newlines collapsed to space; wrapped in a one-element list"
               - source: ge-gcaa
-                fields:
-                  - { field: "0", table: table_1, description: "Operator" }
-                  - { field: "0", table: table_2, description: "Owner; omitted if identical to operator" }
+                field: "0"
+                table: table_2
                 transform:
-                  type: collect_ordered
-                  description: "Operator from table_1 as first entry; owner from table_2 as second if different; Georgian-script names preserved as UTF-8"
+                  type: wrap_array
+                  description: "Owner (table_2 col 0); table_1's operator column is not read; Georgian-script names preserved as UTF-8; wrapped in a one-element list"
               - source: gg-2reg
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "4"
