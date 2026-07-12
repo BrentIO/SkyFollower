@@ -878,11 +878,17 @@ records:
   flight:
     description: >
       Completed flight record. Written to S3 on flight completion and used as
-      the authoritative archive document. Also defines the icao_hex:{hex} Redis
-      enrichment shape written by data runners.
+      the authoritative archive document. This record's aircraft.* field
+      definitions are reused by reference for the two live Redis aircraft
+      enrichment records, aircraft:mictronics:{icao_hex} (written by the
+      mictronics runner) and aircraft:registry:{icao_hex} (written by every
+      country registry runner) — see CLAUDE.md's Redis Key Schema. Those two
+      keys are deep-merged at read time by shared/lua/merge_aircraft.lua,
+      which is what a consumer actually queries for a single aircraft's
+      merged enrichment; neither key nor the merged result is persisted under
+      any icao_hex:{hex} key.
     storage: S3
     s3_path: "flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz"
-    redis_key: "icao_hex:{icao_hex}"
     fields:
 
       _id:
