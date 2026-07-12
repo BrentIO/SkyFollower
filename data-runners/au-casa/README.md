@@ -13,6 +13,8 @@
 
 The CASA register CSV is downloaded from a fixed URL and parsed with `csv.DictReader` (BOM-tolerant `utf-8-sig` decoding). Rows whose `suspendstatus` is `suspended` are filtered out before lookup. Registrations (`VH-` + `Mark`) are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index, then a type sanity check compares tokens extracted from the CASA `Model` column against the existing Mictronics `type_designator`/`manufacturer_model` fields, rejecting the match only when both sides have tokens and none overlap. `Airframe` and `Engtype` are decoded from CASA's plain-English categories (e.g. `Power Driven Aeroplane` → `Airplane`, `Turbofan` → `Turbo-fan`) and `regholdCountry` full country names are mapped to ISO 3166-1 alpha-2 codes, with unmapped values passed through as-is. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `wake_turbulence_category` are each set directly on this record (independently — a type entry with only one of the two still sets that one) — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from CASA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+
 ## Columns
 
 | Source column | Imported | Notes |
@@ -55,7 +57,7 @@ The CASA register CSV is downloaded from a fixed URL and parsed with `csv.DictRe
 | `Regexpirydate` | ❌ | Present in source; not read by this runner |
 | `suspendstatus` | ✅ | Used only as a filter (`suspended` rows are dropped); not stored |
 | `suspenddate` | ❌ | Present in source; not read by this runner |
-| `ICAOtypedesig` | ✅ | → `aircraft.type_designator` |
+| `ICAOtypedesig` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.wake_turbulence_category` when found |
 | `IDERA_Authorised_Party` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`au-casa` entry) for full column semantics and cross-source schema notes.

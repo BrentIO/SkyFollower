@@ -258,7 +258,7 @@ sources:
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
     format: csv
     cadence: weekly_tuesday
-    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; all marks are 3-char suffixes — prepend 'VH-'"
+    notes: "UTF-8 with BOM (decode utf-8-sig); ~16,626 rows; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; all marks are 3-char suffixes — prepend 'VH-'; no hard dependency on the aircraft:type reference table — completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAOtypedesig against that mictronics-populated reference table to set aircraft.manufacturer_model and aircraft.wake_turbulence_category when found (independently — a type entry with only one of the two still sets that one)"
     files:
       - name: acrftreg
         format: csv
@@ -2411,6 +2411,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: au-casa
+                file: acrftreg
+                field: ICAOtypedesig
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2725,6 +2733,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: au-casa
+                file: acrftreg
+                field: ICAOtypedesig
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object
