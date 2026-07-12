@@ -771,7 +771,7 @@ sources:
     url: "https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/"
     format: pdf
     cadence: weekly_tuesday
-    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — not hardcoded; ~31 pages, ~818 records; pdfplumber extract_tables() used; registration marks in PDF use spaced format 'OM - 0101' — normalized to 'OM-0101' by stripping all whitespace; both Vlastník (owner) and Prevádzkovateľ (operator) stored as registrant.names — deduplicated if identical; Záložné právo (lien) column not stored; type, serial number, owner, and operator may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 510000–51FFFF"
+    notes: "PDF URL is date-stamped and discovered by scraping the index page each run — not hardcoded; ~31 pages, ~818 records; pdfplumber extract_tables() used; only Vlastník (owner) stored as registrant.names — Prevádzkovateľ (operator) present in source but not read; Záložné právo (lien) column not stored; type, serial number, and owner may contain embedded newlines — collapsed to single space; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics records; must run after Mictronics; ICAO hex range: 510000–51FFFF"
     files:
       - name: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
         format: pdf_table
@@ -780,7 +780,7 @@ sources:
           "Poznávacia značka":    Registration mark in spaced format (e.g. 'OM - 0101')
           "Výrobné číslo":        "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
           "Vlastník":             "Registered owner name (may contain embedded newlines; collapsed to single space)"
-          "Prevádzkovateľ":       "Operator name (may contain embedded newlines; collapsed to single space)"
+          "Prevádzkovateľ":       "Operator name; not stored"
           "Záložné právo":        Lien status; not stored
 
   tc-caa:
@@ -1407,12 +1407,10 @@ records:
                   description: "Single operator name — wrap in a one-element list"
               - source: sk-nsat
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
-                fields:
-                  - { field: "Vlastník", description: "Registered owner" }
-                  - { field: "Prevádzkovateľ", description: "Operator; omitted if identical to Vlastník" }
+                field: "Vlastník"
                 transform:
-                  type: collect_non_empty
-                  description: "Owner and operator collected in order; duplicate operator entry discarded"
+                  type: wrap_array
+                  description: "Registered owner; wrapped in a one-element list"
               - source: tc-caa
                 file: aircraft-register (HTML page)
                 field: "OWNER /OPERATOR"

@@ -145,25 +145,15 @@ class TestBuildRecord:
         record = _build_record(row, "710ABC", "OM-0101")
         assert record["registrant"]["names"] == ["Slovak Air Lines s.r.o."]
 
-    def test_operator_newlines_collapsed(self):
-        row = _make_row(owner="Owner Corp", operator="Operator\nLtd")
-        record = _build_record(row, "710ABC", "OM-0101")
-        assert record["registrant"]["names"] == ["Owner Corp", "Operator Ltd"]
-
-    def test_owner_and_operator_deduplicated(self):
-        row = _make_row(owner="Owner Corp", operator="Owner Corp")
+    def test_different_operator_not_imported(self):
+        row = _make_row(owner="Owner Corp", operator="Operator Ltd")
         record = _build_record(row, "710ABC", "OM-0101")
         assert record["registrant"]["names"] == ["Owner Corp"]
 
-    def test_different_operator_included(self):
-        row = _make_row(owner="Owner Corp", operator="Operator Ltd")
-        record = _build_record(row, "710ABC", "OM-0101")
-        assert record["registrant"]["names"] == ["Owner Corp", "Operator Ltd"]
-
-    def test_empty_owner_with_operator(self):
+    def test_empty_owner_does_not_fall_back_to_operator(self):
         row = _make_row(owner="", operator="Operator Ltd")
         record = _build_record(row, "710ABC", "OM-0101")
-        assert record["registrant"]["names"] == ["Operator Ltd"]
+        assert "registrant" not in record
 
     def test_empty_owner_and_operator_omits_registrant(self):
         row = _make_row(owner="", operator="")

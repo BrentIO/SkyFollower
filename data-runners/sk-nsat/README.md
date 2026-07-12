@@ -11,7 +11,7 @@
 
 ## How it works
 
-The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page is scraped for the first `.pdf` link found. Tables are extracted with `pdfplumber`; a row is treated as a data row when its second cell, after stripping all whitespace, starts with `OM-` (registration marks appear in the PDF in a spaced format, e.g. `OM - 0101`, and are normalized to `OM-0101`). Once a header row has been seen, the four Slovak column values are re-assigned positionally onto internal column-name constants rather than trusting the header dict directly, since `pdfplumber` can introduce newline/Unicode artifacts into the extracted header text that would otherwise mismatch the constants. Model, serial number, owner, and operator are all run through a whitespace-collapsing transform, since `pdfplumber` can also introduce embedded newlines into a wrapped cell's text. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page is scraped for the first `.pdf` link found. Tables are extracted with `pdfplumber`; a row is treated as a data row when its second cell, after stripping all whitespace, starts with `OM-` (registration marks appear in the PDF in a spaced format, e.g. `OM - 0101`, and are normalized to `OM-0101`). Once a header row has been seen, the four Slovak column values are re-assigned positionally onto internal column-name constants rather than trusting the header dict directly, since `pdfplumber` can introduce newline/Unicode artifacts into the extracted header text that would otherwise mismatch the constants. Model, serial number, and owner are all run through a whitespace-collapsing transform, since `pdfplumber` can also introduce embedded newlines into a wrapped cell's text. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 ## Columns
 
@@ -21,7 +21,7 @@ The register PDF's URL is date-stamped and not hardcoded, so the NSAT index page
 | Typ lietadla (Aircraft Type) | ✅ | → `aircraft.model`; embedded newlines collapsed to a single space |
 | Výrobné číslo (Serial Number) | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | Vlastník (Owner) | ✅ | → `registrant.names[0]`; embedded newlines collapsed to a single space |
-| Prevádzkovateľ (Operator) | ✅ | → `registrant.names[1]`, appended only when different from the owner; embedded newlines collapsed to a single space |
+| Prevádzkovateľ (Operator) | ❌ | Present in source; not read by this runner |
 | Záložné právo (Lien) | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`sk-nsat` entry) for full column semantics and cross-source schema notes.
@@ -74,8 +74,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "military": false,
     "registrant": {
         "names": [
-            "AVIATOR IV 30666, DESIGNATED ACTIVITY COMPANY",
-            "Smartwings Slovakia, s.r.o."
+            "AVIATOR IV 30666, DESIGNATED ACTIVITY COMPANY"
         ]
     },
     "registration": "OM-TVH",

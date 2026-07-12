@@ -157,10 +157,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         aircraft_fields["serial_number"] = serial
 
     owner = _WHITESPACE_RE.sub(" ", row.get(_COL_OWNER, "").strip())
-    operator = _WHITESPACE_RE.sub(" ", row.get(_COL_OPERATOR, "").strip())
     names = [owner] if owner else []
-    if operator and operator != owner:
-        names.append(operator)
     if names:
         registrant_fields["names"] = names
 
