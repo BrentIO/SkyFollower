@@ -48,6 +48,8 @@ def _load_main():
 
 _mod = _load_main()
 
+from shared.url_reachability import assert_url_reachable
+
 _is_active = _mod._is_active
 _format_registration = _mod._format_registration
 _decode_cdcls = _mod._decode_cdcls
@@ -684,3 +686,13 @@ class TestMqttCompletionStats:
         ]
         assert len(ha_topics) == 3
         assert "homeassistant/sensor/SkyFollower_runner_br_anac_records_imported/config" in ha_topics
+
+
+# ---------------------------------------------------------------------------
+# Tests: network (real outbound HTTP call — see #405)
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    @pytest.mark.network
+    def test_url_reachable(self):
+        assert_url_reachable(_mod.DOWNLOAD_URL, "br-anac", headers={"User-Agent": "P5Software SkyFollower"})

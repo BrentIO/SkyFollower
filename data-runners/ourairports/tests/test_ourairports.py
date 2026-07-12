@@ -46,6 +46,8 @@ def _load_main():
 
 _mod = _load_main()
 
+from shared.url_reachability import assert_url_reachable
+
 is_valid_icao = _mod.is_valid_icao
 compute_phonic = _mod.compute_phonic
 build_airport_record = _mod.build_airport_record
@@ -579,3 +581,13 @@ class TestMqttCompletionStats:
             assert "value_template" not in cfg_payload
             assert cfg_payload["state_topic"].startswith(self._base_topic)
             assert call.kwargs.get("retain") is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: network (real outbound HTTP call — see #405)
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    @pytest.mark.network
+    def test_url_reachable(self):
+        assert_url_reachable(_mod.DOWNLOAD_URL, "ourairports")

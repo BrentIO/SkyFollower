@@ -53,4 +53,8 @@ jobs:
             | xargs -0 -I{} python -m pip install -r {}
 
       - name: Run tests
-        run: python -m pytest -q
+        # Excludes @pytest.mark.network tests (real outbound HTTP calls to
+        # runner source sites) — those run on their own schedule via
+        # runner-url-tests.yaml so per-PR CI stays fast, offline, and
+        # deterministic. See #405.
+        run: python -m pytest -q -m "not network"
