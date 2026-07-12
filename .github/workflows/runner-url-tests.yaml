@@ -1,11 +1,11 @@
 name: 🏃 Runner URL Tests
 run-name: "Runner URL Tests ${{ github.ref_name }}"
 
-# Runs only @pytest.mark.network tests — real outbound HTTP HEAD checks
-# against each data runner's source URL (see #405). Deliberately excluded
-# from run-tests.yaml's per-PR run since a government site being briefly
-# down, slow, or geo-blocking GitHub's US-hosted runners shouldn't fail
-# every PR. Runs on demand and weekly instead.
+# Runs only @pytest.mark.network tests — real outbound, streamed GET checks
+# (body never read) against each data runner's source URL (see #405).
+# Deliberately excluded from run-tests.yaml's per-PR run since a government
+# site being briefly down, slow, or geo-blocking GitHub's US-hosted runners
+# shouldn't fail every PR. Runs on demand and weekly instead.
 
 on:
   workflow_dispatch: {}
