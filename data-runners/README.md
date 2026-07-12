@@ -13,8 +13,7 @@ Every runner calls `configure_logging(cfg.get("log_level"))` from
 `config/runners/settings.json.example`) to the root logger — `receiver` and
 `processor` use the same helper. `configure_logging()` is called once more,
 with no argument, if `settings.json` itself can't be loaded, so that failure
-still logs formatted instead of falling back to Python's default handler
-(see #331).
+still logs formatted instead of falling back to Python's default handler.
 
 ### Level convention
 
@@ -33,17 +32,13 @@ their per-record detail fetches:
 ```python
 logger.debug("Fetching Montenegro CAA detail page from %s", url)
 ```
-Bringing the remaining runners identified below up to this rule is
-out of scope for this issue — see the follow-up issues instead of deciding
-those diffs here.
+"More than one HTTP request" means unbounded/high-volume (pagination or
+per-entity) — see the audit below for why 2-request runners are exempt.
 
 ### Request-count audit
 
 | Category | Runners | URL-at-DEBUG rule |
 |----------|---------|--------------------|
 | Single request | `at-austrocontrol`, `au-casa`, `br-anac`, `bz-bdca`, `ca-transport-canada`, `ch-bazl`, `cy-dca`, `ee-transpordiamet`, `es-aesa`, `fr-dgac`, `ge-gcaa`, `is-samgongustofa`, `kg-caa`, `kr-koca`, `ky-caa`, `lv-caa`, `md-caa`, `mictronics`, `no-caa`, `nz-caa`, `ourairports`, `rs-cad`, `tc-caa`, `us-faa` (24) | N/A — one call, already logged at `INFO` |
-| Two-step discovery (fetch an index/listing page, then fetch the one file URL found there — fixed at 2 calls, not pagination) | `bg-caa`, `bs-caa`, `gg-2reg`, `hr-ccaa`, `hu-kozhaf`, `im-ardis`, `lu-dac`, `mk-caa`, `mv-caa`, `nl-ilt`, `pg-casapng`, `sg-caas`, `sk-nsat` (13) | Lower priority — worth logging both URLs at `DEBUG` for consistency, not urgent |
-| Multi-request: pagination or per-entity (unbounded call count) | `cz-caa` (per-ID detail), `me-caa` (paginated list + per-registration detail), `uk-caa` (676 prefix searches + per-aircraft detail) (3) | Primary target. `cz-caa`/`me-caa` already comply; `uk-caa` does not — see follow-up issues |
-
-Follow-up issues for bringing runners up to the URL-at-DEBUG rule:
-#440 for `uk-caa`, #441 for the two-step discovery batch.
+| Two-step discovery (fetch an index/listing page, then fetch the one file URL found there — fixed at 2 calls, not pagination) | `bg-caa`, `bs-caa`, `gg-2reg`, `hr-ccaa`, `hu-kozhaf`, `im-ardis`, `lu-dac`, `mk-caa`, `mv-caa`, `nl-ilt`, `pg-casapng`, `sg-caas`, `sk-nsat` (13) | N/A — already compliant. All 13 already log both the discovery URL and the resolved file URL at `INFO` (e.g. `logger.info("Downloading Bulgaria CAA index page from %s", _INDEX_URL)`). 2 lines for 2 total requests isn't the per-request noise `DEBUG` exists to declutter, and downgrading them would make this visibility opt-in instead of on by default. |
+| Multi-request: pagination or per-entity (unbounded call count) | `cz-caa` (per-ID detail), `me-caa` (paginated list + per-registration detail), `uk-caa` (676 prefix searches + per-aircraft detail) (3) | Compliant — all 3 log the URL of every call at `DEBUG`. |
