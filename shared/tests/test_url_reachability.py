@@ -75,7 +75,7 @@ class TestAssertUrlReachable:
         with patch("shared.url_reachability.requests.get", return_value=_mock_response(200)) as mock_get:
             assert_url_reachable("https://example.com", "example-runner")
         mock_get.assert_called_once_with(
-            "https://example.com", headers=None, verify=True, timeout=10,
+            "https://example.com", headers=None, verify=True, timeout=30,
             allow_redirects=True, stream=True,
         )
 

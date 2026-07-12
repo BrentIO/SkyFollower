@@ -11,6 +11,12 @@ doesn't pull it over the wire just to confirm liveness.
 Not a content guarantee — a 2xx response proves the URL responds, not that the
 runner will successfully parse whatever is there (the runner's own error
 handling already covers that).
+
+Default timeout is 30s rather than a tighter value: some sources (e.g.
+br-anac) build their response server-side before writing anything to the
+socket, so streaming doesn't save us from that server-side latency, and this
+runs on a non-blocking weekly schedule with no reason to hold flaky gov
+sites to a tight SLA.
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ def assert_url_reachable(
     runner_name: str,
     headers: dict | None = None,
     verify: bool = True,
-    timeout: float = 10,
+    timeout: float = 30,
 ) -> None:
     """Assert that `url` responds with a 2xx status to a streamed GET request.
 
