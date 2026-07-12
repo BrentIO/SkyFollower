@@ -25,6 +25,8 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: "**/requirements.txt"
 
       - name: Install dependencies
         run: |
@@ -35,4 +37,48 @@ jobs:
             | xargs -0 -I{} python -m pip install -r {}
 
       - name: Run runner URL tests
-        run: python -m pytest -q -m network
+        id: run_tests
+        continue-on-error: true
+        run: python -m pytest -q -m network --junit-xml=runner-url-results.xml
+
+      - name: Summarize results
+        # Reads the JUnit XML rather than duplicating each runner's URL/name
+        # (that data belongs to the tests, per #405) — one table row per
+        # runner classname, so a red run can be triaged from the Actions
+        # summary page without opening the full pytest log. See #427.
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("runner-url-results.xml")
+          rows = []
+          for testcase in tree.iter("testcase"):
+              classname = testcase.get("classname", "")
+              parts = classname.split(".")
+              runner = parts[1] if len(parts) > 1 and parts[0] == "data-runners" else classname
+
+              failure = testcase.find("failure")
+              if failure is None:
+                  rows.append((runner, "✅ pass", ""))
+                  continue
+
+              detail = failure.get("message", "")
+              for prefix in ("AssertionError: ", f"{runner}: "):
+                  if detail.startswith(prefix):
+                      detail = detail[len(prefix):]
+              rows.append((runner, "❌ fail", detail.replace("|", "\\|")))
+
+          rows.sort(key=lambda r: r[0])
+          passed = sum(1 for r in rows if r[1].startswith("✅"))
+
+          print(f"### 🏃 Runner URL Tests — {passed}/{len(rows)} passed\n")
+          print("| Runner | Status | Detail |")
+          print("|---|---|---|")
+          for runner, status, detail in rows:
+              print(f"| {runner} | {status} | {detail} |")
+          PY
+
+      - name: Fail job if any runner check failed
+        if: steps.run_tests.outcome == 'failure'
+        run: exit 1
