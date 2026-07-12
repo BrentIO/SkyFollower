@@ -832,7 +832,7 @@ sources:
     url: "https://ginfoapi.caa.co.uk"
     format: api
     cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no Redis dependency — runs independently of Mictronics; details payload also includes AircraftOperatedByAocHolder (commercial operator, can differ from owner) — intentionally not captured, only RegisteredAircraftOwners is tracked"
+    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no hard Redis dependency — runs independently of Mictronics and completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAOAircraftTypeDesignator against that mictronics-populated reference table to set aircraft.manufacturer_model and aircraft.wake_turbulence_category when found (independently — a type entry with only one of the two still sets that one); details payload also includes AircraftOperatedByAocHolder (commercial operator, can differ from owner) — intentionally not captured, only RegisteredAircraftOwners is tracked"
     endpoints:
       search:
         method: POST
@@ -2395,6 +2395,14 @@ records:
               - source: mictronics
                 file: types.json
                 field: "values[0]"
+              - source: uk-caa
+                endpoint: details
+                field: "AircraftDetails.ICAOAircraftTypeDesignator"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2693,6 +2701,14 @@ records:
                     "L": Light
                     "M/L": "Medium/Light"
                     "-": "Unknown/None"
+              - source: uk-caa
+                endpoint: details
+                field: "AircraftDetails.ICAOAircraftTypeDesignator"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object

@@ -13,6 +13,8 @@
 
 G-INFO has no bulk-export endpoint, so this runner enumerates the entire register itself: it POSTs `/api/aircraft/search` once for every 2-letter suffix combination from `AA` to `ZZ` (676 calls total, via `itertools.product`), then, for each result with `RegistrationStatus == "R"`, immediately calls `GET /api/aircraft/details/{id}` and writes the record — there is no intermediate accumulation. Search calls are not rate-limited; details calls sleep for `request_interval_seconds` between requests to be polite to the API. Any call that returns HTTP 403 is queued and retried once at a fixed 500ms interval after the main enumeration pass finishes. Lookup tables decode the API's free-text `AircraftClass` into canonical `aircraft.type`/`aircraft.category` values and full English country names into ISO 3166-1 alpha-2 codes, falling back to the raw source value for anything unmapped. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `wake_turbulence_category` are each set directly on this record (independently — a type entry with only one of the two still sets that one) — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the CAA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+
 **Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, a full run takes several hours. It is deliberately scheduled as the last runner of the day in `config/ofelia/config.ini.example` (`10 6 * * 1`, after `ourairports` at `10 5 * * 1`) to avoid overlapping with other Monday jobs.
 
 ## Columns
@@ -48,7 +50,7 @@ Fields below are grouped by the payload they come from: the `POST /api/aircraft/
 | `AircraftDetails.ICAO24BitAircraftAddress.Binary` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.ICAO24BitAircraftAddress.Octal` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.PopularName` | ❌ | Present in source; not read by this runner |
-| `AircraftDetails.ICAOAircraftTypeDesignator` | ✅ | → `aircraft.type_designator` |
+| `AircraftDetails.ICAOAircraftTypeDesignator` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.wake_turbulence_category` when found |
 | `AircraftDetails.AircraftClass` | ✅ | → `aircraft.type` / `aircraft.category` (decoded) |
 | `AircraftDetails.BuildCategory` | ❌ | Present in source; not read by this runner |
 | `AircraftDetails.EasaCategory` | ❌ | Present in source; not read by this runner |

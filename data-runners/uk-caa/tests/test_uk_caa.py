@@ -53,6 +53,7 @@ _decode_aircraft_category = _mod._decode_aircraft_category
 _decode_country = _mod._decode_country
 _parse_year_built = _mod._parse_year_built
 _build_record = _mod._build_record
+_apply_type_lookup = _mod._apply_type_lookup
 _search_by_prefix = _mod._search_by_prefix
 _get_aircraft_details = _mod._get_aircraft_details
 run_pipeline = _mod.run_pipeline
@@ -358,6 +359,95 @@ class TestBuildRecord:
 
 
 # ---------------------------------------------------------------------------
+# Tests: _apply_type_lookup
+# ---------------------------------------------------------------------------
+
+class TestApplyTypeLookup:
+    def _make_redis(self, type_doc=None) -> MagicMock:
+        r = MagicMock()
+        r.json.return_value.get.return_value = type_doc
+        return r
+
+    def test_designator_resolves_sets_manufacturer_model(self):
+        record = {"aircraft": {"type_designator": "SV4"}}
+        r = self._make_redis({"type_designator": "SV4", "manufacturer_model": "NORD SV-4"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["manufacturer_model"] == "NORD SV-4"
+
+    def test_designator_resolves_sets_wake_turbulence_category(self):
+        record = {"aircraft": {"type_designator": "B763"}}
+        r = self._make_redis({"manufacturer_model": "BOEING 767-332ER", "wake_turbulence_category": "Heavy"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["wake_turbulence_category"] == "Heavy"
+
+    def test_lookup_key_uses_type_designator(self):
+        record = {"aircraft": {"type_designator": "SV4"}}
+        r = self._make_redis({"manufacturer_model": "NORD SV-4"})
+        _apply_type_lookup(record, r)
+        r.json.return_value.get.assert_called_once_with("aircraft:type:SV4")
+
+    def test_write_happens_even_if_mictronics_manufacturer_model_already_present(self):
+        """This runner's own type_designator is authoritative — the lookup and
+        write happen regardless of whether Mictronics also has data for the
+        same hex; merge_aircraft.lua's registry-wins precedence handles it."""
+        record = {"aircraft": {"type_designator": "B763", "manufacturer_model": "STALE VALUE"}}
+        r = self._make_redis({"manufacturer_model": "BOEING 767-332ER"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["manufacturer_model"] == "BOEING 767-332ER"
+
+    def test_designator_not_found_leaves_fields_unset(self):
+        record = {"aircraft": {"type_designator": "ULAC"}}
+        r = self._make_redis(None)
+        _apply_type_lookup(record, r)
+        assert "manufacturer_model" not in record["aircraft"]
+        assert "wake_turbulence_category" not in record["aircraft"]
+
+    def test_no_type_designator_skips_lookup_entirely(self):
+        record = {"aircraft": {"model": "Some Model"}}
+        r = self._make_redis({"manufacturer_model": "SHOULD NOT BE USED", "wake_turbulence_category": "Heavy"})
+        _apply_type_lookup(record, r)
+        assert "manufacturer_model" not in record["aircraft"]
+        assert "wake_turbulence_category" not in record["aircraft"]
+        r.json.return_value.get.assert_not_called()
+
+    def test_no_aircraft_object_does_not_crash(self):
+        record = {"icao_hex": "406B48"}
+        r = self._make_redis({"manufacturer_model": "SHOULD NOT BE USED"})
+        _apply_type_lookup(record, r)
+        assert "aircraft" not in record
+
+    def test_redis_lookup_failure_degrades_gracefully(self):
+        """Reference table lookup failure is not a hard dependency — the
+        runner still completes successfully without it."""
+        record = {"aircraft": {"type_designator": "B789"}}
+        r = MagicMock()
+        r.json.return_value.get.side_effect = Exception("connection refused")
+        _apply_type_lookup(record, r)
+        assert "manufacturer_model" not in record["aircraft"]
+        assert "wake_turbulence_category" not in record["aircraft"]
+
+    def test_blank_manufacturer_model_in_type_doc_leaves_field_unset(self):
+        record = {"aircraft": {"type_designator": "XXXX"}}
+        r = self._make_redis({"manufacturer_model": "   "})
+        _apply_type_lookup(record, r)
+        assert "manufacturer_model" not in record["aircraft"]
+
+    def test_blank_wake_turbulence_category_in_type_doc_leaves_field_unset(self):
+        record = {"aircraft": {"type_designator": "XXXX"}}
+        r = self._make_redis({"manufacturer_model": "SOMETHING", "wake_turbulence_category": "   "})
+        _apply_type_lookup(record, r)
+        assert "wake_turbulence_category" not in record["aircraft"]
+
+    def test_manufacturer_model_and_wake_turbulence_category_independent(self):
+        """A type doc with only one of the two fields still sets that one."""
+        record = {"aircraft": {"type_designator": "XXXX"}}
+        r = self._make_redis({"wake_turbulence_category": "Light"})
+        _apply_type_lookup(record, r)
+        assert "manufacturer_model" not in record["aircraft"]
+        assert record["aircraft"]["wake_turbulence_category"] == "Light"
+
+
+# ---------------------------------------------------------------------------
 # Tests: _search_by_prefix
 # ---------------------------------------------------------------------------
 
@@ -432,6 +522,10 @@ class TestRunPipeline:
     def _make_redis(self) -> MagicMock:
         r = MagicMock()
         r.json.return_value = MagicMock()
+        # No aircraft:type match by default, so existing assertions on the
+        # written record aren't polluted by a MagicMock manufacturer_model
+        # value; tests that exercise the lookup override this explicitly.
+        r.json.return_value.get.return_value = None
         return r
 
     def _make_session(self, search_results: list, details: dict) -> MagicMock:
@@ -455,6 +549,19 @@ class TestRunPipeline:
         with patch("time.sleep"):
             run_pipeline(session, r, REDIS_TTL, 0.1)
         assert session.post.call_count == 676
+
+    def test_manufacturer_model_set_from_type_lookup_end_to_end(self):
+        r = self._make_redis()
+        r.json.return_value.get.return_value = {
+            "manufacturer_model": "BOEING 787-9 (Dreamliner)",
+            "wake_turbulence_category": "Heavy",
+        }
+        session = self._make_session(_SEARCH_RESULT, _make_details(type_designator="B789"))
+        with patch("time.sleep"):
+            run_pipeline(session, r, REDIS_TTL, 0.1)
+        written = r.json.return_value.set.call_args.args[2]
+        assert written["aircraft"]["manufacturer_model"] == "BOEING 787-9 (Dreamliner)"
+        assert written["aircraft"]["wake_turbulence_category"] == "Heavy"
 
     def test_includes_first_prefix_aa(self):
         r = self._make_redis()
