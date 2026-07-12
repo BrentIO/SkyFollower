@@ -191,7 +191,7 @@ def _parse_registrant(raw: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def _build_record(row: dict) -> Optional[dict]:
-    """Build the icao_hex:{hex} enrichment record from a BAZL CSV row."""
+    """Build the aircraft:registry:{icao_hex} enrichment record from a BAZL CSV row."""
     raw_hex = row.get(" Aircraft Address HEX", "").strip().upper()
     if len(raw_hex) != 6 or not all(c in "0123456789ABCDEF" for c in raw_hex):
         return None

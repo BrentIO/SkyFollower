@@ -54,7 +54,7 @@ environment:
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `icao_hex:{ICAO_HEX}` | Aircraft registration and type enrichment (read once per new flight) |
+| `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}` and `aircraft:registry:{icao_hex}` server-side and returns the deep-merged result (registry winning on any field overlap) in a single round-trip. |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
 | `flight:{IDENT}` | Origin/destination enrichment (read once per flight when ident is first seen) |
 | `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
