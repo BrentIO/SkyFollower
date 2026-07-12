@@ -38,6 +38,8 @@ def _load_main():
 
 _mod = _load_main()
 
+from shared.url_reachability import assert_url_reachable
+
 _cell_text = _mod._cell_text
 _read_row = _mod._read_row
 _clean_header = _mod._clean_header
@@ -635,3 +637,13 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/nl-ilt"
+
+
+# ---------------------------------------------------------------------------
+# Tests: network (real outbound HTTP call — see #405)
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    @pytest.mark.network
+    def test_url_reachable(self):
+        assert_url_reachable(_mod.INDEX_URL, "nl-ilt", headers={"User-Agent": "P5Software SkyFollower"})

@@ -35,6 +35,8 @@ def _load_main():
 
 _mod = _load_main()
 
+from shared.url_reachability import assert_url_reachable
+
 _fetch_active_ids = _mod._fetch_active_ids
 _fetch_detail = _mod._fetch_detail
 _first_display_name = _mod._first_display_name
@@ -699,3 +701,13 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/cz-caa"
+
+
+# ---------------------------------------------------------------------------
+# Tests: network (real outbound HTTP call — see #405)
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    @pytest.mark.network
+    def test_url_reachable(self):
+        assert_url_reachable(_mod._LIST_URL, "cz-caa", headers={"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"})

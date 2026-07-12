@@ -1,0 +1,38 @@
+name: 🏃 Runner URL Tests
+run-name: "Runner URL Tests ${{ github.ref_name }}"
+
+# Runs only @pytest.mark.network tests — real outbound HTTP HEAD checks
+# against each data runner's source URL (see #405). Deliberately excluded
+# from run-tests.yaml's per-PR run since a government site being briefly
+# down, slow, or geo-blocking GitHub's US-hosted runners shouldn't fail
+# every PR. Runs on demand and weekly instead.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "10 4 * * 1" # weekly, Monday 04:10 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+          find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0 \
+            | xargs -0 -I{} python -m pip install -r {}
+
+      - name: Run runner URL tests
+        run: python -m pytest -q -m network

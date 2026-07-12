@@ -36,6 +36,8 @@ def _load_main():
 
 _mod = _load_main()
 
+from shared.url_reachability import assert_url_reachable
+
 _discover_xlsx_url = _mod._discover_xlsx_url
 download_and_parse = _mod.download_and_parse
 _build_record = _mod._build_record
@@ -467,3 +469,13 @@ class TestWriteToRedis:
         written = set_call[0][2]
         assert "model" not in written["aircraft"]
         assert "type" not in written["aircraft"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: network (real outbound HTTP call — see #405)
+# ---------------------------------------------------------------------------
+
+class TestNetwork:
+    @pytest.mark.network
+    def test_url_reachable(self):
+        assert_url_reachable(_mod._INDEX_URL, "bg-caa", headers={"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"})
