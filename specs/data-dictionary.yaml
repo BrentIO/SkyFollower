@@ -207,7 +207,7 @@ sources:
     url: "https://www.ilent.nl/documenten/lijsten/luchtvaart/databestanden/luchtvaartregister-data"
     format: ods
     cadence: weekly_thursday
-    notes: "ODS (OpenDocument Spreadsheet) parsed with odfpy; URL is date-stamped and changes monthly — runner scrapes the ILT index page to discover the current link; ~3,225 records with valid ICAO hex; row 0 = annotated headers (bracket annotations stripped), row 1 = informational text (skipped), row 2+ = data; cells may carry numbercolumnsrepeated attribute — must be expanded to avoid column misalignment; ICAO hex is published directly in X-Ponder column so no RediSearch reverse-lookup required; no owner/registrant data published; filter rows where X-Ponder is not a valid 6-char hex (covers deregistered records); EngManufacturer='Unknown' and EngModel containing 'not further defined' are omitted"
+    notes: "ODS (OpenDocument Spreadsheet) parsed with odfpy; URL is date-stamped and changes monthly — runner scrapes the ILT index page to discover the current link; ~3,225 records with valid ICAO hex; row 0 = annotated headers (bracket annotations stripped), row 1 = informational text (skipped), row 2+ = data; cells may carry numbercolumnsrepeated attribute — must be expanded to avoid column misalignment; ICAO hex is published directly in X-Ponder column so no RediSearch reverse-lookup required; no owner/registrant data published; filter rows where X-Ponder is not a valid 6-char hex (covers deregistered records); EngManufacturer='Unknown' and EngModel containing 'not further defined' are omitted; no hard Redis dependency — runs independently of Mictronics and completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAO-code against that mictronics-populated reference table to set aircraft.manufacturer_model and aircraft.wake_turbulence_category when found (independently — a type entry with only one of the two still sets that one)"
     files:
       - name: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
         format: ods
@@ -2403,6 +2403,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: "ICAO-code"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: manufacturer_model
+                  description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           serial_number:
             type: string
@@ -2709,6 +2717,14 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: nl-ilt
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: "ICAO-code"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: wake_turbulence_category
+                  description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
           powerplant:
             type: object
