@@ -1,4 +1,8 @@
 import { defineConfig } from "vitepress";
+import { discoverComponents, discoverRunners } from "../scripts/discover.mjs";
+
+const components = discoverComponents();
+const runners = discoverRunners();
 
 export default defineConfig({
   title: "SkyFollower",
@@ -11,6 +15,7 @@ export default defineConfig({
       { text: "Deployment", link: "/deployment/" },
       { text: "Architecture", link: "/architecture/" },
       { text: "Components", link: "/components/" },
+      { text: "Data Runners", link: "/data-runners/" },
       { text: "Specs", link: "/specs/" },
     ],
 
@@ -24,11 +29,29 @@ export default defineConfig({
         ],
       },
       {
-        text: "Reference",
+        text: "Components",
         items: [
-          { text: "Components", link: "/components/" },
-          { text: "Specs", link: "/specs/" },
+          { text: "Overview", link: "/components/" },
+          ...components.map((component) => ({
+            text: component.title,
+            link: `/components/${component.name}`,
+          })),
         ],
+      },
+      {
+        text: "Data Runners",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/data-runners/" },
+          ...runners.map((runner) => ({
+            text: runner.title,
+            link: `/data-runners/${runner.name}`,
+          })),
+        ],
+      },
+      {
+        text: "Reference",
+        items: [{ text: "Specs", link: "/specs/" }],
       },
     ],
 
