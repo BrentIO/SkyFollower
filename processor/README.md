@@ -54,7 +54,7 @@ environment:
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `aircraft:mictronics:{ICAO_HEX}` + `aircraft:registry:{ICAO_HEX}` | Aircraft registration and type enrichment (read once per new flight); both keys deep-merged server-side in a single EVALSHA round-trip via `shared/lua/merge_aircraft.lua`, registry winning on any field overlap |
+| `aircraft:mictronics:{ICAO_HEX}` + `aircraft:registry:{ICAO_HEX}` | Aircraft registration and type enrichment (read once per new flight); the processor calls `shared/lua/merge_aircraft.lua` via `EVALSHA` (loaded once at startup), which deep-merges both keys server-side in a single round-trip, registry winning on any field overlap |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
 | `flight:{IDENT}` | Origin/destination enrichment (read once per flight when ident is first seen) |
 | `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
