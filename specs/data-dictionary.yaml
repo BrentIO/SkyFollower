@@ -3217,6 +3217,14 @@ records:
       origin:
         type: object
         description: "Departure airport enrichment; full object during processing; ICAO code string on persist"
+        ref: airport
+        ref_note: >
+          Field definitions (iata_code, name, city, region, country,
+          latitude, longitude, phonic) are shared with records.airport — see
+          that record for the full property list and ourairports sources.
+          Only icao_code is documented here, since it identifies which
+          airport record to look up and is itself sourced from flight-
+          specific data, not ourairports.
         persisted: true
         persist_as:
           type: string
@@ -3230,50 +3238,18 @@ records:
               - source: flightaware
               - source: standing-data
                 file: routes
-          iata_code:
-            type: string
-            description: "IATA 3-character airport code"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iata_code
-          name:
-            type: string
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: name
-          city:
-            type: string
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: municipality
-          administrative_area:
-            type: string
-            description: "ISO 3166-2 subdivision code (e.g. US-FL)"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iso_region
-          country:
-            type: string
-            description: "ISO 3166-1 alpha-2 country code"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iso_country
-          phonic:
-            type: string
-            description: "Spoken/phonetic airport name for TTS notifications"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
       destination:
         type: object
         description: "Arrival airport enrichment; full object during processing; ICAO code string on persist"
+        ref: airport
+        ref_note: >
+          Field definitions (iata_code, name, city, region, country,
+          latitude, longitude, phonic) are shared with records.airport — see
+          that record for the full property list and ourairports sources.
+          Only icao_code is documented here, since it identifies which
+          airport record to look up and is itself sourced from flight-
+          specific data, not ourairports.
         persisted: true
         persist_as:
           type: string
@@ -3287,46 +3263,6 @@ records:
               - source: flightaware
               - source: standing-data
                 file: routes
-          iata_code:
-            type: string
-            description: "IATA 3-character airport code"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iata_code
-          name:
-            type: string
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: name
-          city:
-            type: string
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: municipality
-          administrative_area:
-            type: string
-            description: "ISO 3166-2 subdivision code (e.g. US-GA)"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iso_region
-          country:
-            type: string
-            description: "ISO 3166-1 alpha-2 country code"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                field: iso_country
-          phonic:
-            type: string
-            description: "Spoken/phonetic airport name for TTS notifications"
-            sources:
-              - source: ourairports
-                file: airports.csv
-                description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
       matched_rules:
         type: "array[string]"
@@ -3384,4 +3320,84 @@ records:
             description: "Vertical speed in feet per minute; negative = descending"
             sources:
               - source: processor
+
+  airport:
+    description: >
+      Airport metadata record, written and updated continuously by the
+      ourairports runner independent of any specific flight. Looked up by
+      ICAO code — via records.flight.fields.origin/destination for a
+      completed flight, or directly for future airport-lookup UI features —
+      through the idx:airport RediSearch index (icao_code, iata_code
+      TagFields).
+    storage: Redis
+    redis_key: "airport:{icao_code}"
+    fields:
+      icao_code:
+        type: string
+        description: "ICAO 4-character airport code; primary key"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: ident
+      iata_code:
+        type: string
+        description: "IATA 3-character airport code; omitted from record if blank"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: iata_code
+      name:
+        type: string
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: name
+      city:
+        type: string
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: municipality
+      region:
+        type: string
+        description: "ISO 3166-2 subdivision code (e.g. US-FL)"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: iso_region
+      country:
+        type: string
+        description: "ISO 3166-1 alpha-2 country code"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: iso_country
+      latitude:
+        type: float
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: latitude_deg
+      longitude:
+        type: float
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: longitude_deg
+      phonic:
+        type: string
+        description: "Spoken/phonetic airport name for TTS notifications"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
