@@ -7,6 +7,16 @@
 # provides a non-null value wins, unless merge_strategy is overridden for
 # that field.
 #
+# Computed fallback fields: some fields may be synthesized at read time from
+# other fields already present on the merged record when no source provides
+# them directly — distinct from the normal per-field sources[] priority list
+# above, since the fallback is computed in shared/lua/merge_aircraft.lua, not
+# written by any runner. manufacturer_model is the first instance of this
+# pattern (see aircraft.manufacturer_model below): when absent after the
+# mictronics/registry merge, it is composed from aircraft.manufacturer /
+# aircraft.model, whichever are present. The computed value is never written
+# back to Redis, so it self-heals the moment a real source value appears.
+#
 # persisted: true  (default) — field is written to the S3 archive record.
 # persisted: false — field is used during processing only; omitted on persist.
 #
@@ -2373,7 +2383,13 @@ records:
 
           manufacturer_model:
             type: string
-            description: "Combined manufacturer + model string from Mictronics types (e.g. BOEING 757-200)"
+            description: >
+              Combined manufacturer + model string from Mictronics types
+              (e.g. BOEING 757-200). If absent after the mictronics/registry
+              merge, shared/lua/merge_aircraft.lua synthesizes it at read
+              time from aircraft.manufacturer / aircraft.model — see the
+              "Computed fallback fields" note near the top of this file. The
+              computed value is never written back to Redis.
             persisted: true
             sources:
               - source: mictronics
