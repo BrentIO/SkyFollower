@@ -89,15 +89,13 @@ def _make_merged_row(
     model="Boeing 737-800",
     serial="12345",
     year="2005",
-    operator="Georgian Airways",
-    owner="",
+    owner="Own Co",
 ) -> dict:
     return {
         "registration": registration,
         "model": model,
         "serial": serial,
         "year": year,
-        "operator": operator,
         "owner": owner,
     }
 
@@ -212,11 +210,11 @@ class TestDownloadAndParse:
         records = download_and_parse(session)
         assert len(records) == 1
         r = records[0]
-        assert r["operator"] == "Op Co"
         assert r["owner"] == "Own Co"
         assert r["registration"] == "4L-AAA"
+        assert "operator" not in r
 
-    def test_operator_only_aircraft_included(self):
+    def test_operator_only_row_has_no_owner_and_no_operator_key(self):
         html = _page_html(
             [_data_row(registration="4L-AAA")],
             [],
@@ -226,6 +224,7 @@ class TestDownloadAndParse:
         records = download_and_parse(session)
         assert len(records) == 1
         assert records[0]["owner"] == ""
+        assert "operator" not in records[0]
 
     def test_owner_only_aircraft_included(self):
         html = _page_html(
@@ -236,8 +235,8 @@ class TestDownloadAndParse:
         session.get.return_value = _make_response(html)
         records = download_and_parse(session)
         assert len(records) == 1
-        assert records[0]["operator"] == ""
         assert records[0]["owner"] == "Own Co"
+        assert "operator" not in records[0]
 
     def test_model_from_table2_when_table1_empty_model(self):
         html = _page_html(
@@ -266,7 +265,7 @@ class TestDownloadAndParse:
 # ---------------------------------------------------------------------------
 
 class TestBuildRecord:
-    def test_full_record_with_operator_and_owner(self):
+    def test_full_record_with_owner(self):
         row = _make_merged_row(owner="Own Co")
         record = _build_record(row, "4A1234", "4L-GAA")
         assert record["icao_hex"] == "4A1234"
@@ -276,22 +275,26 @@ class TestBuildRecord:
         assert record["aircraft"]["model"] == "Boeing 737-800"
         assert record["aircraft"]["serial_number"] == "12345"
         assert record["aircraft"]["manufactured_date"] == "2005-01-01"
-        assert record["registrant"]["names"] == ["Georgian Airways", "Own Co"]
+        assert record["registrant"]["names"] == ["Own Co"]
 
-    def test_owner_omitted_when_same_as_operator(self):
-        row = _make_merged_row(operator="Same Co", owner="Same Co")
-        record = _build_record(row, "4A1234", "4L-GAA")
-        assert record["registrant"]["names"] == ["Same Co"]
-
-    def test_only_owner_when_no_operator(self):
-        row = _make_merged_row(operator="", owner="Own Co")
+    def test_operator_value_ignored_even_if_present_on_row(self):
+        row = _make_merged_row(owner="Own Co")
+        row["operator"] = "Op Co"  # simulates stray key; must never surface in names
         record = _build_record(row, "4A1234", "4L-GAA")
         assert record["registrant"]["names"] == ["Own Co"]
 
-    def test_no_registrant_when_no_parties(self):
-        row = _make_merged_row(operator="", owner="")
+    def test_no_registrant_when_no_owner(self):
+        row = _make_merged_row(owner="")
         record = _build_record(row, "4A1234", "4L-GAA")
         assert "registrant" not in record
+
+    def test_operator_only_row_produces_no_names(self):
+        """A row from an operator-only table_1 entry (no matching table_2 owner)
+        must not silently fall back to using the operator name."""
+        row = {"registration": "4L-AAA", "model": "Boeing 737", "serial": "1", "year": "2005", "owner": ""}
+        record = _build_record(row, "4A1234", "4L-AAA")
+        assert "registrant" not in record
+        assert record["aircraft"]["model"] == "Boeing 737"
 
     def test_year_stored_as_date(self):
         row = _make_merged_row(year="1998")

@@ -19,8 +19,9 @@ Table columns (0-based; identical layout in both tables):
 Merge logic:
   - aircraft.model and aircraft.serial_number: from whichever table provides them
   - aircraft.manufactured_date: from whichever table provides the year
-  - registrant.names[0]: operator (table_1 col 0)
-  - registrant.names[1]: owner (table_2 col 0), omitted if identical to operator
+  - registrant.names[0]: owner (table_2 col 0) only; table_1 (operator) is still
+    fetched and parsed for its aircraft fields, but its party column is never
+    used for registrant.names
 
 Data source: https://gcaa.ge/civil-aircraft-register/
 """
@@ -126,7 +127,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             "model": row["model"],
             "serial": row["serial"],
             "year": row["year"],
-            "operator": row["party"],
             "owner": "",
         }
 
@@ -147,7 +147,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                 "model": row["model"],
                 "serial": row["serial"],
                 "year": row["year"],
-                "operator": "",
                 "owner": row["party"],
             }
 
@@ -179,13 +178,10 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         if 1900 <= y <= 2100:
             aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
-    operator = _WHITESPACE_RE.sub(" ", row.get("operator", "").strip())
     owner = _WHITESPACE_RE.sub(" ", row.get("owner", "").strip())
 
     names: list[str] = []
-    if operator:
-        names.append(operator)
-    if owner and owner != operator:
+    if owner:
         names.append(owner)
     if names:
         registrant_fields["names"] = names
