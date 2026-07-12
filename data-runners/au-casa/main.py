@@ -42,6 +42,7 @@ from shared.redis_keys import (
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
     aircraft_registry_key,
     aircraft_mictronics_key,
+    aircraft_type_key,
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
@@ -267,6 +268,38 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
+def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
+    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
+    and set aircraft.manufacturer_model / aircraft.wake_turbulence_category when found.
+
+    Unconditional: this runner's own type_designator is sourced directly from CASA
+    and is authoritative, so the lookup happens regardless of whether Mictronics
+    also has data for the same hex — merge_aircraft.lua's "registry wins over
+    mictronics" precedence rule already guarantees this value takes priority at read
+    time. The reference table is not a hard dependency: a lookup failure or a missing
+    entry leaves the record exactly as _build_record produced it.
+    """
+    aircraft = record.get("aircraft")
+    if not aircraft:
+        return
+    type_designator = aircraft.get("type_designator")
+    if not type_designator:
+        return
+    try:
+        type_doc = r.json().get(aircraft_type_key(type_designator))
+    except Exception as exc:
+        logger.warning("aircraft:type lookup failed for %s: %s", type_designator, exc)
+        return
+    if not type_doc:
+        return
+    manufacturer_model = (type_doc.get("manufacturer_model") or "").strip()
+    if manufacturer_model:
+        aircraft["manufacturer_model"] = manufacturer_model
+    wake_turbulence_category = (type_doc.get("wake_turbulence_category") or "").strip()
+    if wake_turbulence_category:
+        aircraft["wake_turbulence_category"] = wake_turbulence_category
+
+
 # ---------------------------------------------------------------------------
 # Search index
 # ---------------------------------------------------------------------------
@@ -398,6 +431,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             continue
 
         record = _build_record(row, icao_hex, registration)
+        _apply_type_lookup(record, r)
         record["source"] = "au-casa"
 
         set_json(pipe, aircraft_registry_key(icao_hex), record)
