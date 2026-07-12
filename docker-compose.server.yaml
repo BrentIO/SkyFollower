@@ -87,8 +87,8 @@ services:
   #
   # To initialise before first scheduled run:
   #   docker compose -f docker-compose.server.yaml --profile runners up --no-start
-  # To run a runner manually:
-  #   docker compose -f docker-compose.server.yaml run --rm runner-ourairports
+  # To run a runner manually, or bulk-load every runner once on a fresh
+  # install (mictronics first, then the rest), see README.md's Quick Start.
   # ---------------------------------------------------------------------------
 
   runner-standing-data:

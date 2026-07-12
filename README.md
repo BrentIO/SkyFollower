@@ -91,9 +91,24 @@ docker compose -f docker-compose.processor.yaml up -d
 docker compose -f docker-compose.archive.yaml up -d
 ```
 
-To run a data runner manually (e.g. for a first-time import):
+To run a single data runner manually (e.g. for a first-time import):
 ```bash
 docker compose -f docker-compose.server.yaml run --rm runner-ourairports
+```
+
+To bulk-load *every* runner once (e.g. right after install, so Redis isn't
+empty until each runner's first scheduled `ofelia` run — up to a week away
+for weekly runners). `mictronics` goes first since most country runners
+resolve `icao_hex` against its RediSearch index; the rest follow
+alphabetically. The runner list comes from `docker compose config` itself,
+not a separate list, so it's always accurate for whatever's actually
+declared in `docker-compose.server.yaml` (see #322):
+```bash
+docker compose -f docker-compose.server.yaml run --rm runner-mictronics
+for svc in $(docker compose -f docker-compose.server.yaml config --services \
+    | grep '^runner-' | grep -v '^runner-mictronics$' | sort); do
+  docker compose -f docker-compose.server.yaml run --rm "$svc"
+done
 ```
 
 ## Components
