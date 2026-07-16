@@ -30,11 +30,6 @@ once S3 reconnects.
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `archive.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
-> **Note:** `config/archive/settings.json.example` currently has a `s3` key
-> (`bucket`, `region`, `access_key`, `secret_key`) instead of the `aws` key
-> the code above actually reads — the example does not match the code. This
-> is a pre-existing gap, tracked separately from this README.
-
 ## Consuming from RabbitMQ
 
 The archive processor declares and consumes from a single durable queue

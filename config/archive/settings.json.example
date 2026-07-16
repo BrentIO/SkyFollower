@@ -15,11 +15,11 @@
         "username": "change_me",
         "password": "change_me"
     },
-    "s3": {
+    "aws": {
         "bucket": "your-bucket-name",
         "region": "us-east-1",
-        "access_key": "change_me",
-        "secret_key": "change_me"
+        "access_key_id": "change_me",
+        "secret_access_key": "change_me"
     },
     "telemetry_interval_seconds": 30,
     "data_dir": "/app/data",
