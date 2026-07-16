@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:generate": "node scripts/generate-pages.mjs",
+    "docs:generate": "node scripts/generate-pages.mjs && node scripts/bundle-specs.mjs",
     "predocs:dev": "npm run docs:generate",
     "docs:dev": "vitepress dev",
     "predocs:build": "npm run docs:generate",
@@ -11,6 +11,7 @@
     "docs:preview": "vitepress preview"
   },
   "devDependencies": {
+    "@asyncapi/web-component": "^3.1.4",
     "vitepress": "^1.6.4"
   }
 }
