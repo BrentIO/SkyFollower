@@ -1,4 +1,4 @@
-# shared
+# Shared Data Models
 
 The `shared` package contains the Pydantic data models and Redis key name
 functions used by all SkyFollower components. Keeping these in one place

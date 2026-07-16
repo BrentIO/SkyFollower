@@ -55,23 +55,15 @@ function rewriteReadmeLinks(content) {
   });
 }
 
-// frontmatterTitle overrides the page's <title>/nav title without touching
-// the rendered body — used so a component page's browser-tab title matches
-// its sidebar label (see #454) instead of the README's own H1 wording
-// (e.g. "SkyFollower Archive Processor", or just "shared").
-function writePage(relPath, sourceReadmePath, frontmatterTitle) {
+function writePage(relPath, sourceReadmePath) {
   const target = join(DOCS_ROOT, relPath);
   mkdirSync(dirname(target), { recursive: true });
   const raw = readFileSync(sourceReadmePath, "utf-8");
-  const content = rewriteReadmeLinks(raw);
-  const output = frontmatterTitle
-    ? `---\ntitle: ${JSON.stringify(frontmatterTitle)}\n---\n\n${content}`
-    : content;
-  writeFileSync(target, output);
+  writeFileSync(target, rewriteReadmeLinks(raw));
 }
 
 for (const component of components) {
-  writePage(`components/${component.name}.md`, component.readmePath, component.sidebarLabel);
+  writePage(`components/${component.name}.md`, component.readmePath);
 }
 
 rmSync(join(DOCS_ROOT, "data-runners"), { recursive: true, force: true });

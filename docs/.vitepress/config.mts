@@ -48,7 +48,7 @@ export default defineConfig({
         items: [
           { text: "Overview", link: "/components/" },
           ...deployableComponents.map((component) => ({
-            text: component.sidebarLabel,
+            text: component.title,
             link: `/components/${component.name}`,
           })),
         ],
@@ -74,7 +74,7 @@ export default defineConfig({
               { text: "OpenAPI", link: "/specs/openapi" },
             ],
           },
-          { text: sharedComponent.sidebarLabel, link: `/components/${sharedComponent.name}` },
+          { text: sharedComponent.title, link: `/components/${sharedComponent.name}` },
         ],
       },
     ],
