@@ -15,7 +15,7 @@
         "username": "change_me",
         "password": "change_me"
     },
-    "aws": {
+    "s3": {
         "bucket": "your-bucket-name",
         "region": "us-east-1",
         "access_key_id": "change_me",
