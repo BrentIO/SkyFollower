@@ -22,18 +22,13 @@ once S3 reconnects.
 | `mqtt.port` | integer | `1883` | MQTT broker port |
 | `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `mqtt.password` | string | — | MQTT password |
-| `aws.access_key_id` | string | — | AWS access key ID |
-| `aws.secret_access_key` | string | — | AWS secret access key |
-| `aws.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
-| `aws.bucket` | string | — | S3 bucket name flights are written to |
+| `s3.access_key_id` | string | — | AWS access key ID |
+| `s3.secret_access_key` | string | — | AWS secret access key |
+| `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
+| `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `archive.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
-
-> **Note:** `config/archive/settings.json.example` currently has a `s3` key
-> (`bucket`, `region`, `access_key`, `secret_key`) instead of the `aws` key
-> the code above actually reads — the example does not match the code. This
-> is a pre-existing gap, tracked separately from this README.
 
 ## Consuming from RabbitMQ
 

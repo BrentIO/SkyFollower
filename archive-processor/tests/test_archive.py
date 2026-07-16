@@ -321,8 +321,8 @@ class TestRedisCounterIncrements:
         from archive_processor.main import ArchiveProcessor
 
         config = {
-            "aws": {"region": "us-east-1", "bucket": "test-bucket",
-                    "access_key_id": "x", "secret_access_key": "x"},
+            "s3": {"region": "us-east-1", "bucket": "test-bucket",
+                   "access_key_id": "x", "secret_access_key": "x"},
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "redis": {"host": "localhost"},
             "mqtt": None,
