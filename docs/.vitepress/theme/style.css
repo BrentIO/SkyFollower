@@ -1,0 +1,16 @@
+/**
+ * Layout: wider content area
+ * -------------------------------------------------------------------------- *
+ * VitePress's default ~688px reading-width column is too narrow for wide
+ * content — Markdown tables in the component/runner READMEs, and especially
+ * the AsyncAPI/OpenAPI spec viewers. Widen it site-wide (same fix used by
+ * FireFly-Docs).
+ */
+
+:root {
+  --vp-layout-max-width: 100%;
+}
+
+.VPDoc .content-container {
+  max-width: 100% !important;
+}

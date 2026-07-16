@@ -2,7 +2,7 @@
 import AsyncApiViewer from "./AsyncApiViewer.vue";
 </script>
 
-# AsyncAPI
+# MQTT Reference
 
 Every MQTT topic published by the receiver, processor, archive processor, and
 rule notifications — rendered interactively from

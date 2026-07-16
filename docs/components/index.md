@@ -11,4 +11,4 @@ these map onto hosts and Docker Compose files.
 Data runners (registration, operator, and airport data sources) have their
 own section — see [Data Runners](/data-runners/). The [Shared Data
 Models](/components/shared) library used by every component above is listed
-under [Reference](/specs/).
+under Reference in the sidebar.
