@@ -56,8 +56,17 @@ watch(isDark, (dark) => applyTheme(dark));
 </script>
 
 <template>
+  <!--
+    .attr forces these to be set as real HTML attributes rather than DOM
+    properties. Without it, Vue's custom-element interop can set them as
+    properties depending on exactly when the dynamically-loaded web
+    component upgrades the element — the component reads its config via
+    getAttribute(), so a property-only assignment is silently invisible to
+    it, and it falls back to a relative default path that 404s under this
+    site's /SkyFollower/ base. Intermittent in practice, not deterministic.
+  -->
   <asyncapi-component
-    :schemaUrl="withBase('/asyncapi/asyncapi.yaml')"
-    :cssImportPath="withBase('/asyncapi/default.min.css')"
+    :schemaUrl.attr="withBase('/asyncapi/asyncapi.yaml')"
+    :cssImportPath.attr="withBase('/asyncapi/default.min.css')"
   />
 </template>
