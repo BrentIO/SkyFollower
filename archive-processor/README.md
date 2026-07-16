@@ -40,7 +40,7 @@ once S3 reconnects.
 The archive processor declares and consumes from a single durable queue
 named `archive` (`prefetch_count=1`, manual ack). This is the queue the
 message processor publishes completed flights to — see
-[processor/README.md](https://github.com/BrentIO/SkyFollower/blob/main/processor/README.md).
+[processor/README.md](https://brentio.github.io/SkyFollower/components/processor).
 A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
 loops.
@@ -58,7 +58,7 @@ flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
 - `{uuid}` — the flight's `_id` (UUID-v7)
 
 The object body is the completed flight record (see
-[shared/README.md](https://github.com/BrentIO/SkyFollower/blob/main/shared/README.md)
+[shared/README.md](https://brentio.github.io/SkyFollower/components/shared)
 for `CompletedFlight`) with one addition: a `flight_path` GeoJSON `Feature`
 built from `positions`. Each
 coordinate is `[lon, lat, alt_ft]` when altitude is known (interpolated

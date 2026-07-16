@@ -160,11 +160,11 @@ on the host. Example files for every component are in `config/`:
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
 <!-- #endregion configuration -->
 
-See the component READMEs for the full list of settings fields:
+See the component docs for the full list of settings fields:
 
-- [receiver/README.md](receiver/README.md)
-- [processor/README.md](processor/README.md)
-- [data-runners/README.md](data-runners/README.md) — logging convention, plus per-runner READMEs (e.g. [data-runners/ourairports/README.md](data-runners/ourairports/README.md))
+- [Receiver](https://brentio.github.io/SkyFollower/components/receiver)
+- [Processor](https://brentio.github.io/SkyFollower/components/processor)
+- [Data Runners](https://brentio.github.io/SkyFollower/data-runners/) — logging convention, plus per-runner pages (e.g. [ourairports](https://brentio.github.io/SkyFollower/data-runners/ourairports))
 
 ## Scaling Processors
 
@@ -228,7 +228,7 @@ Available condition types: `altitude`, `heading`, `velocity`, `vertical_speed`,
 `aircraft_type_designator`, `aircraft_registration`, `aircraft_icao_hex`,
 `aircraft_powerplant_count`, `wake_turbulence_category`, `matched_rules`.
 
-See `processor/README.md` for operator and constraint details.
+See the [Processor docs](https://brentio.github.io/SkyFollower/components/processor) for operator and constraint details.
 
 ## Areas
 
