@@ -4,6 +4,11 @@ import { discoverComponents, discoverRunners } from "../scripts/discover.mjs";
 const components = discoverComponents();
 const runners = discoverRunners();
 
+// `shared` is a library, not a deployable component — it keeps its
+// /components/shared URL but is listed under "Reference" in the sidebar.
+const deployableComponents = components.filter((component) => component.name !== "shared");
+const sharedComponent = components.find((component) => component.name === "shared");
+
 export default defineConfig({
   title: "SkyFollower",
   description: "Documentation for the SkyFollower ADS-B tracking system",
@@ -43,8 +48,8 @@ export default defineConfig({
         text: "Components",
         items: [
           { text: "Overview", link: "/components/" },
-          ...components.map((component) => ({
-            text: component.title,
+          ...deployableComponents.map((component) => ({
+            text: component.sidebarLabel,
             link: `/components/${component.name}`,
           })),
         ],
@@ -71,6 +76,7 @@ export default defineConfig({
               { text: "OpenAPI", link: "/specs/openapi" },
             ],
           },
+          { text: sharedComponent.sidebarLabel, link: `/components/${sharedComponent.name}` },
         ],
       },
     ],

@@ -22,25 +22,20 @@ once S3 reconnects.
 | `mqtt.port` | integer | `1883` | MQTT broker port |
 | `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `mqtt.password` | string | — | MQTT password |
-| `aws.access_key_id` | string | — | AWS access key ID |
-| `aws.secret_access_key` | string | — | AWS secret access key |
-| `aws.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
-| `aws.bucket` | string | — | S3 bucket name flights are written to |
+| `s3.access_key_id` | string | — | AWS access key ID |
+| `s3.secret_access_key` | string | — | AWS secret access key |
+| `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
+| `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `archive.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
-
-> **Note:** `config/archive/settings.json.example` currently has a `s3` key
-> (`bucket`, `region`, `access_key`, `secret_key`) instead of the `aws` key
-> the code above actually reads — the example does not match the code. This
-> is a pre-existing gap, tracked separately from this README.
 
 ## Consuming from RabbitMQ
 
 The archive processor declares and consumes from a single durable queue
 named `archive` (`prefetch_count=1`, manual ack). This is the queue the
 message processor publishes completed flights to — see
-[processor/README.md](https://github.com/BrentIO/SkyFollower/blob/main/processor/README.md).
+[processor/README.md](../processor/README.md).
 A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
 loops.
@@ -58,7 +53,7 @@ flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
 - `{uuid}` — the flight's `_id` (UUID-v7)
 
 The object body is the completed flight record (see
-[shared/README.md](https://github.com/BrentIO/SkyFollower/blob/main/shared/README.md)
+[shared/README.md](../shared/README.md)
 for `CompletedFlight`) with one addition: a `flight_path` GeoJSON `Feature`
 built from `positions`. Each
 coordinate is `[lon, lat, alt_ft]` when altitude is known (interpolated

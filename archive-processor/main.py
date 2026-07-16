@@ -313,12 +313,12 @@ class ArchiveProcessor:
     # ------------------------------------------------------------------
 
     def _connect_s3(self) -> None:
-        aws = self._cfg.get("aws", {})
+        s3_cfg = self._cfg.get("s3", {})
         try:
             session = boto3.Session(
-                aws_access_key_id=aws.get("access_key_id"),
-                aws_secret_access_key=aws.get("secret_access_key"),
-                region_name=aws.get("region", "us-east-1"),
+                aws_access_key_id=s3_cfg.get("access_key_id"),
+                aws_secret_access_key=s3_cfg.get("secret_access_key"),
+                region_name=s3_cfg.get("region", "us-east-1"),
             )
             client = session.client("s3")
             # Quick connectivity check
@@ -349,8 +349,8 @@ class ArchiveProcessor:
                     ).start()
 
     def _write_to_s3(self, flight: CompletedFlight, payload_bytes: bytes, s3_key: str) -> None:
-        aws = self._cfg.get("aws", {})
-        bucket = aws.get("bucket", "")
+        s3_cfg = self._cfg.get("s3", {})
+        bucket = s3_cfg.get("bucket", "")
         with self._s3_lock:
             client = self._s3_client
         client.put_object(
