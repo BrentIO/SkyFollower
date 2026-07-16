@@ -9,6 +9,17 @@ export default defineConfig({
   description: "Documentation for the SkyFollower ADS-B tracking system",
   base: "/SkyFollower/",
 
+  vue: {
+    template: {
+      compilerOptions: {
+        // @asyncapi/web-component registers this as a native custom element
+        // at runtime (see docs/specs/AsyncApiViewer.vue) — tell Vue's
+        // compiler not to try to resolve it as a component.
+        isCustomElement: (tag) => tag === "asyncapi-component",
+      },
+    },
+  },
+
   themeConfig: {
     nav: [
       { text: "Getting Started", link: "/getting-started/" },
@@ -51,7 +62,16 @@ export default defineConfig({
       },
       {
         text: "Reference",
-        items: [{ text: "Specs", link: "/specs/" }],
+        items: [
+          {
+            text: "Specs",
+            link: "/specs/",
+            items: [
+              { text: "AsyncAPI", link: "/specs/asyncapi" },
+              { text: "OpenAPI", link: "/specs/openapi" },
+            ],
+          },
+        ],
       },
     ],
 
