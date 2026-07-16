@@ -7,7 +7,8 @@ these map onto hosts and Docker Compose files.
 - [Receiver](/components/receiver) — connects to readsb, tags and routes raw ADS-B messages to RabbitMQ
 - [Processor](/components/processor) — flight state, enrichment, rules engine, MQTT notifications
 - [Archive Processor](/components/archive-processor) — writes completed flights to S3 with a local Parquet index
-- [Shared](/components/shared) — Pydantic models and Redis key functions used by every component above
 
 Data runners (registration, operator, and airport data sources) have their
-own section — see [Data Runners](/data-runners/).
+own section — see [Data Runners](/data-runners/). The [Shared Data
+Models](/components/shared) library used by every component above is listed
+under [Reference](/specs/).
