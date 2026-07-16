@@ -1,4 +1,4 @@
-# SkyFollower Archive Processor
+# Archive Processor
 
 The archive processor consumes completed flight records from the RabbitMQ
 `archive` queue, builds a 3D GeoJSON `LineString` of the flight path

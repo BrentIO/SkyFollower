@@ -1,4 +1,4 @@
-# SkyFollower Message Processor
+# Message Processor
 
 The message processor consumes raw ADS-B and UAT messages from a RabbitMQ
 queue, maintains per-aircraft flight state in an in-memory SQLite database,

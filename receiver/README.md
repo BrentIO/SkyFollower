@@ -1,4 +1,4 @@
-# SkyFollower Receiver
+# Receiver
 
 The receiver connects to one or more readsb TCP streams (raw ADS-B format),
 parses each frame to extract the ICAO hex identifier, wraps the message in a
