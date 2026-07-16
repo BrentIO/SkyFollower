@@ -24,6 +24,6 @@ features:
     details: Receiver, processor, archive-processor, and data runners.
     link: /components/
   - title: Specs
-    details: AsyncAPI and OpenAPI reference documentation.
-    link: /specs/
+    details: MQTT and OpenAPI reference documentation.
+    link: /specs/asyncapi
 ---

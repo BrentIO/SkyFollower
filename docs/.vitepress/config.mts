@@ -32,7 +32,6 @@ export default defineConfig({
       { text: "Architecture", link: "/architecture/" },
       { text: "Components", link: "/components/" },
       { text: "Data Runners", link: "/data-runners/" },
-      { text: "Specs", link: "/specs/" },
     ],
 
     sidebar: [
@@ -70,9 +69,8 @@ export default defineConfig({
         items: [
           {
             text: "Specs",
-            link: "/specs/",
             items: [
-              { text: "AsyncAPI", link: "/specs/asyncapi" },
+              { text: "MQTT Reference", link: "/specs/asyncapi" },
               { text: "OpenAPI", link: "/specs/openapi" },
             ],
           },
