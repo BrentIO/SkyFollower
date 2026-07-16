@@ -7,14 +7,25 @@
 // SVG is a broken <img>, not a broken build) since CI is the authoritative
 // build for the deployed site. Output SVGs are gitignored — regenerated
 // from the .puml source every build.
+//
+// Each rendered SVG is also copied into public/ at its literal relative
+// path (e.g. architecture/images/pipeline.svg -> public/architecture/
+// images/pipeline.svg). VitePress's asset pipeline rewrites a markdown
+// image's <img src> to a hashed /assets/ URL, but does *not* do the same
+// for a plain link wrapped around that image (the
+// [![alt](path)](path) "click to enlarge" pattern used on the
+// architecture page) — that link's href stays the literal relative path,
+// which 404s unless a real file exists there too. Mirroring into public/
+// is the same fix FireFly-Docs uses for the same reason.
 
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCS_ROOT = join(__dirname, "..");
+const PUBLIC_DIR = join(DOCS_ROOT, "public");
 
 function findPumlFiles(dir) {
   const results = [];
@@ -51,6 +62,13 @@ for (const file of pumlFiles) {
   if (result.status !== 0) {
     throw new Error(`docs: plantuml failed to render ${file}`);
   }
+}
+
+for (const file of pumlFiles) {
+  const svgPath = file.replace(/\.puml$/, ".svg");
+  const dest = join(PUBLIC_DIR, relative(DOCS_ROOT, svgPath));
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(svgPath, dest);
 }
 
 console.log(`docs: generated ${pumlFiles.length} PlantUML diagram(s)`);
