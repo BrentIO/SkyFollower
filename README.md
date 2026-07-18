@@ -11,6 +11,8 @@ operator data from Redis, evaluates configurable alert rules, archives completed
 flights as gzipped JSON to AWS S3, and publishes real-time metrics and rule
 notifications over MQTT (with Home Assistant autodiscovery).
 
+**Full documentation: [brentio.github.io/SkyFollower](https://brentio.github.io/SkyFollower/)**
+
 ## Architecture
 
 ```
@@ -160,118 +162,13 @@ on the host. Example files for every component are in `config/`:
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
 <!-- #endregion configuration -->
 
-See the component READMEs for the full list of settings fields:
+See the docs site for the full settings reference, scaling instructions,
+rules/areas configuration, and Home Assistant integration details:
 
-- [receiver/README.md](receiver/README.md)
-- [processor/README.md](processor/README.md)
-- [data-runners/README.md](data-runners/README.md) — logging convention, plus per-runner READMEs (e.g. [data-runners/ourairports/README.md](data-runners/ourairports/README.md))
-
-## Scaling Processors
-
-Each processor handles the subset of aircraft whose ICAO hex modulo
-`PROCESSOR_COUNT` equals the processor's ID. To add a second processor:
-
-1. Uncomment the `processor-1` block in `docker-compose.processor.yaml` and its volume entry.
-2. Increment `processor_count` in the receiver's `settings.json` (e.g. `"processor_count": 2`).
-3. Restart the receiver — it will pre-declare the new queue and begin routing to it.
-
-Each processor must run on a separate host (or at least with a unique
-`PROCESSOR_ID`). The processor claims its ID in Redis on startup and exits if
-the ID is already claimed by another instance.
-
-## Data Runners
-
-Data runners populate Redis with the enrichment data that processors use to
-annotate flights. Each runner downloads a dataset, normalises it, writes it to
-Redis with a TTL, and exits. They are scheduled via an `ofelia` cron container
-running alongside Redis.
-
-| Runner | Data source | Schedule | Redis TTL |
-|--------|-------------|----------|-----------|
-| `standing-data` | VRS SDM: aircraft, operators, routes, airports | Weekly (Tue) | 14 days |
-| `mictronics` | Global registration | Weekly (Tue) | 14 days |
-| `us-faa` | US FAA detailed registration | Weekly (Sat) | 14 days |
-| `ca-transport-canada` | Transport Canada detailed registration | Weekly (Sun) | 14 days |
-| `ourairports` | Airport metadata | Weekly (Mon) | 14 days |
-| `flightaware` | Flight origin/destination (paid; optional) | Every 3 days | 3 days |
-
-Each runner publishes a single MQTT message on completion with `records_imported`,
-`last_run_at`, and `last_run_status`.
-
-## Rules
-
-Rules tell SkyFollower which aircraft to alert on. They are stored in Redis
-(`config:rules`) and edited through the UI. A rule fires at most once per flight
-per rule identifier. All conditions within a rule must match simultaneously (AND
-logic).
-
-Example `rules.example.json` entry:
-
-```json
-[
-  {
-    "identifier": "heavy-arrivals",
-    "name": "Heavy aircraft arriving",
-    "description": "Any heavy aircraft descending below 5000 ft",
-    "enabled": true,
-    "conditions": [
-      { "type": "wake_turbulence_category", "operator": "equals", "value": "heavy" },
-      { "type": "altitude", "operator": "maximum", "value": 5000 },
-      { "type": "vertical_speed", "operator": "maximum", "value": -100 }
-    ]
-  }
-]
-```
-
-Available condition types: `altitude`, `heading`, `velocity`, `vertical_speed`,
-`area`, `date`, `ident`, `squawk`, `military`, `operator_airline_designator`,
-`aircraft_type_designator`, `aircraft_registration`, `aircraft_icao_hex`,
-`aircraft_powerplant_count`, `wake_turbulence_category`, `matched_rules`.
-
-See `processor/README.md` for operator and constraint details.
-
-## Areas
-
-Named geographic polygons used with the `area` condition type. Stored in Redis
-(`config:areas`) as a GeoJSON FeatureCollection and edited through the UI's map
-editor.
-
-Example `areas.example.json`:
-
-```json
-{
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "properties": { "name": "Airport Approach" },
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [[
-          [-84.45, 33.60],
-          [-84.35, 33.60],
-          [-84.35, 33.70],
-          [-84.45, 33.70],
-          [-84.45, 33.60]
-        ]]
-      }
-    }
-  ]
-}
-```
-
-## Home Assistant
-
-When MQTT is configured, all components publish Home Assistant autodiscovery
-payloads on connect. Each processor, receiver, archive processor, and data
-runner appears as a device in Home Assistant with sensor entities for its key
-metrics.
-
-Rule notifications are published to `SkyFollower/rule/{identifier}` as JSON
-payloads containing the flight's current state. These can be consumed by Home
-Assistant automations directly.
-
-Full MQTT topic documentation is in `specs/asyncapi.yaml`.
+- [Components](https://brentio.github.io/SkyFollower/components/) and [Data Runners](https://brentio.github.io/SkyFollower/data-runners/) — settings fields for every container
+- [Architecture](https://brentio.github.io/SkyFollower/architecture/) — pipeline diagram plus scaling processors horizontally
+- [Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) — condition types, example `rules.json`/`areas.json`
+- [MQTT Reference](https://brentio.github.io/SkyFollower/specs/asyncapi) — every topic published, including Home Assistant autodiscovery behavior
 
 ## Development
 

@@ -3,7 +3,22 @@
 Each subdirectory is a self-contained data runner: download → normalize →
 write to Redis with TTL → exit. Runners are scheduled on their own cadence
 via the `ofelia` cron container (see `config/ofelia/config.ini`). See the
-root `README.md` for how to run one manually or bulk-load all of them.
+[Getting Started](https://brentio.github.io/SkyFollower/getting-started/)
+docs for how to run one manually or bulk-load all of them.
+
+## Schedule
+
+| Runner | Data source | Schedule | Redis TTL |
+|--------|-------------|----------|-----------|
+| `standing-data` | VRS SDM: aircraft, operators, routes, airports | Weekly (Tue) | 14 days |
+| `mictronics` | Global registration | Weekly (Tue) | 14 days |
+| `us-faa` | US FAA detailed registration | Weekly (Sat) | 14 days |
+| `ca-transport-canada` | Transport Canada detailed registration | Weekly (Sun) | 14 days |
+| `ourairports` | Airport metadata | Weekly (Mon) | 14 days |
+| `flightaware` | Flight origin/destination (paid; optional) | Every 3 days | 3 days |
+
+Each runner publishes a single MQTT message on completion with `records_imported`,
+`last_run_at`, and `last_run_status`.
 
 ## Logging
 

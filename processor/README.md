@@ -123,5 +123,6 @@ A rule fires at most once per flight per identifier (the identifier is added to
 `flight.matched_rules` on first match, and subsequent evaluations skip it).
 
 Conditions are sorted by evaluation cost before each evaluation pass — cheap
-field comparisons run before expensive geographic checks. See the top-level
-README for the full condition type reference.
+field comparisons run before expensive geographic checks. See
+[Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) for
+the full condition type reference.

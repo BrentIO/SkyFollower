@@ -30,6 +30,7 @@ export default defineConfig({
       { text: "Getting Started", link: "/getting-started/" },
       { text: "Deployment", link: "/deployment/" },
       { text: "Architecture", link: "/architecture/" },
+      { text: "Rules & Areas", link: "/rules-and-areas/" },
       { text: "Components", link: "/components/" },
       { text: "Data Runners", link: "/data-runners/" },
     ],
@@ -41,6 +42,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/getting-started/" },
           { text: "Deployment", link: "/deployment/" },
           { text: "Architecture", link: "/architecture/" },
+          { text: "Rules & Areas", link: "/rules-and-areas/" },
         ],
       },
       {
