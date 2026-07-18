@@ -3,25 +3,29 @@
 
 title Processor Crash Recovery & Backlog Replay
 
-box "Host A — Receiver" $OnPrem
+box "Receiver" $OnPrem
     participant "Receiver" as Receiver
 end box
 
-box "Host B — Central Server" $OnPrem
-    queue "RabbitMQ\n(adsb-{n} / archive)" as MQ
-    participant "MQTT Broker" as MQTT
+box "RabbitMQ" $OnPrem
+    queue "adsb-{n}" as AdsbQ
+    queue "archive" as ArchiveQ
 end box
 
-box "Host C — Processor" $OnPrem
+box "Processor" $OnPrem
     participant "Processor" as Proc
     database "active_flights.db" as ActiveDB
     database "completed_flights.db" as FallbackDB
 end box
 
+box "MQTT" $OnPrem
+    participant "MQTT Broker" as MQTT
+end box
+
 == Normal operation ==
 
-Receiver -> MQ++ : **Publish**\n""adsb-{n}""\n""{raw, icao_hex, received_at, source}""
-MQ -> Proc++ : **Consume**
+Receiver -> AdsbQ++ : **Publish**\n""{raw, icao_hex, received_at, source}""
+AdsbQ -> Proc++ : **Consume**
 Proc -> ActiveDB : **Save flight** (commit)\nflight_id assigned on first message
 Proc -> Proc : message_clock = max(message_clock, received_at)
 
@@ -37,19 +41,14 @@ end
 
 note over Proc
     SIGKILL / OOM-kill / ""docker kill"" / SIGTERM
-    No special shutdown path — see #459
+    No special shutdown path
 end note
 
-Receiver -> MQ : **Publish** (still up)
-note over MQ
-    Messages accumulate in the durable
-    ""adsb-{n}"" queue while Processor is down
+Receiver -> AdsbQ : **Publish** (still up)
+note over AdsbQ
+    Messages accumulate in the
+    durable queue while Processor is down
 end note
-
-== RabbitMQ itself also unavailable (independent failure) ==
-
-Receiver -> Receiver : **Write to** ""queue.db"" (SQLite WAL)
-Receiver -> MQ : **Drain** ""queue.db"" once RabbitMQ reachable again
 
 == Processor restarts ==
 
@@ -60,16 +59,16 @@ note right of Proc
     Recovered flights are **not** archived
     on wall-clock time alone
 end note
-Proc -> MQ++ : **Reconnect**, resume consuming ""adsb-{n}""
+Proc -> AdsbQ++ : **Reconnect**, resume consuming
 
 == Backlog replay ==
 
 loop for each backlog message
-    MQ -> Proc : **Consume**\n""received_at"" = historical timestamp
+    AdsbQ -> Proc : **Consume**\n""received_at"" = historical timestamp
     Proc -> Proc : message_clock = max(message_clock, received_at)
 
     alt existing flight AND (received_at - last_message) > flight_ttl_seconds
-        Proc -> FallbackDB : **Archive** prior flight (reuses stored flight_id)\n(or publish to ""archive"" queue if RabbitMQ up)
+        Proc -> ArchiveQ : **Publish** prior flight (reuses stored flight_id)
         Proc -> ActiveDB : **Delete** old row (commit)
         Proc -> ActiveDB : **Insert** new flight, new flight_id (commit)
     else continues existing flight
@@ -96,7 +95,11 @@ end note
 
 Proc -> ActiveDB++ : **Select** WHERE last_message < message_clock - flight_ttl_seconds
 ActiveDB --> Proc-- : stale icao_hex list
-Proc -> FallbackDB : **Archive** each stale flight (reuses stored flight_id)
+Proc -> ArchiveQ : **Publish** each stale flight (reuses stored flight_id)
+note right of ArchiveQ
+    Falls back to ""completed_flights.db""
+    locally if RabbitMQ is unavailable
+end note
 Proc -> ActiveDB : **Delete** (commit)
 
 @enduml

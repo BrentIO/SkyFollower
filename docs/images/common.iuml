@@ -9,6 +9,7 @@ skinparam {
     ParticipantBackgroundColor white
     CollectionsBackgroundColor white
     DatabaseBackgroundColor white
+    QueueBackgroundColor white
     Shadowing false
 }
 

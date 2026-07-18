@@ -1,0 +1,31 @@
+@startuml
+!include ../../images/common-sequence.iuml
+
+title Receiver Offline Fallback
+
+box "Receiver" $OnPrem
+    participant "Receiver" as Receiver
+    database "queue.db" as ReceiverDB
+end box
+
+box "RabbitMQ" $OnPrem
+    queue "adsb-{n}" as AdsbQ
+end box
+
+Receiver -> AdsbQ : **Publish** attempt fails
+note over AdsbQ
+    RabbitMQ unreachable
+end note
+Receiver -> ReceiverDB : **Write** (SQLite WAL)
+
+loop while RabbitMQ unreachable
+    Receiver -> AdsbQ : **Publish** attempt fails
+    Receiver -> ReceiverDB : **Write** (SQLite WAL)
+end
+
+Receiver -> AdsbQ++ : **Reconnect**
+Receiver -> ReceiverDB : **Drain** oldest-first
+ReceiverDB --> Receiver : buffered messages
+Receiver -> AdsbQ-- : **Publish** each drained message
+
+@enduml
