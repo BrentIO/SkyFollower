@@ -1,0 +1,22 @@
+!include common.iuml
+
+skinparam defaultTextAlignment center
+skinparam rectangle {
+    BorderColor black
+    BackgroundColor white
+}
+skinparam package {
+    BorderColor black
+    BackgroundColor white
+    FontStyle bold
+}
+
+!$AWS = "#ffdbbb"
+!$OnPrem = "#a8e5fa"
+!$Vendor = "#d989c9"
+
+legend bottom
+|<back:$OnPrem>   | On-Premises |
+|<back:$AWS>      | AWS |
+|<back:$Vendor>   | Third-Party Vendor |
+endlegend

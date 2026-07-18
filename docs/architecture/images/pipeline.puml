@@ -1,20 +1,9 @@
-@startuml "SkyFollower Message Pipeline"
-!include ../../images/common.iuml
+@startuml
+!include ../../images/common-component.iuml
 
 title Message Pipeline
 
-skinparam defaultTextAlignment center
-skinparam rectangle {
-    BorderColor black
-    BackgroundColor white
-}
-skinparam package {
-    BorderColor black
-    BackgroundColor white
-    FontStyle bold
-}
-
-package "Receiver" as RevProc {
+package "Receiver" as RevProc $OnPrem {
     rectangle "RTL-SDR 1090\n→ readsb" as Sdr1090
     rectangle "RTL-SDR 978\n→ readsb" as Sdr978
     rectangle "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as Receiver
@@ -26,7 +15,7 @@ package "Receiver" as RevProc {
     ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect
 }
 
-package "Message Processor" as MsgProc {
+package "Message Processor" as MsgProc $OnPrem {
     rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorC
     database "archive.db\n(SQLite WAL)" as ProcessorFallback
     ProcessorC -right-> ProcessorFallback : RabbitMQ offline
@@ -35,7 +24,7 @@ package "Message Processor" as MsgProc {
     note top of ProcessorC : One to many processors supported
 }
 
-package "Central Server" as CentralSvr {
+package "Central Server" as CentralSvr $OnPrem {
     package "RabbitMQ" as Rabbit {
         queue "adsb-{PROCESSOR_ID}" as adsbq
         queue "archive" as archiveq
@@ -43,7 +32,7 @@ package "Central Server" as CentralSvr {
     database "Redis" as Redis
 }
 
-package "Archive Processor" as ArchProc {
+package "Archive Processor" as ArchProc $OnPrem {
     rectangle "Archiver" as Archiver
     database "archive.db\n(SQLite WAL)" as ArchiveFallback
     rectangle "Parquet index\n(design TBD)" as Parquet #E8E8E8
@@ -53,7 +42,7 @@ package "Archive Processor" as ArchProc {
     ArchiveFallback .left.> Archiver : Drains on S3 reconnect
 }
 
-package "AWS" {
+package "AWS" $AWS {
     interface "S3 Public API" as s3
     component S3 as s3svc
     s3 -down- s3svc
