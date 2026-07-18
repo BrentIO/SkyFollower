@@ -18,7 +18,15 @@ package "Host A — Receiver" as HostA {
     rectangle "RTL-SDR 1090\n→ readsb :30002" as Sdr1090
     rectangle "RTL-SDR 978\n→ readsb :30978" as Sdr978
     rectangle "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as Receiver
-    rectangle "queue.db (SQLite WAL)\ndrains on reconnect" as ReceiverFallback #FFE5CC
+    database "queue.db (SQLite WAL)\ndrains on reconnect" as ReceiverFallback #FFE5CC
+}
+
+package "Host C — Processor" as HostC {
+    rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorC
+}
+
+package "Host X — Processor" as HostX {
+    rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorX
 }
 
 package "Host B — Central Server" as HostB {
@@ -26,13 +34,9 @@ package "Host B — Central Server" as HostB {
     database "Redis" as Redis
 }
 
-package "Host C — Processor(s)" as HostC {
-    collections "Processor(s)\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as Processor
-}
-
 package "Host D — Archive Host" as HostD {
     rectangle "Archive Processor" as Archive
-    rectangle "archive.db (SQLite WAL)" as ArchiveFallback #FFE5CC
+    database "archive.db (SQLite WAL)" as ArchiveFallback #FFE5CC
     rectangle "AWS S3\n(.json.gz)" as S3
     rectangle "Parquet index\n(design TBD)" as Parquet #E8E8E8
 }
@@ -44,14 +48,25 @@ Receiver --> Rmq : RabbitMQ available
 Receiver --> ReceiverFallback : RabbitMQ offline
 ReceiverFallback ..> Rmq : drains on reconnect
 
-Rmq --> Processor
+ProcessorC --> Rmq : consumes adsb-{PROCESSOR_ID}
+ProcessorX --> Rmq : consumes adsb-{PROCESSOR_ID}
 
-Processor --> Redis : enrichment lookups
-Processor --> Archive : RabbitMQ available\n(archive queue)
-Processor --> ArchiveFallback : RabbitMQ offline
+ProcessorC --> Redis : enrichment lookups
+ProcessorX --> Redis : enrichment lookups
+
+ProcessorC --> Archive : RabbitMQ available\n(archive queue)
+ProcessorC --> ArchiveFallback : RabbitMQ offline
+ProcessorX --> Archive : RabbitMQ available\n(archive queue)
+ProcessorX --> ArchiveFallback : RabbitMQ offline
 ArchiveFallback ..> Archive : drains on reconnect
 
 Archive --> S3
 Archive --> Parquet
+
+HostA -[hidden]down-> HostC
+HostC -[hidden]right-> HostX
+HostC -[hidden]down-> HostB
+HostX -[hidden]down-> HostD
+HostB -[hidden]right-> HostD
 
 @enduml
