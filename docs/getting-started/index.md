@@ -10,7 +10,48 @@ copy the example settings for whichever components run on that host (see
 [Deployment](/deployment/#configuration) for the full list) and fill in
 real values before starting containers.
 
-<!--@include: ../../README.md#quick-start-->
+## Quick Start
+
+```bash
+# 1. Copy the example settings for each component on this host and fill in values
+#    e.g. for Host B:
+cp config/runners/settings.json.example config/runners/settings.json
+cp config/ofelia/config.ini.example config/ofelia/config.ini
+
+# Host A — receiver
+docker compose -f docker-compose.receiver.yaml up -d
+
+# Host B — central server
+docker compose -f docker-compose.server.yaml up -d
+# Create runner containers in stopped state so ofelia can schedule them:
+docker compose -f docker-compose.server.yaml --profile runners up --no-start
+
+# Host C — processor
+docker compose -f docker-compose.processor.yaml up -d
+
+# Host D — archive + UI
+docker compose -f docker-compose.archive.yaml up -d
+```
+
+To run a single data runner manually (e.g. for a first-time import):
+```bash
+docker compose -f docker-compose.server.yaml run --rm runner-ourairports
+```
+
+To bulk-load *every* runner once (e.g. right after install, so Redis isn't
+empty until each runner's first scheduled `ofelia` run — up to a week away
+for weekly runners). `mictronics` goes first since most country runners
+resolve `icao_hex` against its RediSearch index; the rest follow
+alphabetically. The runner list comes from `docker compose config` itself,
+not a separate list, so it's always accurate for whatever's actually
+declared in `docker-compose.server.yaml`:
+```bash
+docker compose -f docker-compose.server.yaml run --rm runner-mictronics
+for svc in $(docker compose -f docker-compose.server.yaml config --services \
+    | grep '^runner-' | grep -v '^runner-mictronics$' | sort); do
+  docker compose -f docker-compose.server.yaml run --rm "$svc"
+done
+```
 
 ## Next steps
 
