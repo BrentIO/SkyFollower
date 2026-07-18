@@ -16,7 +16,8 @@ skinparam package {
 !$Vendor = "#d989c9"
 
 legend bottom
-|<back:$OnPrem>   | On-Premises |
+**Color Legend**
+|<back:$OnPrem>      | On-Premises |
 |<back:$AWS>      | AWS |
-|<back:$Vendor>   | Third-Party Vendor |
+|<back:$Vendor>      | Third-Party Vendor |
 endlegend
