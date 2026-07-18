@@ -56,6 +56,7 @@ Rmq --> Archive : consumes archive queue
 ProcessorC --> ProcessorFallback : RabbitMQ offline
 ProcessorFallback ..> Rmq : drains on reconnect
 
+Archive --> ArchiveFallback : AWS S3 offline
 ArchiveFallback ..> Archive : drains on reconnect
 
 Archive --> S3
