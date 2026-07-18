@@ -25,7 +25,7 @@ package "Host C — Processor" as HostC {
     rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorC
 }
 
-note right of HostC : One to many processors supported
+note top of HostC : One to many processors supported
 
 package "Host B — Central Server" as HostB {
     rectangle "RabbitMQ" as Rmq
