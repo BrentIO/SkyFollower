@@ -1,0 +1,12 @@
+@startuml
+!include_once ../../images/common-component.iuml
+
+!startsub COMPONENT
+package "AWS" $AWS {
+    interface "S3 Public API" as s3
+    component S3 as s3svc
+    s3 -down- s3svc
+}
+!endsub
+
+@enduml

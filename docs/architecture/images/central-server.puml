@@ -1,0 +1,14 @@
+@startuml
+!include_once ../../images/common-component.iuml
+
+!startsub COMPONENT
+package "Central Server" as CentralSvr $OnPrem {
+    package "RabbitMQ" as Rabbit {
+        queue "adsb-{PROCESSOR_ID}" as adsbq
+        queue "archive" as archiveq
+    }
+    database "Redis" as Redis
+}
+!endsub
+
+@enduml

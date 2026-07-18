@@ -8,6 +8,8 @@ receiver writes to a local SQLite fallback queue and drains it automatically on
 reconnect. One receiver container handles all configured sources concurrently
 (one thread per source).
 
+![Receiver architecture](./receiver.svg)
+
 ## Configuration (`settings.json`)
 
 ### Top-level fields

@@ -1,0 +1,16 @@
+@startuml
+!include_once ../docs/images/common-component.iuml
+
+!startsub COMPONENT
+package "Archive Processor" as ArchProc $OnPrem {
+    component "Archiver" as Archiver
+    database "s3.db\n(SQLite WAL)" as ArchiveFallback
+    component "Parquet index\n(design TBD)" as Parquet #E8E8E8
+
+    Archiver --> Parquet : Metadata Index
+    Archiver -right-> ArchiveFallback : AWS S3 offline
+    ArchiveFallback .left.> Archiver : Drains on S3 reconnect
+}
+!endsub
+
+@enduml

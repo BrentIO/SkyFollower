@@ -8,6 +8,8 @@ routes completed flights to the archive queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one processor instance; scale
 horizontally by adding processor containers on separate hosts.
 
+![Processor architecture](./processor.svg)
+
 ## Configuration (`settings.json`)
 
 | Field | Type | Default | Description |
