@@ -1,0 +1,102 @@
+@startuml
+!include ../../images/common-sequence.iuml
+
+title Processor Crash Recovery & Backlog Replay
+
+box "Host A — Receiver" $OnPrem
+    participant "Receiver" as Receiver
+end box
+
+box "Host B — Central Server" $OnPrem
+    queue "RabbitMQ\n(adsb-{n} / archive)" as MQ
+    participant "MQTT Broker" as MQTT
+end box
+
+box "Host C — Processor" $OnPrem
+    participant "Processor" as Proc
+    database "active_flights.db" as ActiveDB
+    database "completed_flights.db" as FallbackDB
+end box
+
+== Normal operation ==
+
+Receiver -> MQ++ : **Publish**\n""adsb-{n}""\n""{raw, icao_hex, received_at, source}""
+MQ -> Proc++ : **Consume**
+Proc -> ActiveDB : **Save flight** (commit)\nflight_id assigned on first message
+Proc -> Proc : message_clock = max(message_clock, received_at)
+
+opt Rule matched
+    alt lag = now - received_at <= rule_notification_max_lag_seconds
+        Proc -> MQTT-- : **Publish**\n""SkyFollower/rule/{identifier}""
+    else lag > rule_notification_max_lag_seconds
+        Proc -> Proc : **Suppress** — log debug\n(icao_hex, rule identifier, lag)
+    end
+end
+
+== Processor goes down (crash or deliberate stop — handled identically) ==
+
+note over Proc
+    SIGKILL / OOM-kill / ""docker kill"" / SIGTERM
+    No special shutdown path — see #459
+end note
+
+Receiver -> MQ : **Publish** (still up)
+note over MQ
+    Messages accumulate in the durable
+    ""adsb-{n}"" queue while Processor is down
+end note
+
+== RabbitMQ itself also unavailable (independent failure) ==
+
+Receiver -> Receiver : **Write to** ""queue.db"" (SQLite WAL)
+Receiver -> MQ : **Drain** ""queue.db"" once RabbitMQ reachable again
+
+== Processor restarts ==
+
+Proc -> ActiveDB++ : **Reopen** ""active_flights.db""
+ActiveDB --> Proc-- : recovered flight rows
+Proc -> Proc : message_clock = MAX(last_message) over recovered rows\n(or now() if store was empty)
+note right of Proc
+    Recovered flights are **not** archived
+    on wall-clock time alone
+end note
+Proc -> MQ++ : **Reconnect**, resume consuming ""adsb-{n}""
+
+== Backlog replay ==
+
+loop for each backlog message
+    MQ -> Proc : **Consume**\n""received_at"" = historical timestamp
+    Proc -> Proc : message_clock = max(message_clock, received_at)
+
+    alt existing flight AND (received_at - last_message) > flight_ttl_seconds
+        Proc -> FallbackDB : **Archive** prior flight (reuses stored flight_id)\n(or publish to ""archive"" queue if RabbitMQ up)
+        Proc -> ActiveDB : **Delete** old row (commit)
+        Proc -> ActiveDB : **Insert** new flight, new flight_id (commit)
+    else continues existing flight
+        Proc -> ActiveDB : **Append** position/velocity (commit)
+    end
+
+    opt Rule matched
+        alt lag <= rule_notification_max_lag_seconds
+            Proc -> MQTT : **Publish** rule notification
+        else lag > rule_notification_max_lag_seconds
+            Proc -> Proc : **Suppress** — log debug
+        end
+    end
+end
+
+== Caught up to live traffic ==
+
+note over Proc
+    message_clock ≈ wall clock again;
+    rule notifications resume normally
+end note
+
+== Periodic eviction (message-clock gated) ==
+
+Proc -> ActiveDB++ : **Select** WHERE last_message < message_clock - flight_ttl_seconds
+ActiveDB --> Proc-- : stale icao_hex list
+Proc -> FallbackDB : **Archive** each stale flight (reuses stored flight_id)
+Proc -> ActiveDB : **Delete** (commit)
+
+@enduml
