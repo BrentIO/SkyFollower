@@ -17,7 +17,7 @@ package "Receiver" as RevProc $OnPrem {
 
 package "Message Processor" as MsgProc $OnPrem {
     component "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups\nRules engine → MQTT notifications" as ProcessorC
-    database "archive.db\n(SQLite WAL)" as ProcessorFallback
+    database "completed_flights.db\n(SQLite WAL)" as ProcessorFallback
     ProcessorC -right-> ProcessorFallback : RabbitMQ offline
     ProcessorFallback .left.> ProcessorC : Drains on RabbitMQ reconnect
 
@@ -34,7 +34,7 @@ package "Central Server" as CentralSvr $OnPrem {
 
 package "Archive Processor" as ArchProc $OnPrem {
     component "Archiver" as Archiver
-    database "archive.db\n(SQLite WAL)" as ArchiveFallback
+    database "s3.db\n(SQLite WAL)" as ArchiveFallback
     component "Parquet index\n(design TBD)" as Parquet #E8E8E8
 
     Archiver --> Parquet : Metadata Index

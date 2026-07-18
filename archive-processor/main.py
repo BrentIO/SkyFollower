@@ -263,7 +263,7 @@ class ArchiveProcessor:
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
         self._index_path = os.path.join(data_dir, "flight_index.parquet")
-        self._fallback = _S3FallbackQueue(os.path.join(data_dir, "archive.db"))
+        self._fallback = _S3FallbackQueue(os.path.join(data_dir, "s3.db"))
 
         # S3
         self._s3_client: Optional[object] = None

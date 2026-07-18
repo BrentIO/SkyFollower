@@ -412,7 +412,7 @@ class Processor:
         # Archive fallback
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
-        self._fallback = _ArchiveFallbackQueue(os.path.join(data_dir, "archive.db"))
+        self._fallback = _ArchiveFallbackQueue(os.path.join(data_dir, "completed_flights.db"))
 
         # Metrics
         self._rate = _RateTracker()

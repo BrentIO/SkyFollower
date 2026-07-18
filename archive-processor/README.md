@@ -27,7 +27,7 @@ once S3 reconnects.
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `archive.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 ## Consuming from RabbitMQ
@@ -86,7 +86,7 @@ replicated to S3 (see the Parquet/Athena open item in the top-level
 ## Fault Tolerance
 
 When S3 is unavailable — at startup or during operation — completed flights
-are written to `archive.db` (SQLite, in `data_dir`) instead. A background
+are written to `s3.db` (SQLite, in `data_dir`) instead. A background
 thread checks S3 connectivity every 10 seconds; once it reconnects, the
 fallback queue is drained oldest-first, with each flight written to S3 and
 indexed exactly as it would have been on the normal path. RabbitMQ
@@ -110,7 +110,7 @@ All topics use the root `SkyFollower`.
 | `flights_archived_hour` | integer | Flights successfully written to S3 this hour |
 | `flights_archived_today` | integer | Flights successfully written to S3 today (UTC) |
 | `s3_connected` | boolean | Current S3 connectivity state |
-| `local_queue_depth` | integer | Flights currently queued in `archive.db` fallback |
+| `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
 
 All statistics are published as a single retained JSON payload every
 `telemetry_interval_seconds`. Home Assistant autodiscovery payloads are

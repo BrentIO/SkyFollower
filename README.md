@@ -34,7 +34,7 @@ RTL-SDR 978  ──► readsb :30978 ──┤
                       Rules engine → MQTT notifications
                                │ completed flight
                    RabbitMQ available ──► archive queue ──► [ archive-processor ]
-                   RabbitMQ offline   ──► archive.db                │  (Host D)
+                   RabbitMQ offline   ──► completed_flights.db      │  (Host D)
                                           (SQLite WAL)               ├─► S3 (.json.gz)
                                                                      └─► Parquet index
 
