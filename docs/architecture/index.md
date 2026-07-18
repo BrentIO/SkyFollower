@@ -49,10 +49,10 @@ preserved before decommissioning — any flights it was still tracking are
 simply abandoned; surviving processors will start fresh flights for those
 aircraft under the new routing the next time they're seen.
 
-*Future enhancement (not built): the archive-processor could eventually
-detect and stitch together adjacent split-flight records (same `icao_hex`,
-contiguous time ranges, matching aircraft/operator) produced by a
-resize-down event.*
+*Future enhancement, tracked in [#474](https://github.com/BrentIO/SkyFollower/issues/474)
+(not built): the archive-processor could eventually detect and stitch
+together adjacent split-flight records (same `icao_hex`, contiguous time
+ranges, matching aircraft/operator) produced by a resize-down event.*
 
 ## Crash Recovery & Backlog Replay
 
