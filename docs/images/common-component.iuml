@@ -1,7 +1,7 @@
 !include common.iuml
 
 skinparam defaultTextAlignment center
-skinparam rectangle {
+skinparam component {
     BorderColor black
     BackgroundColor white
 }
