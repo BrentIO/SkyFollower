@@ -59,7 +59,7 @@ ProcessorFallback ..> Rmq : drains on reconnect
 Archive --> ArchiveFallback : AWS S3 offline
 ArchiveFallback ..> Archive : drains on reconnect
 
-Archive --> S3
+Archive --> S3 : AWS S3 available
 Archive --> Parquet
 
 HostA -[hidden]down-> HostC
