@@ -14,56 +14,60 @@ skinparam package {
     FontStyle bold
 }
 
-package "Host A — Receiver" as HostA {
-    rectangle "RTL-SDR 1090\n→ readsb :30002" as Sdr1090
-    rectangle "RTL-SDR 978\n→ readsb :30978" as Sdr978
+package "Receiver" as RevProc {
+    rectangle "RTL-SDR 1090\n→ readsb" as Sdr1090
+    rectangle "RTL-SDR 978\n→ readsb" as Sdr978
     rectangle "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as Receiver
-    database "queue.db\n(SQLite WAL)" as ReceiverFallback #FFE5CC
+    database "queue.db\n(SQLite WAL)" as ReceiverFallback
+
+    Receiver -up-> Sdr1090: TCP Socket\nPort 30002
+    Receiver -up-> Sdr978: TCP Socket\nPort 30978
+    Receiver -right-> ReceiverFallback : RabbitMQ offline
+    ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect
 }
 
-package "Host C — Processor" as HostC {
+package "Message Processor" as MsgProc {
     rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorC
-    database "archive.db\n(SQLite WAL)" as ProcessorFallback #FFE5CC
+    database "archive.db\n(SQLite WAL)" as ProcessorFallback
+    ProcessorC -right-> ProcessorFallback : RabbitMQ offline
+    ProcessorFallback .left.> ProcessorC : Drains on RabbitMQ reconnect
+
+    note top of ProcessorC : One to many processors supported
 }
 
-note top of HostC : One to many processors supported
-
-package "Host B — Central Server" as HostB {
-    rectangle "RabbitMQ" as Rmq
+package "Central Server" as CentralSvr {
+    package "RabbitMQ" as Rabbit {
+        queue "adsb-{PROCESSOR_ID}" as adsbq
+        queue "archive" as archiveq
+    }
     database "Redis" as Redis
 }
 
-package "Host D — Archive Host" as HostD {
-    rectangle "Archive Processor" as Archive
-    database "archive.db\n(SQLite WAL)" as ArchiveFallback #FFE5CC
-    rectangle "AWS S3\n(.json.gz)" as S3
+package "Archive Processor" as ArchProc {
+    rectangle "Archiver" as Archiver
+    database "archive.db\n(SQLite WAL)" as ArchiveFallback
     rectangle "Parquet index\n(design TBD)" as Parquet #E8E8E8
+
+    Archiver --> Parquet : Metadata Index
+    Archiver -right-> ArchiveFallback : AWS S3 offline
+    ArchiveFallback .left.> Archiver : Drains on S3 reconnect
 }
 
-Sdr1090 --> Receiver
-Sdr978 --> Receiver
+package "AWS" {
+    interface "S3 Public API" as s3
+    component S3 as s3svc
+    s3 -down- s3svc
+}
 
-Receiver -right-> Rmq : RabbitMQ available
-Receiver -> ReceiverFallback : RabbitMQ offline
-ReceiverFallback ..> Rmq : drains on reconnect
+Receiver -right-> adsbq : Publisher
+ProcessorC --> adsbq : Consumer
+ProcessorC -down--> Redis : Enrichment lookups
+ProcessorC --> archiveq : Publisher
+Archiver -up-> archiveq : Consumer
+Archiver ---> s3 : Persist flight\n(.json.gz)
 
-ProcessorC --> Rmq : consumes adsb-{PROCESSOR_ID}
-
-ProcessorC -down--> Redis : enrichment lookups
-
-ProcessorC --> Rmq : publishes archive queue
-Rmq --> Archive : consumes archive queue
-ProcessorC --> ProcessorFallback : RabbitMQ offline
-ProcessorFallback ..> Rmq : drains on reconnect
-
-Archive --> ArchiveFallback : AWS S3 offline
-ArchiveFallback ..> Archive : drains on reconnect
-
-Archive --> S3 : AWS S3 available
-Archive --> Parquet
-
-HostA -[hidden]down-> HostC
-HostC -[hidden]down-> HostB
-HostB -[hidden]right-> HostD
+RevProc -[hidden]down-> MsgProc
+MsgProc -[hidden]down-> CentralSvr
+CentralSvr -[hidden]right-> ArchProc
 
 @enduml
