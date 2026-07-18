@@ -12,10 +12,6 @@ container = skyfollower-runner-uk-caa
 schedule = 10 5 * * 2
 container = skyfollower-runner-mictronics
 
-[job-run "runner-standing-data"]
-schedule = 10 6 * * 2
-container = skyfollower-runner-standing-data
-
 [job-run "runner-nz-caa"]
 schedule = 10 5 * * 3
 container = skyfollower-runner-nz-caa
@@ -163,7 +159,3 @@ container = skyfollower-runner-us-faa
 [job-run "runner-ca-transport-canada"]
 schedule = 10 5 * * 7
 container = skyfollower-runner-ca-transport-canada
-
-[job-run "runner-flightaware"]
-schedule = 5 */5 * * *
-container = skyfollower-runner-flightaware

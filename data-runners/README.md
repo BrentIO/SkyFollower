@@ -8,14 +8,13 @@ docs for how to run one manually or bulk-load all of them.
 
 ## Schedule
 
-| Runner | Data source | Schedule | Redis TTL |
-|--------|-------------|----------|-----------|
-| `standing-data` | VRS SDM: aircraft, operators, routes, airports | Weekly (Tue) | 14 days |
-| `mictronics` | Global registration | Weekly (Tue) | 14 days |
-| `us-faa` | US FAA detailed registration | Weekly (Sat) | 14 days |
-| `ca-transport-canada` | Transport Canada detailed registration | Weekly (Sun) | 14 days |
-| `ourairports` | Airport metadata | Weekly (Mon) | 14 days |
-| `flightaware` | Flight origin/destination (paid; optional) | Every 3 days | 3 days |
+Each of the 40 data runners has its own entry in `config/ofelia/config.ini`
+(see `config/ofelia/config.ini.example`), staggered across the week so
+runners hitting the same country's civil aviation authority don't collide.
+That file is the single source of truth for exact schedules.
+
+All runners write registration/airport data to Redis with a 14-day TTL
+(`redis_ttl_days` in each runner's `settings.json`, default 14).
 
 Each runner publishes a single MQTT message on completion with `records_imported`,
 `last_run_at`, and `last_run_status`.

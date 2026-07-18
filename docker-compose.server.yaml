@@ -39,7 +39,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/ofelia/config.ini:/etc/ofelia/config.ini:ro
     depends_on:
-      - runner-standing-data
       - runner-mictronics
       - runner-ourairports
       - runner-us-faa
@@ -80,7 +79,6 @@ services:
       - runner-cy-dca
       - runner-hr-ccaa
       - runner-bg-caa
-      - runner-flightaware
 
   # ---------------------------------------------------------------------------
   # Data runners — created stopped; started on schedule by ofelia.
@@ -90,15 +88,6 @@ services:
   # To run a runner manually, or bulk-load every runner once on a fresh
   # install (mictronics first, then the rest), see README.md's Quick Start.
   # ---------------------------------------------------------------------------
-
-  runner-standing-data:
-    image: ghcr.io/brentio/skyfollower-runner-standing-data:latest
-    container_name: skyfollower-runner-standing-data
-    profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
-    depends_on:
-      - redis
 
   runner-mictronics:
     image: ghcr.io/brentio/skyfollower-runner-mictronics:latest
@@ -467,15 +456,6 @@ services:
     depends_on:
       - redis
       - runner-mictronics
-
-  runner-flightaware:
-    image: ghcr.io/brentio/skyfollower-runner-flightaware:latest
-    container_name: skyfollower-runner-flightaware
-    profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
-    depends_on:
-      - redis
 
 volumes:
   rabbitmq-data:

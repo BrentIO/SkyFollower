@@ -137,12 +137,12 @@ done
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs data runner containers on a schedule | — |
 | `ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
-| `standing-data` runner | Imports VRS SDM aircraft, operator, route, and airport data into Redis | — |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa` runner | Imports US FAA detailed registration data into Redis | — |
 | `ca-transport-canada` runner | Imports Transport Canada detailed registration data into Redis | — |
 | `ourairports` runner | Imports airport metadata into Redis | — |
-| `flightaware` runner | Imports flight origin/destination data into Redis (paid; optional) | — |
+
+...and 36 more country-specific registration runners — see [Data Runners](https://brentio.github.io/SkyFollower/data-runners/) for the full list.
 <!-- #endregion components -->
 
 <!-- #region configuration -->
