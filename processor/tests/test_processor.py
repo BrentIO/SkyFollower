@@ -5,6 +5,8 @@ Tests for processor/main.py components that don't require live infrastructure.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
 import tempfile
 import time
@@ -19,9 +21,10 @@ from processor.main import (
     _ArchiveFallbackQueue,
     _RateTracker,
     _TimeTracker,
+    _SCHEMA,
     _category_to_wtc,
 )
-from shared.models import Position, Velocity
+from shared.models import InboundMessage, Position, Velocity
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +32,6 @@ from shared.models import Position, Velocity
 # ---------------------------------------------------------------------------
 
 def _make_db() -> sqlite3.Connection:
-    from processor.main import _SCHEMA
     db = sqlite3.connect(":memory:", check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript(_SCHEMA)
@@ -44,6 +46,26 @@ def _minimal_config() -> dict:
         "telemetry_interval_seconds": 30,
         "data_dir": tempfile.mkdtemp(),
     }
+
+
+def _make_processor(cfg: dict | None = None) -> tuple[Processor, MagicMock]:
+    """Construct a real Processor (file-backed active store) with Redis/rules/
+    processor-ID-claim mocked out, matching TestProcessorEnrichment's pattern
+    but keeping the real on-disk DB instead of swapping in an in-memory one —
+    needed for the crash-recovery/message-clock tests below."""
+    cfg = cfg or _minimal_config()
+    with patch("processor.main.redis_lib.Redis") as MockRedis, \
+         patch("processor.main.RulesEngine"), \
+         patch("processor.main.pathlib.Path"), \
+         patch.object(Processor, "_claim_processor_id"):
+        mock_redis = MagicMock()
+        mock_redis.script_load.return_value = "abc123sha"
+        MockRedis.return_value = mock_redis
+        p = Processor(cfg, processor_id=0)
+        p._redis = mock_redis
+        p._merge_sha = "abc123sha"
+        p._rules_engine.evaluate.return_value = []
+        return p, mock_redis
 
 
 # ---------------------------------------------------------------------------
@@ -480,3 +502,248 @@ class TestTelemetryPayload:
         p._publish_ha_autodiscovery()
         for call in mock_mqtt.publish.call_args_list:
             assert "avg_processing_time_ms" not in call[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Crash-durable active store
+# ---------------------------------------------------------------------------
+
+class TestCrashRecovery:
+    """Active store is file-backed; a process restart (crash or deliberate
+    stop, handled identically) must recover it without eagerly archiving
+    based on wall-clock time elapsed while the process was down."""
+
+    def _write_active_flights_db(self, data_dir, icao_hex, last_message, flight_id="pre-crash-id"):
+        path = os.path.join(data_dir, "active_flights.db")
+        db = sqlite3.connect(path)
+        db.executescript(_SCHEMA)
+        db.execute(
+            "INSERT INTO flights (icao_hex, flight_id, first_message, last_message, "
+            "total_messages, aircraft, ident, operator, squawk, origin, destination, "
+            "matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (icao_hex, flight_id, last_message - 10, last_message, 5,
+             "{}", "", "{}", "", None, None, '["rule_a"]', "1090"),
+        )
+        db.commit()
+        db.close()
+
+    def test_recovers_flight_without_archiving(self):
+        data_dir = tempfile.mkdtemp()
+        # 10 minutes old — would look wall-clock-stale against a 300s TTL,
+        # the exact scenario a naive wall-clock eviction check gets wrong.
+        old_last_message = time.time() - 600
+        self._write_active_flights_db(data_dir, "A8AE7F", old_last_message)
+
+        cfg = _minimal_config()
+        cfg["data_dir"] = data_dir
+        p, _ = _make_processor(cfg)
+
+        # message_clock floors at the recovered flight's last_message, not
+        # at wall-clock "now" — see Processor.__init__.
+        assert p._message_clock == pytest.approx(old_last_message)
+
+        f = Flight(p._db)
+        assert f.load("A8AE7F") is True
+        assert f.matched_rules == ["rule_a"]
+        assert f.flight_id == "pre-crash-id"
+
+        # A periodic eviction sweep right after startup must not archive it
+        # — message_clock hasn't advanced past its TTL window yet.
+        p._evict_stale()
+        f2 = Flight(p._db)
+        assert f2.load("A8AE7F") is True
+
+    def test_empty_store_uses_wall_clock(self):
+        cfg = _minimal_config()
+        p, _ = _make_processor(cfg)
+        assert p._message_clock == pytest.approx(time.time(), abs=5)
+
+
+# ---------------------------------------------------------------------------
+# Per-message gap check
+# ---------------------------------------------------------------------------
+
+class TestPerMessageGapCheck:
+    def test_gap_beyond_ttl_archives_old_and_starts_new(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None  # aircraft enrichment miss
+
+        old_time = 1_700_000_000.0
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "old-flight-id"
+        f.first_message = old_time - 100
+        f.last_message = old_time
+        f.total_messages = 5
+        f.matched_rules = ["rule_a"]
+        f.source = "1090"
+        f.save()
+
+        ttl = p._cfg.get("flight_ttl_seconds", 300)
+        new_time = old_time + ttl + 50  # gap exceeds ttl
+
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=new_time, source="1090")
+        data = {"icao_hex": "A8AE7F"}
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        # Old flight landed in the local fallback (no RabbitMQ connected in
+        # this test — Processor was never start()ed).
+        assert p._fallback.depth() == 1
+
+        # A fresh row now exists for the same icao_hex, not an extension of
+        # the old one.
+        f2 = Flight(p._db)
+        assert f2.load("A8AE7F") is True
+        assert f2.flight_id != "old-flight-id"
+        assert f2.matched_rules == []
+        assert f2.total_messages == 1
+        assert f2.first_message == new_time
+
+    def test_gap_within_ttl_extends_existing_flight(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        old_time = 1_700_000_000.0
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "same-flight-id"
+        f.first_message = old_time - 100
+        f.last_message = old_time
+        f.total_messages = 5
+        f.source = "1090"
+        f.save()
+
+        new_time = old_time + 10  # well within the default 300s ttl
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=new_time, source="1090")
+        data = {"icao_hex": "A8AE7F"}
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        assert p._fallback.depth() == 0
+        f2 = Flight(p._db)
+        assert f2.load("A8AE7F") is True
+        assert f2.flight_id == "same-flight-id"
+        assert f2.total_messages == 6
+
+
+# ---------------------------------------------------------------------------
+# Flight ID assigned at creation, not archive time
+# ---------------------------------------------------------------------------
+
+class TestFlightIdStability:
+    def test_persists_across_save_and_reload(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "abc-123"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.source = "1090"
+        f.save()
+
+        f2 = Flight(db)
+        f2.load("A8AE7F")
+        assert f2.flight_id == "abc-123"
+
+    def test_to_completed_flight_reuses_flight_id(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "abc-123"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.source = "1090"
+        f.save()
+
+        # A duplicate archive attempt (e.g. a crash between the archive
+        # commit and the active-store delete) reuses the same _id, landing
+        # as an idempotent overwrite of the same S3 object rather than a
+        # duplicate record.
+        cf1 = f.to_completed_flight()
+        cf2 = f.to_completed_flight()
+        assert cf1.id == "abc-123"
+        assert cf2.id == "abc-123"
+
+
+# ---------------------------------------------------------------------------
+# message_clock gates eviction, not wall-clock time
+# ---------------------------------------------------------------------------
+
+class TestMessageClockGatesEviction:
+    def test_does_not_evict_ahead_of_message_clock(self):
+        p, _ = _make_processor()
+        ttl = p._cfg.get("flight_ttl_seconds", 300)
+
+        last_message = time.time() - 600  # 10 minutes old by wall-clock
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = last_message - 10
+        f.last_message = last_message
+        f.total_messages = 1
+        f.source = "1090"
+        f.save()
+
+        # Backlog replay has only reached 100s past this flight's last
+        # message so far — well within the ttl window, even though real
+        # wall-clock time has moved on much further.
+        p._message_clock = last_message + 100
+        p._evict_stale()
+        f2 = Flight(p._db)
+        assert f2.load("A8AE7F") is True  # not evicted
+
+        # Once message_clock actually catches up past the ttl window, the
+        # normal eviction outcome applies.
+        p._message_clock = last_message + ttl + 1
+        p._evict_stale()
+        f3 = Flight(p._db)
+        assert f3.load("A8AE7F") is False  # now evicted
+
+
+# ---------------------------------------------------------------------------
+# MQTT rule-notification flood guard
+# ---------------------------------------------------------------------------
+
+class TestMqttLagGuard:
+    def _make_flight(self, p) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.source = "1090"
+        f.save()
+        return f
+
+    def test_suppresses_backlogged_message_notification(self, caplog):
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p)
+
+        old_received_at = time.time() - 3600  # an hour old — backlog replay
+        with caplog.at_level(logging.DEBUG, logger="processor"):
+            p._publish_rule_notification(f, {"identifier": "rule_a"}, old_received_at)
+
+        mock_mqtt.publish.assert_not_called()
+        assert "rule_a" in caplog.text
+        assert "A8AE7F" in caplog.text
+
+    def test_publishes_recent_message_notification(self):
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p)
+
+        recent_received_at = time.time() - 1
+        p._publish_rule_notification(f, {"identifier": "rule_a"}, recent_received_at)
+        mock_mqtt.publish.assert_called_once()

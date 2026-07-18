@@ -1,8 +1,9 @@
 # Message Processor
 
 The message processor consumes raw ADS-B and UAT messages from a RabbitMQ
-queue, maintains per-aircraft flight state in an in-memory SQLite database,
-enriches each flight with registration and operator data from Redis, evaluates
+queue, maintains per-aircraft flight state in a file-backed (WAL-mode) SQLite
+database so it survives a process restart, enriches each flight with
+registration and operator data from Redis, evaluates
 the configured rules engine, publishes MQTT notifications when rules match, and
 routes completed flights to the archive queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one processor instance; scale
@@ -25,10 +26,11 @@ horizontally by adding processor containers on separate hosts.
 | `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `mqtt.password` | string | — | MQTT password |
 | `flight_ttl_seconds` | integer | `300` | Seconds of silence before a flight is considered complete and sent to the archive queue. Too short fragments flights; too long merges back-to-back flights on quick-turn aircraft. |
+| `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a processor reconnects. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
 | `home_latitude` | float | — | Receiver home latitude (decimal degrees). Required for single-message CPR position decoding (DF 17, TC 5–18). Omit if position decoding is not needed. |
 | `home_longitude` | float | — | Receiver home longitude (decimal degrees). |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `completed_flights.db` (the RabbitMQ offline fallback) is written. |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `active_flights.db` (the durable active flight store) and `completed_flights.db` (the RabbitMQ offline fallback) are written. |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 ### `PROCESSOR_ID` Environment Variable
@@ -97,7 +99,7 @@ All topics use the root `SkyFollower`.
 | `registration_misses_today` | integer | Aircraft Redis cache misses today (UTC) |
 | `aircraft_type_misses_hour` | integer | Aircraft type lookup misses this hour |
 | `aircraft_type_misses_today` | integer | Aircraft type lookup misses today (UTC) |
-| `active_flights` | integer | Flights currently tracked in the in-memory store |
+| `active_flights` | integer | Flights currently tracked in the active store |
 
 All statistics are published as a single retained JSON payload every `telemetry_interval_seconds`.
 Home Assistant autodiscovery payloads are published to
@@ -112,6 +114,41 @@ successful RabbitMQ reconnect, the fallback queue is drained oldest-first
 before new messages are consumed. Redis and MQTT failures are handled
 gracefully and logged; enrichment lookups that fail leave the flight partially
 enriched rather than dropping it.
+
+### Active flight store durability & crash recovery
+
+`active_flights.db` (SQLite, WAL mode, `data_dir`) holds every currently
+tracked flight and is committed to disk after every message. A process end —
+whether a deliberate stop (`SIGTERM`/`SIGINT`) or an ungraceful one (OOM-kill,
+`docker kill`, host crash) — is recovered identically on the next startup;
+there is no special "flush everything" shutdown path, since nothing needs
+force-archiving when the store already survives on its own.
+
+On startup, the processor reopens `active_flights.db` and recovers whatever
+flights were still tracked. Recovery is driven by message timestamps, not by
+how long the container was down: an internal clock is floored at the most
+recent `last_message` among recovered flights (not wall-clock "now"), and
+only advances as RabbitMQ messages are actually consumed. This means a
+recovered flight is **not** archived just because real time passed while the
+container was stopped — if a continuation message for that aircraft is
+sitting in the RabbitMQ backlog, it resumes the same flight once the
+processor reconnects and drains the backlog. A genuine gap longer than
+`flight_ttl_seconds` — whether it happens live or is discovered while
+replaying a backlog — still correctly splits the flight into two records.
+
+MQTT rule notifications for messages older than
+`rule_notification_max_lag_seconds` are suppressed during backlog replay
+(logged at debug) to avoid flooding MQTT the instant a processor reconnects
+after downtime; the rule still fires and is still recorded in
+`matched_rules`/the eventual archived flight.
+
+Because `active_flights.db` only depends on `PROCESSOR_ID` (which determines
+the RabbitMQ queue consumed, `adsb-{PROCESSOR_ID}`) and not on container
+identity, moving the file to a replacement container with the same
+`PROCESSOR_ID` resumes tracking the same way a restart does. One caveat: the
+Redis heartbeat key (`processor:{PROCESSOR_ID}:heartbeat`, `SET NX` with a
+TTL of `2 × telemetry_interval_seconds`) must expire — or be deleted
+manually — before a replacement container can claim the same ID.
 
 ## Rules Engine
 

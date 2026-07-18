@@ -3,9 +3,9 @@
 SkyFollower Message Processor
 
 Consumes raw ADS-B/UAT messages from a RabbitMQ queue, maintains per-aircraft
-flight state in SQLite (in-memory), enriches with Redis lookups, runs the
-rules engine, publishes MQTT notifications, and hands completed flights to the
-archive queue.
+flight state in a file-backed SQLite database (survives a process restart),
+enriches with Redis lookups, runs the rules engine, publishes MQTT
+notifications, and hands completed flights to the archive queue.
 
 One container = one processor instance.  PROCESSOR_ID is set via the
 environment variable of the same name.
@@ -67,11 +67,12 @@ _US_REG_RE = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# SQLite schema (in-memory)
+# SQLite schema (active flight store)
 # ---------------------------------------------------------------------------
 _SCHEMA = """
-CREATE TABLE flights (
+CREATE TABLE IF NOT EXISTS flights (
     icao_hex      TEXT PRIMARY KEY,
+    flight_id     TEXT,
     first_message REAL NOT NULL,
     last_message  REAL,
     total_messages INTEGER,
@@ -84,22 +85,22 @@ CREATE TABLE flights (
     matched_rules TEXT,
     source        TEXT
 );
-CREATE TABLE positions (
+CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
     timestamp REAL,
     latitude  REAL,
     longitude REAL,
     altitude  INTEGER
 );
-CREATE TABLE velocities (
+CREATE TABLE IF NOT EXISTS velocities (
     icao_hex      TEXT,
     timestamp     REAL,
     velocity      REAL,
     heading       REAL,
     vertical_speed INTEGER
 );
-CREATE INDEX positions_icao_hex  ON positions  (icao_hex);
-CREATE INDEX velocities_icao_hex ON velocities (icao_hex);
+CREATE INDEX IF NOT EXISTS positions_icao_hex  ON positions  (icao_hex);
+CREATE INDEX IF NOT EXISTS velocities_icao_hex ON velocities (icao_hex);
 """
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ class Flight:
     """
 
     __slots__ = (
-        "icao_hex", "first_message", "last_message", "total_messages",
+        "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
         "aircraft", "ident", "operator", "squawk", "origin", "destination",
         "matched_rules", "source", "positions", "velocities", "_db",
     )
@@ -187,6 +188,7 @@ class Flight:
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
         self.icao_hex: str = ""
+        self.flight_id: str = ""
         self.first_message: float = 0.0
         self.last_message: float = 0.0
         self.total_messages: int = 0
@@ -210,7 +212,7 @@ class Flight:
         self.icao_hex = icao_hex.upper()
         cur = self._db.cursor()
         cur.execute(
-            "SELECT icao_hex, first_message, last_message, total_messages, "
+            "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, squawk, origin, destination, "
             "matched_rules, source FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
@@ -219,6 +221,7 @@ class Flight:
         if row is None:
             return False
 
+        self.flight_id = row["flight_id"] or ""
         self.first_message = row["first_message"]
         self.last_message = row["last_message"]
         self.total_messages = row["total_messages"]
@@ -264,17 +267,18 @@ class Flight:
     def save(self) -> None:
         cur = self._db.cursor()
         cur.execute(
-            "REPLACE INTO flights (icao_hex, first_message, last_message, "
+            "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, "
-            "destination, matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "destination, matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                self.icao_hex, self.first_message, self.last_message,
+                self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
                 json.dumps(self.operator), self.squawk,
                 self.origin, self.destination,
                 json.dumps(self.matched_rules), self.source,
             ),
         )
+        self._db.commit()
 
     def delete(self) -> None:
         cur = self._db.cursor()
@@ -325,7 +329,7 @@ class Flight:
             operator = {k: v for k, v in self.operator.items() if k != "source"}
 
         return CompletedFlight(**{
-            "_id": generate_flight_id(),
+            "_id": self.flight_id or generate_flight_id(),
             "first_message": datetime.fromtimestamp(self.first_message, tz=timezone.utc),
             "last_message": datetime.fromtimestamp(self.last_message, tz=timezone.utc),
             "total_messages": self.total_messages,
@@ -404,14 +408,31 @@ class Processor:
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
-        # SQLite in-memory active store
-        self._db = sqlite3.connect(":memory:", check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
-        self._db.executescript(_SCHEMA)
-
-        # Archive fallback
+        # SQLite active store — file-backed (WAL) so it survives an
+        # ungraceful process death. Reopening an existing file on restart
+        # recovers whatever flights were active when the previous process
+        # ended, whether that was a crash or a deliberate stop — there's no
+        # distinction, see shutdown().
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
+        self._db = sqlite3.connect(
+            os.path.join(data_dir, "active_flights.db"), check_same_thread=False
+        )
+        self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.executescript(_SCHEMA)
+
+        # message_clock drives eviction instead of wall-clock time, so a
+        # backlog of messages replayed after a restart doesn't get archived
+        # just because real time passed while the process was down. Floor
+        # it at the most recent message any recovered flight actually saw;
+        # if the store was empty, there's nothing to protect and wall-clock
+        # time is fine to start from.
+        row = self._db.execute("SELECT MAX(last_message) FROM flights").fetchone()
+        self._message_clock: float = row[0] if row and row[0] is not None else time.time()
+
+        # Archive fallback
         self._fallback = _ArchiveFallbackQueue(os.path.join(data_dir, "completed_flights.db"))
 
         # Metrics
@@ -615,11 +636,28 @@ class Processor:
             self._update_flight(data, msg)
 
     def _update_flight(self, data: dict, msg: InboundMessage) -> None:
+        self._message_clock = max(self._message_clock, msg.received_at)
+
         flight = Flight(self._db)
         exists = flight.load(data["icao_hex"])
 
+        if exists:
+            ttl = self._cfg.get("flight_ttl_seconds", 300)
+            if msg.received_at - flight.last_message > ttl:
+                # The loaded flight is already complete — a gap this size
+                # replayed through the backlog (or happened live) means it
+                # ended before this message. Archive it and start fresh
+                # rather than extending a flight that's actually over.
+                completed = flight.to_completed_flight(load_all=True)
+                flight.delete()
+                self._db.commit()
+                self._archive(completed)
+                flight = Flight(self._db)
+                exists = False
+
         if not exists:
             flight.icao_hex = data["icao_hex"].upper()
+            flight.flight_id = generate_flight_id()
             flight.first_message = msg.received_at
             flight.source = msg.source
             self._enrich_aircraft(flight)
@@ -669,7 +707,7 @@ class Processor:
 
         for rule in matched:
             flight.matched_rules.append(rule["identifier"])
-            self._publish_rule_notification(flight, rule)
+            self._publish_rule_notification(flight, rule, msg.received_at)
 
         flight.save()
 
@@ -746,18 +784,18 @@ class Processor:
     def _eviction_loop(self) -> None:
         while not self._shutdown.is_set():
             time.sleep(10)
-            self._evict_stale(all_flights=False)
+            self._evict_stale()
 
-    def _evict_stale(self, all_flights: bool = False) -> None:
+    def _evict_stale(self) -> None:
         ttl = self._cfg.get("flight_ttl_seconds", 300)
         with self._db_lock:
-            if all_flights:
-                sql = "SELECT icao_hex FROM flights"
-            else:
-                cutoff = time.time() - ttl
-                sql = f"SELECT icao_hex FROM flights WHERE last_message < {cutoff}"
+            # message_clock, not wall-clock time, gates eviction — after a
+            # restart it only advances as far as the RabbitMQ backlog has
+            # actually been drained, so recovered flights aren't archived
+            # just because real time passed while the process was down.
+            cutoff = self._message_clock - ttl
             cur = self._db.cursor()
-            cur.execute(sql)
+            cur.execute("SELECT icao_hex FROM flights WHERE last_message < ?", (cutoff,))
             stale = [row[0] for row in cur.fetchall()]
 
         for icao_hex in stale:
@@ -766,8 +804,8 @@ class Processor:
                 if not flight.load(icao_hex, limit=False):
                     continue
                 completed = flight.to_completed_flight(load_all=False)
-                if not all_flights:
-                    flight.delete()
+                flight.delete()
+                self._db.commit()
 
             self._archive(completed)
 
@@ -823,7 +861,16 @@ class Processor:
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
 
-    def _publish_rule_notification(self, flight: Flight, rule: dict) -> None:
+    def _publish_rule_notification(self, flight: Flight, rule: dict, received_at: float) -> None:
+        max_lag = self._cfg.get("rule_notification_max_lag_seconds", 30)
+        lag = time.time() - received_at
+        if lag > max_lag:
+            logger.debug(
+                "Suppressing MQTT rule notification for %s (rule=%s): "
+                "message is %.1fs old (backlog replay)",
+                flight.icao_hex, rule["identifier"], lag,
+            )
+            return
         if not (self._mqtt and self._mqtt_connected):
             return
         notification = flight.to_completed_flight().model_dump(by_alias=True, mode="json")
@@ -1008,9 +1055,11 @@ class Processor:
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        logger.info("Shutdown requested — persisting active flights…")
+        # No eager flush: the active store is durable, so a deliberate
+        # stop and a crash are recovered identically on the next startup —
+        # nothing needs to be force-archived here.
+        logger.info("Shutdown requested…")
         self._shutdown.set()
-        self._evict_stale(all_flights=True)
         if self._rmq_channel:
             try:
                 self._rmq_channel.stop_consuming()
@@ -1021,6 +1070,7 @@ class Processor:
                 f"SkyFollower/processor/{self._id}/status", "OFFLINE", retain=True
             )
             self._mqtt.loop_stop()
+        self._db.close()
         logger.info("Shutdown complete.")
 
 
