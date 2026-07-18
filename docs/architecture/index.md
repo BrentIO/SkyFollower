@@ -64,3 +64,12 @@ avoids archiving flights just because wall-clock time passed while the
 container was down.
 
 [![Processor crash recovery and backlog replay](./images/crash-recovery-sequence.svg)](./images/crash-recovery-sequence.svg)
+
+## Receiver Offline Fallback
+
+Independent of whether a processor is up, the receiver itself tolerates
+RabbitMQ being unreachable: publish attempts that fail buffer to a local
+`queue.db` (SQLite WAL) and drain oldest-first once RabbitMQ is reachable
+again.
+
+[![Receiver offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
