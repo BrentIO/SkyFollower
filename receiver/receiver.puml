@@ -1,0 +1,18 @@
+@startuml
+!include_once ../docs/images/common-component.iuml
+
+!startsub COMPONENT
+package "Receiver" as RevProc $OnPrem {
+    component "RTL-SDR 1090\n→ readsb" as Sdr1090
+    component "RTL-SDR 978\n→ readsb" as Sdr978
+    component "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as Receiver
+    database "queue.db\n(SQLite WAL)" as ReceiverFallback
+
+    Receiver -up-> Sdr1090: TCP Socket\nPort 30002
+    Receiver -up-> Sdr978: TCP Socket\nPort 30978
+    Receiver -right-> ReceiverFallback : RabbitMQ offline
+    ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect
+}
+!endsub
+
+@enduml

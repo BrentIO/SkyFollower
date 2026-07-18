@@ -1,52 +1,13 @@
 @startuml
-!include ../../images/common-component.iuml
+!include_once ../../images/common-component.iuml
 
 title Message Pipeline
 
-package "Receiver" as RevProc $OnPrem {
-    component "RTL-SDR 1090\n→ readsb" as Sdr1090
-    component "RTL-SDR 978\n→ readsb" as Sdr978
-    component "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as Receiver
-    database "queue.db\n(SQLite WAL)" as ReceiverFallback
-
-    Receiver -up-> Sdr1090: TCP Socket\nPort 30002
-    Receiver -up-> Sdr978: TCP Socket\nPort 30978
-    Receiver -right-> ReceiverFallback : RabbitMQ offline
-    ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect
-}
-
-package "Message Processor" as MsgProc $OnPrem {
-    component "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups\nRules engine → MQTT notifications" as ProcessorC
-    database "completed_flights.db\n(SQLite WAL)" as ProcessorFallback
-    ProcessorC -right-> ProcessorFallback : RabbitMQ offline
-    ProcessorFallback .left.> ProcessorC : Drains on RabbitMQ reconnect
-
-    note top of ProcessorC : One to many processors supported
-}
-
-package "Central Server" as CentralSvr $OnPrem {
-    package "RabbitMQ" as Rabbit {
-        queue "adsb-{PROCESSOR_ID}" as adsbq
-        queue "archive" as archiveq
-    }
-    database "Redis" as Redis
-}
-
-package "Archive Processor" as ArchProc $OnPrem {
-    component "Archiver" as Archiver
-    database "s3.db\n(SQLite WAL)" as ArchiveFallback
-    component "Parquet index\n(design TBD)" as Parquet #E8E8E8
-
-    Archiver --> Parquet : Metadata Index
-    Archiver -right-> ArchiveFallback : AWS S3 offline
-    ArchiveFallback .left.> Archiver : Drains on S3 reconnect
-}
-
-package "AWS" $AWS {
-    interface "S3 Public API" as s3
-    component S3 as s3svc
-    s3 -down- s3svc
-}
+!includesub ../../../receiver/receiver.puml!COMPONENT
+!includesub ../../../processor/processor.puml!COMPONENT
+!includesub central-server.puml!COMPONENT
+!includesub ../../../archive-processor/archive-processor.puml!COMPONENT
+!includesub aws.puml!COMPONENT
 
 Receiver -right-> adsbq : Publisher
 ProcessorC --> adsbq : Consumer

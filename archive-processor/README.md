@@ -8,6 +8,8 @@ metadata index for fast lookups without needing to scan S3. When S3 is
 unavailable, completed flights are queued locally and drained automatically
 once S3 reconnects.
 
+![Archive processor architecture](./archive-processor.svg)
+
 ## Configuration (`settings.json`)
 
 | Field | Type | Default | Description |
