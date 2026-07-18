@@ -26,7 +26,7 @@ horizontally by adding processor containers on separate hosts.
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
 | `home_latitude` | float | — | Receiver home latitude (decimal degrees). Required for single-message CPR position decoding (DF 17, TC 5–18). Omit if position decoding is not needed. |
 | `home_longitude` | float | — | Receiver home longitude (decimal degrees). |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `archive.db` (the RabbitMQ offline fallback) is written. |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `completed_flights.db` (the RabbitMQ offline fallback) is written. |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 ### `PROCESSOR_ID` Environment Variable
@@ -90,7 +90,7 @@ All topics use the root `SkyFollower`.
 | `processing_time_hwm_ms` | float | End-to-end processing time high-water mark since last publish; resets on publish |
 | `rules_engine_hwm_ms` | integer | Rules engine duration high-water mark since last publish; resets on publish |
 | `rabbitmq_input_queue_depth` | integer | Current input queue depth (`-1` on error) |
-| `local_archive_queue_depth` | integer | Completed flights queued in `archive.db` fallback |
+| `local_archive_queue_depth` | integer | Completed flights queued in `completed_flights.db` fallback |
 | `registration_misses_hour` | integer | Aircraft Redis cache misses this hour |
 | `registration_misses_today` | integer | Aircraft Redis cache misses today (UTC) |
 | `aircraft_type_misses_hour` | integer | Aircraft type lookup misses this hour |
@@ -105,7 +105,7 @@ each using `value_template` to extract its field from the shared statistics topi
 ## Fault Tolerance
 
 When RabbitMQ is unavailable at startup or during operation, completed flights
-are written to `archive.db` (SQLite WAL mode) in `data_dir`. On the next
+are written to `completed_flights.db` (SQLite WAL mode) in `data_dir`. On the next
 successful RabbitMQ reconnect, the fallback queue is drained oldest-first
 before new messages are consumed. Redis and MQTT failures are handled
 gracefully and logged; enrichment lookups that fail leave the flight partially

@@ -319,7 +319,7 @@ components:
           example: 0
         local_archive_queue_depth:
           type: integer
-          description: Number of completed flights queued in the local SQLite fallback (archive.db)
+          description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
           example: 0
         registration_misses_hour:
           type: integer
@@ -373,7 +373,7 @@ components:
           example: true
         local_queue_depth:
           type: integer
-          description: Number of completed flights queued in the local SQLite fallback (archive.db)
+          description: Number of completed flights queued in the local SQLite fallback (s3.db)
           example: 0
         started_at:
           type: string
