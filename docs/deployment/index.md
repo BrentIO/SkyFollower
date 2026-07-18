@@ -64,3 +64,39 @@ See the component pages for the full list of settings fields:
 [Archive Processor](/components/archive-processor), and
 [Data Runners](/data-runners/) (logging convention, plus one page per
 runner).
+
+## Maintenance
+
+Each component has different fault-tolerance characteristics, so the safe
+procedure for taking one down — OS patching, a host reboot, a container
+image update — depends on what it is and what depends on it.
+
+**Receiver** — no draining needed. It's the origin of the data, not a
+consumer of anything upstream, so stopping it is simply a coverage gap in
+the ADS-B feed itself; every downstream component (RabbitMQ, processors,
+archive) is unaffected. Stop it, restart it, done.
+
+**Central server** (`rabbitmq`, `redis`, `ofelia`, data runners) — stop
+`ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
+let any currently-running runner finish (or stop it). Stopping processors
+before taking RabbitMQ/Redis down isn't strictly required — processors
+retry their connections and, once reconnected, resume exactly where they
+left off — but doing so avoids noisy reconnect-retry logging during the
+maintenance window. Bring everything back in this order: Redis, then
+RabbitMQ, then `ofelia`.
+
+**A single processor** (not a resize — resizing the processor count up or
+down changes aircraft-to-processor routing and is documented separately) —
+stop it. RabbitMQ retains its queue (`adsb-{id}`, durable) and simply grows
+while the processor is down. Restart it and it drains the backlog automatically:
+the active flight store is durable, and recovery is driven by message
+timestamps rather than wall-clock time, so flights in progress when the
+processor stopped resume correctly instead of being archived just because
+time passed while it was down. See the [Processor](/components/processor)
+page's Fault Tolerance section for the full recovery behavior.
+
+**Archive processor** — stop it. Processors keep publishing completed
+flights to the durable `archive` RabbitMQ queue (or their own local
+fallback if RabbitMQ is also unavailable at the time), which simply grows
+while the archive processor is down. Restart it and it drains normally —
+already fault-tolerant by design, no special handling needed.
