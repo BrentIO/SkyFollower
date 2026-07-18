@@ -1,7 +1,7 @@
-@startuml
+@startuml "SkyFollower Message Pipeline"
 !include ../../images/common.iuml
 
-title SkyFollower — Message Pipeline
+title Message Pipeline
 
 skinparam defaultTextAlignment center
 skinparam rectangle {
