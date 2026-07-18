@@ -23,6 +23,7 @@ package "Host A — Receiver" as HostA {
 
 package "Host C — Processor" as HostC {
     rectangle "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups (Host B)\nRules engine → MQTT notifications" as ProcessorC
+    database "archive.db\n(SQLite WAL)" as ProcessorFallback #FFE5CC
 }
 
 note top of HostC : One to many processors supported
@@ -50,8 +51,11 @@ ProcessorC --> Rmq : consumes adsb-{PROCESSOR_ID}
 
 ProcessorC -down--> Redis : enrichment lookups
 
-ProcessorC --> Archive : RabbitMQ available\n(archive queue)
-ProcessorC --> ArchiveFallback : RabbitMQ offline
+ProcessorC --> Rmq : publishes archive queue
+Rmq --> Archive : consumes archive queue
+ProcessorC --> ProcessorFallback : RabbitMQ offline
+ProcessorFallback ..> Rmq : drains on reconnect
+
 ArchiveFallback ..> Archive : drains on reconnect
 
 Archive --> S3
