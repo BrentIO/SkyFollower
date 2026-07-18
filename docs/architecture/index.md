@@ -33,6 +33,27 @@ corruption. No special drain is required to resize upward safely, though
 performing it during a quiet period will minimize the number of flights
 that get split.
 
+**Removing a processor** works the same way in reverse:
+
+1. Stop the processor container(s) being removed.
+2. Decrement `processor_count` in the receiver's `settings.json`, and
+   comment out (or remove) the corresponding block/volume in
+   `docker-compose.processor.yaml`.
+3. Restart the receiver so the new routing takes effect.
+4. Decommission the removed processor's container and volume.
+
+Splitting an in-progress flight across the resize boundary is an accepted
+trade-off, same as resizing up. The removed processor's residual
+`active_flights.db` data does **not** need to be manually drained or
+preserved before decommissioning — any flights it was still tracking are
+simply abandoned; surviving processors will start fresh flights for those
+aircraft under the new routing the next time they're seen.
+
+*Future enhancement (not built): the archive-processor could eventually
+detect and stitch together adjacent split-flight records (same `icao_hex`,
+contiguous time ranges, matching aircraft/operator) produced by a
+resize-down event.*
+
 ## Crash Recovery & Backlog Replay
 
 The processor's active flight store is file-backed and survives a process
