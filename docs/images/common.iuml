@@ -1,0 +1,15 @@
+skinparam {
+    backgroundColor white
+    ColorBorderColor black
+    SequenceGroupBorderColor black
+    SequenceGroupBackgroundColor white
+    PackageBorderColor black
+    FolderBorderColor black
+    StereotypeBorderColor black
+    ParticipantBackgroundColor white
+    CollectionsBackgroundColor white
+    DatabaseBackgroundColor white
+    Shadowing false
+}
+
+center footer %filename()          %date("yyyy-MM-dd HH:mm")

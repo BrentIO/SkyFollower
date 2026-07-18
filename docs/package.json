@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:generate": "node scripts/generate-pages.mjs && node scripts/bundle-specs.mjs",
+    "docs:generate": "node scripts/generate-pages.mjs && node scripts/bundle-specs.mjs && node scripts/generate-diagrams.mjs",
     "predocs:dev": "npm run docs:generate",
     "docs:dev": "vitepress dev",
     "predocs:build": "npm run docs:generate",
