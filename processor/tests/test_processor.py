@@ -208,17 +208,130 @@ class TestDecode1090:
         assert p._decode_1090(msg) is None
 
 
-class TestDecodeMessageRouting:
-    def test_978_source_dropped_and_logged(self, caplog):
+# ---------------------------------------------------------------------------
+# _decode_978 (#320 — pyModeS978 UAT decoding)
+#
+# These UAT frames are hand-crafted with a synthetic frame builder ported
+# from pyModeS978's own test suite (tests/synth.py — test-only there, not
+# shipped in the PyPI package) and independently verified against
+# pyModeS978.decode() directly before being hardcoded here, matching the
+# same verification discipline TestDecode1090 above uses for 1090 frames.
+# ---------------------------------------------------------------------------
+
+class TestDecode978:
+    def test_ident_and_wake_turbulence_category(self):
+        # payload_type=1 (long), category=4 (medium/large high vortex),
+        # callsign "TEST978A"
         p, _ = _make_processor()
         msg = InboundMessage(
-            raw="-00A3D3E328A71F8C647004E9009C2D401A00",
+            raw="-08A3D3E335818151F32A59C9019432C0E01D96B3912D0A0800000210000000000000",
             icao_hex="A3D3E3", received_at=1.0, source="978",
         )
-        with caplog.at_level(logging.DEBUG, logger="processor"):
-            assert p._decode_message(msg) is None
-        assert "978" in caplog.text
-        assert "A3D3E3" in caplog.text
+        data = p._decode_978(msg)
+        assert data["ident"] == "TEST978A"
+        assert data["wake_turbulence_category"] == "Medium Large High Vortex"
+
+    def test_airborne_position_and_velocity(self):
+        # Same frame as above: lat/lon/altitude + airborne groundspeed/track/vertical_rate
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E335818151F32A59C9019432C0E01D96B3912D0A0800000210000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["latitude"] == pytest.approx(37.6213, abs=0.001)
+        assert data["longitude"] == pytest.approx(-122.3790, abs=0.001)
+        assert data["altitude"] == 34875
+        assert data["velocity"] == 141
+        assert data["heading"] == 45.0
+        assert data["vertical_speed"] == 832
+        assert data["adsb_version"] == 2
+
+    def test_squawk_decoded(self):
+        # Same raw bits as callsign, CSID bit selects squawk instead — no
+        # callsign, no category (NO_INFORMATION, not populated)
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E300000000000000000000000000002A0024E6C40000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["squawk"] == "1200"
+        assert "ident" not in data
+        assert "wake_turbulence_category" not in data
+
+    def test_no_information_category_not_populated(self):
+        # callsign present, category=0 (NO_INFORMATION) — mirrors
+        # _decode_1090's "No category information" guard
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000003B04CAD40610000000200000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["ident"] == "NOCATAC1"
+        assert "wake_turbulence_category" not in data
+
+    def test_ground_heading(self):
+        # On-ground frame, type code selects heading (not track); category=9 (glider/sailplane)
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E300000000000000008042C000003AD755D6B3890000000200000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["velocity"] == 15
+        assert data["heading"] == 270.0
+        assert data["wake_turbulence_category"] == "Glider Sailplane"
+
+    def test_ground_track(self):
+        # On-ground frame, type code selects track (not heading)
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000805540000005C4E6C4E6C40000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["velocity"] == 20
+        assert data["heading"] == 90.0
+
+    def test_uplink_frame_returns_none(self):
+        # FIS-B uplink frame (432-byte payload, '+' direction) carries no
+        # traffic data — decode() returns None, not an error.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="+" + "00" * 432,
+            icao_hex="000000", received_at=1.0, source="978",
+        )
+        assert p._decode_978(msg) is None
+
+    def test_malformed_input_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-ZZZZZZ", icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        assert p._decode_978(msg) is None
+
+    def test_no_useful_fields_dropped(self):
+        # payload_type=0 (short) — no Mode Status block present, so no
+        # ident/squawk/category/version; every state-vector field left at
+        # its "unavailable" raw value.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-00A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        assert p._decode_978(msg) is None
+
+
+class TestDecodeMessageRouting:
+    def test_978_source_routes_to_decode_978(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E335818151F32A59C9019432C0E01D96B3912D0A0800000210000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        assert p._decode_message(msg)["ident"] == "TEST978A"
 
     def test_1090_source_routes_to_decode_1090(self):
         p, _ = _make_processor()

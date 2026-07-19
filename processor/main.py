@@ -31,6 +31,7 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 import pika
 import pyModeS as pms
+import pyModeS978
 import redis as redis_lib
 
 from processor.rules_engine import RulesEngine
@@ -580,11 +581,7 @@ class Processor:
         Mode-S hex, same as 1090 — this dispatch was never keyed on source
         before, so that's not a behavior change."""
         if msg.source == "978":
-            logger.debug(
-                "978 decode not yet implemented (icao_hex=%s) — dropping message.",
-                msg.icao_hex,
-            )
-            return None
+            return self._decode_978(msg)
         return self._decode_1090(msg)
 
     def _decode_1090(self, msg: InboundMessage) -> Optional[dict]:
@@ -651,6 +648,65 @@ class Processor:
             velocity = result.get("airspeed")
         if velocity is not None:
             data["velocity"] = velocity
+
+        heading = result.get("track")
+        if heading is None:
+            heading = result.get("heading")
+        if heading is not None:
+            data["heading"] = heading
+
+        if result.get("vertical_rate") is not None:
+            data["vertical_speed"] = result["vertical_rate"]
+
+        if result.get("version") is not None:
+            data["adsb_version"] = result["version"]
+
+        return data if len(data) > 1 else None
+
+    def _decode_978(self, msg: InboundMessage) -> Optional[dict]:
+        """
+        Decode a raw UAT frame via pyModeS978. Same pure field-presence
+        extraction style as _decode_1090. msg.raw already carries the
+        dump978-fa -/+ direction prefix pyModeS978.decode() expects — no
+        stripping needed.
+        """
+        try:
+            result = pyModeS978.decode(msg.raw)
+        except pyModeS978.DecodeError:
+            return None
+        if result is None:
+            # Uplink frame (FIS-B weather/NOTAM) — no traffic data, not an error.
+            return None
+
+        data: dict = {"icao_hex": msg.icao_hex}
+
+        if result.get("squawk") is not None:
+            data["squawk"] = result["squawk"]
+
+        if result.get("callsign") is not None:
+            # UAT's base40 callsign alphabet has no invalid-character
+            # sentinel (unlike pyModeS 3.x's "#") — every index decodes to
+            # a defined character, so just strip and check non-empty.
+            ident = result["callsign"].strip()
+            if ident:
+                data["ident"] = ident
+
+        category = result.get("category")
+        if category is not None and category.name != "NO_INFORMATION":
+            # Unlike pyModeS's raw 1090 category int, pyModeS978's category
+            # is already typecode-independent and fully resolved by the
+            # library — no processor-side interpretation needed here.
+            data["wake_turbulence_category"] = category.name.replace("_", " ").title()
+
+        if result.get("latitude") is not None:
+            data["latitude"] = result["latitude"]
+            data["longitude"] = result["longitude"]
+
+        if result.get("altitude") is not None:
+            data["altitude"] = result["altitude"]
+
+        if result.get("groundspeed") is not None:
+            data["velocity"] = result["groundspeed"]
 
         heading = result.get("track")
         if heading is None:

@@ -78,6 +78,15 @@ which this processor doesn't use.
 gliders/UAVs, and TC=2 surface vehicles are all encoded on the same numeric
 scale but mean different things, and pyModeS's mapping accounts for that.
 
+UAT (`source: "978"`) frames are decoded the same way, via
+[`pyModeS978`](https://github.com/BrentIO/pyModeS978)'s own `decode()`
+call — same pure field-presence extraction, no message-type dispatch.
+`wake_turbulence_category` is sourced from pyModeS978's `category` field,
+title-cased (e.g. `"Medium Large High Vortex"`); unlike pyModeS's raw 1090
+`category` int, pyModeS978's `category` is already typecode-independent and
+fully resolved by the library, so no further interpretation is needed on
+the processor side.
+
 ## Redis Key Dependencies
 
 ### Keys read
