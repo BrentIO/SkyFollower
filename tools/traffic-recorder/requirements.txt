@@ -1,1 +1,1 @@
-pyModeS>=2.10  # latest: 3.6.0
+pyModeS==3.6.0

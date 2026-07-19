@@ -4,3 +4,187 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/archive-processor"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/at-austrocontrol"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/au-casa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/bg-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/br-anac"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/bs-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/bz-bdca"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ca-transport-canada"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ch-bazl"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/cy-dca"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/cz-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ee-transpordiamet"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/es-aesa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/fr-dgac"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ge-gcaa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/gg-2reg"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/hr-ccaa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/hu-kozhaf"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/im-ardis"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/is-samgongustofa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/kg-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/kr-koca"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ky-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/lu-dac"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/lv-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/md-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/me-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/mictronics"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/mk-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/mv-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/nl-ilt"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/no-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/nz-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/ourairports"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/pg-casapng"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/rs-cad"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/sg-caas"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/sk-nsat"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/tc-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/uk-caa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/data-runners/us-faa"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/processor"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/receiver"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/shared"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/tools/traffic-recorder"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/tools/traffic-replayer"
+    schedule:
+      interval: "weekly"
