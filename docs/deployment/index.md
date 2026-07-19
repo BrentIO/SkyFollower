@@ -82,8 +82,16 @@ let any currently-running runner finish (or stop it). Stopping processors
 before taking RabbitMQ/Redis down isn't strictly required — processors
 retry their connections and, once reconnected, resume exactly where they
 left off — but doing so avoids noisy reconnect-retry logging during the
-maintenance window. Bring everything back in this order: Redis, then
-RabbitMQ, then `ofelia`.
+maintenance window. The archive processor is the same story: it also
+depends on Redis now, for split-flight stitching, but that dependency fails
+soft — a Redis outage doesn't block or fail an archive write, it just means
+stitching quietly stops working, and any flight archived during the window
+that would have merged onto a recent segment stays as a separate,
+un-merged record instead (no data loss, just a permanent miss for that
+pair, since there's no later backfill). Stopping the archive processor
+first avoids that miss and the log noise, but isn't required for
+correctness. Bring everything back in this order: Redis, then RabbitMQ,
+then `ofelia`.
 
 **A single processor** (not a resize — resizing the processor count up or
 down changes aircraft-to-processor routing and is documented separately) —
