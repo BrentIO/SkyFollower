@@ -21,6 +21,7 @@
         "access_key_id": "change_me",
         "secret_access_key": "change_me"
     },
+    "flight_ttl_seconds": 300,
     "telemetry_interval_seconds": 30,
     "data_dir": "/app/data",
     "log_level": "info"

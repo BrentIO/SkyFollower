@@ -37,9 +37,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
-from shared.redis_keys import metrics_flights_archived_key
+from shared.redis_keys import archive_last_segment_key, metrics_flights_archived_key
 
 logger = logging.getLogger("archive-processor")
+
+# How long the "last archived segment" pointer for an aircraft is kept in
+# Redis before it expires on its own (see _try_stitch / _update_stitch_pointer).
+_STITCH_POINTER_TTL_SECONDS = 86400
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +115,59 @@ def build_geojson_feature(flight: CompletedFlight) -> Optional[dict]:
         },
         "properties": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Split-flight stitching
+# ---------------------------------------------------------------------------
+
+def _normalize_timestamps(items: list[dict]) -> list[dict]:
+    """
+    Parse a previously-archived S3 object's position/velocity timestamp
+    strings back into datetime objects, matching the shape a live
+    CompletedFlight's positions/velocities already use — so a merged list
+    can be sorted uniformly regardless of which segment an item came from.
+    """
+    out = []
+    for item in items:
+        item = dict(item)
+        ts = item.get("timestamp")
+        if isinstance(ts, str):
+            item["timestamp"] = datetime.fromisoformat(ts)
+        out.append(item)
+    return out
+
+
+def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
+    """
+    Merge a previously-archived flight segment (raw dict, as read back from
+    S3) with the newly-completed segment that continues it, producing a
+    single CompletedFlight under the *original* segment's _id.
+    """
+    prev_positions = _normalize_timestamps(prev.get("positions") or [])
+    prev_velocities = _normalize_timestamps(prev.get("velocities") or [])
+
+    merged_positions = sorted(
+        prev_positions + new_flight.positions, key=lambda p: p["timestamp"]
+    )
+    merged_velocities = sorted(
+        prev_velocities + new_flight.velocities, key=lambda v: v["timestamp"]
+    )
+    # Union, not concatenation: a rule may have matched independently on
+    # both segments (each processor evaluates rules with no knowledge of
+    # the other's matches), and the merged record should show it once.
+    merged_rules = list(dict.fromkeys(
+        (prev.get("matched_rules") or []) + new_flight.matched_rules
+    ))
+
+    return new_flight.model_copy(update={
+        "id": prev["_id"],
+        "first_message": datetime.fromisoformat(prev["first_message"]),
+        "total_messages": (prev.get("total_messages") or 0) + new_flight.total_messages,
+        "matched_rules": merged_rules,
+        "positions": merged_positions,
+        "velocities": merged_velocities,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -422,26 +479,12 @@ class ArchiveProcessor:
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
     def _process_flight(self, flight: CompletedFlight) -> None:
-        """Build GeoJSON, write to S3 (or fallback), update Parquet index."""
-        # Build enriched payload dict
-        payload_dict = flight.model_dump(by_alias=True, mode="json")
-
-        # Add GeoJSON flight_path
-        feature = build_geojson_feature(flight)
-        if feature is not None:
-            payload_dict["flight_path"] = feature
-
-        payload_json = json.dumps(payload_dict, default=str)
-        payload_gz = gzip.compress(payload_json.encode("utf-8"))
-
-        s3_key = build_s3_key(flight)
-
+        """Write to S3 (or fallback) if S3 is currently reachable."""
         with self._s3_lock:
             s3_available = self._s3_connected
 
         if s3_available:
-            self._write_to_s3(flight, payload_gz, s3_key)
-            self._post_write_success(flight, s3_key)
+            self._archive_flight_to_s3(flight)
         else:
             # Queue the raw JSON payload for later retry
             self._fallback.put(flight.model_dump_json(by_alias=True))
@@ -454,18 +497,112 @@ class ArchiveProcessor:
         """Drain the SQLite fallback queue into S3."""
         def process(payload: str) -> None:
             flight = CompletedFlight.model_validate_json(payload)
-            payload_dict = flight.model_dump(by_alias=True, mode="json")
-            feature = build_geojson_feature(flight)
-            if feature is not None:
-                payload_dict["flight_path"] = feature
-            payload_json = json.dumps(payload_dict, default=str)
-            payload_gz = gzip.compress(payload_json.encode("utf-8"))
-            s3_key = build_s3_key(flight)
-            self._write_to_s3(flight, payload_gz, s3_key)
-            self._post_write_success(flight, s3_key)
+            self._archive_flight_to_s3(flight)
 
         self._fallback.drain(process)
         logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+
+    def _archive_flight_to_s3(self, flight: CompletedFlight) -> None:
+        """
+        Check whether this flight continues a recently-archived segment for
+        the same aircraft (a processor-count resize can force an early
+        archive mid-flight); if so, merge into that segment instead of
+        writing a second S3 object. Otherwise build GeoJSON and write
+        normally. Assumes S3 is reachable — raises on failure so the caller
+        can decide fallback handling.
+        """
+        s3_key = build_s3_key(flight)
+        stitched = self._try_stitch(flight)
+        if stitched is not None:
+            flight, s3_key = stitched
+
+        payload_dict = flight.model_dump(by_alias=True, mode="json")
+        feature = build_geojson_feature(flight)
+        if feature is not None:
+            payload_dict["flight_path"] = feature
+        payload_json = json.dumps(payload_dict, default=str)
+        payload_gz = gzip.compress(payload_json.encode("utf-8"))
+
+        self._write_to_s3(flight, payload_gz, s3_key)
+        self._post_write_success(flight, s3_key)
+        self._update_stitch_pointer(flight, s3_key)
+
+    # ------------------------------------------------------------------
+    # Split-flight stitching
+    # ------------------------------------------------------------------
+
+    def _try_stitch(self, flight: CompletedFlight) -> Optional[tuple[CompletedFlight, str]]:
+        """
+        If this flight's start is within flight_ttl_seconds of the last
+        archived segment for the same aircraft, fetch that segment and
+        merge. Returns (merged_flight, original_s3_key), or None if this is
+        a genuinely new flight (no prior pointer, gap too large, or the
+        prior segment couldn't be fetched).
+        """
+        icao_hex = flight.aircraft.get("icao_hex", "")
+        if not icao_hex:
+            return None
+
+        try:
+            raw = self._redis.get(archive_last_segment_key(icao_hex))
+        except Exception as exc:
+            logger.warning("Stitch pointer lookup failed for %s: %s", icao_hex, exc)
+            return None
+        if not raw:
+            return None
+
+        try:
+            pointer = json.loads(raw)
+            prev_last_message = float(pointer["last_message"])
+            prev_s3_key = pointer["s3_key"]
+        except (ValueError, KeyError, TypeError):
+            return None
+
+        ttl = self._cfg.get("flight_ttl_seconds", 300)
+        gap = flight.first_message.timestamp() - prev_last_message
+        if gap > ttl:
+            return None
+
+        prev = self._fetch_previous_segment(prev_s3_key)
+        if prev is None:
+            return None
+
+        return _merge_segments(flight, prev), prev_s3_key
+
+    def _fetch_previous_segment(self, s3_key: str) -> Optional[dict]:
+        """Fetch and parse a previously-archived S3 object. None on failure —
+        a fetch failure just means this is treated as a new flight instead."""
+        s3_cfg = self._cfg.get("s3", {})
+        bucket = s3_cfg.get("bucket", "")
+        with self._s3_lock:
+            client = self._s3_client
+        try:
+            obj = client.get_object(Bucket=bucket, Key=s3_key)
+            return json.loads(gzip.decompress(obj["Body"].read()))
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch previous segment %s for stitching: %s", s3_key, exc
+            )
+            return None
+
+    def _update_stitch_pointer(self, flight: CompletedFlight, s3_key: str) -> None:
+        icao_hex = flight.aircraft.get("icao_hex", "")
+        if not icao_hex:
+            return
+        pointer = {
+            "uuid": flight.id,
+            "first_message": flight.first_message.timestamp(),
+            "last_message": flight.last_message.timestamp(),
+            "s3_key": s3_key,
+        }
+        try:
+            self._redis.set(
+                archive_last_segment_key(icao_hex),
+                json.dumps(pointer),
+                ex=_STITCH_POINTER_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("Failed to update stitch pointer for %s: %s", icao_hex, exc)
 
     def _post_write_success(self, flight: CompletedFlight, s3_key: str) -> None:
         """After a successful S3 write: update Parquet index and Redis counters."""
