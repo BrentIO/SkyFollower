@@ -1,0 +1,55 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Archive Processor — Split-Flight Stitching
+
+box "Archive Processor" $OnPrem
+    participant "Archiver" as Archiver
+end box
+
+box "Redis" $OnPrem
+    database "archive:last_segment:\n{icao_hex}" as Pointer
+end box
+
+box "AWS" $AWS
+    participant "S3" as S3
+end box
+
+Archiver -> Pointer++ : **Look up the last archived segment for this aircraft**\n""GET archive:last_segment:{icao_hex}""
+alt lookup succeeds
+    Pointer --> Archiver-- : pointer ""{uuid, first_message, last_message, s3_key}""\nor none
+else Redis unreachable
+    Pointer --> Archiver-- : error
+    Archiver -> Archiver : **Treat as no pointer**\narchive as a new flight
+end
+
+alt no pointer, or gap > flight_ttl_seconds
+    Archiver -> Archiver : **Build** GeoJSON ""flight_path""
+    Archiver -> S3++ : **Write the flight to S3**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{new _id}.json.gz""
+    S3 --> Archiver-- : success
+
+else gap <= flight_ttl_seconds (likely a resize-induced split)
+    Archiver -> S3++ : **Fetch the previous segment**\n""GetObject {s3_key from pointer}""
+    alt fetch succeeds
+        S3 --> Archiver-- : previous segment JSON
+        Archiver -> Archiver : **Merge**\npositions/velocities concatenated + sorted\n""flight_path"" recomputed\n""matched_rules"" unioned + deduped\n""total_messages"" summed
+        Archiver -> S3++ : **Overwrite the original flight in S3**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{original _id}.json.gz""
+        S3 --> Archiver-- : success
+    else fetch fails (S3 error, object gone)
+        S3 --> Archiver-- : error
+        Archiver -> Archiver : **Fall back** — treat as a new flight
+        Archiver -> S3++ : **Write the flight to S3**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{new _id}.json.gz""
+        S3 --> Archiver-- : success
+    end
+end
+
+Archiver -\ Pointer : **Save the pointer for this segment**\n""SET archive:last_segment:{icao_hex} {...} EX 86400""
+note right of Pointer
+    Fire-and-forget — a failed write here
+    (Redis unreachable) only means a later
+    segment for this aircraft won't find a
+    pointer to stitch onto. It never blocks
+    or fails the archive that already happened.
+end note
+
+@enduml

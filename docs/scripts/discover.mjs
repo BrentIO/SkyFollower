@@ -25,18 +25,15 @@ function h1Title(readmePath, fallback) {
 
 export function discoverComponents() {
   return COMPONENT_DIRS.map((name) => {
-    const readmePath = join(REPO_ROOT, name, "README.md");
+    const dir = join(REPO_ROOT, name);
+    const readmePath = join(dir, "README.md");
     const hasReadme = existsSync(readmePath);
-    // A component's architecture diagram, if it has one (see #463) — e.g.
-    // receiver/receiver.puml. Not every component has one (shared doesn't).
-    const pumlPath = join(REPO_ROOT, name, `${name}.puml`);
-    const hasPuml = existsSync(pumlPath);
     return {
       name,
+      dir,
       readmePath,
       hasReadme,
       title: hasReadme ? h1Title(readmePath, name) : name,
-      pumlPath: hasPuml ? pumlPath : null,
     };
   });
 }
