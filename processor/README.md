@@ -27,8 +27,8 @@ horizontally by adding processor containers on separate hosts.
 | `mqtt.password` | string | — | MQTT password |
 | `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a processor reconnects. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
-| `home_latitude` | float | — | Receiver home latitude (decimal degrees). Required for single-message CPR position decoding (DF 17, TC 5–18). Omit if position decoding is not needed. |
-| `home_longitude` | float | — | Receiver home longitude (decimal degrees). |
+| `latitude` | float | — | Receiver location latitude (decimal degrees). Required for single-message CPR airborne position decoding. Omit if position decoding is not needed. |
+| `longitude` | float | — | Receiver location longitude (decimal degrees). |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `active_flights.db` (the durable active flight store) and `completed_flights.db` (the RabbitMQ offline fallback) are written. |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
@@ -50,6 +50,33 @@ Example:
 environment:
   PROCESSOR_ID: "0"
 ```
+
+## Decoding
+
+Raw Mode-S/ADS-B frames are decoded via pyModeS 3.x's single unified
+`decode()` call, which returns every decodable field for a message in one
+dict. The processor extracts fields purely by presence — if a field is in
+the result, it's used; there's no downlink-format or typecode dispatch, and
+no downlink-format allowlist. Message types that don't populate any field
+the processor cares about (e.g. ACAS RA broadcasts) simply produce nothing
+and are dropped, with nothing to explicitly filter.
+
+Any message pyModeS flags as CRC-invalid is rejected outright — but this
+only provides real protection for DF17/18 (extended squitter), where
+`crc_valid` reflects an actual CRC-remainder-equals-zero check. For
+DF0/4/5/11/16/20/21 (including squawk, DF5/21), pyModeS hardcodes
+`crc_valid=True` unconditionally, since their CRC field encodes the ICAO
+address itself rather than providing an independent integrity check —
+there's no single-message corruption signal available for those message
+types at all. A squawk value is trusted once decoded; there's nothing
+further to verify it against outside of multi-message/pipe-mode decoding,
+which this processor doesn't use.
+
+`wake_turbulence_category` is sourced directly from pyModeS's own computed
+`wake_vortex` field, which is aware of which identification sub-type
+(typecode) a category code came from — TC=4 aircraft categories, TC=3
+gliders/UAVs, and TC=2 surface vehicles are all encoded on the same numeric
+scale but mean different things, and pyModeS's mapping accounts for that.
 
 ## Redis Key Dependencies
 
