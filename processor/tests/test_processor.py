@@ -42,7 +42,6 @@ def _minimal_config() -> dict:
     return {
         "redis": {"host": "localhost"},
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-        "flight_ttl_seconds": 300,
         "telemetry_interval_seconds": 30,
         "data_dir": tempfile.mkdtemp(),
     }
@@ -579,7 +578,7 @@ class TestPerMessageGapCheck:
         f.source = "1090"
         f.save()
 
-        ttl = p._cfg.get("flight_ttl_seconds", 300)
+        ttl = p._flight_ttl_seconds
         new_time = old_time + ttl + 50  # gap exceeds ttl
 
         msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=new_time, source="1090")
@@ -677,7 +676,7 @@ class TestFlightIdStability:
 class TestMessageClockGatesEviction:
     def test_does_not_evict_ahead_of_message_clock(self):
         p, _ = _make_processor()
-        ttl = p._cfg.get("flight_ttl_seconds", 300)
+        ttl = p._flight_ttl_seconds
 
         last_message = time.time() - 600  # 10 minutes old by wall-clock
 
@@ -747,3 +746,56 @@ class TestMqttLagGuard:
         recent_received_at = time.time() - 1
         p._publish_rule_notification(f, {"identifier": "rule_a"}, recent_received_at)
         mock_mqtt.publish.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# flight_ttl_seconds: shared Redis config (#477)
+# ---------------------------------------------------------------------------
+
+class TestFlightTtlRefresh:
+    def test_defaults_to_300_when_unset(self):
+        p, mock_redis = _make_processor()
+        mock_redis.get.return_value = None
+        p._refresh_flight_ttl_seconds()
+        assert p._flight_ttl_seconds == 300
+
+    def test_updates_from_redis_value(self):
+        p, mock_redis = _make_processor()
+        mock_redis.get.return_value = "600"
+        p._refresh_flight_ttl_seconds()
+        assert p._flight_ttl_seconds == 600
+
+    def test_keeps_stale_value_on_redis_error(self):
+        p, mock_redis = _make_processor()
+        p._flight_ttl_seconds = 450
+        mock_redis.get.side_effect = ConnectionError("redis down")
+        p._refresh_flight_ttl_seconds()
+        assert p._flight_ttl_seconds == 450
+
+    def test_gap_check_uses_refreshed_value_not_config(self):
+        """The per-message gap check must read the cached attribute, not
+        settings.json — config no longer carries flight_ttl_seconds at all."""
+        p, mock_redis = _make_processor()
+        mock_redis.get.return_value = "10"
+        mock_redis.evalsha.return_value = None
+        p._refresh_flight_ttl_seconds()
+        assert "flight_ttl_seconds" not in p._cfg
+
+        old_time = 1_700_000_000.0
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "old-flight-id"
+        f.first_message = old_time
+        f.last_message = old_time
+        f.total_messages = 1
+        f.source = "1090"
+        f.save()
+
+        # Gap of 20s exceeds the refreshed 10s ttl, so this should split.
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=old_time + 20, source="1090")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        f2 = Flight(p._db)
+        f2.load("A8AE7F")
+        assert f2.flight_id != "old-flight-id"

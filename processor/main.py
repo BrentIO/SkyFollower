@@ -48,6 +48,7 @@ from shared.models import (
 from shared.mqtt import build_mqtt_client
 from shared.redis_keys import (
     config_areas_version_key,
+    config_flight_ttl_seconds_key,
     config_rules_version_key,
     flight_key,
     metrics_aircraft_type_misses_key,
@@ -453,6 +454,12 @@ class Processor:
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
 
+        # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
+        # cached locally and refreshed on the same poll cadence as rules/areas
+        # — read on every message in _update_flight's gap check, so it must
+        # never be a synchronous Redis GET on the hot path.
+        self._flight_ttl_seconds: int = 300
+
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
         self._mqtt_connected = False
@@ -471,6 +478,7 @@ class Processor:
         self._claim_processor_id()
         self._connect_mqtt()
         self._rules_engine.reload_if_changed()
+        self._refresh_flight_ttl_seconds()
 
         # Background threads
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat").start()
@@ -642,7 +650,7 @@ class Processor:
         exists = flight.load(data["icao_hex"])
 
         if exists:
-            ttl = self._cfg.get("flight_ttl_seconds", 300)
+            ttl = self._flight_ttl_seconds
             if msg.received_at - flight.last_message > ttl:
                 # The loaded flight is already complete — a gap this size
                 # replayed through the backlog (or happened live) means it
@@ -787,7 +795,7 @@ class Processor:
             self._evict_stale()
 
     def _evict_stale(self) -> None:
-        ttl = self._cfg.get("flight_ttl_seconds", 300)
+        ttl = self._flight_ttl_seconds
         with self._db_lock:
             # message_clock, not wall-clock time, gates eviction — after a
             # restart it only advances as far as the RabbitMQ backlog has
@@ -985,6 +993,18 @@ class Processor:
                 self._rules_engine.reload_if_changed()
             except Exception as exc:
                 logger.debug("Config poll error: %s", exc)
+            self._refresh_flight_ttl_seconds()
+
+    def _refresh_flight_ttl_seconds(self) -> None:
+        """Refresh the cached flight_ttl_seconds from Redis. Leaves the
+        current value in place on any error — the same graceful-degradation
+        posture as the rules/areas reload."""
+        try:
+            raw = self._redis.get(config_flight_ttl_seconds_key())
+            if raw is not None:
+                self._flight_ttl_seconds = int(raw)
+        except Exception as exc:
+            logger.debug("flight_ttl_seconds refresh error: %s", exc)
 
     # ------------------------------------------------------------------
     # Heartbeat (keeps Redis NX key alive)

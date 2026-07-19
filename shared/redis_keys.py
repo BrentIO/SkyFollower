@@ -72,6 +72,17 @@ def config_areas_version_key() -> str:
     return "config:areas:version"
 
 
+def config_flight_ttl_seconds_key() -> str:
+    """
+    Shared flight_ttl_seconds value, read by both the processor and the
+    archive processor. Plain scalar (no version-hash key — cheap enough to
+    just re-GET and compare on the same poll cadence as config:rules/
+    config:areas). Callers should default to 300 if unset.
+    config:flight_ttl_seconds
+    """
+    return "config:flight_ttl_seconds"
+
+
 def processor_heartbeat_key(processor_id: int) -> str:
     """
     Processor liveness key used to detect duplicate PROCESSOR_ID on startup.

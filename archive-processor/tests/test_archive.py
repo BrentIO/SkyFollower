@@ -74,7 +74,6 @@ def _make_processor(tmp_dir: str, flight_ttl_seconds: int = 300):
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
         "redis": {"host": "localhost"},
         "mqtt": None,
-        "flight_ttl_seconds": flight_ttl_seconds,
         "telemetry_interval_seconds": 30,
         "data_dir": tmp_dir,
     }
@@ -86,6 +85,7 @@ def _make_processor(tmp_dir: str, flight_ttl_seconds: int = 300):
         processor = ArchiveProcessor(config)
         processor._redis = mock_redis
         processor._s3_connected = True
+        processor._flight_ttl_seconds = flight_ttl_seconds
         return processor, mock_redis
 
 
@@ -631,3 +631,51 @@ class TestStitching:
             assert merged["total_messages"] == 3
             assert merged["matched_rules"] == ["rule_a", "rule_b", "rule_c"]
             assert len(merged["positions"]) == 3  # one per segment
+
+
+# ---------------------------------------------------------------------------
+# flight_ttl_seconds: shared Redis config (#477)
+# ---------------------------------------------------------------------------
+
+class TestFlightTtlRefresh:
+    def test_defaults_to_300_when_unset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            mock_redis.get.return_value = None
+            processor._refresh_flight_ttl_seconds()
+            assert processor._flight_ttl_seconds == 300
+
+    def test_updates_from_redis_value(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            mock_redis.get.return_value = "600"
+            processor._refresh_flight_ttl_seconds()
+            assert processor._flight_ttl_seconds == 600
+
+    def test_keeps_stale_value_on_redis_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._flight_ttl_seconds = 450
+            mock_redis.get.side_effect = ConnectionError("redis down")
+            processor._refresh_flight_ttl_seconds()
+            assert processor._flight_ttl_seconds == 450
+
+    def test_stitch_uses_refreshed_value_not_config(self):
+        """_try_stitch must read the cached attribute, not settings.json —
+        config no longer carries flight_ttl_seconds at all."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=10)
+            assert "flight_ttl_seconds" not in processor._cfg
+
+            pointer = {
+                "uuid": "prev-uuid",
+                "first_message": 0.0,
+                "last_message": 1000.0,
+                "s3_key": "flights/2024/05/31/prev.json.gz",
+            }
+            mock_redis.get.return_value = json.dumps(pointer)
+
+            # Gap of 20s exceeds the 10s ttl, so this should not stitch.
+            new_first = datetime.fromtimestamp(1020.0, tz=timezone.utc)
+            flight = _make_flight(_id="new-uuid", first_message=new_first)
+            assert processor._try_stitch(flight) is None
