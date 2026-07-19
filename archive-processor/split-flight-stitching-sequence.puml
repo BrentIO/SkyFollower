@@ -1,0 +1,43 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Archive Processor — Split-Flight Stitching
+
+box "Archive Processor" $OnPrem
+    participant "Archiver" as Archiver
+end box
+
+box "Redis" $OnPrem
+    database "archive:last_segment:\n{icao_hex}" as Pointer
+end box
+
+box "AWS" $AWS
+    collections "S3" as S3
+end box
+
+Archiver -> Pointer++ : **Look up** last archived segment\nfor this aircraft
+Pointer --> Archiver-- : pointer ""{uuid, first_message, last_message, s3_key}""\nor none
+
+alt no pointer, or gap > flight_ttl_seconds
+    Archiver -> Archiver : **Build** GeoJSON ""flight_path""
+    Archiver -> S3++ : **PutObject**\nnew key (own ""_id"")
+    S3 --> Archiver-- : success
+
+else gap <= flight_ttl_seconds (likely a resize-induced split)
+    Archiver -> S3++ : **GetObject** previous segment
+    alt fetch succeeds
+        S3 --> Archiver-- : previous segment JSON
+        Archiver -> Archiver : **Merge**\npositions/velocities concatenated + sorted\n""flight_path"" recomputed\n""matched_rules"" unioned + deduped\n""total_messages"" summed
+        Archiver -> S3++ : **PutObject**\noriginal key (original ""_id"")
+        S3 --> Archiver-- : success
+    else fetch fails (S3 error, object gone)
+        S3 --> Archiver-- : error
+        Archiver -> Archiver : **Fall back** — treat as a new flight
+        Archiver -> S3++ : **PutObject**\nnew key (own ""_id"")
+        S3 --> Archiver-- : success
+    end
+end
+
+Archiver -> Pointer : **Write** pointer for the segment just written\n(new or merged) — TTL 1 day
+
+@enduml

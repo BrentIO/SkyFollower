@@ -95,6 +95,14 @@ processor detects and merges this after the fact:
   processor or affect live MQTT rule notifications, which are published in
   real time as each segment is tracked, before the archive processor ever
   sees a completed flight.
+- If the previous segment can't be fetched (S3 error, object deleted, etc.),
+  the current flight falls back to being archived as its own new object
+  rather than blocking or dropping data — the Redis pointer still advances
+  to point at whatever was actually written, so a later segment can still
+  stitch onto it going forward, even though this specific pair missed the
+  merge.
+
+![Split-flight stitching](./split-flight-stitching-sequence.svg)
 
 ## Parquet Metadata Index
 

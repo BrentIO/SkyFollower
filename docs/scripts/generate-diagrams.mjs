@@ -13,7 +13,10 @@
 // source and README, and gets `!include`d into docs/architecture/images/
 // pipeline.puml as a reusable fragment (via PlantUML's !startsub/!endsub +
 // `!include file.puml!NAME`) as well as rendered standalone for that
-// component's own docs page. Two different "make the rendered SVG land
+// component's own docs page. A component isn't limited to one diagram —
+// e.g. archive-processor/ has both its architecture diagram and a sequence
+// diagram for a specific behavior — any .puml directly in a component's
+// directory gets picked up. Two different "make the rendered SVG land
 // somewhere a generated docs page can reference" steps follow from that:
 //
 // 1. For .puml files already under docs/ (pipeline.puml itself, and its
@@ -26,12 +29,12 @@
 //    stays the literal relative path, which 404s unless a real file exists
 //    there too. Mirroring into public/ is the same fix FireFly-Docs uses
 //    for the same reason.
-// 2. For a component's own .puml (outside docs/ entirely), the rendered
-//    SVG is copied into docs/components/<name>.svg — a sibling of the
-//    generated docs/components/<name>.md page (see generate-pages.mjs).
-//    Since the source README embeds the diagram with a same-basename
-//    relative reference (e.g. `./receiver.svg`, sitting next to
-//    receiver/README.md), and the copied SVG lands at the identical
+// 2. For a component's own .puml file(s) (outside docs/ entirely), each
+//    rendered SVG is copied into docs/components/<basename>.svg — a
+//    sibling of the generated docs/components/<name>.md page (see
+//    generate-pages.mjs). Since the source README embeds a diagram with a
+//    same-basename relative reference (e.g. `./receiver.svg`, sitting next
+//    to receiver/README.md), and the copied SVG lands at the identical
 //    relative position next to the generated page, no link-rewriting is
 //    needed — the reference resolves unchanged. This intentionally does
 //    *not* render on GitHub (the source .svg is gitignored, never
@@ -96,15 +99,19 @@ for (const file of pumlFiles) {
   copyFileSync(svgPath, dest);
 }
 
-// Step 2: copy each component's own diagram SVG next to its generated docs
-// page (see #463).
+// Step 2: copy each component's own diagram SVG(s) next to its generated
+// docs page (see #463) — every .puml directly in the component's
+// directory, not just one matching the component's own name.
 const componentsDir = join(DOCS_ROOT, "components");
 for (const component of discoverComponents()) {
-  if (!component.pumlPath) continue;
-  const svgPath = component.pumlPath.replace(/\.puml$/, ".svg");
-  const dest = join(componentsDir, `${component.name}.svg`);
-  mkdirSync(dirname(dest), { recursive: true });
-  copyFileSync(svgPath, dest);
+  for (const entry of readdirSync(component.dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".puml")) continue;
+    const svgName = entry.name.replace(/\.puml$/, ".svg");
+    const svgPath = join(component.dir, svgName);
+    const dest = join(componentsDir, svgName);
+    mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(svgPath, dest);
+  }
 }
 
 console.log(`docs: generated ${pumlFiles.length} PlantUML diagram(s)`);
