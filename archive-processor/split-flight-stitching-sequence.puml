@@ -12,7 +12,7 @@ box "Redis" $OnPrem
 end box
 
 box "AWS" $AWS
-    collections "S3" as S3
+    participant "S3" as S3
 end box
 
 Archiver -> Pointer++ : **Look up** last archived segment\nfor this aircraft
@@ -38,6 +38,6 @@ else gap <= flight_ttl_seconds (likely a resize-induced split)
     end
 end
 
-Archiver -> Pointer : **Write** pointer for the segment just written\n(new or merged) — TTL 1 day
+Archiver -\ Pointer : **Write** pointer for the segment just written\n(new or merged) — TTL 1 day
 
 @enduml
