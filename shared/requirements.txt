@@ -1,2 +1,2 @@
-pydantic>=2.0
-uuid7>=0.1.0
+pydantic>=2.0  # latest: 2.13.4
+uuid7>=0.1.0  # latest: 0.1.0
