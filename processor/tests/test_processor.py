@@ -22,7 +22,6 @@ from processor.main import (
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
-    _category_to_wtc,
 )
 from shared.models import InboundMessage, Position, Velocity
 
@@ -68,23 +67,176 @@ def _make_processor(cfg: dict | None = None) -> tuple[Processor, MagicMock]:
 
 
 # ---------------------------------------------------------------------------
-# _category_to_wtc
+# _decode_1090 (#302 — pyModeS 3.x migration)
+#
+# These hex frames are hand-crafted with pyModeS's own CRC function
+# (pyModeS._bits.crc_remainder) rather than copy-pasted from elsewhere, so
+# each one is deliberately built to exercise exactly one field combination
+# and independently verified against pms.decode() directly before being
+# used here. This is the coverage that would have caught the pre-#302 bug
+# (pms.df() raising V2APIRemovedError on every message) — every other test
+# in this file calls _update_flight directly with hand-built dicts and
+# never touches real decode at all.
 # ---------------------------------------------------------------------------
 
-class TestCategoryToWtc:
-    def test_all_known_categories(self):
-        assert _category_to_wtc(1) == "Light"
-        assert _category_to_wtc(2) == "Medium 1"
-        assert _category_to_wtc(3) == "Medium 2"
-        assert _category_to_wtc(4) == "High Vortex Aircraft"
-        assert _category_to_wtc(5) == "Heavy"
-        assert _category_to_wtc(6) == "High Performance"
-        assert _category_to_wtc(7) == "Rotorcraft"
+class TestDecode1090:
+    def test_ident_and_wake_turbulence_category(self):
+        # TC=4, category=5 (Heavy), callsign "TESTHVY1"
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F255054D42166710A1432",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["ident"] == "TESTHVY1"
+        assert data["wake_turbulence_category"] == "Heavy"
 
-    def test_unknown_returns_none(self):
-        assert _category_to_wtc(0) is None
-        assert _category_to_wtc(8) is None
-        assert _category_to_wtc(99) is None
+    def test_gps_velocity(self):
+        # TC=19 subtype 1 (GPS): groundspeed=159, track≈182.88, vertical_rate=-832
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8D485020994409940838175B284F",
+            icao_hex="485020", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["velocity"] == 159
+        assert data["heading"] == pytest.approx(182.88, abs=0.01)
+        assert data["vertical_speed"] == -832
+
+    def test_airspeed_velocity(self):
+        # TC=19 subtype 3 (airspeed): airspeed=250 IAS, heading=90.0
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F9B05001F600000533884",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["velocity"] == 250
+        assert data["heading"] == 90.0
+
+    def test_position_with_configured_reference(self):
+        p, _ = _make_processor(_minimal_config() | {"latitude": 52.2572, "longitude": 3.9198})
+        msg = InboundMessage(
+            raw="8D40621D58C382D690C8AC2863A7",
+            icao_hex="40621D", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["latitude"] == pytest.approx(52.2572, abs=0.001)
+        assert data["longitude"] == pytest.approx(3.9198, abs=0.001)
+        assert data["altitude"] == 38000
+
+    def test_position_without_configured_reference(self):
+        # No latitude/longitude in config — altitude still decodes, but
+        # position can't be resolved from a single message without one.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8D40621D58C382D690C8AC2863A7",
+            icao_hex="40621D", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert "latitude" not in data
+        assert data["altitude"] == 38000
+
+    def test_squawk_decoded_from_df21(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="A800030F992252CD453820AD87FB",
+            icao_hex="71BE3A", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["squawk"] == "2646"
+
+    def test_crc_valid_is_a_no_op_for_df21(self):
+        """Documents real pyModeS behavior (verified by reading message.py):
+        crc_valid is hardcoded True for DF0/4/5/11/16/20/21 regardless of
+        the actual message content — their CRC field encodes the ICAO
+        itself, so there's no single-message corruption signal for these
+        DF types at all. A squawk is trusted once decoded; there's nothing
+        else to check it against in single-message mode."""
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="A800030F992252CD453820AD87FB",
+            icao_hex="000000", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["squawk"] == "2646"
+
+    def test_adsb_version(self):
+        # TC=31 subtype 0, version=2
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7FF8000000004000F9567C",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["adsb_version"] == 2
+
+    def test_corrupted_crc_rejected(self):
+        # Same position message as above with the last hex char flipped —
+        # pyModeS still returns the (now-untrustworthy) decoded fields with
+        # crc_valid=False; the message must still be rejected.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8D40621D58C382D690C8AC2863A0",
+            icao_hex="40621D", received_at=1.0, source="1090",
+        )
+        assert p._decode_1090(msg) is None
+
+    def test_message_type_with_no_tracked_fields_dropped(self):
+        # TC=28 (ACAS RA broadcast) — no df/typecode filtering exists
+        # anymore, so this relies purely on the message not populating any
+        # field _decode_1090 extracts.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7FE00000000000005E3ED8",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        assert p._decode_1090(msg) is None
+
+    def test_garbage_input_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="not-valid-hex", icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        assert p._decode_1090(msg) is None
+
+    def test_too_short_input_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8D4B19", icao_hex="4B1900", received_at=1.0, source="1090",
+        )
+        assert p._decode_1090(msg) is None
+
+
+class TestDecodeMessageRouting:
+    def test_978_source_dropped_and_logged(self, caplog):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-00A3D3E328A71F8C647004E9009C2D401A00",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with caplog.at_level(logging.DEBUG, logger="processor"):
+            assert p._decode_message(msg) is None
+        assert "978" in caplog.text
+        assert "A3D3E3" in caplog.text
+
+    def test_1090_source_routes_to_decode_1090(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7FF8000000004000F9567C",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        assert p._decode_message(msg)["adsb_version"] == 2
+
+    def test_mlat_source_routes_to_decode_1090(self):
+        # MLAT frames are still raw Mode-S hex — same path as 1090, source
+        # was never branched on before this PR either.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7FF8000000004000F9567C",
+            icao_hex="A8AE7F", received_at=1.0, source="MLAT",
+        )
+        assert p._decode_message(msg)["adsb_version"] == 2
 
 
 # ---------------------------------------------------------------------------

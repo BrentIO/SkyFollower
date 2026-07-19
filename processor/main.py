@@ -569,80 +569,102 @@ class Processor:
     # ------------------------------------------------------------------
 
     def _process(self, msg: InboundMessage) -> None:
+        data = self._decode_message(msg)
+        if data is None:
+            return
+        with self._db_lock:
+            self._update_flight(data, msg)
+
+    def _decode_message(self, msg: InboundMessage) -> Optional[dict]:
+        """Route to the source-specific decoder. MLAT frames are still raw
+        Mode-S hex, same as 1090 — this dispatch was never keyed on source
+        before, so that's not a behavior change."""
+        if msg.source == "978":
+            logger.debug(
+                "978 decode not yet implemented (icao_hex=%s) — dropping message.",
+                msg.icao_hex,
+            )
+            return None
+        return self._decode_1090(msg)
+
+    def _decode_1090(self, msg: InboundMessage) -> Optional[dict]:
+        """
+        Decode a raw Mode-S hex frame via pyModeS 3.x's unified decode().
+        Pure field-presence extraction — no DF/typecode dispatch. Message
+        types that don't populate any of the fields below (e.g. ACAS RA
+        broadcasts) simply produce nothing and get dropped, with no need to
+        enumerate which typecodes to skip.
+        """
         raw = msg.raw
         if len(raw) < 14:
-            return
+            return None
+
+        lat_cfg = self._cfg.get("latitude")
+        lon_cfg = self._cfg.get("longitude")
+        reference = (lat_cfg, lon_cfg) if lat_cfg is not None and lon_cfg is not None else None
 
         try:
-            df = pms.df(raw)
+            result = pms.decode(raw, reference=reference)
         except Exception:
-            return
+            return None
 
-        if df not in (5, 17, 21):
-            return
+        # A real corruption check only for DF17/18 (crc_valid there is a
+        # genuine crc==0 result). For DF0/4/5/11/16/20/21, pyModeS hardcodes
+        # crc_valid=True unconditionally — their CRC field encodes the ICAO
+        # itself, so there's no single-message corruption signal available
+        # for those types at all (confirmed by reading pyModeS's own
+        # message.py). This check is a no-op for that DF set, not a gap we
+        # can close by passing an icao hint — a hint only overrides what
+        # `icao` is reported as, it doesn't verify anything.
+        if result.get("crc_valid") is False:
+            return None
 
         data: dict = {"icao_hex": msg.icao_hex}
 
-        if df in (5, 21):
-            try:
-                data["squawk"] = pms.common.idcode(raw)
-            except Exception:
-                pass
+        if result.get("squawk") is not None:
+            data["squawk"] = result["squawk"]
 
-        if df == 17:
-            try:
-                tc = pms.adsb.typecode(raw)
-            except Exception:
-                return
+        if result.get("callsign") is not None:
+            # pyModeS 3.x uses "#" (not "_") as its invalid-character
+            # sentinel for undecodable callsign slots — reject rather than
+            # store a partially-garbage ident.
+            ident = result["callsign"].strip()
+            if ident and "#" not in ident:
+                data["ident"] = ident
 
-            if tc in (28, 29):
-                return
+        wake_vortex = result.get("wake_vortex")
+        if wake_vortex and wake_vortex != "No category information":
+            data["wake_turbulence_category"] = wake_vortex
 
-            if 1 <= tc <= 4:
-                try:
-                    ident = pms.adsb.callsign(raw)
-                    if ident:
-                        data["ident"] = ident.replace("_", "").strip()
-                except Exception:
-                    pass
-                try:
-                    data["category"] = pms.adsb.category(raw)
-                except Exception:
-                    pass
+        if result.get("latitude") is not None:
+            data["latitude"] = result["latitude"]
+            data["longitude"] = result["longitude"]
 
-            if (5 <= tc <= 22) and tc not in (19,):
-                try:
-                    home_lat = self._cfg.get("home_latitude")
-                    home_lon = self._cfg.get("home_longitude")
-                    if home_lat is not None and home_lon is not None:
-                        lat, lon = pms.adsb.position_with_ref(raw, home_lat, home_lon)
-                    else:
-                        lat, lon = None, None
-                    alt = pms.adsb.altitude(raw)
-                    if lat is not None:
-                        data["latitude"] = lat
-                        data["longitude"] = lon
-                    data["altitude"] = alt
-                except Exception:
-                    pass
+        if result.get("altitude") is not None:
+            data["altitude"] = result["altitude"]
 
-            if tc in (5, 6, 7, 8) or tc == 19:
-                try:
-                    vel, hdg, vs, _ = pms.adsb.velocity(raw)
-                    data["velocity"] = vel
-                    data["heading"] = hdg
-                    data["vertical_speed"] = vs
-                except Exception:
-                    pass
+        # subtype 1/2 (GPS): groundspeed + track; subtype 3/4 (airspeed):
+        # airspeed + heading. `or` would mishandle a genuine 0 kt/0 deg
+        # reading, so check for None explicitly, not truthiness.
+        velocity = result.get("groundspeed")
+        if velocity is None:
+            velocity = result.get("airspeed")
+        if velocity is not None:
+            data["velocity"] = velocity
 
-            if tc == 31:
-                try:
-                    data["adsb_version"] = pms.adsb.version(raw)
-                except Exception:
-                    pass
+        heading = result.get("track")
+        if heading is None:
+            heading = result.get("heading")
+        if heading is not None:
+            data["heading"] = heading
 
-        with self._db_lock:
-            self._update_flight(data, msg)
+        if result.get("vertical_rate") is not None:
+            data["vertical_speed"] = result["vertical_rate"]
+
+        if result.get("version") is not None:
+            data["adsb_version"] = result["version"]
+
+        return data if len(data) > 1 else None
 
     def _update_flight(self, data: dict, msg: InboundMessage) -> None:
         self._message_clock = max(self._message_clock, msg.received_at)
@@ -693,10 +715,8 @@ class Processor:
         if "squawk" in data and not flight.squawk:
             flight.squawk = str(data["squawk"])
 
-        if "category" in data:
-            wtc = _category_to_wtc(data["category"])
-            if wtc:
-                flight.aircraft.setdefault("wake_turbulence_category", wtc)
+        if "wake_turbulence_category" in data:
+            flight.aircraft.setdefault("wake_turbulence_category", data["wake_turbulence_category"])
 
         if "ident" in data and not flight.ident:
             ident = data["ident"]
@@ -1092,22 +1112,6 @@ class Processor:
             self._mqtt.loop_stop()
         self._db.close()
         logger.info("Shutdown complete.")
-
-
-# ---------------------------------------------------------------------------
-# ADS-B category → wake turbulence category
-# ---------------------------------------------------------------------------
-
-def _category_to_wtc(category: int) -> Optional[str]:
-    return {
-        1: "Light",
-        2: "Medium 1",
-        3: "Medium 2",
-        4: "High Vortex Aircraft",
-        5: "Heavy",
-        6: "High Performance",
-        7: "Rotorcraft",
-    }.get(category)
 
 
 # ---------------------------------------------------------------------------
