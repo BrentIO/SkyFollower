@@ -1,4 +1,4 @@
-paho-mqtt==2.*
-pdfplumber>=0.11
-redis[hiredis]>=5
-requests>=2.31
+paho-mqtt==2.1.0
+pdfplumber==0.11.10
+redis[hiredis]==8.0.1
+requests==2.34.2

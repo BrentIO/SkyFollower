@@ -1,6 +1,6 @@
-beautifulsoup4>=4.12
-lxml>=5
-openpyxl>=3.1
-paho-mqtt==2.*
-redis[hiredis]>=5
-requests>=2.31
+beautifulsoup4==4.15.0
+lxml==6.1.1
+openpyxl==3.1.5
+paho-mqtt==2.1.0
+redis[hiredis]==8.0.1
+requests==2.34.2

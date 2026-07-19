@@ -1,8 +1,8 @@
-pydantic>=2.0
-uuid7>=0.1.0
-redis>=5.0
-paho-mqtt>=2.0
-requests>=2.31
-beautifulsoup4>=4.12
-lxml>=5.0
-pdfplumber>=0.10
+pydantic==2.13.4
+uuid7==0.1.0
+redis==8.0.1
+paho-mqtt==2.1.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+lxml==6.1.1
+pdfplumber==0.11.10
