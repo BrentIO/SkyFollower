@@ -64,7 +64,7 @@ environment:
 | `config:rules` | JSON rules array; loaded when version changes |
 | `config:areas:version` | SHA-256 hash polled every 5 s; triggers area reload when changed |
 | `config:areas` | GeoJSON FeatureCollection; loaded when version changes |
-| `config:flight_ttl_seconds` | Plain scalar, polled every 5 s and cached locally (no version-hash key needed for a single value); defaults to `300` if unset. Shared with the archive processor, which uses the same value to detect flights split by a processor-count resize. |
+| `config:flight_ttl_seconds` | Plain scalar, read once at startup and cached (not hot-reloaded — restart to pick up a changed value); defaults to `300` if unset. Shared with the archive processor, which uses the same value to detect flights split by a processor-count resize. |
 
 ### Keys written
 

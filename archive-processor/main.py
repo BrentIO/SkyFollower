@@ -339,7 +339,8 @@ class ArchiveProcessor:
         )
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
-        # cached locally and refreshed on a poll loop, same as the processor.
+        # read once at startup and cached. Not hot-reloaded; restart to pick
+        # up a changed value.
         self._flight_ttl_seconds: int = 300
 
         # MQTT
@@ -359,12 +360,11 @@ class ArchiveProcessor:
         self._setup_logging()
         self._connect_mqtt()
         self._connect_s3()
-        self._refresh_flight_ttl_seconds()
+        self._load_flight_ttl_seconds()
 
         # Background threads
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._s3_reconnect_loop, daemon=True, name="s3-reconnect").start()
-        threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
 
         self._consume_loop()
 
@@ -748,23 +748,19 @@ class ArchiveProcessor:
             return 0
 
     # ------------------------------------------------------------------
-    # Config polling
+    # Config loading
     # ------------------------------------------------------------------
 
-    def _config_poll_loop(self) -> None:
-        while not self._shutdown.is_set():
-            time.sleep(5)
-            self._refresh_flight_ttl_seconds()
-
-    def _refresh_flight_ttl_seconds(self) -> None:
-        """Refresh the cached flight_ttl_seconds from Redis. Leaves the
-        current value in place on any error."""
+    def _load_flight_ttl_seconds(self) -> None:
+        """Read flight_ttl_seconds from Redis once at startup. Not
+        hot-reloaded — restart the container to pick up a changed value.
+        Leaves the default in place if Redis is unreachable at startup."""
         try:
             raw = self._redis.get(config_flight_ttl_seconds_key())
             if raw is not None:
                 self._flight_ttl_seconds = int(raw)
         except Exception as exc:
-            logger.debug("flight_ttl_seconds refresh error: %s", exc)
+            logger.debug("flight_ttl_seconds load error: %s", exc)
 
     # ------------------------------------------------------------------
     # Shutdown

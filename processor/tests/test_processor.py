@@ -752,33 +752,32 @@ class TestMqttLagGuard:
 # flight_ttl_seconds: shared Redis config (#477)
 # ---------------------------------------------------------------------------
 
-class TestFlightTtlRefresh:
+class TestFlightTtlLoad:
     def test_defaults_to_300_when_unset(self):
         p, mock_redis = _make_processor()
         mock_redis.get.return_value = None
-        p._refresh_flight_ttl_seconds()
+        p._load_flight_ttl_seconds()
         assert p._flight_ttl_seconds == 300
 
-    def test_updates_from_redis_value(self):
+    def test_loads_from_redis_value(self):
         p, mock_redis = _make_processor()
         mock_redis.get.return_value = "600"
-        p._refresh_flight_ttl_seconds()
+        p._load_flight_ttl_seconds()
         assert p._flight_ttl_seconds == 600
 
-    def test_keeps_stale_value_on_redis_error(self):
+    def test_keeps_default_on_redis_error(self):
         p, mock_redis = _make_processor()
-        p._flight_ttl_seconds = 450
         mock_redis.get.side_effect = ConnectionError("redis down")
-        p._refresh_flight_ttl_seconds()
-        assert p._flight_ttl_seconds == 450
+        p._load_flight_ttl_seconds()
+        assert p._flight_ttl_seconds == 300
 
-    def test_gap_check_uses_refreshed_value_not_config(self):
+    def test_gap_check_uses_loaded_value_not_config(self):
         """The per-message gap check must read the cached attribute, not
         settings.json — config no longer carries flight_ttl_seconds at all."""
         p, mock_redis = _make_processor()
         mock_redis.get.return_value = "10"
         mock_redis.evalsha.return_value = None
-        p._refresh_flight_ttl_seconds()
+        p._load_flight_ttl_seconds()
         assert "flight_ttl_seconds" not in p._cfg
 
         old_time = 1_700_000_000.0

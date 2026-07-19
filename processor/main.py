@@ -455,9 +455,10 @@ class Processor:
         self._rules_engine = RulesEngine(self._redis)
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
-        # cached locally and refreshed on the same poll cadence as rules/areas
-        # — read on every message in _update_flight's gap check, so it must
-        # never be a synchronous Redis GET on the hot path.
+        # read once at startup and cached — read on every message in
+        # _update_flight's gap check, so it must never be a synchronous
+        # Redis GET on the hot path. Not hot-reloaded; restart to pick up
+        # a changed value.
         self._flight_ttl_seconds: int = 300
 
         # MQTT
@@ -478,7 +479,7 @@ class Processor:
         self._claim_processor_id()
         self._connect_mqtt()
         self._rules_engine.reload_if_changed()
-        self._refresh_flight_ttl_seconds()
+        self._load_flight_ttl_seconds()
 
         # Background threads
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat").start()
@@ -993,18 +994,17 @@ class Processor:
                 self._rules_engine.reload_if_changed()
             except Exception as exc:
                 logger.debug("Config poll error: %s", exc)
-            self._refresh_flight_ttl_seconds()
 
-    def _refresh_flight_ttl_seconds(self) -> None:
-        """Refresh the cached flight_ttl_seconds from Redis. Leaves the
-        current value in place on any error — the same graceful-degradation
-        posture as the rules/areas reload."""
+    def _load_flight_ttl_seconds(self) -> None:
+        """Read flight_ttl_seconds from Redis once at startup. Not
+        hot-reloaded — restart the container to pick up a changed value.
+        Leaves the default in place if Redis is unreachable at startup."""
         try:
             raw = self._redis.get(config_flight_ttl_seconds_key())
             if raw is not None:
                 self._flight_ttl_seconds = int(raw)
         except Exception as exc:
-            logger.debug("flight_ttl_seconds refresh error: %s", exc)
+            logger.debug("flight_ttl_seconds load error: %s", exc)
 
     # ------------------------------------------------------------------
     # Heartbeat (keeps Redis NX key alive)

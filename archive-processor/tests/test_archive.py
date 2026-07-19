@@ -637,30 +637,29 @@ class TestStitching:
 # flight_ttl_seconds: shared Redis config (#477)
 # ---------------------------------------------------------------------------
 
-class TestFlightTtlRefresh:
+class TestFlightTtlLoad:
     def test_defaults_to_300_when_unset(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir)
             mock_redis.get.return_value = None
-            processor._refresh_flight_ttl_seconds()
+            processor._load_flight_ttl_seconds()
             assert processor._flight_ttl_seconds == 300
 
-    def test_updates_from_redis_value(self):
+    def test_loads_from_redis_value(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir)
             mock_redis.get.return_value = "600"
-            processor._refresh_flight_ttl_seconds()
+            processor._load_flight_ttl_seconds()
             assert processor._flight_ttl_seconds == 600
 
-    def test_keeps_stale_value_on_redis_error(self):
+    def test_keeps_default_on_redis_error(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir)
-            processor._flight_ttl_seconds = 450
             mock_redis.get.side_effect = ConnectionError("redis down")
-            processor._refresh_flight_ttl_seconds()
-            assert processor._flight_ttl_seconds == 450
+            processor._load_flight_ttl_seconds()
+            assert processor._flight_ttl_seconds == 300
 
-    def test_stitch_uses_refreshed_value_not_config(self):
+    def test_stitch_uses_loaded_value_not_config(self):
         """_try_stitch must read the cached attribute, not settings.json —
         config no longer carries flight_ttl_seconds at all."""
         with tempfile.TemporaryDirectory() as tmp_dir:

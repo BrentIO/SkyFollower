@@ -33,9 +33,10 @@ once S3 reconnects.
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 `flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
-in Redis (shared with the processor), polled every 5 s and cached locally.
-Defaults to `300` if unset. See [Split-Flight Stitching](#split-flight-stitching)
-below for how it's used.
+in Redis (shared with the processor) once at startup and cached; not
+hot-reloaded, restart the container to pick up a changed value. Defaults to
+`300` if unset. See [Split-Flight Stitching](#split-flight-stitching) below
+for how it's used.
 
 ## Consuming from RabbitMQ
 

@@ -75,9 +75,9 @@ def config_areas_version_key() -> str:
 def config_flight_ttl_seconds_key() -> str:
     """
     Shared flight_ttl_seconds value, read by both the processor and the
-    archive processor. Plain scalar (no version-hash key — cheap enough to
-    just re-GET and compare on the same poll cadence as config:rules/
-    config:areas). Callers should default to 300 if unset.
+    archive processor. Read once at startup and cached, not hot-reloaded —
+    a changed value takes effect on the next container restart. Callers
+    should default to 300 if unset.
     config:flight_ttl_seconds
     """
     return "config:flight_ttl_seconds"
