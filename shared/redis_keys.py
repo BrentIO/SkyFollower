@@ -112,3 +112,14 @@ def metrics_flights_archived_key(period: str) -> str:
     if period not in _VALID_ARCHIVE_PERIODS:
         raise ValueError(f"period must be one of {_VALID_ARCHIVE_PERIODS}, got: {period!r}")
     return f"metrics:archive:flights_archived:{period}"
+
+
+def archive_last_segment_key(icao_hex: str) -> str:
+    """
+    Pointer to the most recently archived flight segment for an aircraft.
+    Used to detect and stitch together flights that were artificially split
+    by a processor-count resize. JSON {uuid, first_message, last_message,
+    s3_key}. Set with a 1-day TTL.
+    archive:last_segment:{icao_hex}
+    """
+    return f"archive:last_segment:{icao_hex.upper()}"

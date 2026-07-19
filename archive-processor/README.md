@@ -28,6 +28,7 @@ once S3 reconnects.
 | `s3.secret_access_key` | string | — | AWS secret access key |
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
+| `flight_ttl_seconds` | integer | `300` | Used to detect flights artificially split by a processor-count resize (see "Split-Flight Stitching" below). Should match the processors' own `flight_ttl_seconds`. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
@@ -64,6 +65,36 @@ linearly from the nearest preceding/following position with an altitude) or
 than two positions have no `flight_path`. The payload is gzip-compressed
 before upload, with `ContentType: application/json` and
 `ContentEncoding: gzip`.
+
+## Split-Flight Stitching
+
+Resizing a deployment's processor count reshuffles which processor an
+aircraft routes to, which can force a flight to be archived early even
+though the aircraft keeps flying — the continuation shows up as a second,
+separate flight on whichever processor it's now routed to. The archive
+processor detects and merges this after the fact:
+
+- After archiving a flight, it writes a small pointer to Redis —
+  `archive:last_segment:{icao_hex}` (see `shared/redis_keys.py`), containing
+  the flight's `_id`, `first_message`, `last_message`, and S3 key. This
+  expires after 1 day.
+- Before archiving the *next* flight for that aircraft, it checks for a
+  pointer. If the new flight's `first_message` is within
+  `flight_ttl_seconds` of the pointer's `last_message`, this is treated as
+  a continuation rather than a new flight: the archive processor fetches
+  the previous S3 object, merges the two segments — concatenated and
+  re-sorted `positions`/`velocities`, a recomputed `flight_path`, a deduped
+  union of `matched_rules`, and summed `total_messages` — and overwrites
+  the *original* S3 object under its original `_id`. The new segment's own
+  S3 object is never created.
+- A gap beyond `flight_ttl_seconds` (or no pointer at all) means this is a
+  genuinely new flight; it's archived normally and a fresh pointer is
+  written. Three or more consecutive artificial splits chain correctly —
+  each stitches into the same original segment, not a new one each time.
+- This is a purely archive-side concern: it doesn't touch the message
+  processor or affect live MQTT rule notifications, which are published in
+  real time as each segment is tracked, before the archive processor ever
+  sees a completed flight.
 
 ## Parquet Metadata Index
 
