@@ -28,10 +28,15 @@ once S3 reconnects.
 | `s3.secret_access_key` | string | — | AWS secret access key |
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
-| `flight_ttl_seconds` | integer | `300` | Used to detect flights artificially split by a processor-count resize (see "Split-Flight Stitching" below). Should match the processors' own `flight_ttl_seconds`. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
+
+`flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
+in Redis (shared with the processor) once at startup and cached; not
+hot-reloaded, restart the container to pick up a changed value. Defaults to
+`300` if unset. See [Split-Flight Stitching](#split-flight-stitching) below
+for how it's used.
 
 ## Consuming from RabbitMQ
 

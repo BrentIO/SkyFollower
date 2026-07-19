@@ -37,7 +37,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
-from shared.redis_keys import archive_last_segment_key, metrics_flights_archived_key
+from shared.redis_keys import (
+    archive_last_segment_key,
+    config_flight_ttl_seconds_key,
+    metrics_flights_archived_key,
+)
 
 logger = logging.getLogger("archive-processor")
 
@@ -334,6 +338,11 @@ class ArchiveProcessor:
             decode_responses=True,
         )
 
+        # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
+        # read once at startup and cached. Not hot-reloaded; restart to pick
+        # up a changed value.
+        self._flight_ttl_seconds: int = 300
+
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
         self._mqtt_connected = False
@@ -351,6 +360,7 @@ class ArchiveProcessor:
         self._setup_logging()
         self._connect_mqtt()
         self._connect_s3()
+        self._load_flight_ttl_seconds()
 
         # Background threads
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
@@ -558,7 +568,7 @@ class ArchiveProcessor:
         except (ValueError, KeyError, TypeError):
             return None
 
-        ttl = self._cfg.get("flight_ttl_seconds", 300)
+        ttl = self._flight_ttl_seconds
         gap = flight.first_message.timestamp() - prev_last_message
         if gap > ttl:
             return None
@@ -736,6 +746,21 @@ class ArchiveProcessor:
             return int(v) if v else 0
         except Exception:
             return 0
+
+    # ------------------------------------------------------------------
+    # Config loading
+    # ------------------------------------------------------------------
+
+    def _load_flight_ttl_seconds(self) -> None:
+        """Read flight_ttl_seconds from Redis once at startup. Not
+        hot-reloaded — restart the container to pick up a changed value.
+        Leaves the default in place if Redis is unreachable at startup."""
+        try:
+            raw = self._redis.get(config_flight_ttl_seconds_key())
+            if raw is not None:
+                self._flight_ttl_seconds = int(raw)
+        except Exception as exc:
+            logger.debug("flight_ttl_seconds load error: %s", exc)
 
     # ------------------------------------------------------------------
     # Shutdown

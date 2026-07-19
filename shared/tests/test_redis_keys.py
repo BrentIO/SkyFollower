@@ -7,8 +7,10 @@ from shared.redis_keys import (
     aircraft_mictronics_key,
     aircraft_registry_key,
     aircraft_type_key,
+    archive_last_segment_key,
     config_areas_key,
     config_areas_version_key,
+    config_flight_ttl_seconds_key,
     config_rules_key,
     config_rules_version_key,
     flight_key,
@@ -64,6 +66,14 @@ class TestConfigKeys:
 
     def test_config_areas_version_key(self):
         assert config_areas_version_key() == "config:areas:version"
+
+    def test_config_flight_ttl_seconds_key(self):
+        assert config_flight_ttl_seconds_key() == "config:flight_ttl_seconds"
+
+
+class TestArchiveKeys:
+    def test_archive_last_segment_key(self):
+        assert archive_last_segment_key("a8ae7f") == "archive:last_segment:A8AE7F"
 
 
 class TestProcessorKeys:

@@ -15,7 +15,6 @@
         "username": "change_me",
         "password": "change_me"
     },
-    "flight_ttl_seconds": 300,
     "rule_notification_max_lag_seconds": 30,
     "telemetry_interval_seconds": 30,
     "home_latitude": 0.0,

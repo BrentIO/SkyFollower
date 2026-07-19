@@ -25,7 +25,6 @@ horizontally by adding processor containers on separate hosts.
 | `mqtt.port` | integer | `1883` | MQTT broker port |
 | `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `mqtt.password` | string | — | MQTT password |
-| `flight_ttl_seconds` | integer | `300` | Seconds of silence before a flight is considered complete and sent to the archive queue. Too short fragments flights; too long merges back-to-back flights on quick-turn aircraft. |
 | `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a processor reconnects. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
 | `home_latitude` | float | — | Receiver home latitude (decimal degrees). Required for single-message CPR position decoding (DF 17, TC 5–18). Omit if position decoding is not needed. |
@@ -65,6 +64,7 @@ environment:
 | `config:rules` | JSON rules array; loaded when version changes |
 | `config:areas:version` | SHA-256 hash polled every 5 s; triggers area reload when changed |
 | `config:areas` | GeoJSON FeatureCollection; loaded when version changes |
+| `config:flight_ttl_seconds` | Plain scalar, read once at startup and cached (not hot-reloaded — restart to pick up a changed value); defaults to `300` if unset. Shared with the archive processor, which uses the same value to detect flights split by a processor-count resize. |
 
 ### Keys written
 

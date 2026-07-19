@@ -72,6 +72,17 @@ def config_areas_version_key() -> str:
     return "config:areas:version"
 
 
+def config_flight_ttl_seconds_key() -> str:
+    """
+    Shared flight_ttl_seconds value, read by both the processor and the
+    archive processor. Read once at startup and cached, not hot-reloaded —
+    a changed value takes effect on the next container restart. Callers
+    should default to 300 if unset.
+    config:flight_ttl_seconds
+    """
+    return "config:flight_ttl_seconds"
+
+
 def processor_heartbeat_key(processor_id: int) -> str:
     """
     Processor liveness key used to detect duplicate PROCESSOR_ID on startup.
