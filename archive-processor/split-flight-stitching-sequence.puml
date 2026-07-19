@@ -16,7 +16,12 @@ box "AWS" $AWS
 end box
 
 Archiver -> Pointer++ : **Look up** last archived segment\nfor this aircraft
-Pointer --> Archiver-- : pointer ""{uuid, first_message, last_message, s3_key}""\nor none
+alt lookup succeeds
+    Pointer --> Archiver-- : pointer ""{uuid, first_message, last_message, s3_key}""\nor none
+else Redis unreachable
+    Pointer --> Archiver-- : error
+    Archiver -> Archiver : **Treat as no pointer**\narchive as a new flight
+end
 
 alt no pointer, or gap > flight_ttl_seconds
     Archiver -> Archiver : **Build** GeoJSON ""flight_path""
@@ -39,5 +44,12 @@ else gap <= flight_ttl_seconds (likely a resize-induced split)
 end
 
 Archiver -\ Pointer : **Write** pointer for the segment just written\n(new or merged) — TTL 1 day
+note right of Pointer
+    Fire-and-forget — a failed write here
+    (Redis unreachable) only means a later
+    segment for this aircraft won't find a
+    pointer to stitch onto. It never blocks
+    or fails the archive that already happened.
+end note
 
 @enduml
