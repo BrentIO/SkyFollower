@@ -11,9 +11,8 @@
 -- registry, livery (same semantics as the old deep-merge-on-write pattern,
 -- but performed server-side at read time). In practice registry and livery
 -- never write overlapping fields — livery only ever contributes
--- special_livery/livery_name — but the ordering is preserved so the
--- three-source stacking (mictronics -> registry -> livery) holds even if
--- that changes.
+-- special_livery — but the ordering is preserved so the three-source
+-- stacking (mictronics -> registry -> livery) holds even if that changes.
 --
 -- If the merged result has no aircraft.manufacturer_model (only ever written by
 -- mictronics), it is synthesized from aircraft.manufacturer / aircraft.model —

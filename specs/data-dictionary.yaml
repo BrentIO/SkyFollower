@@ -864,11 +864,11 @@ sources:
           longitude_deg:  decimal longitude (stored as longitude float)
 
   airportwebcams:
-    description: "Airport Webcams Special Liveries database — aircraft in retro/special/sponsor liveries; livery_name is spoken by Home Assistant TTS on a matched-flight notification, so it is derived/cleaned, not stored verbatim"
+    description: "Airport Webcams Special Liveries database — aircraft in retro/special/sponsor liveries; special_livery is spoken by Home Assistant TTS on a matched-flight notification, so it is derived/cleaned, not stored verbatim"
     url: "https://airportwebcams.net/special-liveries/"
     format: html
     cadence: weekly_friday
-    notes: "TablePress table (id tablepress-8), fully server-rendered — all ~2,074 rows present in a single GET, no pagination/AJAX to crawl; default curl/requests User-Agent is blocked with HTTP 406 by the site's ModSecurity rule, an honest identifying User-Agent (e.g. 'Mozilla/5.0 (compatible; P5Software SkyFollower)') is accepted; robots.txt does not disallow this path for a generic user agent; no ICAO hex published — resolved via RediSearch against Mictronics records (FT.SEARCH idx:aircraft:mictronics), same pattern as at-austrocontrol/fr-dgac/etc.; must run after Mictronics; rows with Registration='Various' (whole-fleet liveries, e.g. Silk Way West '10 Years' sticker on the entire fleet) are skipped, not force-matched to a single hex"
+    notes: "TablePress table (id tablepress-8), fully server-rendered — all ~2,074 rows present in a single GET, no pagination/AJAX to crawl; default curl/requests User-Agent is blocked with HTTP 406 by the site's ModSecurity rule, an honest identifying User-Agent (e.g. 'Mozilla/5.0 (compatible; P5Software SkyFollower)') is accepted; robots.txt does not disallow this path for a generic user agent; no ICAO hex published — resolved via RediSearch against Mictronics records (FT.SEARCH idx:aircraft:mictronics), same pattern as at-austrocontrol/fr-dgac/etc.; must run after Mictronics; rows with Registration='Various' (whole-fleet special liveries, e.g. Silk Way West '10 Years' sticker on the entire fleet) are skipped, not force-matched to a single hex"
     files:
       - name: "special-liveries/ (TablePress #tablepress-8)"
         format: html_table
@@ -878,7 +878,7 @@ sources:
           2: "Aircraft Type"
           3: Registration
           4: Description
-        notes: "Registration cell text is the tail number (also a FlightRadar24 link). Description sometimes packs multiple livery names into one cell separated by ' / ' (~7% of rows), and/or carries a trailing '(sticker)'/'(stickers)' annotation and/or a trailing site-freshness marker like '(#New at 17-Jul-26)' — see the livery_name transform below; at least one real row's annotation itself contains a '/' ('(sticker; underside/belly)'), so annotations must be stripped before splitting on '/', not after"
+        notes: "Registration cell text is the tail number (also a FlightRadar24 link). Description sometimes packs multiple livery names into one cell separated by ' / ' (~7% of rows), and/or carries a trailing '(sticker)'/'(stickers)' annotation and/or a trailing site-freshness marker like '(#New at 17-Jul-26)' — see the special_livery transform below; at least one real row's annotation itself contains a '/' ('(sticker; underside/belly)'), so annotations must be stripped before splitting on '/', not after"
 
   standing-data:
     description: "VRS Standing Data — operators, airports, and flight routes"
@@ -3284,26 +3284,15 @@ records:
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
 
       special_livery:
-        type: boolean
-        description: "True if the aircraft is currently wearing a known special/retro/sponsor livery"
-        persisted: true
-        sources:
-          - source: airportwebcams
-            transform:
-              type: constant
-              value: true
-              description: "Set for every icao_hex the runner successfully resolves a Registration match for. Absent (not explicitly false) for every other aircraft — this source only ever writes positive matches, so downstream consumers must treat a missing key as false, the same way most other Optional aircraft fields already work"
-
-      livery_name:
         type: string
-        description: "Human-readable special livery name, cleaned for a Home Assistant TTS announcement on a matched-flight notification"
+        description: "Human-readable special livery name, cleaned for a Home Assistant TTS announcement on a matched-flight notification. Presence of this field is itself the flag that the aircraft is wearing a known special/retro/sponsor livery — there is no separate boolean; absent for every other aircraft"
         persisted: true
         sources:
           - source: airportwebcams
             field: Description
             transform:
               type: strip_annotations_then_split_last_segment
-              description: "1) Strip any parenthetical group whose contents contain 'sticker' or '#new' case-insensitively (covers '(sticker)', '(stickers)', '(sticker, underside)', '(sticker; underside/belly)', and the site's '(#New at DD-Mon-YY)' freshness marker in whatever exact wording/date format it uses) — this runs BEFORE the split below, not after, because at least one real annotation contains its own '/' ('(sticker; underside/belly)'), which would otherwise be misread as an extra compound-description segment. 2) Split what remains on '/' and take the LAST segment — for the ~7% of rows with a compound description, the last-listed livery is treated as the current/primary one. 3) Collapse whitespace and trim. Other parenthetical content that is genuinely part of the name (e.g. a year like '(2022)') is left untouched. Verified against all 2,074 rows in the live table: the transform never produces an empty result. Examples: 'Rugby's Greatest Rivalry / 2026 NZ v SA rugby tour (#New at 17-Jul-26)' -> '2026 NZ v SA rugby tour'; '50th Anniversary / Air Silk Road / 1 Million Tons, 10 Years (stickers)' -> '1 Million Tons, 10 Years'; 'Amar Bank (sticker) (#New at 17-Jul-26)' -> 'Amar Bank'; 'FedEx founder F W Smith (sticker; underside/belly)' -> 'FedEx founder F W Smith'"
+              description: "1) Strip any parenthetical group whose contents contain 'sticker' or '#new' case-insensitively (covers '(sticker)', '(stickers)', '(sticker, underside)', '(sticker; underside/belly)', and the site's '(#New at DD-Mon-YY)' freshness marker in whatever exact wording/date format it uses) — this runs BEFORE the split below, not after, because at least one real annotation contains its own '/' ('(sticker; underside/belly)'), which would otherwise be misread as an extra compound-description segment. 2) Split what remains on '/' and take the LAST segment — for the ~7% of rows with a compound description, the last-listed livery is treated as the current/primary one. 3) Collapse whitespace and trim. Other parenthetical content that is genuinely part of the name (e.g. a year like '(2022)') is left untouched. Verified against all 2,074 rows in the live table: the transform never produces an empty result, and this field is only ever written for a row the runner successfully resolves a Registration match for. Examples: 'Rugby's Greatest Rivalry / 2026 NZ v SA rugby tour (#New at 17-Jul-26)' -> '2026 NZ v SA rugby tour'; '50th Anniversary / Air Silk Road / 1 Million Tons, 10 Years (stickers)' -> '1 Million Tons, 10 Years'; 'Amar Bank (sticker) (#New at 17-Jul-26)' -> 'Amar Bank'; 'FedEx founder F W Smith (sticker; underside/belly)' -> 'FedEx founder F W Smith'"
 
       ident:
         type: string

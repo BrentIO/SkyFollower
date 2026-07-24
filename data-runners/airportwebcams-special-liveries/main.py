@@ -6,28 +6,30 @@ Fetches the Airport Webcams Special Liveries table from a single static HTML
 page (a TablePress-rendered table — the whole ~2,074-row table is present in
 the initial response, no pagination/AJAX to crawl), looks up each
 registration in the Redis simple search index to find the ICAO hex (provided
-by Mictronics), then writes special_livery/livery_name enrichment to
+by Mictronics), then writes special_livery enrichment to
 aircraft:livery:{icao_hex} and publishes MQTT completion stats, then exits.
 
 Important: this source does not publish ICAO hex (Mode S) addresses.
 This runner can only enrich records that already exist in Redis from
 Mictronics. Schedule it AFTER the Mictronics runner.
 
-livery_name is derived, not stored verbatim — it is spoken by Home Assistant
-TTS on a matched-flight notification, so it needs to read as a clean phrase.
-The source Description cell sometimes packs more than one livery name into a
-single cell separated by "/", and/or carries a "(sticker...)" annotation
-and/or a "(#New at DD-Mon-YY)" site-freshness marker. All parenthetical
-annotations containing "sticker" or "#new" (case-insensitive) are stripped
-FIRST, before splitting on "/" — stripping must happen before the split
-because at least one real annotation itself contains a "/"
-(e.g. "(sticker; underside/belly)"), which would otherwise be misread as an
-extra compound-description segment. The last "/"-separated segment of what
-remains is then treated as the current/primary livery name.
+special_livery holds the derived livery name, not the raw Description cell
+verbatim — it is spoken by Home Assistant TTS on a matched-flight
+notification, so it needs to read as a clean phrase. Presence of the field
+is itself the flag (no separate boolean) — it's absent entirely for aircraft
+with no special livery. The source Description cell sometimes packs more
+than one livery name into a single cell separated by "/", and/or carries a
+"(sticker...)" annotation and/or a "(#New at DD-Mon-YY)" site-freshness
+marker. All parenthetical annotations containing "sticker" or "#new"
+(case-insensitive) are stripped FIRST, before splitting on "/" — stripping
+must happen before the split because at least one real annotation itself
+contains a "/" (e.g. "(sticker; underside/belly)"), which would otherwise be
+misread as an extra compound-description segment. The last "/"-separated
+segment of what remains is then treated as the current/primary livery name.
 
-Rows whose Registration is the literal string "Various" (a livery applied
-across an entire fleet, not a single tail) are skipped — they can't be
-resolved to one aircraft.
+Rows whose Registration is the literal string "Various" (a special livery
+applied across an entire fleet, not a single tail) are skipped — they can't
+be resolved to one aircraft.
 
 Data source: https://airportwebcams.net/special-liveries/
 """
@@ -59,12 +61,12 @@ from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
 
-logger = logging.getLogger("airportwebcams-liveries")
+logger = logging.getLogger("airportwebcams-special-liveries")
 
 SOURCE_URL = "https://airportwebcams.net/special-liveries/"
 TABLE_ID = "tablepress-8"
 REDIS_TTL = 14 * 86400
-MQTT_ROOT = "SkyFollower/runner/airportwebcams-liveries"
+MQTT_ROOT = "SkyFollower/runner/airportwebcams-special-liveries"
 BATCH_SIZE = 100
 
 _ANNOTATION_RE = re.compile(r"\s*\([^()]*(?:sticker|#new)[^()]*\)", re.IGNORECASE)
@@ -72,10 +74,10 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------------------
-# livery_name transform
+# special_livery transform
 # ---------------------------------------------------------------------------
 
-def _derive_livery_name(description: str) -> str:
+def _derive_special_livery(description: str) -> str:
     """Derive a clean, TTS-ready livery name from a raw Description cell.
 
     Strips any parenthetical annotation containing "sticker" or "#new"
@@ -140,14 +142,13 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 # Record builder
 # ---------------------------------------------------------------------------
 
-def _build_record(icao_hex: str, registration: str, livery_name: str) -> dict:
-    """Build the enrichment record for a single matched livery."""
+def _build_record(icao_hex: str, registration: str, special_livery: str) -> dict:
+    """Build the enrichment record for a single matched special livery."""
     return {
         "icao_hex": icao_hex,
         "registration": registration,
-        "source": "airportwebcams-liveries",
-        "special_livery": True,
-        "livery_name": livery_name,
+        "source": "airportwebcams-special-liveries",
+        "special_livery": special_livery,
     }
 
 
@@ -218,7 +219,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         reg_row_map[reg] = row
 
     if skipped_various:
-        logger.info("Skipped %d row(s) with Registration='Various' (whole-fleet liveries).", skipped_various)
+        logger.info("Skipped %d row(s) with Registration='Various' (whole-fleet special liveries).", skipped_various)
 
     registrations = list(reg_row_map.keys())
     logger.info("Looking up %d registrations in Redis search index.", len(registrations))
@@ -238,13 +239,13 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     for registration, icao_hex in reg_icao_map.items():
         row = reg_row_map[registration]
-        livery_name = _derive_livery_name(row.get("description") or "")
-        if not livery_name:
-            logger.debug("Empty livery_name after transform for %s, skipping", registration)
+        special_livery = _derive_special_livery(row.get("description") or "")
+        if not special_livery:
+            logger.debug("Empty special_livery after transform for %s, skipping", registration)
             skipped_empty_name += 1
             continue
 
-        record = _build_record(icao_hex, registration, livery_name)
+        record = _build_record(icao_hex, registration, special_livery)
         key = aircraft_livery_key(icao_hex)
         set_json(pipe, key, record)
         pipe.expire(key, ttl)
@@ -268,7 +269,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             errors += pipe_count
 
     logger.info(
-        "Finished: %d written, %d skipped (empty livery_name), %d errors.",
+        "Finished: %d written, %d skipped (empty special_livery), %d errors.",
         count, skipped_empty_name, errors,
     )
     return count
@@ -330,21 +331,21 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
-        "ids": "SkyFollower_runner_airportwebcams_liveries",
-        "name": "SkyFollower Airport Webcams Liveries Runner",
+        "ids": "SkyFollower_runner_airportwebcams_special_liveries",
+        "name": "SkyFollower Airport Webcams Special Liveries Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Airport Webcams Liveries Records Imported", "mdi:airplane", "total_increasing", None),
-        ("last_run_at", "Airport Webcams Liveries Last Run At", "mdi:clock", None, None),
-        ("last_run_status", "Airport Webcams Liveries Last Run Status", "mdi:check-circle", None, None),
+        ("records_imported", "Airport Webcams Special Liveries Records Imported", "mdi:airplane", "total_increasing", None),
+        ("last_run_at", "Airport Webcams Special Liveries Last Run At", "mdi:clock", None, None),
+        ("last_run_status", "Airport Webcams Special Liveries Last Run Status", "mdi:check-circle", None, None),
     ]
     for name, friendly_name, icon, state_class, unit in stats:
         payload: dict = {
             "state_topic": f"{MQTT_ROOT}/statistic/{name}",
             "name": friendly_name,
-            "unique_id": f"SkyFollower_runner_airportwebcams_liveries_{name}",
-            "object_id": f"SkyFollower_runner_airportwebcams_liveries_{name}",
+            "unique_id": f"SkyFollower_runner_airportwebcams_special_liveries_{name}",
+            "object_id": f"SkyFollower_runner_airportwebcams_special_liveries_{name}",
             "device": device,
             "icon": icon,
         }
@@ -353,7 +354,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         if unit:
             payload["unit_of_measurement"] = unit
         client.publish(
-            f"homeassistant/sensor/SkyFollower_runner_airportwebcams_liveries_{name}/config",
+            f"homeassistant/sensor/SkyFollower_runner_airportwebcams_special_liveries_{name}/config",
             json.dumps(payload),
             retain=True,
         )
@@ -404,12 +405,12 @@ def main() -> None:
         records_imported = write_to_redis(rows, r, ttl)
         status = "success"
         logger.info(
-            "Airport Webcams Liveries runner completed successfully. Records imported: %d",
+            "Airport Webcams Special Liveries runner completed successfully. Records imported: %d",
             records_imported,
         )
 
     except Exception as exc:
-        logger.error("Airport Webcams Liveries runner failed: %s", exc, exc_info=True)
+        logger.error("Airport Webcams Special Liveries runner failed: %s", exc, exc_info=True)
 
     finally:
         session.close()

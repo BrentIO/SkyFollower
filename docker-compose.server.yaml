@@ -79,7 +79,7 @@ services:
       - runner-cy-dca
       - runner-hr-ccaa
       - runner-bg-caa
-      - runner-airportwebcams-liveries
+      - runner-airportwebcams-special-liveries
 
   # ---------------------------------------------------------------------------
   # Data runners — created stopped; started on schedule by ofelia.
@@ -458,9 +458,9 @@ services:
       - redis
       - runner-mictronics
 
-  runner-airportwebcams-liveries:
-    image: ghcr.io/brentio/skyfollower-runner-airportwebcams-liveries:latest
-    container_name: skyfollower-runner-airportwebcams-liveries
+  runner-airportwebcams-special-liveries:
+    image: ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:latest
+    container_name: skyfollower-runner-airportwebcams-special-liveries
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro

@@ -160,6 +160,6 @@ container = skyfollower-runner-us-faa
 schedule = 10 5 * * 7
 container = skyfollower-runner-ca-transport-canada
 
-[job-run "runner-airportwebcams-liveries"]
+[job-run "runner-airportwebcams-special-liveries"]
 schedule = 10 6 * * 5
-container = skyfollower-runner-airportwebcams-liveries
+container = skyfollower-runner-airportwebcams-special-liveries

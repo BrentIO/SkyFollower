@@ -23,11 +23,11 @@ if _REPO_ROOT not in sys.path:
 
 def _load_main():
     spec = importlib.util.spec_from_file_location(
-        "airportwebcams_liveries_main",
+        "airportwebcams_special_liveries_main",
         os.path.join(_RUNNER_DIR, "main.py"),
     )
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["airportwebcams_liveries_main"] = mod
+    sys.modules["airportwebcams_special_liveries_main"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -36,7 +36,7 @@ _mod = _load_main()
 
 from shared.url_reachability import assert_url_reachable
 
-_derive_livery_name = _mod._derive_livery_name
+_derive_special_livery = _mod._derive_special_livery
 _build_record = _mod._build_record
 _escape_tag = _mod._escape_tag
 download_and_parse = _mod.download_and_parse
@@ -105,54 +105,54 @@ def _make_redis_no_match():
 
 
 # ---------------------------------------------------------------------------
-# Tests: _derive_livery_name
+# Tests: _derive_special_livery
 # ---------------------------------------------------------------------------
 
-class TestDeriveLiveryName:
+class TestDeriveSpecialLivery:
     def test_simple_no_annotation(self):
-        assert _derive_livery_name("SkyTeam") == "SkyTeam"
+        assert _derive_special_livery("SkyTeam") == "SkyTeam"
 
     def test_compound_with_sticker_annotation(self):
         # Real row: JetBlue N775JB
-        assert _derive_livery_name("Vets In Blue (2022) / America250 (sticker)") == "America250"
+        assert _derive_special_livery("Vets In Blue (2022) / America250 (sticker)") == "America250"
 
     def test_compound_with_stickers_plural(self):
         # Real row: Cargolux LX-VCC
-        assert _derive_livery_name(
+        assert _derive_special_livery(
             "50th Anniversary / Air Silk Road / 1 Million Tons, 10 Years (stickers)"
         ) == "1 Million Tons, 10 Years"
 
     def test_sticker_and_new_marker_both_present_no_slash(self):
         # Real row: Citilink PK-GLW
-        assert _derive_livery_name("Amar Bank (sticker) (#New at 17-Jul-26)") == "Amar Bank"
+        assert _derive_special_livery("Amar Bank (sticker) (#New at 17-Jul-26)") == "Amar Bank"
 
     def test_new_marker_only_with_slash(self):
         # Real row: Airlink ZS-YAE
-        assert _derive_livery_name(
+        assert _derive_special_livery(
             "Rugby's Greatest Rivalry / 2026 NZ v SA rugby tour (#New at 17-Jul-26)"
         ) == "2026 NZ v SA rugby tour"
 
     def test_slash_inside_sticker_annotation_not_treated_as_separator(self):
         # Real row (FedEx): the annotation itself contains a "/" — must not
         # be misread as an extra compound-description segment.
-        assert _derive_livery_name(
+        assert _derive_special_livery(
             "FedEx founder F W Smith (sticker; underside/belly)"
         ) == "FedEx founder F W Smith"
 
     def test_sticker_with_comma_qualifier(self):
-        assert _derive_livery_name("FedEx 50 (sticker, underside)") == "FedEx 50"
+        assert _derive_special_livery("FedEx 50 (sticker, underside)") == "FedEx 50"
 
     def test_year_parenthetical_preserved(self):
-        assert _derive_livery_name("Vets In Blue (2022)") == "Vets In Blue (2022)"
+        assert _derive_special_livery("Vets In Blue (2022)") == "Vets In Blue (2022)"
 
     def test_case_insensitive_sticker(self):
-        assert _derive_livery_name("Foo (STICKER)") == "Foo"
+        assert _derive_special_livery("Foo (STICKER)") == "Foo"
 
     def test_case_insensitive_new_marker(self):
-        assert _derive_livery_name("Foo (#NEW at 1-Jan-26)") == "Foo"
+        assert _derive_special_livery("Foo (#NEW at 1-Jan-26)") == "Foo"
 
     def test_collapses_internal_whitespace(self):
-        assert _derive_livery_name("Foo   Bar") == "Foo Bar"
+        assert _derive_special_livery("Foo   Bar") == "Foo Bar"
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +165,8 @@ class TestBuildRecord:
         assert record == {
             "icao_hex": "AA7C64",
             "registration": "N775JB",
-            "source": "airportwebcams-liveries",
-            "special_livery": True,
-            "livery_name": "America250",
+            "source": "airportwebcams-special-liveries",
+            "special_livery": "America250",
         }
 
 
@@ -279,9 +278,8 @@ class TestWriteToRedis:
         write_to_redis(rows, r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         written = set_call[0][2]
-        assert written["special_livery"] is True
-        assert written["livery_name"] == "America250"
-        assert written["source"] == "airportwebcams-liveries"
+        assert written["special_livery"] == "America250"
+        assert written["source"] == "airportwebcams-special-liveries"
 
     def test_fire_and_forget_no_read_before_write(self):
         rows = [{"registration": "N775JB", "description": "America250"}]
@@ -289,7 +287,7 @@ class TestWriteToRedis:
         write_to_redis(rows, r, REDIS_TTL)
         r.json.return_value.get.assert_not_called()
 
-    def test_empty_livery_name_after_transform_skipped(self):
+    def test_empty_special_livery_after_transform_skipped(self):
         rows = [{"registration": "N775JB", "description": "(sticker)"}]
         r = _make_redis_with_search(icao_hex="AA7C64", registration="N775JB")
         count = write_to_redis(rows, r, REDIS_TTL)
@@ -321,7 +319,7 @@ class TestPublishCompletionStats:
     def test_mqtt_publishes_records_imported(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("airportwebcams_liveries_main.mqtt.Client", return_value=mc):
+        with patch("airportwebcams_special_liveries_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 42, "success")
         topics = [c.args[0] for c in mc.publish.call_args_list]
@@ -330,14 +328,14 @@ class TestPublishCompletionStats:
     def test_mqtt_records_imported_value(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("airportwebcams_liveries_main.mqtt.Client", return_value=mc):
+        with patch("airportwebcams_special_liveries_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 77, "success")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
         assert calls[f"{MQTT_ROOT}/statistic/records_imported"] == "77"
 
     def test_mqtt_root_topic(self):
-        assert MQTT_ROOT == "SkyFollower/runner/airportwebcams-liveries"
+        assert MQTT_ROOT == "SkyFollower/runner/airportwebcams-special-liveries"
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +347,6 @@ class TestNetwork:
     def test_url_reachable(self):
         assert_url_reachable(
             SOURCE_URL,
-            "airportwebcams-liveries",
+            "airportwebcams-special-liveries",
             headers={"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"},
         )

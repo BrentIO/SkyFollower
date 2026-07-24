@@ -122,17 +122,14 @@ class TestAircraftRecord:
     def test_special_livery_defaults_to_none(self):
         rec = AircraftRecord(icao_hex="A8AE7F")
         assert rec.special_livery is None
-        assert rec.livery_name is None
 
-    def test_special_livery_fields(self):
+    def test_special_livery_field(self):
         rec = AircraftRecord(
             icao_hex="AA7C64",
             registration="N775JB",
-            special_livery=True,
-            livery_name="America250",
+            special_livery="America250",
         )
-        assert rec.special_livery is True
-        assert rec.livery_name == "America250"
+        assert rec.special_livery == "America250"
 
 
 class TestOperatorRecord:
