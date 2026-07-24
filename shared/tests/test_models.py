@@ -119,6 +119,18 @@ class TestAircraftRecord:
         assert rec.registration == "N659DL"
         assert rec.powerplant.count == 2
 
+    def test_special_livery_defaults_to_none(self):
+        rec = AircraftRecord(icao_hex="A8AE7F")
+        assert rec.special_livery is None
+
+    def test_special_livery_field(self):
+        rec = AircraftRecord(
+            icao_hex="AA7C64",
+            registration="N775JB",
+            special_livery="America250",
+        )
+        assert rec.special_livery == "America250"
+
 
 class TestOperatorRecord:
     def test_minimal(self):

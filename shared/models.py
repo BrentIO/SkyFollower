@@ -75,11 +75,13 @@ class PowerplantInfo(BaseModel):
 class AircraftRecord(BaseModel):
     """
     Aircraft registration and type enrichment.
-    Written across two Redis keys — aircraft:mictronics:{icao_hex} (Mictronics)
-    and aircraft:registry:{icao_hex} (country registry runners) — and
-    deep-merged at read time by shared/lua/merge_aircraft.lua, registry
-    winning on any field overlap. This shape is the merged result. Field
-    names match the AROI /registration/icao_hex/{hex} response.
+    Written across three Redis keys — aircraft:mictronics:{icao_hex}
+    (Mictronics), aircraft:registry:{icao_hex} (country registry runners),
+    and aircraft:livery:{icao_hex} (the airportwebcams-special-liveries runner) —
+    and deep-merged at read time by shared/lua/merge_aircraft.lua, with
+    later sources in that list winning on any field overlap. This shape is
+    the merged result. Field names match the AROI /registration/icao_hex/{hex}
+    response.
     """
 
     icao_hex: str
@@ -95,6 +97,7 @@ class AircraftRecord(BaseModel):
     serial_number: Optional[str] = None
     year_built: Optional[str] = None
     is_private_operator: Optional[bool] = None
+    special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
     source: Optional[str] = None            # data runner that wrote this record
 
 
