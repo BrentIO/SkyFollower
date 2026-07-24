@@ -49,7 +49,9 @@ def icao_hex(redis_client):
     """A fresh, collision-free test hex per test, cleaned up afterward."""
     hex_ = "FFFE" + uuid.uuid4().hex[:2].upper()
     yield hex_
-    redis_client.delete(f"aircraft:mictronics:{hex_}", f"aircraft:registry:{hex_}")
+    redis_client.delete(
+        f"aircraft:mictronics:{hex_}", f"aircraft:registry:{hex_}", f"aircraft:livery:{hex_}",
+    )
 
 
 def _merge(redis_client, merge_sha, hex_):
@@ -133,4 +135,71 @@ class TestManufacturerModelFallback:
         assert result["aircraft"]["manufacturer_model"] == "J3C-65"
 
     def test_both_keys_absent_still_returns_none(self, redis_client, merge_sha, icao_hex):
+        assert _merge(redis_client, merge_sha, icao_hex) is None
+
+
+class TestLiveryLayer:
+    """Covers the third merge tier — aircraft:livery:{icao_hex}, written by
+    the airportwebcams-liveries runner — added on top of the existing
+    mictronics/registry two-key merge (see #490)."""
+
+    def test_livery_absent_merge_unaffected(self, redis_client, merge_sha, icao_hex):
+        """An aircraft with no special livery (the common case) must merge
+        exactly as it did before this key existed — no special_livery or
+        livery_name key at all. Mirrors the real N659DL/A8AE7F and
+        N62770/A833A4 control cases documented in the runner's README."""
+        redis_client.json().set(
+            f"aircraft:mictronics:{icao_hex}", "$",
+            {"aircraft": {"manufacturer_model": "BOEING 757-200"}},
+        )
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$", {"registration": "N659DL", "military": False},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["registration"] == "N659DL"
+        assert "special_livery" not in result
+        assert "livery_name" not in result
+
+    def test_livery_only_key_present(self, redis_client, merge_sha, icao_hex):
+        redis_client.json().set(
+            f"aircraft:livery:{icao_hex}", "$",
+            {"special_livery": True, "livery_name": "America250"},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["special_livery"] is True
+        assert result["livery_name"] == "America250"
+
+    def test_livery_layered_on_top_of_mictronics_and_registry(self, redis_client, merge_sha, icao_hex):
+        redis_client.json().set(
+            f"aircraft:mictronics:{icao_hex}", "$",
+            {"aircraft": {"manufacturer_model": "AIRBUS A320"}},
+        )
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$", {"registration": "N775JB", "military": False},
+        )
+        redis_client.json().set(
+            f"aircraft:livery:{icao_hex}", "$",
+            {"special_livery": True, "livery_name": "America250"},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["aircraft"]["manufacturer_model"] == "AIRBUS A320"
+        assert result["registration"] == "N775JB"
+        assert result["military"] is False
+        assert result["special_livery"] is True
+        assert result["livery_name"] == "America250"
+
+    def test_livery_wins_on_field_overlap_with_registry(self, redis_client, merge_sha, icao_hex):
+        """Livery is deep-merged last, so it must win over registry on any
+        overlapping field — proving the requested stacking order (Mictronics
+        -> registry -> livery) even though no real field overlaps today."""
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$", {"registration": "REGISTRY-VALUE"},
+        )
+        redis_client.json().set(
+            f"aircraft:livery:{icao_hex}", "$", {"registration": "LIVERY-VALUE"},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["registration"] == "LIVERY-VALUE"
+
+    def test_all_three_keys_absent_still_returns_none(self, redis_client, merge_sha, icao_hex):
         assert _merge(redis_client, merge_sha, icao_hex) is None

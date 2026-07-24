@@ -1,13 +1,19 @@
 -- merge_aircraft.lua
 --
--- Merges aircraft:mictronics:{icao_hex} and aircraft:registry:{icao_hex} into a
--- single JSON document and returns it as a string.
+-- Merges aircraft:mictronics:{icao_hex}, aircraft:registry:{icao_hex}, and
+-- aircraft:livery:{icao_hex} into a single JSON document and returns it as a
+-- string.
 --
 -- ARGV[1] : icao_hex (e.g. "A8AE7F")
 --
--- Returns nil only if both keys are absent for the given icao_hex.
--- Registry fields win over mictronics fields on any overlap (same semantics as the
--- old deep-merge-on-write pattern, but performed server-side at read time).
+-- Returns nil only if all three keys are absent for the given icao_hex.
+-- Fields win in this priority order, lowest to highest: mictronics,
+-- registry, livery (same semantics as the old deep-merge-on-write pattern,
+-- but performed server-side at read time). In practice registry and livery
+-- never write overlapping fields — livery only ever contributes
+-- special_livery/livery_name — but the ordering is preserved so the
+-- three-source stacking (mictronics -> registry -> livery) holds even if
+-- that changes.
 --
 -- If the merged result has no aircraft.manufacturer_model (only ever written by
 -- mictronics), it is synthesized from aircraft.manufacturer / aircraft.model —
@@ -59,14 +65,18 @@ end
 
 local mictronics_raw = redis.call('JSON.GET', 'aircraft:mictronics:' .. icao_hex)
 local registry_raw   = redis.call('JSON.GET', 'aircraft:registry:'   .. icao_hex)
+local livery_raw     = redis.call('JSON.GET', 'aircraft:livery:'     .. icao_hex)
 
-if not mictronics_raw and not registry_raw then
+if not mictronics_raw and not registry_raw and not livery_raw then
     return nil
 end
 
 local result = mictronics_raw and cjson.decode(mictronics_raw) or {}
 if registry_raw then
     deep_merge(result, cjson.decode(registry_raw))
+end
+if livery_raw then
+    deep_merge(result, cjson.decode(livery_raw))
 end
 
 apply_manufacturer_model_fallback(result)

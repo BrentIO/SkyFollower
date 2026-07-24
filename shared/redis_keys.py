@@ -32,6 +32,16 @@ def aircraft_registry_key(icao_hex: str) -> str:
     return f"aircraft:registry:{icao_hex.upper()}"
 
 
+def aircraft_livery_key(icao_hex: str) -> str:
+    """
+    Special-livery enrichment record, written by the airportwebcams-liveries
+    runner. Deep-merged last by shared/lua/merge_aircraft.lua, so it wins
+    over both aircraft:mictronics and aircraft:registry on any field overlap.
+    aircraft:livery:{icao_hex}
+    """
+    return f"aircraft:livery:{icao_hex.upper()}"
+
+
 def operator_key(designator: str) -> str:
     """Airline operator record. operator:{designator}"""
     return f"operator:{designator.upper()}"
