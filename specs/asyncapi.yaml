@@ -476,10 +476,12 @@ components:
           example: "2005"
         is_private_operator:
           type: boolean
-        source:
-          type: string
-          description: Data runner that wrote this registration record
-          example: us-faa
+        data_sources:
+          type: array
+          items:
+            type: string
+          description: Every data runner that contributed a field to this record, mictronics -> registry -> livery order
+          example: [mictronics, us-faa]
 
     FlightRuleNotification:
       type: object

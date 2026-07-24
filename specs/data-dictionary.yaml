@@ -16,6 +16,10 @@
 # mictronics/registry merge, it is composed from aircraft.manufacturer /
 # aircraft.model, whichever are present. The computed value is never written
 # back to Redis, so it self-heals the moment a real source value appears.
+# aircraft.data_sources (below) is a second instance: no runner ever writes a
+# "data_sources" key at all — each of the three enrichment keys carries its
+# own singular "source" scalar, and merge_aircraft.lua collects whichever are
+# present into the array at read time.
 #
 # persisted: true  (default) — field is written to the S3 archive record.
 # persisted: false — field is used during processing only; omitted on persist.
@@ -3078,6 +3082,24 @@ records:
                   - source: us-faa
                     file: engine.txt
                     description: "HORSEPOWER or THRUST column depending on engine type"
+
+          data_sources:
+            type: array
+            description: >
+              Every data runner that contributed a field to this record —
+              e.g. ["mictronics", "us-faa"]. Computed fallback field (see the
+              note near the top of this file): no runner writes a
+              "data_sources" key directly. Each of the three enrichment keys
+              (aircraft:mictronics, aircraft:registry, aircraft:livery)
+              carries its own singular "source" scalar naming the runner
+              that wrote it; shared/lua/merge_aircraft.lua collects whichever
+              of those three are present into this array, in
+              mictronics -> registry -> livery order, and removes the bare
+              "source" scalar so it never leaks through. Not to be confused
+              with the flight-level "source" field elsewhere in this record
+              (1090/978/MLAT ADS-B receive path, tracked separately by the
+              processor, unrelated despite the shared word).
+            persisted: true
 
       military:
         type: boolean
