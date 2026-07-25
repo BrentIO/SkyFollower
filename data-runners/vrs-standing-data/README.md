@@ -1,4 +1,6 @@
-# standing-data
+# vrs-standing-data
+
+Virtual Radar Server Standing Data
 
 | | |
 |---|---|
@@ -96,7 +98,7 @@ The settings file path defaults to `/app/settings.json` and can be overridden wi
 
 ## MQTT
 
-Published once, at the end of a run, to `SkyFollower/runner/standing-data/statistic/{name}` (all retained):
+Published once, at the end of a run, to `SkyFollower/runner/vrs-standing-data/statistic/{name}` (all retained):
 
 | Topic suffix | Value | Format |
 |---|---|---|
@@ -104,4 +106,4 @@ Published once, at the end of a run, to `SkyFollower/runner/standing-data/statis
 | `last_run_at` | e.g. `2026-07-25T04:50:12.123456+00:00` | ISO 8601 UTC |
 | `last_run_status` | `success` or `failure` | String |
 
-Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_standing_data_{name}/config` for each of the three stats above.
+Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_vrs_standing_data_{name}/config` for each of the three stats above.

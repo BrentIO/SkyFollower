@@ -1,5 +1,5 @@
 """
-Tests for the Standing Data (VRS SDM) data runner.
+Tests for the vrs-standing-data (Virtual Radar Server Standing Data) runner.
 
 Covers:
 - Tarball download/extraction (route CSVs only, top-level dir stripped)
@@ -26,7 +26,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_RUNNER_DIR = os.path.dirname(_HERE)          # data-runners/standing-data/
+_RUNNER_DIR = os.path.dirname(_HERE)          # data-runners/vrs-standing-data/
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
 
 if _REPO_ROOT not in sys.path:
@@ -35,11 +35,11 @@ if _REPO_ROOT not in sys.path:
 
 def _load_main():
     spec = importlib.util.spec_from_file_location(
-        "standing_data_main",
+        "vrs_standing_data_main",
         os.path.join(_RUNNER_DIR, "main.py"),
     )
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["standing_data_main"] = mod
+    sys.modules["vrs_standing_data_main"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -105,7 +105,7 @@ class TestDownloadAndExtractRoutes:
 
     def test_extracts_route_csvs(self):
         tarball = _make_tarball(_make_files())
-        with patch("standing_data_main.requests.get", return_value=self._mock_response(tarball)):
+        with patch("vrs_standing_data_main.requests.get", return_value=self._mock_response(tarball)):
             files = download_and_extract_routes("https://example.test/archive.tar.gz")
         assert set(files.keys()) == {
             "routes/schema-01/A/AAL-all.csv",
@@ -114,7 +114,7 @@ class TestDownloadAndExtractRoutes:
 
     def test_strips_top_level_directory(self):
         tarball = _make_tarball(_make_files())
-        with patch("standing_data_main.requests.get", return_value=self._mock_response(tarball)):
+        with patch("vrs_standing_data_main.requests.get", return_value=self._mock_response(tarball)):
             files = download_and_extract_routes("https://example.test/archive.tar.gz")
         assert all(not p.startswith("standing-data-main/") for p in files)
 
@@ -124,13 +124,13 @@ class TestDownloadAndExtractRoutes:
             "aircraft/schema-01/A/foo.csv": b"not a route file",
             "routes/schema-01/README.md": b"not a csv",
         })
-        with patch("standing_data_main.requests.get", return_value=self._mock_response(tarball)):
+        with patch("vrs_standing_data_main.requests.get", return_value=self._mock_response(tarball)):
             files = download_and_extract_routes("https://example.test/archive.tar.gz")
         assert "aircraft/schema-01/A/foo.csv" not in files
         assert "routes/schema-01/README.md" not in files
 
     def test_raises_on_non_200(self):
-        with patch("standing_data_main.requests.get", return_value=self._mock_response(b"", status_code=404)):
+        with patch("vrs_standing_data_main.requests.get", return_value=self._mock_response(b"", status_code=404)):
             with pytest.raises(RuntimeError):
                 download_and_extract_routes("https://example.test/archive.tar.gz")
 
@@ -315,7 +315,7 @@ class TestMqttCompletionStats:
     def test_publishes_records_imported(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("standing_data_main.mqtt.Client", return_value=mc):
+        with patch("vrs_standing_data_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 42, "success")
         topics = [c.args[0] for c in mc.publish.call_args_list]
@@ -324,7 +324,7 @@ class TestMqttCompletionStats:
     def test_records_imported_value(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("standing_data_main.mqtt.Client", return_value=mc):
+        with patch("vrs_standing_data_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 99, "success")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
@@ -333,7 +333,7 @@ class TestMqttCompletionStats:
     def test_publishes_last_run_status(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("standing_data_main.mqtt.Client", return_value=mc):
+        with patch("vrs_standing_data_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 0, "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
@@ -342,14 +342,14 @@ class TestMqttCompletionStats:
     def test_no_mqtt_config_skips(self):
         cfg = {}
         mc = self._setup_mock_client()
-        with patch("standing_data_main.mqtt.Client", return_value=mc):
+        with patch("vrs_standing_data_main.mqtt.Client", return_value=mc):
             publish_completion_stats(cfg, 0, "success")
         mc.connect.assert_not_called()
 
     def test_ha_autodiscovery_three_sensors(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
-        with patch("standing_data_main.mqtt.Client", return_value=mc):
+        with patch("vrs_standing_data_main.mqtt.Client", return_value=mc):
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 100, "success")
         ha_topics = [
@@ -357,9 +357,9 @@ class TestMqttCompletionStats:
             if c.args[0].startswith("homeassistant/")
         ]
         assert len(ha_topics) == 3
-        assert "homeassistant/sensor/SkyFollower_runner_standing_data_records_imported/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_standing_data_last_run_at/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_standing_data_last_run_status/config" in ha_topics
+        assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_records_imported/config" in ha_topics
+        assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_last_run_at/config" in ha_topics
+        assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_last_run_status/config" in ha_topics
 
 
 # ---------------------------------------------------------------------------
@@ -369,4 +369,4 @@ class TestMqttCompletionStats:
 class TestNetwork:
     @pytest.mark.network
     def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "standing-data")
+        assert_url_reachable(_mod.DOWNLOAD_URL, "vrs-standing-data")

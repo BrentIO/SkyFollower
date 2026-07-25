@@ -60,7 +60,7 @@ def flight_key(ident: str) -> str:
 def route_key(ident: str) -> str:
     """
     Raw VRS standing-data route string for a callsign, written by the
-    standing-data runner. Plain Redis string (not JSON) — e.g. GET
+    vrs-standing-data runner. Plain Redis string (not JSON) — e.g. GET
     route:AAL15 -> "KMIA-KJFK-KMIA" — passed through unchanged from the
     source AirportCodes column. route:{ident}
     """

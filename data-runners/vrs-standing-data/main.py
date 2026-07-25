@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SkyFollower Standing Data Runner
+SkyFollower VRS Standing Data Runner (Virtual Radar Server Standing Data)
 
 Downloads the VRS Standing Data Management (SDM) repository's route CSVs,
 stages ident -> route rows in local SQLite, writes each as a plain Redis
@@ -40,7 +40,7 @@ from shared.redis_keys import route_key
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
 
-logger = logging.getLogger("standing-data")
+logger = logging.getLogger("vrs-standing-data")
 
 DOWNLOAD_URL = "https://codeload.github.com/vradarserver/standing-data/tar.gz/refs/heads/main"
 
@@ -54,7 +54,7 @@ DOWNLOAD_URL = "https://codeload.github.com/vradarserver/standing-data/tar.gz/re
 # a single value.
 REDIS_TTL = 3 * 86400  # 3 days in seconds
 
-MQTT_ROOT = "SkyFollower/runner/standing-data"
+MQTT_ROOT = "SkyFollower/runner/vrs-standing-data"
 
 _ROUTES_PATH_PREFIX = "routes/schema-01/"
 
@@ -237,21 +237,21 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
-        "ids": "SkyFollower_runner_standing_data",
-        "name": "SkyFollower Standing Data Runner",
+        "ids": "SkyFollower_runner_vrs_standing_data",
+        "name": "SkyFollower Virtual Radar Server Standing Data Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Standing Data Records Imported", "mdi:routes", "total_increasing", None),
-        ("last_run_at", "Standing Data Last Run At", "mdi:clock", None, None),
-        ("last_run_status", "Standing Data Last Run Status", "mdi:check-circle", None, None),
+        ("records_imported", "Virtual Radar Server Standing Data Records Imported", "mdi:routes", "total_increasing", None),
+        ("last_run_at", "Virtual Radar Server Standing Data Last Run At", "mdi:clock", None, None),
+        ("last_run_status", "Virtual Radar Server Standing Data Last Run Status", "mdi:check-circle", None, None),
     ]
     for name, friendly_name, icon, state_class, unit in stats:
         payload: dict = {
             "state_topic": f"{MQTT_ROOT}/statistic/{name}",
             "name": friendly_name,
-            "unique_id": f"SkyFollower_runner_standing_data_{name}",
-            "object_id": f"SkyFollower_runner_standing_data_{name}",
+            "unique_id": f"SkyFollower_runner_vrs_standing_data_{name}",
+            "object_id": f"SkyFollower_runner_vrs_standing_data_{name}",
             "device": device,
             "icon": icon,
         }
@@ -260,7 +260,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         if unit:
             payload["unit_of_measurement"] = unit
         client.publish(
-            f"homeassistant/sensor/SkyFollower_runner_standing_data_{name}/config",
+            f"homeassistant/sensor/SkyFollower_runner_vrs_standing_data_{name}/config",
             json.dumps(payload),
             retain=True,
         )
@@ -308,10 +308,10 @@ def main() -> None:
         records_imported = write_to_redis(conn, r, REDIS_TTL)
         conn.close()
         status = "success"
-        logger.info("Standing-data runner completed successfully. Records imported: %d", records_imported)
+        logger.info("VRS standing-data runner completed successfully. Records imported: %d", records_imported)
 
     except Exception as exc:
-        logger.error("Standing-data runner failed: %s", exc, exc_info=True)
+        logger.error("VRS standing-data runner failed: %s", exc, exc_info=True)
 
     finally:
         try:

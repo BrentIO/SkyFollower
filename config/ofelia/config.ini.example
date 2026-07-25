@@ -165,6 +165,6 @@ schedule = 10 6 * * 5
 container = skyfollower-runner-airportwebcams-special-liveries
 
 # Upstream repo's daily commit lands ~03:49-03:51 UTC; run an hour after.
-[job-run "runner-standing-data"]
+[job-run "runner-vrs-standing-data"]
 schedule = 50 4 * * *
-container = skyfollower-runner-standing-data
+container = skyfollower-runner-vrs-standing-data

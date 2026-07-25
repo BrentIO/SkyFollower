@@ -884,8 +884,8 @@ sources:
           4: Description
         notes: "Registration cell text is the tail number (also a FlightRadar24 link). Description sometimes packs multiple livery names into one cell separated by ' / ' (~7% of rows), and/or carries a trailing '(sticker)'/'(stickers)' annotation and/or a trailing site-freshness marker like '(#New at 17-Jul-26)' — see the special_livery transform below; at least one real row's annotation itself contains a '/' ('(sticker; underside/belly)'), so annotations must be stripped before splitting on '/', not after"
 
-  standing-data:
-    description: "VRS Standing Data — flight routes only"
+  vrs-standing-data:
+    description: "Virtual Radar Server Standing Data — flight routes only"
     url: "https://github.com/vradarserver/standing-data"
     format: csv
     cadence: daily
@@ -3504,7 +3504,7 @@ records:
 
   route:
     description: >
-      Raw flight-number-to-route lookup written by the standing-data runner.
+      Raw flight-number-to-route lookup written by the vrs-standing-data runner.
       Deliberately not object-shaped like the other records below — the
       value is a plain Redis string (not JSON), passed through unchanged
       from the source's AirportCodes column, including multi-airport
@@ -3516,7 +3516,7 @@ records:
     redis_value_type: string
     example: "KMIA-KJFK-KMIA"
     sources:
-      - source: standing-data
+      - source: vrs-standing-data
         file: routes
         field: AirportCodes
 
