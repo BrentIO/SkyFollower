@@ -7,6 +7,7 @@ title Message Pipeline
 !includesub ../../../processor/processor.puml!COMPONENT
 !includesub central-server.puml!COMPONENT
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
+!includesub ../../../archive-compaction/archive-compaction.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
 Receiver -right-> adsbq : Publisher
@@ -16,10 +17,13 @@ ProcessorC --> archiveq : Publisher
 Archiver -up-> archiveq : Consumer
 Archiver ---> s3 : Persist flight\n(flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz)
 Archiver ---> s3 : Persist Parquet index row\n(index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet)
+CompactionJob ---> s3 : Read + merge a day's small Parquet files,\nwrite one compacted file
+CompactionJob ---> s3 : Delete compacted sources
 
 RevProc -[hidden]down-> MsgProc
 MsgProc -[hidden]down-> CentralSvr
 CentralSvr -[hidden]right-> ArchProc
 ArchProc -[hidden]down-> AWS
+ArchProc -[hidden]right-> ArchCompaction
 
 @enduml

@@ -1,0 +1,10 @@
+@startuml
+!include_once ../docs/images/common-component.iuml
+
+!startsub COMPONENT
+package "Archive Compaction" as ArchCompaction $OnPrem {
+    component "Compaction Job" as CompactionJob
+}
+!endsub
+
+@enduml
