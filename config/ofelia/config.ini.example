@@ -163,3 +163,8 @@ container = skyfollower-runner-ca-transport-canada
 [job-run "runner-airportwebcams-special-liveries"]
 schedule = 10 6 * * 5
 container = skyfollower-runner-airportwebcams-special-liveries
+
+# Upstream repo's daily commit lands ~03:49-03:51 UTC; run an hour after.
+[job-run "runner-standing-data"]
+schedule = 50 4 * * *
+container = skyfollower-runner-standing-data

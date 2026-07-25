@@ -885,10 +885,10 @@ sources:
         notes: "Registration cell text is the tail number (also a FlightRadar24 link). Description sometimes packs multiple livery names into one cell separated by ' / ' (~7% of rows), and/or carries a trailing '(sticker)'/'(stickers)' annotation and/or a trailing site-freshness marker like '(#New at 17-Jul-26)' — see the special_livery transform below; at least one real row's annotation itself contains a '/' ('(sticker; underside/belly)'), so annotations must be stripped before splitting on '/', not after"
 
   standing-data:
-    description: "VRS Standing Data — operators, airports, and flight routes"
+    description: "VRS Standing Data — flight routes only"
     url: "https://github.com/vradarserver/standing-data"
     format: csv
-    cadence: weekly_tuesday
+    cadence: daily
 
   flightaware:
     description: "FlightAware origin/destination enrichment (paid; optional)"
@@ -3387,8 +3387,6 @@ records:
             description: "ICAO 4-character airport code"
             sources:
               - source: flightaware
-              - source: standing-data
-                file: routes
 
       destination:
         type: object
@@ -3412,8 +3410,6 @@ records:
             description: "ICAO 4-character airport code"
             sources:
               - source: flightaware
-              - source: standing-data
-                file: routes
 
       matched_rules:
         type: "array[string]"
@@ -3505,6 +3501,24 @@ records:
             description: "Vertical speed in feet per minute; negative = descending"
             sources:
               - source: processor
+
+  route:
+    description: >
+      Raw flight-number-to-route lookup written by the standing-data runner.
+      Deliberately not object-shaped like the other records below — the
+      value is a plain Redis string (not JSON), passed through unchanged
+      from the source's AirportCodes column, including multi-airport
+      sequences (e.g. "KDFW-MYNN-KDFW" for a same-day out-and-back reusing
+      one callsign). Not currently consumed by records.flight.fields.origin/
+      destination — that field is populated by flightaware only.
+    storage: Redis
+    redis_key: "route:{ident}"
+    redis_value_type: string
+    example: "KMIA-KJFK-KMIA"
+    sources:
+      - source: standing-data
+        file: routes
+        field: AirportCodes
 
   airport:
     description: >
