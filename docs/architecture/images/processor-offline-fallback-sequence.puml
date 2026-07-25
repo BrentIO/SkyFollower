@@ -22,6 +22,7 @@ alt connected
     Processor -\ ArchiveQ : **Publish**
     opt channel already closed locally
         Processor -> Processor : **Local publish failure**\n""basic_publish() raises""
+        Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
         Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
         ProcessorDB --> Processor-- : OK
     end
@@ -61,6 +62,7 @@ loop For each row in database
     ProcessorDB --> Processor-- : Record
     Processor -\ ArchiveQ : **Publish**
     break basic_publish raises error
+        Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
         Processor -> Processor : **Stop draining**
     end
     Processor -> ProcessorDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""

@@ -526,6 +526,62 @@ class TestFlight:
 
 
 # ---------------------------------------------------------------------------
+# Processor._archive — live-path publish, mirroring receiver._publish()'s
+# rmq_connected reset on a basic_publish failure (see #533)
+# ---------------------------------------------------------------------------
+
+class TestProcessorArchive:
+    def _make_completed_flight(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        return f.to_completed_flight()
+
+    def test_archive_publishes_when_connected(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        p._rmq_channel = mock_channel
+        p._rmq_connected = True
+
+        p._archive(self._make_completed_flight())
+
+        mock_channel.basic_publish.assert_called_once()
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
+        assert p._fallback.depth() == 0
+        assert p._rmq_connected is True
+
+    def test_archive_falls_back_when_not_connected(self):
+        p, _ = _make_processor()
+        p._rmq_connected = False
+
+        p._archive(self._make_completed_flight())
+
+        assert p._fallback.depth() == 1
+        assert p._rmq_connected is False
+
+    def test_archive_resets_rmq_connected_on_publish_failure(self):
+        """A live basic_publish failure is the only self-correcting path
+        this component has — unlike the receiver, nothing else in
+        _archive() ever flips rmq_connected back, so a failure here must
+        set it False rather than leaving it pinned True (see #533)."""
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        p._rmq_channel = mock_channel
+        p._rmq_connected = True
+
+        p._archive(self._make_completed_flight())
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
+
+# ---------------------------------------------------------------------------
 # _ArchiveFallbackQueue
 # ---------------------------------------------------------------------------
 
@@ -599,6 +655,22 @@ class TestProcessorDrainFallback:
 
         assert p._fallback.depth() == 1
 
+    def test_drain_fallback_resets_rmq_connected_on_publish_failure(self):
+        """A failed basic_publish during draining is just as much evidence
+        the connection is broken as a failed live-path publish — mirror
+        _archive()'s handling (and the receiver's #531 fix)."""
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        mock_channel = MagicMock()
+        mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        p._rmq_channel = mock_channel
+        p._rmq_connected = True
+
+        p._drain_fallback()
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
     def _run_one_telemetry_tick(self, p) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
         making the mocked time.sleep set _shutdown so the loop body runs
@@ -614,10 +686,10 @@ class TestProcessorDrainFallback:
     def test_telemetry_loop_drains_when_connected(self):
         """The periodic tick must attempt a drain when RabbitMQ is
         connected — this is what lets a stuck/missed reconnect-triggered
-        drain (see #526) still recover on the next tick. Unlike the
-        receiver, _archive() doesn't flip _rmq_connected on a publish
-        failure, so repeated per-flight failures are the way this queue
-        gets stuck here, rather than a pinned flag."""
+        drain (see #526) still recover on the next tick, since a publish
+        failure can pin _rmq_connected False without the underlying
+        connection ever raising AMQPConnectionError to re-enter
+        _consume_loop's own reconnect-triggered drain."""
         p, _ = _make_processor()
         p._fallback.put('{"_id": "a"}')
         p._rmq_channel = MagicMock()
