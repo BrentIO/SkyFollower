@@ -48,7 +48,10 @@ An `MLAT` source does not need to be co-located with the receiver's SDR
 hardware — it's a plain TCP connection like any other source, so `host` can
 point at a remote MLAT-results feed (e.g. a readsb instance receiving results
 from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
-so no separate parsing is required.
+so no separate parsing is required. Any number of MLAT providers can be
+configured — each is its own `sources[]` entry with `source: "MLAT"`.
+
+![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
 ### `rabbitmq` object
 

@@ -9,6 +9,9 @@ title Message Pipeline
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
+component "MLAT Provider(s)" as MlatProviders $Vendor
+
+Receiver -up-> MlatProviders : TCP Socket\n(one or more sources)
 Receiver -right-> adsbq : Publisher
 ProcessorC --> adsbq : Consumer
 ProcessorC -down--> Redis : Enrichment lookups
