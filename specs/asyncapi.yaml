@@ -360,6 +360,7 @@ components:
         - s3_connected
         - local_queue_depth
         - local_index_queue_depth
+        - rabbitmq_archive_queue_depth_hwm
         - started_at
       properties:
         flights_archived_hour:
@@ -389,6 +390,10 @@ components:
         local_index_queue_depth:
           type: integer
           description: Number of Parquet index rows queued for retry (index_queue table in s3.db) after their flight object wrote successfully but the index write failed
+          example: 0
+        rabbitmq_archive_queue_depth_hwm:
+          type: integer
+          description: High-water mark of the RabbitMQ 'archive' queue's depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
           example: 0
         started_at:
           type: string

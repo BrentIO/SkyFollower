@@ -226,6 +226,7 @@ All topics use the root `SkyFollower`.
 | `s3_connected` | boolean | Current S3 connectivity state |
 | `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | integer | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
+| `rabbitmq_archive_queue_depth_hwm` | integer | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 
 All statistics are published as a single retained JSON payload every
 `telemetry_interval_seconds`. Home Assistant autodiscovery payloads are
