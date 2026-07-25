@@ -13,7 +13,6 @@ from shared.redis_keys import (
     config_flight_ttl_seconds_key,
     config_rules_key,
     config_rules_version_key,
-    flight_key,
     metrics_aircraft_type_misses_key,
     metrics_flights_archived_key,
     metrics_registration_misses_key,
@@ -44,10 +43,6 @@ class TestEnrichmentKeys:
     def test_aircraft_type_key(self):
         assert aircraft_type_key("b763") == "aircraft:type:B763"
         assert aircraft_type_key("B763") == "aircraft:type:B763"
-
-    def test_flight_key(self):
-        assert flight_key("dal659") == "flight:DAL659"
-        assert flight_key("DAL659") == "flight:DAL659"
 
     def test_airport_key(self):
         assert airport_key("katl") == "airport:KATL"

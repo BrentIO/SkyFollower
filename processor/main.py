@@ -39,7 +39,6 @@ from shared.logging_setup import configure_logging
 from shared.models import (
     AircraftRecord,
     CompletedFlight,
-    FlightEnrichment,
     InboundMessage,
     OperatorRecord,
     Position,
@@ -51,7 +50,6 @@ from shared.redis_keys import (
     config_areas_version_key,
     config_flight_ttl_seconds_key,
     config_rules_version_key,
-    flight_key,
     metrics_aircraft_type_misses_key,
     metrics_registration_misses_key,
     operator_key,
@@ -809,7 +807,6 @@ class Processor:
             if ident and ident != "00000000":
                 flight.ident = ident
                 self._enrich_operator(flight)
-                self._enrich_flight(flight)
 
         if "adsb_version" in data:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
@@ -879,20 +876,6 @@ class Processor:
                 self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
         except Exception as exc:
             logger.debug("Redis enrichment (operator) error: %s", exc)
-
-    def _enrich_flight(self, flight: Flight) -> None:
-        try:
-            raw = self._redis.get(flight_key(flight.ident))
-            if raw:
-                info = FlightEnrichment.model_validate_json(raw)
-                if info.origin:
-                    flight.origin = info.origin.get("icao_code")
-                if info.destination:
-                    flight.destination = info.destination.get("icao_code")
-                if info.flight_number and flight.operator:
-                    flight.operator["flight_number"] = info.flight_number
-        except Exception as exc:
-            logger.debug("Redis enrichment (flight) error: %s", exc)
 
     # ------------------------------------------------------------------
     # Stale flight eviction

@@ -129,20 +129,6 @@ class AirportRecord(BaseModel):
     type: Optional[str] = None
 
 
-class FlightEnrichment(BaseModel):
-    """
-    Origin/destination enrichment.
-    Stored in Redis at flight:{ident} with a short TTL. Shape matches the AROI
-    /flight/{ident} response.
-    """
-
-    ident: str
-    flight_number: Optional[str] = None
-    airline_designator: Optional[str] = None
-    origin: Optional[dict] = None       # {"icao_code": "KATL", ...}
-    destination: Optional[dict] = None  # {"icao_code": "KLAX", ...}
-
-
 # ── Completed flight record ─────────────────────────────────────────────────
 
 

@@ -52,11 +52,6 @@ def aircraft_type_key(designator: str) -> str:
     return f"aircraft:type:{designator.upper()}"
 
 
-def flight_key(ident: str) -> str:
-    """Origin/destination enrichment record. flight:{ident}"""
-    return f"flight:{ident.upper()}"
-
-
 def route_key(ident: str) -> str:
     """
     Raw VRS standing-data route string for a callsign, written by the
