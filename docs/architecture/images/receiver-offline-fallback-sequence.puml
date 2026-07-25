@@ -12,34 +12,69 @@ box "RabbitMQ" $OnPrem
     queue "adsb-{n}" as AdsbQ
 end box
 
-Receiver -> AdsbQ : **Publish** attempt fails
-note over AdsbQ
-    RabbitMQ unreachable
-end note
-Receiver -> ReceiverDB : **Write** (SQLite WAL)
+== Normal operation ==
 
-loop while RabbitMQ unreachable
-    Receiver -> AdsbQ : **Publish** attempt fails
-    Receiver -> ReceiverDB : **Write** (SQLite WAL)
+Receiver -> AdsbQ++ : **Connect**
+AdsbQ --> Receiver-- : Connected
+Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
+alt connected
+    Receiver -\ AdsbQ : **Publish**
+    opt channel already closed locally
+        Receiver -> Receiver : **Local publish failure**\n""basic_publish() raises""
+        Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+    end
+else not connected
+    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+    ReceiverDB --> Receiver-- : OK
 end
 
-alt RabbitMQ connection-level reconnect detected
-    Receiver -> AdsbQ++ : **Reconnect**
-    AdsbQ --> Receiver-- : Connected
-    Receiver -> ReceiverDB : **Drain** oldest-first
-    ReceiverDB --> Receiver : buffered messages
-    Receiver -> AdsbQ : **Publish** each drained message
-else every telemetry_interval_seconds
-    Receiver -> Receiver : **Check** rmq_connected
+== Connection drops ==
+
+AdsbQ ->x Receiver : **Connection lost**
+Receiver -> Receiver : **Connection monitoring detects the drop**\n""conn.process_data_events() raises""
+Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+
+loop Until reconnected
+    alt Connection fails
+        Receiver ->x AdsbQ : **Connect**
+        Receiver -> Receiver : **Sleep 10 seconds**
+    else Connection succeeds
+        Receiver -> AdsbQ++ : **Connect**
+        AdsbQ --> Receiver-- : Connected
+        Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+    end
+end
+
+opt Message arrives while disconnected from RabbitMQ
+    loop For each message
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+        ReceiverDB --> Receiver-- : OK
+    end
+end
+
+== Draining queue.db (reconnect-triggered) ==
+
+loop For each row in database
+    Receiver -> ReceiverDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+    ReceiverDB --> Receiver-- : Record
+    Receiver -\ AdsbQ : **Publish**
+    break basic_publish raises error
+        Receiver -> Receiver : **Stop draining**
+    end
+    Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+    ReceiverDB --> Receiver-- : OK
+end
+
+== Independently, every telemetry_interval_seconds (catches failures that never dropped the connection) ==
+
+Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
+alt connected
     note right of Receiver
-        Independent backstop: a publish failure can
-        leave messages queued without the underlying
-        connection ever raising an error, so the
-        reconnect branch above never fires for it.
+        Refer to //Draining queue.db (reconnect-triggered)//
     end note
-    Receiver -> ReceiverDB : **Drain** oldest-first
-    ReceiverDB --> Receiver : buffered messages
-    Receiver -> AdsbQ : **Publish** each drained message
+else not connected
+    Receiver -> Receiver : **Skip — nothing to do this tick**
 end
 
 @enduml
