@@ -100,6 +100,13 @@ the RabbitMQ connection is re-established, the fallback queue is drained
 oldest-first before new messages are forwarded. If RabbitMQ drops mid-drain,
 draining stops cleanly and resumes on the next reconnect.
 
+Draining is also attempted independently every `telemetry_interval_seconds`,
+not just on a detected reconnect. A publish failure can leave messages queued
+without the underlying connection ever raising an error (a broker-side
+rejection, a channel-level error — anything short of the connection itself
+dying), in which case the reconnect-triggered drain never fires again on its
+own. The periodic check is a cheap no-op when the queue is already empty.
+
 ## MQTT Topics Published
 
 All topics use the root `SkyFollower`.

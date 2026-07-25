@@ -23,9 +23,22 @@ loop while RabbitMQ unreachable
     Receiver -> ReceiverDB : **Write** (SQLite WAL)
 end
 
-Receiver -> AdsbQ++ : **Reconnect**
-Receiver -> ReceiverDB : **Drain** oldest-first
-ReceiverDB --> Receiver : buffered messages
-Receiver -> AdsbQ-- : **Publish** each drained message
+alt RabbitMQ connection-level reconnect detected
+    Receiver -> AdsbQ++ : **Reconnect**
+    Receiver -> ReceiverDB : **Drain** oldest-first
+    ReceiverDB --> Receiver : buffered messages
+    Receiver -> AdsbQ-- : **Publish** each drained message
+else every telemetry_interval_seconds
+    Receiver -> Receiver : **Check** rmq_connected
+    note right of Receiver
+        Independent backstop: a publish failure can
+        leave messages queued without the underlying
+        connection ever raising an error, so the
+        reconnect branch above never fires for it.
+    end note
+    Receiver -> ReceiverDB : **Drain** oldest-first
+    ReceiverDB --> Receiver : buffered messages
+    Receiver -> AdsbQ : **Publish** each drained message
+end
 
 @enduml
