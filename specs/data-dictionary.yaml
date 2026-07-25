@@ -890,12 +890,6 @@ sources:
     format: csv
     cadence: daily
 
-  flightaware:
-    description: "FlightAware origin/destination enrichment (paid; optional)"
-    format: api
-    cadence: every_3_days
-    status: optional
-
   processor:
     description: "Derived in real time by the message processor from ADS-B messages"
 
@@ -3367,7 +3361,7 @@ records:
 
       origin:
         type: object
-        description: "Departure airport enrichment; full object during processing; ICAO code string on persist"
+        description: "Departure airport enrichment; full object during processing; ICAO code string on persist. Not currently populated by any built runner — see records.route for the raw route data this could eventually be derived from."
         ref: airport
         ref_note: >
           Field definitions (iata_code, name, city, region, country,
@@ -3385,12 +3379,10 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
-            sources:
-              - source: flightaware
 
       destination:
         type: object
-        description: "Arrival airport enrichment; full object during processing; ICAO code string on persist"
+        description: "Arrival airport enrichment; full object during processing; ICAO code string on persist. Not currently populated by any built runner — see records.route for the raw route data this could eventually be derived from."
         ref: airport
         ref_note: >
           Field definitions (iata_code, name, city, region, country,
@@ -3408,8 +3400,6 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
-            sources:
-              - source: flightaware
 
       matched_rules:
         type: "array[string]"
@@ -3510,7 +3500,7 @@ records:
       from the source's AirportCodes column, including multi-airport
       sequences (e.g. "KDFW-MYNN-KDFW" for a same-day out-and-back reusing
       one callsign). Not currently consumed by records.flight.fields.origin/
-      destination — that field is populated by flightaware only.
+      destination — neither field is populated by any built runner today.
     storage: Redis
     redis_key: "route:{ident}"
     redis_value_type: string
