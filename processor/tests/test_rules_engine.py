@@ -140,7 +140,7 @@ class TestLoadRules:
 
 
 # ---------------------------------------------------------------------------
-# force_archive rule-level flag (#492)
+# force_archive rule-level flag
 # ---------------------------------------------------------------------------
 
 class TestForceArchiveFlag:

@@ -492,7 +492,7 @@ class ArchiveProcessor:
     def _process_flight(self, flight: CompletedFlight) -> None:
         """Write to S3 (or fallback) if S3 is currently reachable.
 
-        MLAT-only flights (see #492) are dropped here, before either the S3
+        MLAT-only flights are dropped here, before either the S3
         write or the local fallback queue — deliberately, not deferred, since
         the whole point is avoiding the S3 storage cost of flights the user
         never asked to keep. force_archive (set by a matching rule) overrides

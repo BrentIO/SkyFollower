@@ -371,11 +371,11 @@ components:
           example: 412
         flights_skipped_hour:
           type: integer
-          description: MLAT-only flights dropped instead of archived this hour (see #492)
+          description: MLAT-only flights dropped instead of archived this hour
           example: 118
         flights_skipped_today:
           type: integer
-          description: MLAT-only flights dropped instead of archived today, UTC (see #492)
+          description: MLAT-only flights dropped instead of archived today, UTC
           example: 2540
         s3_connected:
           type: boolean

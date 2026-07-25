@@ -187,7 +187,7 @@ class TestCompletedFlight:
         assert flight.receiver_sources == ["MLAT", "1090"]
 
     def test_receiver_sources_defaults_to_empty_list(self):
-        """Must default, not be required — legacy flights (see #496) have no
+        """Must default, not be required — legacy migrated flights have no
         receive-source history at all and must still deserialize."""
         flight = self._make(receiver_sources=[])
         assert flight.receiver_sources == []

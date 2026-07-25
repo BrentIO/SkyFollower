@@ -939,7 +939,7 @@ class TestPerMessageGapCheck:
 
 
 # ---------------------------------------------------------------------------
-# receiver_sources accumulation + force_archive (#492)
+# receiver_sources accumulation + force_archive
 # ---------------------------------------------------------------------------
 
 class TestReceiverSourcesAccumulation:
@@ -974,9 +974,9 @@ class TestReceiverSourcesAccumulation:
         assert f.receiver_sources == ["1090"]
 
     def test_not_only_set_on_first_message(self):
-        """Regression guard for the pre-#492 bug: source used to be set only
-        inside the `if not exists:` branch, so a flight created on MLAT that
-        later got picked up on 1090 never reflected the second source."""
+        """Regression guard: source used to be set only inside the
+        `if not exists:` branch, so a flight created on MLAT that later got
+        picked up on 1090 never reflected the second source."""
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = None
 

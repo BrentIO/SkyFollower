@@ -152,12 +152,12 @@ class CompletedFlight(BaseModel):
     message processor. Shape matches the legacy MongoDB document written by
     Flight.persist() in SkyFollower-legacy, with additive fields:
     _id is now UUID-v7 (was UUID-v4), and receiver_sources/force_archive are
-    new (see #492).
+    new.
 
     receiver_sources and matched_rules both default to an empty list rather
-    than being required, since neither exists in legacy flight records
-    (Phase 7 migration — see #496 — deliberately leaves those files
-    untouched rather than backfilling a synthetic value).
+    than being required, since neither exists in legacy flight records —
+    the legacy-to-S3 migration plan deliberately leaves those files
+    untouched rather than backfilling a synthetic value.
 
     Serialise with .model_dump(by_alias=True, mode="json") for RabbitMQ
     transport and S3 storage to produce the {"_id": ...} key expected by

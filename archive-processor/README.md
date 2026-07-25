@@ -52,7 +52,7 @@ loops.
 
 Flights whose `receiver_sources` is exactly `["MLAT"]` are dropped instead
 of archived — not written to S3, and not queued to the local fallback
-either, since the drop is deliberate rather than deferred (#492). MLAT can
+either, since the drop is deliberate rather than deferred. MLAT can
 produce a very large number of tracked aircraft the user has no interest
 in, and S3 storage cost scales with what gets archived. Any mix that
 includes a non-MLAT source (e.g. `["1090", "MLAT"]`) archives normally,
@@ -173,8 +173,8 @@ All topics use the root `SkyFollower`.
 | `started_at` | string | UTC ISO-8601 timestamp of process start |
 | `flights_archived_hour` | integer | Flights successfully written to S3 this hour |
 | `flights_archived_today` | integer | Flights successfully written to S3 today (UTC) |
-| `flights_skipped_hour` | integer | MLAT-only flights dropped instead of archived this hour (see #492) |
-| `flights_skipped_today` | integer | MLAT-only flights dropped instead of archived today, UTC (see #492) |
+| `flights_skipped_hour` | integer | MLAT-only flights dropped instead of archived this hour |
+| `flights_skipped_today` | integer | MLAT-only flights dropped instead of archived today, UTC |
 | `s3_connected` | boolean | Current S3 connectivity state |
 | `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
 

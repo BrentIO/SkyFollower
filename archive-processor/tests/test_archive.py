@@ -419,7 +419,7 @@ class TestRedisCounterIncrements:
 
 
 # ---------------------------------------------------------------------------
-# MLAT-only flight skip + force_archive override (#492)
+# MLAT-only flight skip + force_archive override
 # ---------------------------------------------------------------------------
 
 class TestMlatOnlySkip:

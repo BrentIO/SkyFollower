@@ -138,7 +138,7 @@ def metrics_flights_archived_key(period: str) -> str:
 def metrics_flights_skipped_key(period: str) -> str:
     """
     Counter for MLAT-only flights dropped by the archive processor instead
-    of being written to S3 (see #492). period must be one of: hour, today.
+    of being written to S3. period must be one of: hour, today.
     metrics:archive:flights_skipped:{period}
     """
     if period not in _VALID_ARCHIVE_PERIODS:

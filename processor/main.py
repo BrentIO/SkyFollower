@@ -109,7 +109,7 @@ CREATE INDEX IF NOT EXISTS velocities_icao_hex ON velocities (icao_hex);
 
 def _migrate_schema(db: sqlite3.Connection) -> None:
     """Upgrade an active_flights.db created before receiver_sources/
-    force_archive existed (#492). CREATE TABLE IF NOT EXISTS only handles a
+    force_archive existed. CREATE TABLE IF NOT EXISTS only handles a
     brand-new file; a file created under the old schema still has the old
     `source` column (left in place, unused) and is missing these two, so
     ALTER TABLE fills the gap. Safe to call unconditionally on every
