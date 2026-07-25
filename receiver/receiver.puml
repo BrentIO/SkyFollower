@@ -11,7 +11,7 @@ package "Receiver" as RevProc $OnPrem {
     Receiver -up-> Sdr1090: TCP Socket\nPort 30002
     Receiver -up-> Sdr978: TCP Socket\nPort 30978
     Receiver -right-> ReceiverFallback : RabbitMQ offline
-    ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect
+    ReceiverFallback .left.> Receiver : Drains on RabbitMQ reconnect\nor every telemetry tick
 }
 !endsub
 
