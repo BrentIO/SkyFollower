@@ -3361,7 +3361,7 @@ records:
 
       origin:
         type: object
-        description: "Departure airport enrichment; full object during processing; ICAO code string on persist. Not currently populated by any built runner — see records.route for the raw route data this could eventually be derived from."
+        description: "Departure airport enrichment; full object during processing; ICAO code string on persist"
         ref: airport
         ref_note: >
           Field definitions (iata_code, name, city, region, country,
@@ -3382,7 +3382,7 @@ records:
 
       destination:
         type: object
-        description: "Arrival airport enrichment; full object during processing; ICAO code string on persist. Not currently populated by any built runner — see records.route for the raw route data this could eventually be derived from."
+        description: "Arrival airport enrichment; full object during processing; ICAO code string on persist"
         ref: airport
         ref_note: >
           Field definitions (iata_code, name, city, region, country,
@@ -3499,8 +3499,7 @@ records:
       value is a plain Redis string (not JSON), passed through unchanged
       from the source's AirportCodes column, including multi-airport
       sequences (e.g. "KDFW-MYNN-KDFW" for a same-day out-and-back reusing
-      one callsign). Not currently consumed by records.flight.fields.origin/
-      destination — neither field is populated by any built runner today.
+      one callsign).
     storage: Redis
     redis_key: "route:{ident}"
     redis_value_type: string
