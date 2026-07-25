@@ -11,9 +11,9 @@ build time via a relative path reference in their `requirements.txt`.
 
 - **`models.py`** — Pydantic models for the RabbitMQ message envelope
   (`InboundMessage`), in-flight telemetry (`Position`, `Velocity`), Redis
-  enrichment records (`AircraftRecord`, `OperatorRecord`, `AirportRecord`,
-  `FlightEnrichment`), and the completed flight record published to the archive
-  queue (`CompletedFlight`). Also exports `generate_flight_id()` which returns
+  enrichment records (`AircraftRecord`, `OperatorRecord`, `AirportRecord`),
+  and the completed flight record published to the archive queue
+  (`CompletedFlight`). Also exports `generate_flight_id()` which returns
   a UUID-v7 string used as the `_id` of each archived flight.
 
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key

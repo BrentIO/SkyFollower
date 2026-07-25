@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from shared.models import (
     AircraftRecord,
     CompletedFlight,
-    FlightEnrichment,
     InboundMessage,
     OperatorRecord,
     Position,

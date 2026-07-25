@@ -697,24 +697,6 @@ class TestProcessorEnrichment:
 
         assert f.operator["airline_designator"] == "DAL"
 
-    def test_enrich_flight_sets_origin_destination(self):
-        p, mock_redis = self._make_processor()
-        from shared.models import FlightEnrichment
-        fe = FlightEnrichment(
-            ident="DAL659",
-            origin={"icao_code": "KATL"},
-            destination={"icao_code": "KLAX"},
-        )
-        mock_redis.get.return_value = fe.model_dump_json()
-
-        f = Flight(p._db)
-        f.icao_hex = "A8AE7F"
-        f.ident = "DAL659"
-        f.operator = {}
-        p._enrich_flight(f)
-
-        assert f.origin == "KATL"
-
 
 # ---------------------------------------------------------------------------
 # Telemetry — single JSON payload
