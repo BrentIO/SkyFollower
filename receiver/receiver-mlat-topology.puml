@@ -1,21 +1,26 @@
 @startuml
 !include_once ../docs/images/common-component.iuml
+!include_once ../docs/images/receiver-instance.iuml
 
 title Receiver — MLAT Provider Topology
 
-component "Receiver\n--\nTags: raw, icao_hex, received_at, source" as Receiver $OnPrem
+!startsub COMPONENT
+package "Receiver" as RevMlat $OnPrem {
+    $receiverCore(ReceiverMlat, ReceiverFallbackMlat)
+}
 
-component "MLAT Provider A\n(e.g. mlat-client feed)" as MlatA $Vendor
-component "MLAT Provider B\n(e.g. a different aggregator)" as MlatB $Vendor
+package "MLAT Provider" as MlatProviderA $Vendor {
+    component "MLAT Socket Service" as MlatA
+}
 
-Receiver -up-> MlatA : TCP Socket\nPort 30105
-Receiver -up-> MlatB : TCP Socket\nPort 30106
+package "MLAT Provider" as MlatProviderB $Vendor {
+    component "MLAT Socket Service" as MlatB
+}
 
-note bottom of MlatB
-    Any number of MLAT providers can be configured — each is its own
-    ""sources[]"" entry with ""source: "MLAT""", a plain TCP connection
-    like any other source. MLAT providers are not co-located with the
-    receiver's on-prem SDR hardware (see receiver.puml).
-end note
+ReceiverMlat -up-> MlatA : TCP Socket\nPort 30105
+ReceiverMlat -up-> MlatB : TCP Socket\nPort 30106
+
+!endsub
+
 
 @enduml

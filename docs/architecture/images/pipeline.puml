@@ -1,19 +1,19 @@
 @startuml
 !include_once ../../images/common-component.iuml
+!include_once ../../images/receiver-instance.iuml
 
 title Message Pipeline
 
 !includesub ../../../receiver/receiver.puml!COMPONENT
+!includesub ../../../receiver/receiver-mlat-topology.puml!COMPONENT
 !includesub ../../../processor/processor.puml!COMPONENT
 !includesub central-server.puml!COMPONENT
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
-component "MLAT Provider(s)" as MlatProviders $Vendor
-
-Receiver -up-> MlatProviders : TCP Socket\n(one or more sources)
-Receiver -right-> adsbq : Publisher
-ProcessorC --> adsbq : Consumer
+ReceiverMlat -> adsbq : Publisher
+Receiver -> adsbq : Publisher
+ProcessorC ----> adsbq : Consumer
 ProcessorC -down--> Redis : Enrichment lookups
 ProcessorC --> archiveq : Publisher
 Archiver -up-> archiveq : Consumer
@@ -21,8 +21,9 @@ Archiver ---> s3 : Persist flight\n(flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_
 Archiver ---> s3 : Persist Parquet index row\n(index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet)
 
 RevProc -[hidden]down-> MsgProc
+RevProc -[hidden]down-> RevMlat
 MsgProc -[hidden]down-> CentralSvr
-CentralSvr -[hidden]right-> ArchProc
-ArchProc -[hidden]down-> AWS
+CentralSvr -[hidden]down-> ArchProc
+ArchProc -[hidden]down---> AWS
 
 @enduml

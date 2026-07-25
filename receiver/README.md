@@ -32,14 +32,13 @@ reconnect. One receiver container handles all configured sources concurrently
 | `port` | integer | TCP port of the readsb raw output (e.g. `30002` for 1090 MHz, `30978` for 978 MHz UAT). |
 | `source` | string | Tag applied to every message from this stream. One of `"1090"`, `"978"`, or `"MLAT"`. |
 
-Example with three sources:
+Example, the SDR-hosting receiver (e.g. on the Raspberry Pi):
 
 ```json
 {
   "sources": [
     { "host": "192.168.1.10", "port": 30002, "source": "1090" },
-    { "host": "192.168.1.10", "port": 30978, "source": "978" },
-    { "host": "mlat-server.example.com", "port": 30105, "source": "MLAT" }
+    { "host": "192.168.1.10", "port": 30978, "source": "978" }
   ]
 }
 ```
@@ -48,8 +47,24 @@ An `MLAT` source does not need to be co-located with the receiver's SDR
 hardware — it's a plain TCP connection like any other source, so `host` can
 point at a remote MLAT-results feed (e.g. a readsb instance receiving results
 from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
-so no separate parsing is required. Any number of MLAT providers can be
-configured — each is its own `sources[]` entry with `source: "MLAT"`.
+so no separate parsing is required. Nothing prevents adding an `MLAT` entry
+to the same `sources[]` list above, but a **separate receiver container and
+`RECEIVER_ID`** is recommended instead — message routing is keyed on
+`icao_hex`, not receiver identity, so a second instance publishes into the
+exact same pipeline with no special handling on the processor side, while
+keeping internet-facing MLAT ingestion off the resource-constrained device
+handling the local RTL-SDR hardware. Any number of MLAT providers can be
+configured on that instance — each is its own `sources[]` entry with
+`source: "MLAT"`:
+
+```json
+{
+  "sources": [
+    { "host": "mlat-server-a.example.com", "port": 30105, "source": "MLAT" },
+    { "host": "mlat-server-b.example.com", "port": 30105, "source": "MLAT" }
+  ]
+}
+```
 
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
