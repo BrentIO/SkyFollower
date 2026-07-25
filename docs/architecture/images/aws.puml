@@ -6,6 +6,13 @@ package "AWS" $AWS {
     interface "S3 Public API" as s3
     component S3 as s3svc
     s3 -down- s3svc
+
+    component "Glue Catalog\n(partition projection)" as glue #E8E8E8
+    component "Athena" as athena #E8E8E8
+
+    s3svc -right-> glue : Parquet index\n(index/{YYYY}/{MM}/{DD})
+    athena -up-> glue : Query
+    athena -down-> s3svc : Scan matching partitions
 }
 !endsub
 

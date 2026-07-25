@@ -15,6 +15,7 @@ ProcessorC -down--> Redis : Enrichment lookups
 ProcessorC --> archiveq : Publisher
 Archiver -up-> archiveq : Consumer
 Archiver ---> s3 : Persist flight\n(.json.gz)
+Archiver ---> s3 : Persist Parquet index row\n(per-flight; compacted daily,\nqueried via Athena/Glue)
 
 RevProc -[hidden]down-> MsgProc
 MsgProc -[hidden]down-> CentralSvr
