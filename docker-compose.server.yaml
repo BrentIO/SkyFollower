@@ -80,6 +80,7 @@ services:
       - runner-hr-ccaa
       - runner-bg-caa
       - runner-airportwebcams-special-liveries
+      - runner-vrs-standing-data
 
   # ---------------------------------------------------------------------------
   # Data runners — created stopped; started on schedule by ofelia.
@@ -467,6 +468,15 @@ services:
     depends_on:
       - redis
       - runner-mictronics
+
+  runner-vrs-standing-data:
+    image: ghcr.io/brentio/skyfollower-runner-vrs-standing-data:latest
+    container_name: skyfollower-runner-vrs-standing-data
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
 
 volumes:
   rabbitmq-data:

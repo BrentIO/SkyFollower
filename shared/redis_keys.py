@@ -57,6 +57,16 @@ def flight_key(ident: str) -> str:
     return f"flight:{ident.upper()}"
 
 
+def route_key(ident: str) -> str:
+    """
+    Raw VRS standing-data route string for a callsign, written by the
+    vrs-standing-data runner. Plain Redis string (not JSON) — e.g. GET
+    route:AAL15 -> "KMIA-KJFK-KMIA" — passed through unchanged from the
+    source AirportCodes column. route:{ident}
+    """
+    return f"route:{ident.upper()}"
+
+
 def airport_key(icao_code: str) -> str:
     """Airport metadata record. airport:{icao_code}"""
     return f"airport:{icao_code.upper()}"
