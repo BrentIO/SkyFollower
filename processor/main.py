@@ -911,27 +911,31 @@ class Processor:
 
     def _archive(self, flight: CompletedFlight) -> None:
         payload = flight.model_dump_json(by_alias=True)
-        try:
-            if self._rmq_connected and self._rmq_channel:
+        if self._rmq_connected and self._rmq_channel:
+            try:
                 self._rmq_channel.basic_publish(
                     exchange="",
                     routing_key="archive",
                     body=payload.encode(),
                     properties=pika.BasicProperties(delivery_mode=2),
                 )
-            else:
-                raise pika.exceptions.AMQPConnectionError("not connected")
-        except Exception:
-            self._fallback.put(payload)
+                return
+            except Exception:
+                self._rmq_connected = False
+        self._fallback.put(payload)
 
     def _drain_fallback(self) -> None:
         def publish(payload: str) -> None:
-            self._rmq_channel.basic_publish(
-                exchange="",
-                routing_key="archive",
-                body=payload.encode(),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
+            try:
+                self._rmq_channel.basic_publish(
+                    exchange="",
+                    routing_key="archive",
+                    body=payload.encode(),
+                    properties=pika.BasicProperties(delivery_mode=2),
+                )
+            except Exception:
+                self._rmq_connected = False
+                raise
         self._fallback.drain(publish)
 
     # ------------------------------------------------------------------
@@ -1001,13 +1005,14 @@ class Processor:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
             time.sleep(interval)
-            # Independent of _consume_loop's reconnect-triggered drain:
-            # _archive() queues to the fallback on any publish exception
-            # without necessarily affecting _rmq_connected or the consume
-            # side at all, so repeated publish-only failures (e.g. a
-            # broker-side rejection on the archive routing key) would
-            # otherwise never trigger a drain again. This periodic sweep
-            # is a cheap no-op when the queue is empty.
+            # Independent of _consume_loop's reconnect-triggered drain: a
+            # publish failure can pin _rmq_connected False (or leave
+            # messages queued) without the underlying connection ever
+            # raising AMQPConnectionError, in which case _consume_loop
+            # never re-enters its reconnect branch and _drain_fallback
+            # never runs again on its own. This periodic sweep is a cheap
+            # no-op when the queue is empty and doesn't depend on that
+            # edge-triggered detection ever firing.
             if self._rmq_connected:
                 self._drain_fallback()
             self._publish_telemetry()
