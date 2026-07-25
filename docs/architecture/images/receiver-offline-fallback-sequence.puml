@@ -25,9 +25,10 @@ end
 
 alt RabbitMQ connection-level reconnect detected
     Receiver -> AdsbQ++ : **Reconnect**
+    AdsbQ --> Receiver-- : Connected
     Receiver -> ReceiverDB : **Drain** oldest-first
     ReceiverDB --> Receiver : buffered messages
-    Receiver -> AdsbQ-- : **Publish** each drained message
+    Receiver -> AdsbQ : **Publish** each drained message
 else every telemetry_interval_seconds
     Receiver -> Receiver : **Check** rmq_connected
     note right of Receiver
