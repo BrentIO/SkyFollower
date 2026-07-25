@@ -342,6 +342,78 @@ class TestFallbackQueue:
 
 
 # ---------------------------------------------------------------------------
+# Receiver._drain_fallback — and its periodic-tick trigger from
+# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger
+# ---------------------------------------------------------------------------
+
+class TestDrainFallback:
+    def _make_receiver(self, receiver_id: int = 0):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg, receiver_id)
+
+    def test_drain_fallback_publishes_queued_items(self):
+        r = self._make_receiver()
+        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        mock_channel = MagicMock()
+        r._rmq_channel = mock_channel
+
+        r._drain_fallback()
+
+        assert r._fallback.depth() == 0
+        mock_channel.basic_publish.assert_called_once()
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "adsb-0"
+
+    def test_drain_fallback_leaves_items_queued_if_channel_gone(self):
+        r = self._make_receiver()
+        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._rmq_channel = None
+
+        r._drain_fallback()
+
+        assert r._fallback.depth() == 1
+
+    def _run_one_telemetry_tick(self, r) -> None:
+        """Run the real _telemetry_loop for exactly one iteration, by
+        making the mocked time.sleep set _shutdown so the loop body runs
+        once and then exits — rather than re-implementing the loop's
+        conditional in the test, which wouldn't actually exercise it."""
+        def fake_sleep(_seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", side_effect=fake_sleep), \
+             patch.object(r, "_publish_telemetry"):
+            r._telemetry_loop()
+
+    def test_telemetry_loop_drains_when_connected(self):
+        """The periodic tick must attempt a drain when RabbitMQ is
+        connected — this is what lets a stuck/missed reconnect-triggered
+        drain (see #525) still recover on the next tick."""
+        r = self._make_receiver()
+        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._rmq_channel = MagicMock()
+        r._rmq_connected = True
+
+        self._run_one_telemetry_tick(r)
+
+        assert r._fallback.depth() == 0
+
+    def test_telemetry_tick_does_not_drain_when_disconnected(self):
+        r = self._make_receiver()
+        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._rmq_connected = False
+
+        self._run_one_telemetry_tick(r)
+
+        assert r._fallback.depth() == 1
+
+
+# ---------------------------------------------------------------------------
 # Rate tracker
 # ---------------------------------------------------------------------------
 

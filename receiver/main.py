@@ -472,6 +472,18 @@ class Receiver:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
             time.sleep(interval)
+            # Independent of _rmq_loop's reconnect-triggered drain: a
+            # publish failure can pin _rmq_connected False (or leave
+            # messages queued) without the underlying connection ever
+            # raising AMQPConnectionError, in which case _rmq_loop never
+            # re-enters its reconnect branch and _drain_fallback never
+            # runs again on its own. This periodic sweep is a cheap
+            # no-op when the queue is empty and doesn't depend on that
+            # edge-triggered detection ever firing.
+            with self._rmq_lock:
+                rmq_connected = self._rmq_connected
+            if rmq_connected:
+                self._drain_fallback()
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:
