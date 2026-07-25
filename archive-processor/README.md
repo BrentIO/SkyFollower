@@ -74,7 +74,7 @@ Each flight is written to:
 flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
 ```
 
-- `{YYYY}/{MM}/{DD}` — UTC date of the flight's last message
+- `{YYYY}/{MM}/{DD}` — UTC date of the flight's *first* message, not its last. This key is only ever computed once, at first archive — a later [split-flight stitch](#split-flight-stitching) overwrites the object in place under this same key rather than recomputing it, so the date has to come from whichever timestamp stitching never changes. `first_message` is exactly that (`_merge_segments` always preserves the original segment's `first_message`; only `last_message` advances with each stitched segment) — using it keeps the key stable across any number of stitches, even ones that happen to straddle a UTC day boundary. The [Parquet index row](#parquet-index)'s key follows the same rule, for the same reason (it's rebuilt on every stitch, unlike this object's key).
 - `{ident}` — non-alphanumeric characters stripped; `unknown` if absent
 - `{uuid}` — the flight's `_id` (UUID-v7)
 
@@ -138,8 +138,10 @@ index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet
 ```
 
 - `year=`/`month=`/`day=` — Hive-style partition segments (UTC date of the
-  flight's last message, same as the flight object's own date) — Athena
-  partition projection assumes this layout by default, with no
+  flight's *first* message, matching the flight object's own key — see
+  [S3 Object Format](#s3-object-format) for why first_message, not
+  last_message, is what both keys have to agree on) — Athena partition
+  projection assumes this layout by default, with no
   `storage.location.template` table property required.
 - `{uuid}` — the flight's `_id` (UUID-v7), matching the flight object's own
   key.

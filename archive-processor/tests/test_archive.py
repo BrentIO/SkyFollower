@@ -153,10 +153,14 @@ class TestBuildS3Key:
         key = build_s3_key(flight)
         assert flight.id in key
 
-    def test_date_from_last_message_utc(self):
-        # last_message at 2023-12-01T23:59:00Z
+    def test_date_from_first_message_utc(self):
+        # first_message at 2023-12-01T23:59:00Z, last_message the next day —
+        # the key must follow first_message, not last_message, so it stays
+        # invariant across split-flight stitching (see _merge_segments,
+        # which always preserves the original segment's first_message).
         flight = _make_flight(
-            last_message=datetime(2023, 12, 1, 23, 59, 0, tzinfo=timezone.utc)
+            first_message=datetime(2023, 12, 1, 23, 59, 0, tzinfo=timezone.utc),
+            last_message=datetime(2023, 12, 2, 0, 5, 0, tzinfo=timezone.utc),
         )
         key = build_s3_key(flight)
         assert key.startswith("flights/2023/12/01/")
@@ -168,12 +172,37 @@ class TestBuildIndexS3Key:
         key = build_index_s3_key(flight)
         assert key == f"index/year=2024/month=05/day=31/{flight.id}.parquet"
 
-    def test_date_from_last_message_utc(self):
+    def test_date_from_first_message_utc(self):
+        # Same rationale as TestBuildS3Key.test_date_from_first_message_utc:
+        # first_message, not last_message, is what stays invariant across a
+        # stitch, so it's what both key builders must agree on.
         flight = _make_flight(
-            last_message=datetime(2023, 12, 1, 23, 59, 0, tzinfo=timezone.utc)
+            first_message=datetime(2023, 12, 1, 23, 59, 0, tzinfo=timezone.utc),
+            last_message=datetime(2023, 12, 2, 0, 5, 0, tzinfo=timezone.utc),
         )
         key = build_index_s3_key(flight)
         assert key.startswith("index/year=2023/month=12/day=01/")
+
+    def test_key_matches_build_s3_key_date_across_simulated_stitch(self):
+        """A stitched flight's first_message stays pinned to the original
+        segment even as last_message advances into the next UTC day — the
+        index key (recomputed on every stitch) must land in the same
+        day-partition as the flight object's key (frozen at first archive),
+        or a cross-midnight stitch silently orphans a stale index row."""
+        original_first = datetime(2024, 3, 14, 23, 55, 0, tzinfo=timezone.utc)
+        object_key = build_s3_key(_make_flight(
+            first_message=original_first,
+            last_message=datetime(2024, 3, 14, 23, 58, 0, tzinfo=timezone.utc),
+        ))
+
+        merged_after_stitch = _make_flight(
+            first_message=original_first,  # _merge_segments always preserves this
+            last_message=datetime(2024, 3, 15, 0, 10, 0, tzinfo=timezone.utc),
+        )
+        index_key = build_index_s3_key(merged_after_stitch)
+
+        assert object_key.startswith("flights/2024/03/14/")
+        assert index_key.startswith("index/year=2024/month=03/day=14/")
 
 
 class TestBuildParquetIndexRow:
@@ -865,6 +894,56 @@ class TestArchiveWritesIndexToS3:
             assert row["icao_hex"] == "A8AE7F"
             flight_key = next(k for k in processor._s3_client.objects if k.startswith("flights/"))
             assert row["s3_key"] == flight_key
+
+    def test_index_stays_in_original_partition_across_midnight_stitch(self):
+        """End-to-end regression test for the bug this design avoids: a
+        stitch whose new segment's last_message falls on the next UTC day
+        must NOT move the index row to a new partition or leave a stale
+        one behind under the original day."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=600)
+            processor._s3_client = _FakeS3()
+
+            seg1 = _make_flight(
+                _id="seg1-uuid",
+                first_message=datetime(2024, 3, 14, 23, 55, 0, tzinfo=timezone.utc),
+                last_message=datetime(2024, 3, 14, 23, 58, 0, tzinfo=timezone.utc),
+            )
+            mock_redis.get.return_value = None
+            processor._archive_flight_to_s3(seg1)
+
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert flight_keys == ["flights/2024/03/14/A8AE7F_DAL659_seg1-uuid.json.gz"]
+            assert index_keys == ["index/year=2024/month=03/day=14/seg1-uuid.parquet"]
+
+            pointer_call = mock_redis.set.call_args
+            pointer = json.loads(pointer_call.args[1])
+            mock_redis.get.return_value = json.dumps(pointer)
+
+            # Segment 2 starts 5 minutes later — past midnight UTC, but
+            # within the 600s ttl, so this stitches into segment 1.
+            seg2 = _make_flight(
+                _id="seg2-uuid",
+                first_message=datetime(2024, 3, 15, 0, 3, 0, tzinfo=timezone.utc),
+                last_message=datetime(2024, 3, 15, 0, 10, 0, tzinfo=timezone.utc),
+            )
+            processor._archive_flight_to_s3(seg2)
+
+            # Still exactly one flight object and one index row — the
+            # stitch overwrote both in place, neither moved to 03/15, and
+            # no stale 03/14-dated leftover or duplicate 03/15 copy exists.
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert flight_keys == ["flights/2024/03/14/A8AE7F_DAL659_seg1-uuid.json.gz"]
+            assert index_keys == ["index/year=2024/month=03/day=14/seg1-uuid.parquet"]
+
+            payload = processor._s3_client.read_parquet_bytes(index_keys[0])
+            row = pq.read_table(io.BytesIO(payload)).to_pylist()[0]
+            # The column value itself correctly reflects the real, extended
+            # last_message — only the partition/key stays pinned to the
+            # original day.
+            assert row["last_message"] == datetime(2024, 3, 15, 0, 10, 0, tzinfo=timezone.utc)
 
     def test_index_write_failure_does_not_block_archiving(self):
         """Best-effort semantic: an exception building/uploading the index

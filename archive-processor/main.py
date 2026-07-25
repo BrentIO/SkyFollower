@@ -189,8 +189,18 @@ def build_s3_key(flight: CompletedFlight) -> str:
     """
     Build the S3 object key for a completed flight.
     Format: flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
+
+    Dated by first_message, not last_message: split-flight stitching
+    (_merge_segments) always preserves the *original* segment's
+    first_message across every stitch, while last_message keeps advancing
+    to whichever segment most recently continued the flight. This key is
+    only ever computed once per flight (a stitch overwrites the object in
+    place under its original key, never recomputing it) — first_message
+    is what keeps that frozen key's date consistent with the value the
+    Parquet index (build_index_s3_key, same rationale) recomputes on every
+    stitch, even when a stitch happens to straddle a UTC day boundary.
     """
-    dt = flight.last_message.astimezone(timezone.utc)
+    dt = flight.first_message.astimezone(timezone.utc)
     yyyy = dt.strftime("%Y")
     mm = dt.strftime("%m")
     dd = dt.strftime("%d")
@@ -227,12 +237,18 @@ def build_index_s3_key(flight: CompletedFlight) -> str:
 
     Hive-style partition segments (year=/month=/day=) so Athena partition
     projection can use its default location-template behavior with no
-    explicit storage.location.template table property required. Uses the
-    same YYYY/MM/DD derivation (flight.last_message, UTC) as build_s3_key(),
-    so a flight's index row always lands in the same day-partition as its
-    flight object.
+    explicit storage.location.template table property required. Dated by
+    first_message, matching build_s3_key() — unlike the flight object's
+    key (computed once, then frozen across any later stitch), this index
+    row IS rebuilt on every stitch, so it must derive its date from
+    something stitching never changes. last_message advances with every
+    stitched segment; first_message is always the original segment's,
+    invariant across the whole chain (see _merge_segments). Using
+    last_message here would silently orphan a stale index row under the
+    original day's partition — and create a second, live one elsewhere —
+    the moment a stitch happened to straddle a UTC day boundary.
     """
-    dt = flight.last_message.astimezone(timezone.utc)
+    dt = flight.first_message.astimezone(timezone.utc)
     yyyy = dt.strftime("%Y")
     mm = dt.strftime("%m")
     dd = dt.strftime("%d")
