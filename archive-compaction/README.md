@@ -60,7 +60,7 @@ overridden with the `SETTINGS_PATH` environment variable.
 ## MQTT
 
 Published once, at the end of a run, to
-`SkyFollower/runner/archive-compaction/statistic/{name}` (all retained):
+`SkyFollower/archive-compaction/statistic/{name}` (all retained):
 
 | Topic suffix | Value | Format |
 |---|---|---|

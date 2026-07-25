@@ -37,7 +37,7 @@ from shared.mqtt import build_mqtt_client
 
 logger = logging.getLogger("archive-compaction")
 
-MQTT_ROOT = "SkyFollower/runner/archive-compaction"
+MQTT_ROOT = "SkyFollower/archive-compaction"
 
 # Matches archive-processor's _PARQUET_INDEX_SCHEMA exactly (see
 # archive-processor/main.py) -- every per-flight file this job reads was
