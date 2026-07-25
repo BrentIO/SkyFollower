@@ -890,12 +890,6 @@ sources:
     format: csv
     cadence: daily
 
-  flightaware:
-    description: "FlightAware origin/destination enrichment (paid; optional)"
-    format: api
-    cadence: every_3_days
-    status: optional
-
   processor:
     description: "Derived in real time by the message processor from ADS-B messages"
 
@@ -3385,8 +3379,6 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
-            sources:
-              - source: flightaware
 
       destination:
         type: object
@@ -3408,8 +3400,6 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
-            sources:
-              - source: flightaware
 
       matched_rules:
         type: "array[string]"
@@ -3509,8 +3499,7 @@ records:
       value is a plain Redis string (not JSON), passed through unchanged
       from the source's AirportCodes column, including multi-airport
       sequences (e.g. "KDFW-MYNN-KDFW" for a same-day out-and-back reusing
-      one callsign). Not currently consumed by records.flight.fields.origin/
-      destination — that field is populated by flightaware only.
+      one callsign).
     storage: Redis
     redis_key: "route:{ident}"
     redis_value_type: string

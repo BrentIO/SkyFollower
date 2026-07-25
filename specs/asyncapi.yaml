@@ -604,4 +604,4 @@ components:
     RunnerName:
       description: >
         Data runner name identifying which import job published statistics.
-        One of: mictronics, us-faa-registry, ca-transport-canada-registry, ourairports, flightaware.
+        One of: mictronics, us-faa-registry, ca-transport-canada-registry, ourairports.
