@@ -1,0 +1,36 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Archive Processor — RabbitMQ Queue-Depth High-Water Mark
+
+box "Archive Processor" $OnPrem
+    participant "Archiver" as Archiver
+end box
+
+box "RabbitMQ" $OnPrem
+    queue "archive" as ArchiveQ
+end box
+
+box "MQTT" $OnPrem
+    participant "MQTT Broker" as MQTT
+end box
+
+== Every 10 seconds, independent of telemetry_interval_seconds ==
+
+loop until shutdown
+    Archiver -> Archiver : **Sleep 10 seconds**
+    alt consumer channel connected
+        Archiver -> ArchiveQ++ : **Read queue depth**\n""queue_declare(queue=archive, durable=True, passive=True)""
+        ArchiveQ --> Archiver-- : message_count
+        Archiver -> Archiver : **Record into high-water mark**\n""hwm.record(message_count)""
+    else not connected yet, or declare raises
+        Archiver -> Archiver : **Record into high-water mark**\n""hwm.record(-1)""
+    end
+end
+
+== Independently, every telemetry_interval_seconds ==
+
+Archiver -> Archiver : **Read and reset the high-water mark**\n""depth_hwm = hwm.value_and_reset()""
+Archiver -\ MQTT : **Publish telemetry**\n""SkyFollower/archive/statistics"" (retain=True)\nincludes rabbitmq_archive_queue_depth_hwm
+
+@enduml
