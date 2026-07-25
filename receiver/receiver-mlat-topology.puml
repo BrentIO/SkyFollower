@@ -1,0 +1,26 @@
+@startuml
+!include_once ../docs/images/common-component.iuml
+!include_once ../docs/images/receiver-instance.iuml
+
+title Receiver — MLAT Provider Topology
+
+!startsub COMPONENT
+package "Receiver" as RevMlat $OnPrem {
+    $receiverCore(ReceiverMlat, ReceiverFallbackMlat)
+}
+
+package "MLAT Provider" as MlatProviderA $Vendor {
+    component "MLAT Socket Service" as MlatA
+}
+
+package "MLAT Provider" as MlatProviderB $Vendor {
+    component "MLAT Socket Service" as MlatB
+}
+
+ReceiverMlat -up-> MlatA : TCP Socket\nPort 30105
+ReceiverMlat -up-> MlatB : TCP Socket\nPort 30106
+
+!endsub
+
+
+@enduml
