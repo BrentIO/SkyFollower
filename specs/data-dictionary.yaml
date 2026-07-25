@@ -3606,9 +3606,9 @@ records:
       table regardless of how many files exist for that day, so late
       stragglers self-heal without duplication risk.
     storage: S3
-    s3_path: "index/{YYYY}/{MM}/{DD}/{uuid}.parquet"
+    s3_path: "index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet"
     format: parquet
-    partitioning: "year/month/day, computed from the S3 path via Glue Catalog partition projection; no crawler"
+    partitioning: "Hive-style year=/month=/day= segments via Glue Catalog partition projection; no crawler"
     fields:
 
       icao_hex:

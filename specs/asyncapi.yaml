@@ -359,6 +359,7 @@ components:
         - flights_skipped_today
         - s3_connected
         - local_queue_depth
+        - local_index_queue_depth
         - started_at
       properties:
         flights_archived_hour:
@@ -384,6 +385,10 @@ components:
         local_queue_depth:
           type: integer
           description: Number of completed flights queued in the local SQLite fallback (s3.db)
+          example: 0
+        local_index_queue_depth:
+          type: integer
+          description: Number of Parquet index rows queued for retry (index_queue table in s3.db) after their flight object wrote successfully but the index write failed
           example: 0
         started_at:
           type: string

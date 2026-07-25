@@ -15,10 +15,11 @@ ProcessorC -down--> Redis : Enrichment lookups
 ProcessorC --> archiveq : Publisher
 Archiver -up-> archiveq : Consumer
 Archiver ---> s3 : Persist flight\n(flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz)
-Archiver ---> s3 : Persist Parquet index row\n(index/{YYYY}/{MM}/{DD}/{uuid}.parquet)
+Archiver ---> s3 : Persist Parquet index row\n(index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet)
 
 RevProc -[hidden]down-> MsgProc
 MsgProc -[hidden]down-> CentralSvr
 CentralSvr -[hidden]right-> ArchProc
+ArchProc -[hidden]down-> AWS
 
 @enduml

@@ -4,13 +4,15 @@ SkyFollower Archive Processor
 
 Consumes completed flight records from the RabbitMQ 'archive' queue,
 builds a 3D GeoJSON LineString with altitude interpolation, writes
-gzip-compressed JSON to AWS S3, maintains a local Parquet metadata index
-via DuckDB, and falls back to SQLite when S3 is unavailable.
+gzip-compressed JSON to AWS S3 alongside a per-flight Parquet index row
+(queryable via AWS Athena/Glue), and falls back to SQLite when S3 is
+unavailable.
 """
 
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import logging
 import logging.handlers
@@ -25,9 +27,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
-import duckdb
 import paho.mqtt.client as mqtt
 import pika
+import pyarrow as pa
+import pyarrow.parquet as pq
 import redis as redis_lib
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -186,8 +189,18 @@ def build_s3_key(flight: CompletedFlight) -> str:
     """
     Build the S3 object key for a completed flight.
     Format: flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
+
+    Dated by first_message, not last_message: split-flight stitching
+    (_merge_segments) always preserves the *original* segment's
+    first_message across every stitch, while last_message keeps advancing
+    to whichever segment most recently continued the flight. This key is
+    only ever computed once per flight (a stitch overwrites the object in
+    place under its original key, never recomputing it) — first_message
+    is what keeps that frozen key's date consistent with the value the
+    Parquet index (build_index_s3_key, same rationale) recomputes on every
+    stitch, even when a stitch happens to straddle a UTC day boundary.
     """
-    dt = flight.last_message.astimezone(timezone.utc)
+    dt = flight.first_message.astimezone(timezone.utc)
     yyyy = dt.strftime("%Y")
     mm = dt.strftime("%m")
     dd = dt.strftime("%d")
@@ -201,63 +214,74 @@ def build_s3_key(flight: CompletedFlight) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parquet index helper
+# Parquet index helpers
 # ---------------------------------------------------------------------------
 
-def append_to_parquet_index(flight: CompletedFlight, s3_key: str, index_path: str) -> None:
-    """
-    Append a row to the Parquet flight index at index_path.
-    Creates the file if it does not exist.
-    """
-    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+_PARQUET_INDEX_SCHEMA = pa.schema([
+    pa.field("icao_hex", pa.string()),
+    pa.field("registration", pa.string()),
+    pa.field("type_designator", pa.string()),
+    pa.field("military", pa.bool_(), nullable=False),
+    pa.field("operator_designator", pa.string()),
+    pa.field("ident", pa.string()),
+    pa.field("first_message", pa.timestamp("us", tz="UTC")),
+    pa.field("last_message", pa.timestamp("us", tz="UTC")),
+    pa.field("s3_key", pa.string()),
+])
 
+
+def build_index_s3_key(flight: CompletedFlight) -> str:
+    """
+    Build the S3 object key for a completed flight's Parquet index row.
+    Format: index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet
+
+    Hive-style partition segments (year=/month=/day=) so Athena partition
+    projection can use its default location-template behavior with no
+    explicit storage.location.template table property required. Dated by
+    first_message, matching build_s3_key() — unlike the flight object's
+    key (computed once, then frozen across any later stitch), this index
+    row IS rebuilt on every stitch, so it must derive its date from
+    something stitching never changes. last_message advances with every
+    stitched segment; first_message is always the original segment's,
+    invariant across the whole chain (see _merge_segments). Using
+    last_message here would silently orphan a stale index row under the
+    original day's partition — and create a second, live one elsewhere —
+    the moment a stitch happened to straddle a UTC day boundary.
+    """
+    dt = flight.first_message.astimezone(timezone.utc)
+    yyyy = dt.strftime("%Y")
+    mm = dt.strftime("%m")
+    dd = dt.strftime("%d")
+    return f"index/year={yyyy}/month={mm}/day={dd}/{flight.id}.parquet"
+
+
+def build_parquet_index_row(flight: CompletedFlight, s3_key: str) -> bytes:
+    """
+    Build the single-row Parquet file (in-memory bytes) for a completed
+    flight's index entry. s3_key is the flight object's own key (from
+    build_s3_key), copied into the row so a search hit can be resolved to
+    its full flight record. Column set/order matches
+    specs/data-dictionary.yaml's archive_parquet_index record exactly.
+    """
     row = {
-        "_id": flight.id,
-        "icao_hex": flight.aircraft.get("icao_hex", ""),
+        "icao_hex": flight.aircraft.get("icao_hex", "") or "",
         "registration": flight.aircraft.get("registration", "") or "",
+        "type_designator": flight.aircraft.get("type_designator", "") or "",
+        # The merged aircraft record only ever has military present-and-true
+        # or absent (to_completed_flight() strips an explicit False for
+        # legacy compatibility) — normalize absent to False here so the
+        # column is a clean non-nullable boolean rather than tri-state.
+        "military": bool(flight.aircraft.get("military") or False),
+        "operator_designator": (flight.operator or {}).get("airline_designator", "") or "",
         "ident": flight.ident or "",
         "first_message": flight.first_message,
         "last_message": flight.last_message,
-        "operator_designator": (
-            (flight.operator or {}).get("airline_designator", "") or ""
-        ),
         "s3_key": s3_key,
     }
-
-    conn = duckdb.connect()
-
-    if os.path.exists(index_path):
-        # Read existing data, append new row, write back
-        conn.execute(f"CREATE TABLE idx AS SELECT * FROM read_parquet('{index_path}')")
-    else:
-        conn.execute(
-            "CREATE TABLE idx ("
-            "  _id VARCHAR,"
-            "  icao_hex VARCHAR,"
-            "  registration VARCHAR,"
-            "  ident VARCHAR,"
-            "  first_message TIMESTAMP WITH TIME ZONE,"
-            "  last_message TIMESTAMP WITH TIME ZONE,"
-            "  operator_designator VARCHAR,"
-            "  s3_key VARCHAR"
-            ")"
-        )
-
-    conn.execute(
-        "INSERT INTO idx VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [
-            row["_id"],
-            row["icao_hex"],
-            row["registration"],
-            row["ident"],
-            row["first_message"],
-            row["last_message"],
-            row["operator_designator"],
-            row["s3_key"],
-        ],
-    )
-    conn.execute(f"COPY idx TO '{index_path}' (FORMAT PARQUET)")
-    conn.close()
+    table = pa.Table.from_pylist([row], schema=_PARQUET_INDEX_SCHEMA)
+    sink = io.BytesIO()
+    pq.write_table(table, sink)
+    return sink.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -265,13 +289,19 @@ def append_to_parquet_index(flight: CompletedFlight, s3_key: str, index_path: st
 # ---------------------------------------------------------------------------
 
 class _S3FallbackQueue:
-    """SQLite-backed fallback for completed flights when S3 is unavailable."""
+    """
+    SQLite-backed fallback queue for anything that needs to survive an S3
+    outage and be retried later. table_name lets two independent queues
+    (e.g. full flights vs. index-only retries) share one SQLite file
+    without colliding — always an internal literal, never user input.
+    """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, table_name: str = "queue") -> None:
+        self._table = table_name
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS queue "
+            f"CREATE TABLE IF NOT EXISTS {self._table} "
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, queued_at REAL)"
         )
         self._conn.commit()
@@ -280,7 +310,7 @@ class _S3FallbackQueue:
     def put(self, payload: str) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO queue (payload, queued_at) VALUES (?, ?)",
+                f"INSERT INTO {self._table} (payload, queued_at) VALUES (?, ?)",
                 (payload, time.time()),
             )
             self._conn.commit()
@@ -290,7 +320,7 @@ class _S3FallbackQueue:
         while True:
             with self._lock:
                 cur = self._conn.execute(
-                    "SELECT id, payload FROM queue ORDER BY id ASC LIMIT 1"
+                    f"SELECT id, payload FROM {self._table} ORDER BY id ASC LIMIT 1"
                 )
                 row = cur.fetchone()
                 if row is None:
@@ -299,14 +329,14 @@ class _S3FallbackQueue:
             try:
                 process_fn(payload)
                 with self._lock:
-                    self._conn.execute("DELETE FROM queue WHERE id=?", (row_id,))
+                    self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row_id,))
                     self._conn.commit()
             except Exception:
                 break  # S3 went away again; stop draining
 
     def depth(self) -> int:
         with self._lock:
-            cur = self._conn.execute("SELECT COUNT(*) FROM queue")
+            cur = self._conn.execute(f"SELECT COUNT(*) FROM {self._table}")
             return cur.fetchone()[0]
 
 
@@ -324,8 +354,11 @@ class ArchiveProcessor:
         # Paths
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
-        self._index_path = os.path.join(data_dir, "flight_index.parquet")
-        self._fallback = _S3FallbackQueue(os.path.join(data_dir, "s3.db"))
+        s3_db_path = os.path.join(data_dir, "s3.db")
+        self._fallback = _S3FallbackQueue(s3_db_path)
+        # Separate table, same file: retries for flights whose object write
+        # already succeeded but whose Parquet index row failed to write.
+        self._index_fallback = _S3FallbackQueue(s3_db_path, table_name="index_queue")
 
         # S3
         self._s3_client: Optional[object] = None
@@ -411,9 +444,9 @@ class ArchiveProcessor:
                 with self._s3_lock:
                     reconnected = self._s3_connected
                 if reconnected:
-                    logger.info("S3 reconnected — draining fallback queue.")
+                    logger.info("S3 reconnected — draining fallback queues.")
                     threading.Thread(
-                        target=self._drain_fallback, daemon=True, name="drain-fallback"
+                        target=self._drain_all_fallbacks, daemon=True, name="drain-fallback"
                     ).start()
 
     def _write_to_s3(self, flight: CompletedFlight, payload_bytes: bytes, s3_key: str) -> None:
@@ -427,6 +460,18 @@ class ArchiveProcessor:
             Body=payload_bytes,
             ContentType="application/json",
             ContentEncoding="gzip",
+        )
+
+    def _write_index_to_s3(self, payload_bytes: bytes, s3_key: str) -> None:
+        s3_cfg = self._cfg.get("s3", {})
+        bucket = s3_cfg.get("bucket", "")
+        with self._s3_lock:
+            client = self._s3_client
+        client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=payload_bytes,
+            ContentType="application/octet-stream",
         )
 
     # ------------------------------------------------------------------
@@ -528,6 +573,40 @@ class ArchiveProcessor:
 
         self._fallback.drain(process)
         logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+
+    def _drain_all_fallbacks(self) -> None:
+        """
+        Drain both fallback queues. Both get the same two triggers (S3
+        reconnect and every telemetry tick) even though only the index
+        queue strictly needs the periodic one — the flight queue only
+        ever fills while S3 is known to be down, so the reconnect loop's
+        edge-triggered detection is sufficient for it in theory. But a
+        periodic sweep is a strictly stronger guarantee for near-zero
+        extra cost (an empty-queue check when there's nothing to drain),
+        so both queues get both triggers rather than leaving the flight
+        queue with the weaker one.
+        """
+        self._drain_fallback()
+        self._drain_index_fallback()
+
+    def _drain_index_fallback(self) -> None:
+        """
+        Retry Parquet index writes for flights whose object write already
+        succeeded but whose index row failed. Only rebuilds/rewrites the
+        index row — never re-archives the flight object itself.
+        """
+        def process(payload: str) -> None:
+            data = json.loads(payload)
+            flight = CompletedFlight.model_validate_json(data["flight_json"])
+            s3_key = data["s3_key"]
+            index_key = build_index_s3_key(flight)
+            index_bytes = build_parquet_index_row(flight, s3_key)
+            self._write_index_to_s3(index_bytes, index_key)
+
+        self._index_fallback.drain(process)
+        logger.info(
+            "Index-fallback drain complete. Remaining depth: %d", self._index_fallback.depth()
+        )
 
     def _archive_flight_to_s3(self, flight: CompletedFlight) -> None:
         """
@@ -632,12 +711,25 @@ class ArchiveProcessor:
             logger.warning("Failed to update stitch pointer for %s: %s", icao_hex, exc)
 
     def _post_write_success(self, flight: CompletedFlight, s3_key: str) -> None:
-        """After a successful S3 write: update Parquet index and Redis counters."""
-        # Parquet index
+        """After a successful S3 write: write the Parquet index row and update Redis counters."""
+        # Parquet index row — best-effort: never blocks archiving (the
+        # flight object above already succeeded), and a failure here queues
+        # a retry rather than re-archiving the whole flight.
         try:
-            append_to_parquet_index(flight, s3_key, self._index_path)
+            index_key = build_index_s3_key(flight)
+            index_bytes = build_parquet_index_row(flight, s3_key)
+            self._write_index_to_s3(index_bytes, index_key)
         except Exception as exc:
-            logger.warning("Parquet index update failed for %s: %s", flight.id, exc)
+            logger.warning(
+                "Parquet index write failed for %s: %s — queued for retry", flight.id, exc
+            )
+            try:
+                self._index_fallback.put(json.dumps({
+                    "flight_json": flight.model_dump_json(by_alias=True),
+                    "s3_key": s3_key,
+                }))
+            except Exception as queue_exc:
+                logger.warning("Failed to queue index retry for %s: %s", flight.id, queue_exc)
 
         # Redis counters
         try:
@@ -701,6 +793,7 @@ class ArchiveProcessor:
             ("flights_skipped_today", "Flights Skipped MLAT-Only (Today)", "mdi:airplane-off", "total_increasing", None, "{{ value_json.flights_skipped_today }}"),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, "{{ value_json.s3_connected }}"),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_queue_depth }}"),
+            ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_index_queue_depth }}"),
             ("started_at", "Archive Started At", "mdi:clock", None, None, "{{ value_json.started_at }}"),
         ]
         for name, desc, icon, state_class, unit, tmpl in sensors:
@@ -732,6 +825,15 @@ class ArchiveProcessor:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
             time.sleep(interval)
+            # Independent of MQTT/_publish_telemetry below: a periodic
+            # sweep of both fallback queues, not just a reaction to
+            # _s3_reconnect_loop's edge-triggered "was down, now up"
+            # detection — see _drain_all_fallbacks for why both queues
+            # get this even though only the index queue strictly needs it.
+            with self._s3_lock:
+                s3_connected = self._s3_connected
+            if s3_connected:
+                self._drain_all_fallbacks()
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:
@@ -756,6 +858,7 @@ class ArchiveProcessor:
             ),
             "s3_connected": s3_connected,
             "local_queue_depth": self._fallback.depth(),
+            "local_index_queue_depth": self._index_fallback.depth(),
             "started_at": self._started_at,
         }
 
