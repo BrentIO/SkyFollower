@@ -420,12 +420,17 @@ class Receiver:
                 channel = self._rmq_channel
             if channel is None:
                 raise RuntimeError("RabbitMQ channel gone")
-            channel.basic_publish(
-                exchange="",
-                routing_key=queue_name,
-                body=payload.encode(),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
+            try:
+                channel.basic_publish(
+                    exchange="",
+                    routing_key=queue_name,
+                    body=payload.encode(),
+                    properties=pika.BasicProperties(delivery_mode=2),
+                )
+            except Exception:
+                with self._rmq_lock:
+                    self._rmq_connected = False
+                raise
 
         self._fallback.drain(publish_fn)
 

@@ -378,6 +378,22 @@ class TestDrainFallback:
 
         assert r._fallback.depth() == 1
 
+    def test_drain_fallback_resets_rmq_connected_on_publish_failure(self):
+        """A failed basic_publish during draining is just as much evidence
+        the connection is broken as a failed live-path publish — mirror
+        _publish()'s handling."""
+        r = self._make_receiver()
+        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        mock_channel = MagicMock()
+        mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        r._rmq_channel = mock_channel
+        r._rmq_connected = True
+
+        r._drain_fallback()
+
+        assert r._rmq_connected is False
+        assert r._fallback.depth() == 1
+
     def _run_one_telemetry_tick(self, r) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
         making the mocked time.sleep set _shutdown so the loop body runs
