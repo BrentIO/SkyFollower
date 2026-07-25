@@ -491,7 +491,7 @@ components:
           items:
             type: string
           description: Every data runner that contributed a field to this record, mictronics -> registry -> livery order
-          example: [mictronics, us-faa]
+          example: [mictronics, us-faa-registry]
 
     FlightRuleNotification:
       type: object
@@ -604,4 +604,4 @@ components:
     RunnerName:
       description: >
         Data runner name identifying which import job published statistics.
-        One of: mictronics, us-faa, ca-transport-canada, ourairports, flightaware.
+        One of: mictronics, us-faa-registry, ca-transport-canada-registry, ourairports, flightaware.

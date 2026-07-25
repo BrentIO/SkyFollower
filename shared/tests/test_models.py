@@ -138,9 +138,9 @@ class TestAircraftRecord:
     def test_data_sources_field(self):
         rec = AircraftRecord(
             icao_hex="A8AE7F",
-            data_sources=["mictronics", "us-faa"],
+            data_sources=["mictronics", "us-faa-registry"],
         )
-        assert rec.data_sources == ["mictronics", "us-faa"]
+        assert rec.data_sources == ["mictronics", "us-faa-registry"]
 
 
 class TestOperatorRecord:

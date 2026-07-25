@@ -23,7 +23,7 @@
 -- a real Mictronics value.
 --
 -- Each of the three keys carries its own scalar `source` field naming the
--- runner that wrote it (e.g. "mictronics", "us-faa"). A plain deep_merge
+-- runner that wrote it (e.g. "mictronics", "us-faa-registry"). A plain deep_merge
 -- would let later keys silently clobber earlier ones, hiding the fact that
 -- an aircraft's enrichment came from more than one runner. Instead the
 -- result never carries a bare `source` — every present key's `source` is

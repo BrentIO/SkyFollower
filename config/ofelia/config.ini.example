@@ -2,163 +2,163 @@
 schedule = 10 5 * * 1
 container = skyfollower-runner-ourairports
 
-# uk-caa makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
+# uk-caa-registry makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
 # Schedule it as the last runner of the day.
-[job-run "runner-uk-caa"]
+[job-run "runner-uk-caa-registry"]
 schedule = 10 6 * * 1
-container = skyfollower-runner-uk-caa
+container = skyfollower-runner-uk-caa-registry
 
 [job-run "runner-mictronics"]
 schedule = 10 5 * * 2
 container = skyfollower-runner-mictronics
 
-[job-run "runner-nz-caa"]
+[job-run "runner-nz-caa-registry"]
 schedule = 10 5 * * 3
-container = skyfollower-runner-nz-caa
+container = skyfollower-runner-nz-caa-registry
 
-[job-run "runner-no-caa"]
+[job-run "runner-no-caa-registry"]
 schedule = 10 6 * * 3
-container = skyfollower-runner-no-caa
+container = skyfollower-runner-no-caa-registry
 
-[job-run "runner-fr-dgac"]
+[job-run "runner-fr-dgac-registry"]
 schedule = 10 7 * * 3
-container = skyfollower-runner-fr-dgac
+container = skyfollower-runner-fr-dgac-registry
 
-[job-run "runner-br-anac"]
+[job-run "runner-br-anac-registry"]
 schedule = 10 8 * * 3
-container = skyfollower-runner-br-anac
+container = skyfollower-runner-br-anac-registry
 
-[job-run "runner-is-samgongustofa"]
+[job-run "runner-is-samgongustofa-registry"]
 schedule = 10 9 * * 3
-container = skyfollower-runner-is-samgongustofa
+container = skyfollower-runner-is-samgongustofa-registry
 
-[job-run "runner-lu-dac"]
+[job-run "runner-lu-dac-registry"]
 schedule = 10 10 * * 3
-container = skyfollower-runner-lu-dac
+container = skyfollower-runner-lu-dac-registry
 
-[job-run "runner-bz-bdca"]
+[job-run "runner-bz-bdca-registry"]
 schedule = 10 11 * * 3
-container = skyfollower-runner-bz-bdca
+container = skyfollower-runner-bz-bdca-registry
 
-[job-run "runner-at-austrocontrol"]
+[job-run "runner-at-austrocontrol-registry"]
 schedule = 10 12 * * 3
-container = skyfollower-runner-at-austrocontrol
+container = skyfollower-runner-at-austrocontrol-registry
 
-[job-run "runner-ch-bazl"]
+[job-run "runner-ch-bazl-registry"]
 schedule = 10 13 * * 3
-container = skyfollower-runner-ch-bazl
+container = skyfollower-runner-ch-bazl-registry
 
-[job-run "runner-au-casa"]
+[job-run "runner-au-casa-registry"]
 schedule = 10 7 * * 2
-container = skyfollower-runner-au-casa
+container = skyfollower-runner-au-casa-registry
 
-[job-run "runner-kr-koca"]
+[job-run "runner-kr-koca-registry"]
 schedule = 10 8 * * 2
-container = skyfollower-runner-kr-koca
+container = skyfollower-runner-kr-koca-registry
 
-[job-run "runner-bg-caa"]
+[job-run "runner-bg-caa-registry"]
 schedule = 10 0 * * 3
-container = skyfollower-runner-bg-caa
+container = skyfollower-runner-bg-caa-registry
 
-[job-run "runner-hr-ccaa"]
+[job-run "runner-hr-ccaa-registry"]
 schedule = 10 23 * * 2
-container = skyfollower-runner-hr-ccaa
+container = skyfollower-runner-hr-ccaa-registry
 
-[job-run "runner-cy-dca"]
+[job-run "runner-cy-dca-registry"]
 schedule = 10 22 * * 2
-container = skyfollower-runner-cy-dca
+container = skyfollower-runner-cy-dca-registry
 
-[job-run "runner-cz-caa"]
+[job-run "runner-cz-caa-registry"]
 schedule = 10 21 * * 2
-container = skyfollower-runner-cz-caa
+container = skyfollower-runner-cz-caa-registry
 
-[job-run "runner-ee-transpordiamet"]
+[job-run "runner-ee-transpordiamet-registry"]
 schedule = 10 20 * * 2
-container = skyfollower-runner-ee-transpordiamet
+container = skyfollower-runner-ee-transpordiamet-registry
 
-[job-run "runner-ge-gcaa"]
+[job-run "runner-ge-gcaa-registry"]
 schedule = 10 19 * * 2
-container = skyfollower-runner-ge-gcaa
+container = skyfollower-runner-ge-gcaa-registry
 
-[job-run "runner-gg-2reg"]
+[job-run "runner-gg-2reg-registry"]
 schedule = 10 18 * * 2
-container = skyfollower-runner-gg-2reg
+container = skyfollower-runner-gg-2reg-registry
 
-[job-run "runner-kg-caa"]
+[job-run "runner-kg-caa-registry"]
 schedule = 10 17 * * 2
-container = skyfollower-runner-kg-caa
+container = skyfollower-runner-kg-caa-registry
 
-[job-run "runner-lv-caa"]
+[job-run "runner-lv-caa-registry"]
 schedule = 10 16 * * 2
-container = skyfollower-runner-lv-caa
+container = skyfollower-runner-lv-caa-registry
 
-[job-run "runner-md-caa"]
+[job-run "runner-md-caa-registry"]
 schedule = 10 14 * * 2
-container = skyfollower-runner-md-caa
+container = skyfollower-runner-md-caa-registry
 
-[job-run "runner-mv-caa"]
+[job-run "runner-mv-caa-registry"]
 schedule = 10 15 * * 2
-container = skyfollower-runner-mv-caa
+container = skyfollower-runner-mv-caa-registry
 
-[job-run "runner-me-caa"]
+[job-run "runner-me-caa-registry"]
 schedule = 10 13 * * 2
-container = skyfollower-runner-me-caa
+container = skyfollower-runner-me-caa-registry
 
-[job-run "runner-hu-kozhaf"]
+[job-run "runner-hu-kozhaf-registry"]
 schedule = 10 12 * * 2
-container = skyfollower-runner-hu-kozhaf
+container = skyfollower-runner-hu-kozhaf-registry
 
-[job-run "runner-mk-caa"]
+[job-run "runner-mk-caa-registry"]
 schedule = 10 11 * * 2
-container = skyfollower-runner-mk-caa
+container = skyfollower-runner-mk-caa-registry
 
-[job-run "runner-rs-cad"]
+[job-run "runner-rs-cad-registry"]
 schedule = 10 10 * * 2
-container = skyfollower-runner-rs-cad
+container = skyfollower-runner-rs-cad-registry
 
-[job-run "runner-pg-casapng"]
+[job-run "runner-pg-casapng-registry"]
 schedule = 10 11 1 * *
-container = skyfollower-runner-pg-casapng
+container = skyfollower-runner-pg-casapng-registry
 
-[job-run "runner-sg-caas"]
+[job-run "runner-sg-caas-registry"]
 schedule = 10 10 1 * *
-container = skyfollower-runner-sg-caas
+container = skyfollower-runner-sg-caas-registry
 
-[job-run "runner-sk-nsat"]
+[job-run "runner-sk-nsat-registry"]
 schedule = 10 9 * * 2
-container = skyfollower-runner-sk-nsat
+container = skyfollower-runner-sk-nsat-registry
 
-[job-run "runner-nl-ilt"]
+[job-run "runner-nl-ilt-registry"]
 schedule = 10 5 * * 4
-container = skyfollower-runner-nl-ilt
+container = skyfollower-runner-nl-ilt-registry
 
-[job-run "runner-ky-caa"]
+[job-run "runner-ky-caa-registry"]
 schedule = 10 6 * * 4
-container = skyfollower-runner-ky-caa
+container = skyfollower-runner-ky-caa-registry
 
-[job-run "runner-im-ardis"]
+[job-run "runner-im-ardis-registry"]
 schedule = 10 7 * * 4
-container = skyfollower-runner-im-ardis
+container = skyfollower-runner-im-ardis-registry
 
-[job-run "runner-es-aesa"]
+[job-run "runner-es-aesa-registry"]
 schedule = 10 8 * * 4
-container = skyfollower-runner-es-aesa
+container = skyfollower-runner-es-aesa-registry
 
-[job-run "runner-tc-caa"]
+[job-run "runner-tc-caa-registry"]
 schedule = 10 9 * * 4
-container = skyfollower-runner-tc-caa
+container = skyfollower-runner-tc-caa-registry
 
-[job-run "runner-bs-caa"]
+[job-run "runner-bs-caa-registry"]
 schedule = 10 5 * * 5
-container = skyfollower-runner-bs-caa
+container = skyfollower-runner-bs-caa-registry
 
-[job-run "runner-us-faa"]
+[job-run "runner-us-faa-registry"]
 schedule = 10 5 * * 6
-container = skyfollower-runner-us-faa
+container = skyfollower-runner-us-faa-registry
 
-[job-run "runner-ca-transport-canada"]
+[job-run "runner-ca-transport-canada-registry"]
 schedule = 10 5 * * 7
-container = skyfollower-runner-ca-transport-canada
+container = skyfollower-runner-ca-transport-canada-registry
 
 [job-run "runner-airportwebcams-special-liveries"]
 schedule = 10 6 * * 5

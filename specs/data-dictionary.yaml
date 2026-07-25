@@ -61,7 +61,7 @@ sources:
       - name: operators.json
         format: "object: airline_designator → [name, country, callsign]"
 
-  us-faa:
+  us-faa-registry:
     description: "FAA Releasable Aircraft Database — US N-number registrations"
     url: "https://registry.faa.gov/database/ReleasableAircraft.zip"
     format: zip+csv
@@ -117,7 +117,7 @@ sources:
           4: HORSEPOWER
           5: THRUST
 
-  ca-tc:
+  ca-transport-canada-registry:
     description: "Transport Canada Civil Aircraft Register — Canadian C- registrations"
     url: "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/ReleaseAccessEN.aspx"
     format: zip+csv
@@ -162,7 +162,7 @@ sources:
           skip_if_not_value: A
         notes: "TYPE_OF_OWNER_E stores decoded English strings ('Individual', 'Entity') not raw codes; COUNTRY_E stores full country name (e.g. 'CANADA') not ISO code"
 
-  no-caa:
+  no-caa-registry:
     description: "Norway Civil Aviation Authority (CAA) aircraft register — LN-prefix registrations"
     url: "https://data.caa.no/nlr/norgesluftfartoyregister.json"
     format: json
@@ -181,7 +181,7 @@ sources:
           "Eier(e)":                        "array of owner objects; each has Eier type, Navn, Gateadresse, Postnummer, Poststed, Land"
           "ICAO 24-bits adresse":           "array of objects keyed Desimal/Binær/Oktal/Heksadesimal"
 
-  fr-dgac:
+  fr-dgac-registry:
     description: "France Direction Générale de l'Aviation Civile (DGAC) aircraft register — F-prefix registrations"
     url: "https://immat.aviation-civile.gouv.fr/immat/servlet/static/upload/export.csv"
     format: csv
@@ -206,7 +206,7 @@ sources:
           PERSONNE_SAISISSANTE:      seizure person (dropped)
           ADRESSE_PERSONNE_SAISISSANTE: seizure person address (dropped)
 
-  nl-ilt:
+  nl-ilt-registry:
     description: "Netherlands Inspectie Leefomgeving en Transport (ILT) civil aircraft register — PH-prefix registrations"
     url: "https://www.ilent.nl/documenten/lijsten/luchtvaart/databestanden/luchtvaartregister-data"
     format: ods
@@ -233,7 +233,7 @@ sources:
           field: X-Ponder
           skip_if_not_pattern: "^[0-9A-Fa-f]{6}$"
 
-  br-anac:
+  br-anac-registry:
     description: "Brazil ANAC Registro Aeronáutico Brasileiro (RAB) — PP/PR/PT/PS/PU-prefix registrations"
     url: "https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_aeronaves.json"
     format: json
@@ -257,7 +257,7 @@ sources:
       - field: CDINTERDICAO
         skip_if_pattern: "^[RM]"
 
-  au-casa:
+  au-casa-registry:
     description: "Australia Civil Aviation Safety Authority (CASA) aircraft register — VH-prefix registrations"
     url: "https://services.casa.gov.au/CSV/acrftreg.csv"
     format: csv
@@ -290,7 +290,7 @@ sources:
           field: suspendstatus
           skip_if_value: Suspended
 
-  nz-caa:
+  nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
     format: csv
@@ -309,7 +309,7 @@ sources:
           Owner Address:     free-text address (parsed into street/city/postal_code/country)
           Mode S Code HEX:   6-character uppercase hex ICAO address
 
-  bs-caa:
+  bs-caa-registry:
     description: "Bahamas Civil Aviation Authority (CAA) aircraft register — C6-prefix registrations"
     url: "https://caabahamas.com/registers/"
     format: pdf
@@ -324,7 +324,7 @@ sources:
           "AIRCRAFT TYPE - MAKE/MODEL":   "Combined make and model designation (single free-text field; may contain embedded newlines; collapsed to single space)"
           "SERIAL #":                     "manufacturer serial number (may contain embedded newlines; collapsed to single space)"
 
-  ch-bazl:
+  ch-bazl-registry:
     description: "Switzerland Federal Office of Civil Aviation (FOCA/BAZL) aircraft register — HB-prefix registrations"
     url: "https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv"
     format: api
@@ -343,7 +343,7 @@ sources:
             aircraftStatus: ["Registered"]
         description: "Full register download; response is UTF-16 BE CSV with semicolon delimiters; columns have a leading space in their names"
 
-  at-austrocontrol:
+  at-austrocontrol-registry:
     description: "Austria Austrocontrol aircraft register — OE-prefix registrations"
     url: "https://www.austrocontrol.at/lfa-publish-service/v2/oenfl/luftfahrzeuge"
     format: api
@@ -355,7 +355,7 @@ sources:
         path: "/lfa-publish-service/v2/oenfl/luftfahrzeuge?page=0&size=10000"
         description: "Full register download; returns flat JSON array; all active registered aircraft in one page"
 
-  is-samgongustofa:
+  is-samgongustofa-registry:
     description: "Iceland Samgöngustofa (Transport Authority) aircraft register — TF-prefix registrations"
     url: "https://island.is/api/graphql"
     format: api
@@ -379,7 +379,7 @@ sources:
       "owners[*].postcode":    Postal code (first owner only)
       "owners[*].country":     Country name (Icelandic or English; first owner only)
 
-  lu-dac:
+  lu-dac-registry:
     description: "Luxembourg Directorate of Civil Aviation (DAC) aircraft register — LX-prefix registrations"
     url: "https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html"
     format: pdf
@@ -396,7 +396,7 @@ sources:
           Exploitant:         "Operator name; not stored"
           Propriétaire:       Owner name (may be privacy placeholder PROPRIÉTAIRE PRIVÉ or COPROPRIÉTÉ)
 
-  bz-bdca:
+  bz-bdca-registry:
     description: "Belize Department of Civil Aviation (BDCA) civil aircraft register — V3-prefix registrations"
     url: "https://www.civilaviation.gov.bz/index.php/bdca-civil-aircraft-register"
     format: html
@@ -412,7 +412,7 @@ sources:
           Owner:                  Registered owner name (may include '(Charterer by Demise)' suffix)
           Address:                Free-text address; may be comma-delimited street and city
 
-  im-ardis:
+  im-ardis-registry:
     description: "Isle of Man Aircraft Registry (ARDIS) — M-prefix registrations"
     url: "https://ardis.iomaircraftregistry.com/register/search"
     format: html
@@ -433,7 +433,7 @@ sources:
           field: "Aircraft Status"
           skip_if_value: Deregistered
 
-  es-aesa:
+  es-aesa-registry:
     description: "Spain AESA (Agencia Estatal de Seguridad Aérea) aircraft register — EC-prefix registrations"
     url: "https://www.seguridadaerea.gob.es/sites/default/files/aeronaves_inscritas.pdf"
     format: pdf
@@ -454,7 +454,7 @@ sources:
           "Nº mot.":      Number of powerplants (integer string)
           Clase:          "Aircraft category code (may contain embedded newlines, including mid-word; collapsed to single space)"
 
-  kr-koca:
+  kr-koca-registry:
     description: "South Korea Korea Office of Civil Aviation (KOCA) aircraft register — HL-prefix registrations"
     url: "http://atis.koca.go.kr/ATIS/aircraft/statListEn01.do?AIR_GUBUN=all"
     format: json
@@ -473,7 +473,7 @@ sources:
           AIR_LIMIT_MAN: Maximum occupants; not stored
           AIR_FLY_WEIGHT: Maximum takeoff weight; not stored
 
-  hu-kozhaf:
+  hu-kozhaf-registry:
     description: "Hungary KoZHAF (National Transport Authority) aircraft register — HA-prefix registrations"
     url: "https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604"
     format: pdf
@@ -491,7 +491,7 @@ sources:
           5: "Owner address (may contain embedded newlines; collapsed to single space)"
           6: "Operator name; not stored"
 
-  bg-caa:
+  bg-caa-registry:
     description: "Bulgaria CAA aircraft register — LZ-prefix registrations"
     url: "https://www.caa.bg/bg/category/300/17238"
     format: xlsx
@@ -506,7 +506,7 @@ sources:
       "Категория ВС (col 5)": "Aircraft category (English labels; case-insensitive)"
       "Основание (col 6)": "Legal basis for registration; not stored"
 
-  hr-ccaa:
+  hr-ccaa-registry:
     description: "Croatia Civil Aviation Agency aircraft register — 9A-prefix registrations"
     url: "https://www.ccaa.hr/en/list-of-registered-aircraft-94674"
     format: pdf
@@ -521,7 +521,7 @@ sources:
       "VLASNIK": "Registered owner name"
       "ADRESA": "Owner address (comma-separated)"
 
-  cy-dca:
+  cy-dca-registry:
     description: "Cyprus Department of Civil Aviation aircraft register — 5B-prefix registrations"
     url: "https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf"
     format: pdf
@@ -538,7 +538,7 @@ sources:
       field: "REGISTRATION MARK"
       skip_if_not_pattern: "^5B-"
 
-  cz-caa:
+  cz-caa-registry:
     description: "Czech CAA aircraft register — OK-prefix and numeric registrations"
     url: "https://lr.caa.gov.cz/api/avreg/filtered?start=0&length=10000"
     format: rest_api
@@ -567,7 +567,7 @@ sources:
         endpoint: detail
         skip_if_empty: true
 
-  ee-transpordiamet:
+  ee-transpordiamet-registry:
     description: "Estonia Transpordiamet civil aircraft register — ES-prefix registrations"
     url: "https://transpordiamet.ee/ohusoidukite-register"
     format: html_table
@@ -580,7 +580,7 @@ sources:
       6: "Registered owner name"
       7: "Operator name; not imported"
 
-  ge-gcaa:
+  ge-gcaa-registry:
     description: "Georgia GCAA aircraft register — 4L-prefix registrations"
     url: "https://gcaa.ge/civil-aircraft-register/"
     format: html_table
@@ -594,7 +594,7 @@ sources:
       4: "Serial number"
       5: "Year of manufacture (4-digit integer)"
 
-  gg-2reg:
+  gg-2reg-registry:
     description: "Guernsey (Bailiwick) aircraft register — 2-prefix registrations"
     url: "https://www.2-reg.com/legislation/register/"
     format: pdf
@@ -608,7 +608,7 @@ sources:
       4: "Registered Owner/Charterer by demise (x<1015)"
       5: "Date of Registration (x≥1015; not stored)"
 
-  kg-caa:
+  kg-caa-registry:
     description: "Kyrgyzstan CAA aircraft register — EX-prefix registrations"
     url: "https://caa.kg/en/node/46"
     format: html_table
@@ -623,7 +623,7 @@ sources:
       5: "Серийный №/Serial Number"
       6: "Дата производства/Date of Manufacture (DD.MM.YYYY or month-name YYYY format)"
 
-  lv-caa:
+  lv-caa-registry:
     description: "Latvia CAA aircraft register — YL-prefix registrations"
     url: "https://data.gov.lv/dati/lv/api/action/datastore_search?resource_id=dbde00e6-8616-449a-8cac-ef748c6793f3&limit=50000"
     format: json_api
@@ -637,7 +637,7 @@ sources:
       Registered_on: Registration date; not stored
       Aircraft_Model_Category: Free-text aircraft category description
 
-  mv-caa:
+  mv-caa-registry:
     description: "Maldives CAA aircraft register — 8Q-prefix registrations"
     url: "https://www.caa.gov.mv/operations/registration-of-aircraft-and-mortgages"
     format: pdf
@@ -667,7 +667,7 @@ sources:
           field: "15"
           skip_if_not_value: Valid
 
-  md-caa:
+  md-caa-registry:
     description: "Moldova CAA aircraft register — ER-prefix registrations"
     url: "https://www.caa.md/modules/filemanager/files/documentum/Registrul_Aerian_al_Republicii_Moldova.pdf"
     format: pdf
@@ -683,7 +683,7 @@ sources:
       3: "Manufacturer serial number (may contain embedded newlines; collapsed to single space)"
       4: Operator ICAO 3-letter code; not stored
 
-  me-caa:
+  me-caa-registry:
     description: "Montenegro CAA aircraft register — 4O-prefix registrations"
     url: "https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157"
     format: html_paginated
@@ -713,7 +713,7 @@ sources:
           "Zip code, town": Combined postal code and city (e.g. '81000 Podgorica')
           Country: Operator country
 
-  mk-caa:
+  mk-caa-registry:
     description: "North Macedonia CAA (Civil Aviation Agency) aircraft register — Z3-prefix registrations"
     url: "https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/"
     format: pdf
@@ -732,7 +732,7 @@ sources:
           6: "Owner name (may contain embedded newlines; collapsed to single space)"
           7: "Owner address (may contain embedded newlines; collapsed to single space)"
 
-  pg-casapng:
+  pg-casapng-registry:
     description: "Papua New Guinea CASA PNG (Civil Aviation Safety Authority) aircraft register — P2-prefix registrations"
     url: "https://casapng.gov.pg/safety-regulatory/airworthiness/Aircraft-Registers/"
     format: pdf
@@ -748,7 +748,7 @@ sources:
           3: "Operator name (may contain embedded newlines; collapsed to single space)"
           4: "Address string; comma-delimited; may contain embedded newlines"
 
-  rs-cad:
+  rs-cad-registry:
     description: "Serbia CAD (Civil Aviation Directorate) aircraft register — YU-prefix registrations"
     url: "https://apps.cad.gov.rs/ords/dcvws/regvaz/site/listAircraft"
     format: json
@@ -762,7 +762,7 @@ sources:
       korisnik:            Operator or user name
       vrsta_vazduhoplova:  Aircraft type category (Serbian)
 
-  sg-caas:
+  sg-caas-registry:
     description: "Singapore CAAS (Civil Aviation Authority of Singapore) aircraft register — 9V-prefix registrations"
     url: "https://www.caas.gov.sg/industry/aircraft-operators/certificate-of-registration/"
     format: xlsx
@@ -780,7 +780,7 @@ sources:
           "Engine Model":          Engine model designation
           "Engine Manufacturer":   Engine manufacturer name
 
-  sk-nsat:
+  sk-nsat-registry:
     description: "Slovakia NSAT (Národný bezpečnostný úrad pre letectvo) aircraft register — OM-prefix registrations"
     url: "https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/"
     format: pdf
@@ -797,7 +797,7 @@ sources:
           "Prevádzkovateľ":       "Operator name; not stored"
           "Záložné právo":        Lien status; not stored
 
-  tc-caa:
+  tc-caa-registry:
     description: "Turks & Caicos Islands Civil Aviation Authority (CAA) aircraft register — VQ-prefix registrations"
     url: "https://tcicaa.tc/operations-safety/aircrafts/aircraft-register"
     format: html
@@ -814,7 +814,7 @@ sources:
           "OWNER /OPERATOR": Registered owner or operator name (column header contains a space before the slash)
           D.O.R:            Date of registration; not stored
 
-  ky-caa:
+  ky-caa-registry:
     description: "Cayman Islands Civil Aviation Authority (CAA) aircraft register — VP-C-prefix registrations"
     url: "https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf"
     format: pdf
@@ -831,7 +831,7 @@ sources:
           "Series Type":           Combined manufacturer and model designation (single free-text field)
           "Serial Number":         Manufacturer serial number
 
-  uk-caa:
+  uk-caa-registry:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
     url: "https://ginfoapi.caa.co.uk"
     format: api
@@ -872,7 +872,7 @@ sources:
     url: "https://airportwebcams.net/special-liveries/"
     format: html
     cadence: weekly_friday
-    notes: "TablePress table (id tablepress-8), fully server-rendered — all ~2,074 rows present in a single GET, no pagination/AJAX to crawl; default curl/requests User-Agent is blocked with HTTP 406 by the site's ModSecurity rule, an honest identifying User-Agent (e.g. 'Mozilla/5.0 (compatible; P5Software SkyFollower)') is accepted; robots.txt does not disallow this path for a generic user agent; no ICAO hex published — resolved via RediSearch against Mictronics records (FT.SEARCH idx:aircraft:mictronics), same pattern as at-austrocontrol/fr-dgac/etc.; must run after Mictronics; rows with Registration='Various' (whole-fleet special liveries, e.g. Silk Way West '10 Years' sticker on the entire fleet) are skipped, not force-matched to a single hex"
+    notes: "TablePress table (id tablepress-8), fully server-rendered — all ~2,074 rows present in a single GET, no pagination/AJAX to crawl; default curl/requests User-Agent is blocked with HTTP 406 by the site's ModSecurity rule, an honest identifying User-Agent (e.g. 'Mozilla/5.0 (compatible; P5Software SkyFollower)') is accepted; robots.txt does not disallow this path for a generic user agent; no ICAO hex published — resolved via RediSearch against Mictronics records (FT.SEARCH idx:aircraft:mictronics), same pattern as at-austrocontrol-registry/fr-dgac-registry/etc.; must run after Mictronics; rows with Registration='Various' (whole-fleet special liveries, e.g. Silk Way West '10 Years' sticker on the entire fleet) are skipped, not force-matched to a single hex"
     files:
       - name: "special-liveries/ (TablePress #tablepress-8)"
         format: html_table
@@ -963,133 +963,133 @@ records:
           - source: mictronics
             file: aircrafts.json
             description: "JSON object key; already a 6-character uppercase hex string"
-          - source: us-faa
+          - source: us-faa-registry
             file: master.txt
             field: MODE S CODE HEX
             position: 33
             transform:
               type: uppercase
               description: "Field is hex but may be mixed case — normalise to uppercase"
-          - source: ca-tc
+          - source: ca-transport-canada-registry
             file: carscurr.txt
             field: MODE_S_TRANSPONDER_BINARY
             position: 42
             transform:
               type: binary_to_hex
               description: "24-character binary string — format(int(value, 2), '06X') → 6-character uppercase hex"
-          - source: nz-caa
+          - source: nz-caa-registry
             file: Aircraft-Register-for-website-.csv
             field: Mode S Code HEX
             transform:
               type: uppercase
               description: "Field is already 6-character hex — normalise to uppercase and strip whitespace"
-          - source: no-caa
+          - source: no-caa-registry
             file: norgesluftfartoyregister.json
             field: "ICAO 24-bits adresse[].Heksadesimal"
             transform:
               type: uppercase
               description: "Extract Heksadesimal entry from the ICAO address array; normalise to uppercase"
-          - source: nl-ilt
+          - source: nl-ilt-registry
             file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
             field: X-Ponder
             transform:
               type: uppercase
               description: "6-character hex string; normalise to uppercase and strip whitespace"
-          - source: au-casa
+          - source: au-casa-registry
             file: acrftreg
             description: "CASA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VH\\-XXX} against Mictronics records; enriches existing records only"
-          - source: fr-dgac
+          - source: fr-dgac-registry
             file: export.csv
             description: "DGAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{F\\-XXX} against Mictronics records; enriches existing records only"
-          - source: bs-caa
+          - source: bs-caa-registry
             file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
             description: "Bahamas CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{C6\\-XXX} against Mictronics records; enriches existing records only"
-          - source: ky-caa
+          - source: ky-caa-registry
             file: Active-Aircraft-Register.pdf
             description: "Cayman Islands CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft @registration:{VP\\-CXXX} against Mictronics records; enriches existing records only"
-          - source: br-anac
+          - source: br-anac-registry
             file: dados_aeronaves.json
             description: "ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{PP\\-XXX} against Mictronics records; enriches existing records only"
-          - source: uk-caa
+          - source: uk-caa-registry
             endpoint: details
             field: AircraftDetails.ICAO24BitAircraftAddress.Hex
             transform:
               type: uppercase
               description: "Hex string normalised to uppercase"
-          - source: ch-bazl
+          - source: ch-bazl-registry
             endpoint: bulk
             field: " Aircraft Address HEX"
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase"
-          - source: im-ardis
+          - source: im-ardis-registry
             file: ARDIS search results (HTML table)
             field: "Mode S Number"
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase; ICAO hex provided directly — no RediSearch lookup needed"
-          - source: cz-caa
+          - source: cz-caa-registry
             endpoint: detail
             field: transponder
             transform:
               type: uppercase
               description: "6-character hex string normalised to uppercase"
-          - source: me-caa
+          - source: me-caa-registry
             page: detail
             description: "Montenegro CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{4O\\-XXX} against Mictronics records; enriches existing records only"
-          - source: is-samgongustofa
+          - source: is-samgongustofa-registry
             endpoint: bulk
             description: "Iceland Samgöngustofa does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{TF\\-XXX} against Mictronics records; enriches existing records only"
-          - source: kr-koca
+          - source: kr-koca-registry
             file: statListEn01.do (JSON datatable)
             description: "Korea KOCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{HL\\-XXXX} against Mictronics records; enriches existing records only"
-          - source: hu-kozhaf
+          - source: hu-kozhaf-registry
             file: "Aircraft register PDF (date-stamped, discovered via index page)"
             description: "Hungary KoZHAF does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{HA\\-XXX} against Mictronics records; enriches existing records only"
-          - source: ge-gcaa
+          - source: ge-gcaa-registry
             description: "Georgia GCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{4L\\-XXX} against Mictronics records; enriches existing records only"
-          - source: gg-2reg
+          - source: gg-2reg-registry
             file: "PDF (date-encoded, discovered via index page)"
             description: "Guernsey 2-reg does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{2\\-XXXX} against Mictronics records; enriches existing records only"
-          - source: kg-caa
+          - source: kg-caa-registry
             description: "Kyrgyzstan CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{EX\\-XXX} against Mictronics records; enriches existing records only"
-          - source: bg-caa
+          - source: bg-caa-registry
             file: "Aircraft_Register_{YYYYMMDD}.xlsx"
             description: "Bulgaria CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{LZ\\-XXX} against Mictronics records; enriches existing records only"
-          - source: hr-ccaa
+          - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
-          - source: cy-dca
+          - source: cy-dca-registry
             file: Aircraft_Register_Extract.pdf
             description: "Cyprus DCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{5B\\-XXX} against Mictronics records; enriches existing records only"
-          - source: ee-transpordiamet
+          - source: ee-transpordiamet-registry
             description: "Estonia Transpordiamet does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{ES\\-XXX} against Mictronics records; enriches existing records only"
-          - source: lv-caa
+          - source: lv-caa-registry
             description: "Latvia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{YL\\-XXX} against Mictronics records; enriches existing records only"
-          - source: mv-caa
+          - source: mv-caa-registry
             file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
             description: "Maldives CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{8Q\\-XXX} against Mictronics records; enriches existing records only"
-          - source: md-caa
+          - source: md-caa-registry
             file: Registrul_Aerian_al_Republicii_Moldova.pdf
             description: "Moldova CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{ER\\-XXX} against Mictronics records; enriches existing records only"
-          - source: mk-caa
+          - source: mk-caa-registry
             file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
             description: "North Macedonia CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{Z3\\-XXX} against Mictronics records; enriches existing records only"
-          - source: pg-casapng
+          - source: pg-casapng-registry
             file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
             description: "Papua New Guinea CASA PNG does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{P2\\-XXX} against Mictronics records; enriches existing records only"
-          - source: rs-cad
+          - source: rs-cad-registry
             description: "Serbia CAD does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{YU\\-XXX} against Mictronics records; enriches existing records only"
-          - source: sk-nsat
+          - source: sk-nsat-registry
             file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
             description: "Slovakia NSAT does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{OM\\-XXX} against Mictronics records; enriches existing records only"
-          - source: tc-caa
+          - source: tc-caa-registry
             file: aircraft-register (HTML page)
             description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
-          - source: lu-dac
+          - source: lu-dac-registry
             file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
             description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
-          - source: bz-bdca
+          - source: bz-bdca-registry
             file: bdca-civil-aircraft-register (HTML page)
             description: "Belize BDCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{V3\\-XXX} against Mictronics records; enriches existing records only"
 
@@ -1098,7 +1098,7 @@ records:
         description: "Aircraft registration mark (e.g. N659DL, C-FEGI)"
         persisted: true
         sources:
-          - source: us-faa
+          - source: us-faa-registry
             file: master.txt
             field: N-NUMBER
             position: 0
@@ -1106,7 +1106,7 @@ records:
               type: prefix
               value: "N"
               description: "Prepend 'N' to the stored number to form the full mark"
-          - source: ca-tc
+          - source: ca-transport-canada-registry
             file: carscurr.txt
             field: TRIMMED_MARK
             position: 46
@@ -1117,135 +1117,135 @@ records:
           - source: mictronics
             file: aircrafts.json
             field: "values[0]"
-          - source: nz-caa
+          - source: nz-caa-registry
             file: Aircraft-Register-for-website-.csv
             field: Registration Mark
             description: "Full registration mark including ZK- prefix (e.g. ZK-AAC)"
-          - source: no-caa
+          - source: no-caa-registry
             file: norgesluftfartoyregister.json
             field: Registreringsmerke
             description: "Full registration mark including LN- prefix (e.g. LN-ABA)"
-          - source: au-casa
+          - source: au-casa-registry
             file: acrftreg
             field: Mark
             transform:
               type: prefix
               value: "VH-"
               description: "Prepend 'VH-' to the 3-character mark suffix to form the full registration"
-          - source: nl-ilt
+          - source: nl-ilt-registry
             file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
             field: Registration
             description: "Full registration mark including PH- prefix (e.g. PH-ABC)"
-          - source: fr-dgac
+          - source: fr-dgac-registry
             file: export.csv
             field: IMMATRICULATION
             description: "Full registration mark including F- prefix (e.g. F-BKDK)"
-          - source: bs-caa
+          - source: bs-caa-registry
             file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
             field: AIRCRAFT REGISTRATION NUMBER
             description: "Full registration mark including C6- prefix (e.g. C6-BFY)"
-          - source: ky-caa
+          - source: ky-caa-registry
             file: Active-Aircraft-Register.pdf
             field: "Aircraft Registration"
             description: "Full registration mark including VP-C prefix (e.g. VP-CAD)"
-          - source: uk-caa
+          - source: uk-caa-registry
             endpoint: details
             field: RegistrationDetails.Mark
             transform:
               type: prefix
               value: "G-"
               description: "Prepend 'G-' to the stored mark to form the full registration"
-          - source: ch-bazl
+          - source: ch-bazl-registry
             endpoint: bulk
             field: " Registration"
             description: "Full registration mark including HB- prefix (e.g. HB-JNA)"
-          - source: br-anac
+          - source: br-anac-registry
             file: dados_aeronaves.json
             field: MARCA
             transform:
               type: insert_hyphen
               position: 2
               description: "MARCA stored without hyphen (e.g. PPAJH); hyphen inserted after position 2 to yield full registration (PP-AJH)"
-          - source: im-ardis
+          - source: im-ardis-registry
             file: ARDIS search results (HTML table)
             field: "Registration Mark"
             description: "Full M-prefix registration mark (e.g. M-ABCD)"
-          - source: me-caa
+          - source: me-caa-registry
             page: list
             field: "Registarska oznaka"
             description: "Full 4O-prefix registration mark (e.g. 4O-AOM)"
-          - source: is-samgongustofa
+          - source: is-samgongustofa-registry
             endpoint: bulk
             field: identifiers
             description: "Full TF-prefix registration mark (e.g. TF-ISA)"
-          - source: kr-koca
+          - source: kr-koca-registry
             file: statListEn01.do (JSON datatable)
             field: REG_SNO
             description: "Full HL-prefix registration mark (e.g. HL-7612)"
-          - source: hu-kozhaf
+          - source: hu-kozhaf-registry
             file: "Aircraft register PDF (date-stamped, discovered via index page)"
             field: "0"
             description: "HA-prefix registration mark; stray space after hyphen (HA- GZQ) normalized to HA-GZQ"
-          - source: ge-gcaa
+          - source: ge-gcaa-registry
             field: "2"
             description: "Full 4L-prefix registration mark (e.g. 4L-GAA)"
-          - source: gg-2reg
+          - source: gg-2reg-registry
             file: "PDF (date-encoded, discovered via index page)"
             field: "0"
             description: "Full 2-prefix registration mark (e.g. 2-ABCD)"
-          - source: kg-caa
+          - source: kg-caa-registry
             field: "3"
             description: "Full EX-prefix registration mark (e.g. EX-001)"
-          - source: bg-caa
+          - source: bg-caa-registry
             file: "Aircraft_Register_{YYYYMMDD}.xlsx"
             field: "Рег. знак (col 4)"
             description: "Full LZ-prefix registration mark (e.g. LZ-ABC)"
-          - source: hr-ccaa
+          - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
             description: "Registration suffix with 9A- prepended (e.g. 9A-ABC)"
-          - source: cy-dca
+          - source: cy-dca-registry
             file: Aircraft_Register_Extract.pdf
             field: "REGISTRATION MARK"
             description: "Full 5B-prefix registration mark (e.g. 5B-DBZ)"
-          - source: ee-transpordiamet
+          - source: ee-transpordiamet-registry
             field: "1"
             description: "ES-prefix registration mark; internal whitespace normalized (e.g. 'ES - MBA' → 'ES-MBA')"
-          - source: lv-caa
+          - source: lv-caa-registry
             field: Registration_Mark
             description: "Full YL-prefix registration mark (e.g. YL-LCS)"
-          - source: mv-caa
+          - source: mv-caa-registry
             file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
             field: "2"
             description: "Full 8Q-prefix registration mark (e.g. 8Q-MAD)"
-          - source: md-caa
+          - source: md-caa-registry
             file: Registrul_Aerian_al_Republicii_Moldova.pdf
             field: "2"
             description: "Full ER-prefix registration mark (e.g. ER-AXP)"
-          - source: mk-caa
+          - source: mk-caa-registry
             file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
             field: "2"
             description: "Full Z3-prefix registration mark (e.g. Z3-AAA)"
-          - source: pg-casapng
+          - source: pg-casapng-registry
             file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
             field: "0"
             description: "Full P2-prefix registration mark (e.g. P2-ANG)"
-          - source: rs-cad
+          - source: rs-cad-registry
             field: registarska_oznaka
             description: "Full YU-prefix registration mark (e.g. YU-APA)"
-          - source: sk-nsat
+          - source: sk-nsat-registry
             file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
             field: "Poznávacia značka"
             description: "Spaced format 'OM - XXXX' normalized to 'OM-XXXX' by stripping whitespace around hyphen"
-          - source: tc-caa
+          - source: tc-caa-registry
             file: aircraft-register (HTML page)
             field: REG
             description: "Full VQ-prefix registration mark (e.g. VQ-TCA)"
-          - source: lu-dac
+          - source: lu-dac-registry
             file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
             field: Immat
             description: "Full LX-prefix registration mark (e.g. LX-AIR)"
-          - source: bz-bdca
+          - source: bz-bdca-registry
             file: bdca-civil-aircraft-register (HTML page)
             field: "Registration Number"
             description: "Full V3-prefix registration mark (e.g. V3-HBC)"
@@ -1261,7 +1261,7 @@ records:
             description: "Registrant name(s); primary name is first; additional DBA names follow"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 fields:
                   - { field: NAME,            position: 6  }
@@ -1273,7 +1273,7 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Collect all non-blank name fields in column order into an array"
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 fields:
                   - { field: FULL_NAME,   position: 1 }
@@ -1281,43 +1281,43 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "Collect FULL_NAME then TRADE_NAME"
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Name
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[].Navn"
                 transform:
                   type: collect_ordered
                   description: "Eier/Kontakt entry first, then all Eier entries; deduplicated"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: regholdname
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: PROPRIETAIRE
                 transform:
                   type: collect_ordered
                   description: "Rows are grouped by IMMATRICULATION (co-ownership); all unique non-blank PROPRIETAIRE values collected in order of first appearance; blank for individuals per GDPR"
-              - source: bs-caa
+              - source: bs-caa-registry
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
                 field: REGISTERED OWNER OF AIRCRAFT
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list"
-              - source: ky-caa
+              - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Registered Owner"
                 transform:
                   type: wrap_array
                   description: "Single name — wrap in a one-element list; embedded newlines normalised to spaces"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 fields:
                   - { field: "RegisteredAircraftOwners[0].RegisteredOwner" }
@@ -1325,142 +1325,142 @@ records:
                 transform:
                   type: collect_non_empty
                   description: "RegisteredOwner first; TradingAs appended if non-null"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Main Owner"
                 transform:
                   type: parse_address_name
                   description: "Best-effort parse of 'Name[, Canton]?, Street, PostalCode City, Switzerland'; 2-letter canton abbreviations filtered out; if only one non-canton segment remains after extracting the postal line it is the name (no street); wrapped in a one-element list"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: halter
                 transform:
                   type: parse_address_name
                   description: "Best-effort parse; line 0 of first owner group (\\r\\n-delimited); surrounding quotes stripped; wrapped in a one-element list"
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: "PROPRIETARIOSJSON[0].NOME"
                 transform:
                   type: wrap_array
                   description: "NOME of first owner entry; /\\\"\\\" un-escaped to double-quote before JSON parse; 'Indisponível' treated as absent; wrapped in a one-element list"
-              - source: sg-caas
+              - source: sg-caas-registry
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: Operator
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
-              - source: im-ardis
+              - source: im-ardis-registry
                 file: ARDIS search results (HTML table)
                 field: "Registered Owners"
                 transform:
                   type: split_first_comma_name
                   description: "Everything before the first comma; wrapped in a one-element list"
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: "owners[*].display_name"
                 transform:
                   type: collect_ordered
                   description: "All owner display_names collected in order"
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: Name
                 transform:
                   type: wrap_array
                   description: "Single operator/owner name — wrap in a one-element list"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: operator.name
                 transform:
                   type: wrap_array
                   description: "Single operator/owner name — wrap in a one-element list"
-              - source: kr-koca
+              - source: kr-koca-registry
                 file: statListEn01.do (JSON datatable)
                 field: REG_CUSER
                 transform:
                   type: wrap_array
                   description: "Single registered owner name (Korean UTF-8 text) — wrap in a one-element list"
-              - source: hu-kozhaf
+              - source: hu-kozhaf-registry
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "4"
                 transform:
                   type: wrap_array
                   description: "Owner name (col 4); embedded newlines collapsed to space; wrapped in a one-element list"
-              - source: ge-gcaa
+              - source: ge-gcaa-registry
                 field: "0"
                 table: table_2
                 transform:
                   type: wrap_array
                   description: "Owner (table_2 col 0); table_1's operator column is not read; Georgian-script names preserved as UTF-8; wrapped in a one-element list"
-              - source: gg-2reg
+              - source: gg-2reg-registry
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "4"
                 transform:
                   type: wrap_array
                   description: "Single registered owner/charterer name — wrap in a one-element list"
-              - source: kg-caa
+              - source: kg-caa-registry
                 field: "1"
                 transform:
                   type: wrap_array
                   description: "Operator/owner name; rowspan value carried forward across spanned rows — wrap in a one-element list"
-              - source: hr-ccaa
+              - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list"
-              - source: cy-dca
+              - source: cy-dca-registry
                 file: Aircraft_Register_Extract.pdf
                 field: "AIRCRAFT OWNER/OPERATOR"
                 transform:
                   type: collect_non_empty
                   description: "String split on /; each segment trimmed; empty segments discarded"
-              - source: ee-transpordiamet
+              - source: ee-transpordiamet-registry
                 field: "6"
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list"
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "7"
                 transform:
                   type: wrap_array
                   description: "First line of multiline owner/address cell — wrap in a one-element list"
-              - source: mk-caa
+              - source: mk-caa-registry
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "6"
                 transform:
                   type: wrap_array
                   description: "Embedded newlines collapsed to space; wrap single owner name in a one-element list"
-              - source: pg-casapng
+              - source: pg-casapng-registry
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "3"
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
-              - source: rs-cad
+              - source: rs-cad-registry
                 field: korisnik
                 transform:
                   type: wrap_array
                   description: "Single operator name — wrap in a one-element list"
-              - source: sk-nsat
+              - source: sk-nsat-registry
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
                 field: "Vlastník"
                 transform:
                   type: wrap_array
                   description: "Registered owner; wrapped in a one-element list"
-              - source: tc-caa
+              - source: tc-caa-registry
                 file: aircraft-register (HTML page)
                 field: "OWNER /OPERATOR"
                 transform:
                   type: wrap_array
                   description: "Single owner or operator name — wrap in a one-element list"
-              - source: lu-dac
+              - source: lu-dac-registry
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: Propriétaire
                 transform:
                   type: wrap_array
                   description: "Owner name; privacy placeholders excluded (PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ); wrapped in a one-element list"
-              - source: bz-bdca
+              - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
                 field: Owner
                 transform:
@@ -1472,119 +1472,119 @@ records:
             description: "Street address lines; blank lines omitted"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 fields:
                   - { field: STREET,  position: 7 }
                   - { field: STREET2, position: 8 }
                 transform:
                   type: collect_non_empty
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 fields:
                   - { field: STREET_NAME,  position: 3 }
                   - { field: STREET_NAME2, position: 4 }
                 transform:
                   type: collect_non_empty
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Address
                 transform:
                   type: parse_address_street
                   description: "All comma-segments except the last two; PO Box segments treated as street lines"
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Gateadresse"
                 transform:
                   type: wrap_array
                   description: "Single street address line from the Eier/Kontakt owner entry"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 fields:
                   - { field: regholdadd1 }
                   - { field: regholdadd2 }
                 transform:
                   type: collect_non_empty
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: ADRESSE_PROPRIETAIRE
                 transform:
                   type: parse_address_street
                   description: "Everything before the 5-digit postal code; omitted if no postal code found (foreign addresses)"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 fields:
                   - { field: "RegisteredAircraftOwners[0].Address1" }
                   - { field: "RegisteredAircraftOwners[0].Address2" }
                 transform:
                   type: collect_non_empty
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Main Owner"
                 transform:
                   type: parse_address_street
                   description: "Best-effort parse; third-from-last comma-segment (before PostalCode City and Switzerland); wrapped in a one-element list"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: halter
                 transform:
                   type: parse_address_street
                   description: "Best-effort parse; everything after first comma on line 1 (PostalCode City, Street) of first owner group; wrapped in a one-element list"
-              - source: ky-caa
+              - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Registered Address"
                 transform:
                   type: split_comma
                   description: "Country suffix (matching Nationality column) stripped first; remaining string split on commas, each segment trimmed and stored as a separate street line"
-              - source: im-ardis
+              - source: im-ardis-registry
                 file: ARDIS search results (HTML table)
                 field: "Registered Owners"
                 transform:
                   type: split_first_comma_street
                   description: "Everything after the first comma; wrapped in a one-element list"
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: Address
                 transform:
                   type: wrap_array
                   description: "Single street address line — wrap in a one-element list"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: operator.address
                 transform:
                   type: wrap_array
                   description: "Single street address line — wrap in a one-element list"
-              - source: hu-kozhaf
+              - source: hu-kozhaf-registry
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "5"
                 transform:
                   type: wrap_array
                   description: "Owner address; embedded newlines collapsed to space — wrap in a one-element list"
-              - source: hr-ccaa
+              - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: ADRESA
                 transform:
                   type: split_comma
                   description: "Comma-separated address string split into individual street lines"
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "7"
                 transform:
                   type: collect_non_empty
                   description: "Middle lines of multiline owner/address cell (between first and last line); empty lines discarded"
-              - source: mk-caa
+              - source: mk-caa-registry
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "7"
                 transform:
                   type: wrap_array
                   description: "Embedded newlines collapsed to space; wrap address in a one-element list"
-              - source: pg-casapng
+              - source: pg-casapng-registry
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "4"
                 transform:
                   type: collect_non_empty
                   description: "Embedded newlines collapsed to space; comma-split; all segments except last; empty segments discarded"
-              - source: bz-bdca
+              - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
                 field: Address
                 transform:
@@ -1595,54 +1595,54 @@ records:
             type: string
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: CITY
                 position: 9
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 field: CITY
                 position: 5
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Address
                 transform:
                   type: parse_address_city
                   description: "Second-to-last comma-segment; extract leading word(s) before trailing 3–6 digit postal code; omitted if segment is a PO Box"
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Poststed"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: regholdSuburb
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: ADRESSE_PROPRIETAIRE
                 transform:
                   type: parse_address_city
                   description: "Everything after the 5-digit postal code (before country); omitted if no postal code found"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].Town"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Main Owner"
                 transform:
                   type: parse_address_city
                   description: "Best-effort parse; city portion of second-to-last comma-segment (after 4-digit postal code)"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: halter
                 transform:
                   type: parse_address_city
                   description: "Best-effort parse; word(s) on line 1 of first owner group after the postal code digits and before the first comma"
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: "Zip code, town"
                 transform:
                   type: parse_address_city
                   description: "Text suffix after the leading numeric postal code digits (e.g. '81000 Podgorica' → 'Podgorica')"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: operator.city
 
@@ -1651,20 +1651,20 @@ records:
             description: "First-level country subdivision (US state, Canadian province, etc.)"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: STATE
                 position: 10
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 field: PROVINCE_OR_STATE_E
                 position: 6
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: regholdState
                 description: "Australian state/territory abbreviation (NSW, VIC, QLD, SA, WA, TAS, NT, ACT); passed through as-is"
-                # fr-dgac has no administrative_area equivalent
-              - source: uk-caa
+                # fr-dgac-registry has no administrative_area equivalent
+              - source: uk-caa-registry
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].County"
 
@@ -1672,57 +1672,57 @@ records:
             type: string
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: ZIP CODE
                 position: 11
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 field: POSTAL_CODE
                 position: 8
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Address
                 transform:
                   type: parse_address_postal
                   description: "Trailing 3–6 digit number from second-to-last comma-segment; omitted if segment is a PO Box"
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Postnummer"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: regholdPostcode
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: ADRESSE_PROPRIETAIRE
                 transform:
                   type: parse_address_postal
                   description: "5-digit postal code extracted from free-text address; omitted if no 5-digit code found"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].PostCode"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Main Owner"
                 transform:
                   type: parse_address_postal
                   description: "Best-effort parse; leading 4-digit postal code from second-to-last comma-segment"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: halter
                 transform:
                   type: parse_address_postal
                   description: "Best-effort parse; leading digit sequence before first space on line 1 of first owner group"
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: "Zip code, town"
                 transform:
                   type: parse_address_postal
                   description: "Leading numeric digit sequence before the first space (e.g. '81000 Podgorica' → '81000')"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: operator.postcode
-              - source: bz-bdca
+              - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
                 field: Address
                 description: "Substring after first comma; if no comma, entire value used"
@@ -1732,7 +1732,7 @@ records:
             description: "ISO 3166-1 alpha-2 country code"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: COUNTRY
                 position: 14
@@ -1740,78 +1740,78 @@ records:
                   type: fallback_constant
                   value: "US"
                   description: "Use field value if non-empty; fall back to 'US' for domestic records"
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 field: COUNTRY_E
                 position: 9
                 transform:
                   type: decode_country_name
                   description: "Full English country name (e.g. 'CANADA') → ISO 3166-1 alpha-2 code"
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Owner Address
                 transform:
                   type: parse_address_country
                   description: "Last comma-segment; mapped to ISO 3166-1 alpha-2 (e.g. 'New Zealand' → 'NZ'); falls back to raw name if unmapped"
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: "Eier(e)[Eier/Kontakt].Land"
                 transform:
                   type: decode_country_name
                   description: "Norwegian names (Norge→NO, Sverige→SE, Danmark→DK) and English names mapped to ISO 3166-1 alpha-2; falls back to raw name if unmapped"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: regholdCountry
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Australia' → 'AU'); falls back to raw name if unmapped"
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: ADRESSE_PROPRIETAIRE
                 transform:
                   type: parse_address_country
                   description: "French country name stripped from end of address string (multi-word names checked first); mapped to ISO 3166-1 alpha-2 (e.g. 'FRANCE'→FR, 'ETATS UNIS D\\'AMERIQUE'→US); omitted if country suffix not recognised"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: "RegisteredAircraftOwners[0].Country"
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'UNITED KINGDOM' → 'GB'); falls back to raw name if unmapped"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 description: "Always 'CH' — all BAZL-registered aircraft are Swiss-based"
                 value: "CH"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: halter
                 transform:
                   type: decode_country_name
                   description: "German country name on line 2 of first owner group (e.g. 'Österreich'→AT, 'Deutschland'→DE, 'Tschechische Republik'→CZ); falls back to raw name if unmapped"
-              - source: ky-caa
+              - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Nationality"
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'United Kingdom'→GB, 'Cayman Islands'→KY); 'Irish' normalised to IE; case-insensitive ('Cayman islands' typo handled); omitted if unmapped"
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: Country
                 transform:
                   type: decode_country_name
                   description: "Full English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Montenegro'→ME); falls back to raw name if unmapped"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: operator.country
                 transform:
                   type: decode_country_name
                   description: "Icelandic or English country name mapped to ISO 3166-1 alpha-2 (e.g. 'Ísland'→IS, 'Iceland'→IS)"
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "7"
                 transform:
                   type: decode_country_name
                   description: "Last line of multiline owner/address cell; full English country name mapped to ISO 3166-1 alpha-2"
-              - source: pg-casapng
+              - source: pg-casapng-registry
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "4"
                 transform:
@@ -1823,7 +1823,7 @@ records:
             description: "Registrant category"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: TYPE REGISTRANT
                 position: 5
@@ -1838,7 +1838,7 @@ records:
                     "7": LLC
                     "8": "Non-Citizen Corporation"
                     "9": "Non-Citizen Co-Owned"
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carsownr.txt
                 field: TYPE_OF_OWNER_E
                 position: 11
@@ -1860,7 +1860,7 @@ records:
             description: "Aircraft category (Airplane, Rotorcraft, Glider, etc.)"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: acftref.txt
                 field: TYPE-ACFT
                 position: 3
@@ -1876,7 +1876,7 @@ records:
                     "7": Weight-Shift-Control
                     "8": Powered Parachute
                     "9": Gyroplane
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: AIRCRAFT_CATEGORY_E
                 position: 10
@@ -1888,7 +1888,7 @@ records:
                     "Glider": Glider
                     "Balloon": Balloon
                     "Gyroplane": Gyroplane
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: Kategori
                 transform:
@@ -1899,7 +1899,7 @@ records:
                     "Helikopter": Helicopter
                     "Seilfly": Glider
                     "Ballong": Balloon
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Model Category
                 transform:
@@ -1917,7 +1917,7 @@ records:
                     "Amateur Built Glider": Glider
                     "Gyroplane (Gyrocopter)": Gyroplane
                     "Balloon (hot-air)": Balloon
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Group
                 transform:
@@ -1933,7 +1933,7 @@ records:
                     "Balloon": Balloon
                     "Rotorcraft": Helicopter
                     "Drones": Drone
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: Airframe
                 transform:
@@ -1945,7 +1945,7 @@ records:
                     "Glider": Glider
                     "Manned Free Balloon": Balloon
                     "Motor-Glider": Powered Glider
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.AircraftClass
                 transform:
@@ -1965,7 +1965,7 @@ records:
                     "GYROPLANE": Gyroplane
                     "POWERED LIFT": "Powered Lift"
                     "TILT ROTOR": "Powered Lift"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Aircraft Type"
                 transform:
@@ -1987,7 +1987,7 @@ records:
                     "Ultralight (3-axis control)": Microlight
                     "Ecolight": Microlight
                     "Trike": Weight-Shift-Control
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: luftfahrzeugart
                 transform:
@@ -1999,7 +1999,7 @@ records:
                     "Tragschrauber": Gyroplane
                     "Eigenstartfähiger Motorsegler": Powered Glider
                     "Nicht eigenstartfähiger Motorsegler": Glider
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: CDCLS
                 transform:
@@ -2012,7 +2012,7 @@ records:
                     "G": Gyroplane
                     "S": Seaplane
                     "RPA": Drone
-              - source: es-aesa
+              - source: es-aesa-registry
                 file: aeronaves_inscritas.pdf
                 field: Clase
                 transform:
@@ -2026,7 +2026,7 @@ records:
                     "ULM-AVION": Airplane
                     "ULM-AUTOGIRO": Gyroplane
                     "AFI-AVION": Airplane
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: category
                 transform:
@@ -2040,7 +2040,7 @@ records:
                     "HOT_AIR_AIRSHIP": "Blimp/Dirigible"
                     "POWERED_GLIDER": Powered Glider
                     "Bezpilotní letadlo": Unmanned Aircraft
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: Category
                 transform:
@@ -2053,7 +2053,7 @@ records:
                     "General Aviation – Helicopter": Helicopter
                     "General Aviation – Glider": Glider
                     "General Aviation – Balloon": Balloon
-              - source: bg-caa
+              - source: bg-caa-registry
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Категория ВС (col 5)"
                 transform:
@@ -2072,9 +2072,9 @@ records:
                     "Hot-air Balloon": Balloon
                     "Motor-hanglider": Weight-Shift-Control
                     "Paramotor-Trike": Paramotor Trike
-              - source: lv-caa
+              - source: lv-caa-registry
                 field: Aircraft_Model_Category
-              - source: rs-cad
+              - source: rs-cad-registry
                 field: vrsta_vazduhoplova
                 transform:
                   type: decode_table
@@ -2093,123 +2093,123 @@ records:
             description: "Model designation from the national registry (e.g. 757-232)"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: acftref.txt
                 field: MODEL
                 position: 2
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: MODEL_NAME
                 position: 4
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Model
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: Type
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: Model
                 notes: "Type column is always blank; Model column used instead"
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Model
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: MODELE
-              - source: bs-caa
+              - source: bs-caa-registry
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
                 field: "AIRCRAFT TYPE - MAKE/MODEL"
                 description: "Combined make and model free-text field (e.g. 'B737-790', 'CIRRUS SR 22', 'DE HAVILLAND DHC-6'); no separate manufacturer column; stored as-is"
-              - source: ky-caa
+              - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Series Type"
                 description: "Combined manufacturer and model free-text field (e.g. 'Gulfstream Aerospace Corporation G-IV', 'Leonardo S.p.A. AW139'); no separate manufacturer column; embedded newlines normalised to spaces; stored as-is"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.Type
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Aicraft Model"
                 description: "Model designation as published (note: 'Aicraft' is a typo in the source field name)"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: baumuster
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: DSMODELO
-              - source: es-aesa
+              - source: es-aesa-registry
                 file: aeronaves_inscritas.pdf
                 field: Modelo
-              - source: sg-caas
+              - source: sg-caas-registry
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: Aircraft Model
-              - source: im-ardis
+              - source: im-ardis-registry
                 file: ARDIS search results (HTML table)
                 field: "Aircraft Type"
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: model
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: "Aircraft model/type"
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: type
-              - source: kr-koca
+              - source: kr-koca-registry
                 file: statListEn01.do (JSON datatable)
                 field: AIR_TYPE
-              - source: hu-kozhaf
+              - source: hu-kozhaf-registry
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "1"
                 description: "Embedded newlines collapsed to space"
-              - source: ge-gcaa
+              - source: ge-gcaa-registry
                 field: "1"
-              - source: gg-2reg
+              - source: gg-2reg-registry
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "2"
-              - source: kg-caa
+              - source: kg-caa-registry
                 field: "2"
                 description: "Rowspan value carried forward across spanned rows"
-              - source: bg-caa
+              - source: bg-caa-registry
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Модел (col 2)"
-              - source: hr-ccaa
+              - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
-              - source: cy-dca
+              - source: cy-dca-registry
                 file: Aircraft_Register_Extract.pdf
                 field: "AIRCRAFT TYPE"
-              - source: ee-transpordiamet
+              - source: ee-transpordiamet-registry
                 field: "4"
-              - source: lv-caa
+              - source: lv-caa-registry
                 field: Model
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "3"
                 description: "Embedded newlines collapsed to space"
-              - source: md-caa
+              - source: md-caa-registry
                 file: Registrul_Aerian_al_Republicii_Moldova.pdf
                 field: "1"
-              - source: mk-caa
+              - source: mk-caa-registry
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "3"
                 description: "Embedded newlines collapsed to space"
-              - source: pg-casapng
+              - source: pg-casapng-registry
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "2"
-              - source: rs-cad
+              - source: rs-cad-registry
                 field: proizvođačka_oznaka
-              - source: sk-nsat
+              - source: sk-nsat-registry
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
                 field: "Typ lietadla"
-              - source: tc-caa
+              - source: tc-caa-registry
                 file: aircraft-register (HTML page)
                 field: MODEL
-              - source: lu-dac
+              - source: lu-dac-registry
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "Type d'aéronef"
-              - source: bz-bdca
+              - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
                 field: "Manufacturer, Model"
                 description: "Combined manufacturer and model; no separate manufacturer field available"
@@ -2219,22 +2219,22 @@ records:
             description: "Number of seats certified"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: acftref.txt
                 field: NO-SEATS
                 position: 8
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: NUMBER_OF_SEATS
                 position: 18
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.MaximumPassengers
                 transform:
                   type: add
                   value: 1
                   description: "MaximumPassengers counts passengers only (excludes pilot); +1 gives total seats. Accuracy for multi-crew transport category aircraft is unknown."
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 transform:
                   type: sum
@@ -2243,10 +2243,10 @@ records:
                       description: "Maximum Operational Passenger Seating Configuration"
                     - field: " Minimum Crew"
                       description: "Minimum required flight crew"
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: NRASSENTOS
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: max_on_board
                 skip_if_empty: true
@@ -2257,7 +2257,7 @@ records:
             description: "Aircraft build category (Land, Sea, Amphibian)"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: acftref.txt
                 field: CLASS
                 position: 5
@@ -2267,7 +2267,7 @@ records:
                     "1": Land
                     "2": Sea
                     "3": Amphibian
-              - source: br-anac
+              - source: br-anac-registry
                 field: CDCLS
                 transform:
                   type: decode_table
@@ -2279,7 +2279,7 @@ records:
                     "G": Land
                     "S": Sea
                     "RPA": Land
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.AircraftClass
                 transform:
@@ -2295,27 +2295,27 @@ records:
             description: "Aircraft manufacturer name"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: acftref.txt
                 field: MFG
                 position: 1
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: ID_PLATE_MANUFACTURERS_NAME
                 position: 7
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Manufacturer
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: Produsent
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: Manu
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Manufacturer
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: CONSTRUCTEUR
               - source: mictronics
@@ -2325,54 +2325,54 @@ records:
                   type: split_first
                   delimiter: " "
                   description: "Split 'Boeing 737-800' on first space; keep left part"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.Manufacturer
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Manufacturer"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: hersteller
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: NMFABRICANTE
-              - source: es-aesa
+              - source: es-aesa-registry
                 file: aeronaves_inscritas.pdf
                 field: Fabricante
-              - source: sg-caas
+              - source: sg-caas-registry
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: Aircraft Manufacturer
-              - source: im-ardis
+              - source: im-ardis-registry
                 file: ARDIS search results (HTML table)
                 field: "Aircraft Manufacturer"
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: manufacturer
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: Manufacturer
-              - source: gg-2reg
+              - source: gg-2reg-registry
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "1"
-              - source: hr-ccaa
+              - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČ"
-              - source: cy-dca
+              - source: cy-dca-registry
                 file: Aircraft_Register_Extract.pdf
                 field: "MANUFACTURER"
-              - source: mk-caa
+              - source: mk-caa-registry
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "4"
-              - source: pg-casapng
+              - source: pg-casapng-registry
                 file: "PNG-civil-aircraft-register-website{date}.pdf (date-stamped, discovered via index page)"
                 field: "1"
-              - source: rs-cad
+              - source: rs-cad-registry
                 field: "proizvođač"
-              - source: tc-caa
+              - source: tc-caa-registry
                 file: aircraft-register (HTML page)
                 field: "MANUFACT."
-              - source: lu-dac
+              - source: lu-dac-registry
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: Constructeur
 
@@ -2384,21 +2384,21 @@ records:
               - source: mictronics
                 file: aircrafts.json
                 field: "values[1]"
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: ICAO-code
                 description: "ICAO 4-character type designator (e.g. B738, TL30)"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: ICAOtypedesig
                 description: "ICAO 4-character type designator; populated for all CASA records"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.ICAOAircraftTypeDesignator
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " ICAO Aircraft Type"
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: CDTIPOICAO
 
@@ -2416,7 +2416,7 @@ records:
               - source: mictronics
                 file: types.json
                 field: "values[0]"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: "AircraftDetails.ICAOAircraftTypeDesignator"
                 transform:
@@ -2424,7 +2424,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: "ICAO-code"
                 transform:
@@ -2432,7 +2432,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: ICAOtypedesig
                 transform:
@@ -2440,7 +2440,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: "ICAO Aircraft Type"
                 transform:
@@ -2448,7 +2448,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: manufacturer_model
                   description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: CDTIPOICAO
                 transform:
@@ -2461,116 +2461,116 @@ records:
             type: string
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: SERIAL NUMBER
                 position: 1
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: MANUFACTURERS_SERIAL_NUMBER
                 position: 5
-              - source: nz-caa
+              - source: nz-caa-registry
                 file: Aircraft-Register-for-website-.csv
                 field: Serial No.
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: Serienummer
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: Serial
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Serial
-              - source: fr-dgac
+              - source: fr-dgac-registry
                 file: export.csv
                 field: NUMERO_SERIE
-              - source: bs-caa
+              - source: bs-caa-registry
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
                 field: "SERIAL #"
-              - source: ky-caa
+              - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Serial Number"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.SerialNumber
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Serial Number"
-              - source: at-austrocontrol
+              - source: at-austrocontrol-registry
                 endpoint: bulk
                 field: seriennummer
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: NRSERIE
-              - source: es-aesa
+              - source: es-aesa-registry
                 file: aeronaves_inscritas.pdf
                 field: "Nº serie"
                 transform:
                   type: skip_if_value
                   value: "NO\nDISPONIBLE"
                   description: "Value 'NO\\nDISPONIBLE' (with embedded newline) treated as absent"
-              - source: sg-caas
+              - source: sg-caas-registry
                 file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                 field: "Aircraft S/N"
-              - source: im-ardis
+              - source: im-ardis-registry
                 file: ARDIS search results (HTML table)
                 field: "Serial Number"
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: serial_number
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: S/N
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: serialNumber
-              - source: kr-koca
+              - source: kr-koca-registry
                 file: statListEn01.do (JSON datatable)
                 field: AIR_BUILD_NO
-              - source: hu-kozhaf
+              - source: hu-kozhaf-registry
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "2"
-              - source: ge-gcaa
+              - source: ge-gcaa-registry
                 field: "4"
-              - source: gg-2reg
+              - source: gg-2reg-registry
                 file: "PDF (date-encoded, discovered via index page)"
                 field: "3"
-              - source: kg-caa
+              - source: kg-caa-registry
                 field: "5"
-              - source: bg-caa
+              - source: bg-caa-registry
                 file: "Aircraft_Register_{YYYYMMDD}.xlsx"
                 field: "Сериен № (col 3)"
-              - source: hr-ccaa
+              - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "SERIJSKI BROJ"
-              - source: cy-dca
+              - source: cy-dca-registry
                 file: Aircraft_Register_Extract.pdf
                 field: "AIRCRAFT SERIAL NO"
-              - source: ee-transpordiamet
+              - source: ee-transpordiamet-registry
                 field: "5"
-              - source: lv-caa
+              - source: lv-caa-registry
                 field: Serial_No
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "5"
-              - source: md-caa
+              - source: md-caa-registry
                 file: Registrul_Aerian_al_Republicii_Moldova.pdf
                 field: "3"
-              - source: mk-caa
+              - source: mk-caa-registry
                 file: "AIRCRAFT-REGISTER-DD.MM.YYYY.pdf (date-stamped, discovered via index page)"
                 field: "5"
-              - source: rs-cad
+              - source: rs-cad-registry
                 field: serijski_broj
-              - source: sk-nsat
+              - source: sk-nsat-registry
                 file: WEB-DD.MM.YYYY.pdf (date-stamped, discovered via index page)
                 field: "Výrobné číslo"
-              - source: tc-caa
+              - source: tc-caa-registry
                 file: aircraft-register (HTML page)
                 field: "S/N"
-              - source: lu-dac
+              - source: lu-dac-registry
                 file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "SN aéronef"
-              - source: bz-bdca
+              - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
                 field: "Serial Number"
                 skip_if_value: "–"
@@ -2580,7 +2580,7 @@ records:
             description: "Date of manufacture as ISO 8601 UTC datetime; FAA is year-only precision (January 1 assumed); TC is nominally full date but 99.8% of records are also January 1"
             persisted: true
             sources:
-              - source: us-faa
+              - source: us-faa-registry
                 file: master.txt
                 field: YEAR MFR
                 position: 4
@@ -2590,7 +2590,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "FAA provides 4-digit year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: ca-tc
+              - source: ca-transport-canada-registry
                 file: carscurr.txt
                 field: DATE_MANUFACTURE_ASSEMBLY
                 position: 31
@@ -2600,7 +2600,7 @@ records:
                   pattern: "{value.replace('/', '-')}T00:00:00Z"
                   description: "TC provides YYYY/MM/DD — reformat separators and append UTC time"
                   skip_if_empty: true
-              - source: no-caa
+              - source: no-caa-registry
                 file: norgesluftfartoyregister.json
                 field: Byggeår
                 precision: year
@@ -2609,7 +2609,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "Norway provides 4-digit build year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: Built
                 precision: year
@@ -2618,7 +2618,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "ILT provides 4-digit build year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: Yearmanu
                 precision: year
@@ -2627,7 +2627,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "CASA provides 4-digit manufacture year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: AircraftDetails.YearBuild
                 precision: year
@@ -2636,7 +2636,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "UK CAA provides 4-digit build year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: " Year of Manufacture"
                 precision: year
@@ -2645,7 +2645,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "BAZL provides 4-digit manufacture year only — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: NRANOFABRICACAO
                 precision: year
@@ -2654,7 +2654,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "ANAC provides 4-digit manufacture year only; null for some records — January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: es-aesa
+              - source: es-aesa-registry
                 file: aeronaves_inscritas.pdf
                 field: "Año cons."
                 precision: year
@@ -2664,7 +2664,7 @@ records:
                   description: "4-digit construction year; 1900 is a placeholder for unknown year — omit; January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: "1900"
-              - source: cz-caa
+              - source: cz-caa-registry
                 endpoint: detail
                 field: manufacture_year
                 precision: year
@@ -2674,7 +2674,7 @@ records:
                   description: "Integer year; 0 or null treated as absent — January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: 0
-              - source: me-caa
+              - source: me-caa-registry
                 page: detail
                 field: "Year Built"
                 precision: year
@@ -2683,7 +2683,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "4-digit integer year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: is-samgongustofa
+              - source: is-samgongustofa-registry
                 endpoint: bulk
                 field: productionYear
                 precision: year
@@ -2693,12 +2693,12 @@ records:
                   description: "Integer year; 0 treated as absent — January 1 at midnight UTC assumed"
                   skip_if_empty: true
                   skip_if_value: 0
-              - source: kr-koca
+              - source: kr-koca-registry
                 file: statListEn01.do (JSON datatable)
                 field: AIR_BUILD_DATE
                 description: "YY.MM.DD string; pivot year 50 (>=50 → 19xx, <50 → 20xx); output as YYYY-MM-DD"
                 skip_if_empty: true
-              - source: hu-kozhaf
+              - source: hu-kozhaf-registry
                 file: "Aircraft register PDF (date-stamped, discovered via index page)"
                 field: "3"
                 precision: year
@@ -2707,7 +2707,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "4-digit manufacture year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: ge-gcaa
+              - source: ge-gcaa-registry
                 field: "5"
                 precision: year
                 transform:
@@ -2715,11 +2715,11 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "4-digit manufacture year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: kg-caa
+              - source: kg-caa-registry
                 field: "6"
                 description: "DD.MM.YYYY → YYYY-MM-DD; month-name YYYY (Russian or English) → YYYY-MM-01"
                 skip_if_empty: true
-              - source: lv-caa
+              - source: lv-caa-registry
                 field: Construction_Year
                 precision: year
                 transform:
@@ -2727,7 +2727,7 @@ records:
                   pattern: "{value}-01-01T00:00:00Z"
                   description: "Integer year; January 1 at midnight UTC assumed"
                   skip_if_empty: true
-              - source: mv-caa
+              - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "6"
                 precision: year
@@ -2754,7 +2754,7 @@ records:
                     "L": Light
                     "M/L": "Medium/Light"
                     "-": "Unknown/None"
-              - source: uk-caa
+              - source: uk-caa-registry
                 endpoint: details
                 field: "AircraftDetails.ICAOAircraftTypeDesignator"
                 transform:
@@ -2762,7 +2762,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: nl-ilt
+              - source: nl-ilt-registry
                 file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                 field: "ICAO-code"
                 transform:
@@ -2770,7 +2770,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: au-casa
+              - source: au-casa-registry
                 file: acrftreg
                 field: ICAOtypedesig
                 transform:
@@ -2778,7 +2778,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: ch-bazl
+              - source: ch-bazl-registry
                 endpoint: bulk
                 field: "ICAO Aircraft Type"
                 transform:
@@ -2786,7 +2786,7 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: wake_turbulence_category
                   description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type), already decoded, and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
-              - source: br-anac
+              - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: CDTIPOICAO
                 transform:
@@ -2856,36 +2856,36 @@ records:
                 description: "Number of engines installed"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: acftref.txt
                     field: NO-ENG
                     position: 7
-                  - source: ca-tc
+                  - source: ca-transport-canada-registry
                     file: carscurr.txt
                     field: NUMBER_OF_ENGINES
                     position: 17
-                  - source: nl-ilt
+                  - source: nl-ilt-registry
                     file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                     field: Engines
-                  - source: au-casa
+                  - source: au-casa-registry
                     file: acrftreg
                     field: engnum
-                  - source: uk-caa
+                  - source: uk-caa-registry
                     endpoint: details
                     field: "AircraftDetails.Engines[0].TotalNumberOfEngines"
-                  - source: br-anac
+                  - source: br-anac-registry
                     file: dados_aeronaves.json
                     field: CDCLS
                     transform:
                       type: decode_character
                       position: 1
                       description: "Position 2 (index 1) of CDCLS is the engine count digit; '0' or absent = omit; omitted for RPA (drone) records"
-                  - source: es-aesa
+                  - source: es-aesa-registry
                     file: aeronaves_inscritas.pdf
                     field: "Nº mot."
                     transform:
                       type: parse_integer
-                  - source: cz-caa
+                  - source: cz-caa-registry
                     endpoint: detail
                     field: engine_count
                     skip_if_empty: true
@@ -2896,7 +2896,7 @@ records:
                 description: "Engine type (Reciprocating, Turbo-fan, etc.)"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: acftref.txt
                     field: TYPE-ENG
                     position: 4
@@ -2915,7 +2915,7 @@ records:
                         "9": Unknown
                         "10": Electric
                         "11": Rotary
-                  - source: ca-tc
+                  - source: ca-transport-canada-registry
                     file: carscurr.txt
                     field: ENGINE_CATEGORY_E
                     position: 15
@@ -2929,7 +2929,7 @@ records:
                         "Turbo Jet": Turbo-jet
                         "Electric": Electric
                         "Other": Unknown
-                  - source: nl-ilt
+                  - source: nl-ilt-registry
                     file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                     field: EngKind
                     skip_if_value: "Engine - not defined"
@@ -2947,7 +2947,7 @@ records:
                         "Turbine-driven propeller engine": Turbo-prop
                         "Turbojet engine": Turbo-jet
                         "Wankel engine": Rotary
-                  - source: au-casa
+                  - source: au-casa-registry
                     file: acrftreg
                     field: Engtype
                     skip_if_value: "Not Applicable"
@@ -2963,7 +2963,7 @@ records:
                         "Electric": Electric
                         "Diesel Engine": Diesel
                         "Rotary": Rotary
-                  - source: ch-bazl
+                  - source: ch-bazl-registry
                     endpoint: bulk
                     field: " Engine Category"
                     transform:
@@ -2976,7 +2976,7 @@ records:
                         "Jet Engine": Turbo-jet
                         "Electrical Engine": Electric
                         "Hydrogen-Electric": Hydrogen-Electric
-                  - source: br-anac
+                  - source: br-anac-registry
                     file: dados_aeronaves.json
                     field: CDCLS
                     transform:
@@ -2988,7 +2988,7 @@ records:
                         "J": Turbo-jet
                         "E": Electric
                         "T": "Turbo-prop (or Turbo-shaft for helicopters — see description)"
-                  - source: cz-caa
+                  - source: cz-caa-registry
                     endpoint: detail
                     field: engine_type
                     skip_if_value: "NO_ENGINE"
@@ -3005,32 +3005,32 @@ records:
                 description: "Engine model designation (e.g. LEAP-1B28)"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: engine.txt
                     field: MODEL
                     position: 2
                     join: "master.txt[3] → engine.txt[0]"
-                  - source: nl-ilt
+                  - source: nl-ilt-registry
                     file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                     field: EngModel
                     notes: "Values containing 'not further defined' are omitted"
-                  - source: au-casa
+                  - source: au-casa-registry
                     file: acrftreg
                     field: Engmodel
-                  - source: uk-caa
+                  - source: uk-caa-registry
                     endpoint: details
                     field: "AircraftDetails.Engines[0].Name"
-                  - source: ch-bazl
+                  - source: ch-bazl-registry
                     endpoint: bulk
                     field: " Engine"
                     transform:
                       type: split_first
                       delimiter: ", "
                       description: "Comma-separated multi-engine entries take first value (e.g. 'CFM56-5B4/3, CFM56-5B4/P' → 'CFM56-5B4/3')"
-                  - source: es-aesa
+                  - source: es-aesa-registry
                     file: aeronaves_inscritas.pdf
                     field: "Modelo Motor"
-                  - source: sg-caas
+                  - source: sg-caas-registry
                     file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                     field: Engine Model
 
@@ -3039,29 +3039,29 @@ records:
                 description: "Engine manufacturer name"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: engine.txt
                     field: MFR
                     position: 1
                     join: "master.txt[3] → engine.txt[0]"
-                  - source: ca-tc
+                  - source: ca-transport-canada-registry
                     file: carscurr.txt
                     field: ENGINE_MANUF_E
                     position: 13
-                  - source: nl-ilt
+                  - source: nl-ilt-registry
                     file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
                     field: EngManufacturer
                     notes: "Values of 'Unknown' are omitted"
-                  - source: au-casa
+                  - source: au-casa-registry
                     file: acrftreg
                     field: Engmanu
-                  - source: ch-bazl
+                  - source: ch-bazl-registry
                     endpoint: bulk
                     field: " Engine manufacturer"
-                  - source: es-aesa
+                  - source: es-aesa-registry
                     file: aeronaves_inscritas.pdf
                     field: "Marca Motor"
-                  - source: sg-caas
+                  - source: sg-caas-registry
                     file: Aircraft-Register-as-at-{MonYYYY}.xlsx
                     field: Engine Manufacturer
 
@@ -3070,7 +3070,7 @@ records:
                 description: "Power rating unit — Horsepower (piston/turbo-prop) or Thrust (jet)"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: engine.txt
                     description: "Derived from engine TYPE; piston/prop → Horsepower; jet → Thrust"
 
@@ -3079,7 +3079,7 @@ records:
                 description: "Rated power output in horsepower or pounds of thrust"
                 persisted: true
                 sources:
-                  - source: us-faa
+                  - source: us-faa-registry
                     file: engine.txt
                     description: "HORSEPOWER or THRUST column depending on engine type"
 
@@ -3087,7 +3087,7 @@ records:
             type: array
             description: >
               Every data runner that contributed a field to this record —
-              e.g. ["mictronics", "us-faa"]. Computed fallback field (see the
+              e.g. ["mictronics", "us-faa-registry"]. Computed fallback field (see the
               note near the top of this file): no runner writes a
               "data_sources" key directly. Each of the three enrichment keys
               (aircraft:mictronics, aircraft:registry, aircraft:livery)
@@ -3114,192 +3114,192 @@ records:
               index: 0
               equals: "1"
               description: "flags_string[0] == '1'"
-          - source: at-austrocontrol
+          - source: at-austrocontrol-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: au-casa
+          - source: au-casa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: bg-caa
+          - source: bg-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: br-anac
+          - source: br-anac-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: bs-caa
+          - source: bs-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: bz-bdca
+          - source: bz-bdca-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: ca-transport-canada
+          - source: ca-transport-canada-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: ch-bazl
+          - source: ch-bazl-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: cy-dca
+          - source: cy-dca-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: cz-caa
+          - source: cz-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: ee-transpordiamet
+          - source: ee-transpordiamet-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: es-aesa
+          - source: es-aesa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: fr-dgac
+          - source: fr-dgac-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: ge-gcaa
+          - source: ge-gcaa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: gg-2reg
+          - source: gg-2reg-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: hr-ccaa
+          - source: hr-ccaa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: hu-kozhaf
+          - source: hu-kozhaf-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: im-ardis
+          - source: im-ardis-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: is-samgongustofa
+          - source: is-samgongustofa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: kg-caa
+          - source: kg-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: kr-koca
+          - source: kr-koca-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: ky-caa
+          - source: ky-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: lu-dac
+          - source: lu-dac-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: lv-caa
+          - source: lv-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: md-caa
+          - source: md-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: me-caa
+          - source: me-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: mk-caa
+          - source: mk-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: mv-caa
+          - source: mv-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: nl-ilt
+          - source: nl-ilt-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: no-caa
+          - source: no-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: nz-caa
+          - source: nz-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: pg-casapng
+          - source: pg-casapng-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: rs-cad
+          - source: rs-cad-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: sg-caas
+          - source: sg-caas-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: sk-nsat
+          - source: sk-nsat-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: tc-caa
+          - source: tc-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: uk-caa
+          - source: uk-caa-registry
             transform:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
-          - source: us-faa
+          - source: us-faa-registry
             transform:
               type: constant
               value: false

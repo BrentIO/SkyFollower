@@ -224,23 +224,23 @@ class TestDataSources:
             f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"},
         )
         redis_client.json().set(
-            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa", "registration": "N659DL"},
+            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry", "registration": "N659DL"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["data_sources"] == ["mictronics", "us-faa"]
+        assert result["data_sources"] == ["mictronics", "us-faa-registry"]
 
     def test_three_sources_all_present_mictronics_registry_livery_order(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
             f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"},
         )
         redis_client.json().set(
-            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa"},
+            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry"},
         )
         redis_client.json().set(
             f"aircraft:livery:{icao_hex}", "$", {"source": "airportwebcams-special-liveries", "special_livery": "America250"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["data_sources"] == ["mictronics", "us-faa", "airportwebcams-special-liveries"]
+        assert result["data_sources"] == ["mictronics", "us-faa-registry", "airportwebcams-special-liveries"]
 
     def test_mictronics_absent_registry_and_livery_still_both_collected(self, redis_client, merge_sha, icao_hex):
         """Regression guard: an earlier draft of this aggregation used Lua's
@@ -249,31 +249,31 @@ class TestDataSources:
         (nil, index 1), that would have skipped registry/livery too even
         though both are present — this is exactly the case that catches it."""
         redis_client.json().set(
-            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa"},
+            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry"},
         )
         redis_client.json().set(
             f"aircraft:livery:{icao_hex}", "$", {"source": "airportwebcams-special-liveries"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["data_sources"] == ["us-faa", "airportwebcams-special-liveries"]
+        assert result["data_sources"] == ["us-faa-registry", "airportwebcams-special-liveries"]
 
     def test_bare_source_scalar_never_leaks_through(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
             f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"},
         )
         redis_client.json().set(
-            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa"},
+            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
         assert "source" not in result
-        assert result["data_sources"] == ["mictronics", "us-faa"]
+        assert result["data_sources"] == ["mictronics", "us-faa-registry"]
 
     def test_key_present_without_source_field_does_not_crash_or_gap_the_array(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
             f"aircraft:mictronics:{icao_hex}", "$", {"aircraft": {"manufacturer_model": "BOEING 757-200"}},
         )
         redis_client.json().set(
-            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa"},
+            f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["data_sources"] == ["us-faa"]
+        assert result["data_sources"] == ["us-faa-registry"]
