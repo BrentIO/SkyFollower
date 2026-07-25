@@ -3589,3 +3589,93 @@ records:
             file: airports.csv
             description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
+  archive_parquet_index:
+    description: >
+      Per-flight Parquet index row, written by archive-processor alongside
+      each flight's S3 object so Athena/Glue can query the archive without
+      scanning the full flight records.json.gz payload (positions[] and
+      velocities[] dominate flight object size but are never filtered on).
+      Every column is copied directly from the same completed flight's
+      records.flight fields at archive-write time — no data runner writes
+      this record; archive-processor is the sole source for all columns. A
+      daily compaction job consolidates each day's small per-flight files
+      into one file (targeting the day before yesterday, to absorb
+      flight_ttl_seconds and offline-queue drain lag), deleting originals
+      only once included in the compacted output; Glue Catalog partition
+      projection reads every file under a year/month/day partition as one
+      table regardless of how many files exist for that day, so late
+      stragglers self-heal without duplication risk.
+    storage: S3
+    s3_path: "index/{YYYY}/{MM}/{DD}/{uuid}.parquet"
+    format: parquet
+    partitioning: "year/month/day, computed from the S3 path via Glue Catalog partition projection; no crawler"
+    fields:
+
+      icao_hex:
+        type: string
+        description: "6-character uppercase ICAO Mode S hex identifier; primary aircraft query key"
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.icao_hex"
+
+      registration:
+        type: string
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.registration"
+
+      type_designator:
+        type: string
+        description: "ICAO 4-character aircraft type designator (e.g. B722); one of the two named primary query patterns alongside icao_hex"
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.aircraft.properties.type_designator"
+
+      military:
+        type: boolean
+        description: "True if the aircraft is known to be military. The merged aircraft record only ever has records.flight.fields.military present-and-true or absent — to_completed_flight() strips an explicit false for legacy compatibility — so this column normalizes absent to false, keeping it a clean non-nullable boolean rather than tri-state"
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Derived from records.flight.fields.military, defaulting absent to false"
+
+      operator_designator:
+        type: string
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.operator.properties.airline_designator"
+
+      ident:
+        type: string
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.ident"
+
+      first_message:
+        type: datetime
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.first_message"
+
+      last_message:
+        type: datetime
+        description: "Used, alongside first_message, for date-range queries; unbounded queries (e.g. every B722 ever) cannot prune on this column since type_designator/icao_hex/operator_designator aren't partition keys"
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Copied from records.flight.fields.last_message"
+
+      s3_key:
+        type: string
+        description: "Full S3 key of the matching flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz object; a search result's s3_key is what the UI backend uses to fetch the full flight record"
+        persisted: true
+        sources:
+          - source: archive-processor
+            description: "Computed at write time from records.flight's s3_path pattern for the same flight"
+
