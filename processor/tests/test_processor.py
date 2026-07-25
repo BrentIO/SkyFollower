@@ -19,6 +19,7 @@ from processor.main import (
     Flight,
     Processor,
     _ArchiveFallbackQueue,
+    _DepthHWM,
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
@@ -751,6 +752,122 @@ class TestTimeTracker:
 
 
 # ---------------------------------------------------------------------------
+# _DepthHWM — high-water-mark tracker backing rabbitmq_input_queue_depth_hwm
+# ---------------------------------------------------------------------------
+
+class TestDepthHWM:
+    def test_starts_at_negative_one(self):
+        assert _DepthHWM().value_and_reset() == -1
+
+    def test_tracks_max_of_recorded_values(self):
+        hwm = _DepthHWM()
+        hwm.record(3)
+        hwm.record(9)
+        hwm.record(5)
+        assert hwm.value_and_reset() == 9
+
+    def test_resets_after_read(self):
+        hwm = _DepthHWM()
+        hwm.record(9)
+        assert hwm.value_and_reset() == 9
+        assert hwm.value_and_reset() == -1
+
+    def test_error_reading_does_not_clobber_a_prior_valid_max(self):
+        """A -1 (error/no-sample) reading is still passed to record() by the
+        sampler loop — it must never win against a real depth already seen
+        this window, since -1 always loses the max() comparison."""
+        hwm = _DepthHWM()
+        hwm.record(4)
+        hwm.record(-1)
+        assert hwm.value_and_reset() == 4
+
+    def test_all_error_readings_report_negative_one(self):
+        hwm = _DepthHWM()
+        hwm.record(-1)
+        hwm.record(-1)
+        assert hwm.value_and_reset() == -1
+
+
+# ---------------------------------------------------------------------------
+# Processor._rmq_queue_depth — passive queue_declare on this processor's own
+# input queue, reusing the existing consumer channel
+# ---------------------------------------------------------------------------
+
+class TestRmqQueueDepth:
+    def test_no_channel_returns_negative_one(self):
+        p, _ = _make_processor()
+        p._rmq_channel = None
+        assert p._rmq_queue_depth() == -1
+
+    def test_returns_message_count_from_passive_declare(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_channel.queue_declare.return_value.method.message_count = 7
+        p._rmq_channel = mock_channel
+
+        assert p._rmq_queue_depth() == 7
+        mock_channel.queue_declare.assert_called_once_with(
+            queue=p._queue_name, durable=True, passive=True
+        )
+
+    def test_declare_error_returns_negative_one(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_channel.queue_declare.side_effect = ConnectionError("gone")
+        p._rmq_channel = mock_channel
+
+        assert p._rmq_queue_depth() == -1
+
+
+# ---------------------------------------------------------------------------
+# Processor._rmq_queue_depth_sampler_loop — polls at most once every 10
+# seconds, independent of telemetry_interval_seconds
+# ---------------------------------------------------------------------------
+
+class TestRmqQueueDepthSamplerLoop:
+    def _run_one_sample_tick(self, p) -> None:
+        """Run the real _rmq_queue_depth_sampler_loop for exactly one
+        iteration, by making the mocked time.sleep set _shutdown so the
+        loop body runs once and then exits — mirrors
+        _run_one_telemetry_tick's approach for _telemetry_loop."""
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("processor.main.time.sleep", side_effect=fake_sleep):
+            p._rmq_queue_depth_sampler_loop()
+
+    def test_sleeps_ten_seconds_between_samples(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_channel.queue_declare.return_value.method.message_count = 0
+        p._rmq_channel = mock_channel
+
+        with patch("processor.main.time.sleep") as mock_sleep:
+            mock_sleep.side_effect = lambda _s: p._shutdown.set()
+            p._rmq_queue_depth_sampler_loop()
+
+        mock_sleep.assert_called_once_with(10)
+
+    def test_one_tick_records_sampled_depth_into_hwm(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_channel.queue_declare.return_value.method.message_count = 12
+        p._rmq_channel = mock_channel
+
+        self._run_one_sample_tick(p)
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == 12
+
+    def test_one_tick_with_no_channel_records_negative_one(self):
+        p, _ = _make_processor()
+        p._rmq_channel = None
+
+        self._run_one_sample_tick(p)
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1
+
+
+# ---------------------------------------------------------------------------
 # Processor enrichment logic (unit tests with mocked Redis)
 # ---------------------------------------------------------------------------
 
@@ -883,7 +1000,7 @@ class TestTelemetryPayload:
         payload = json.loads(mock_mqtt.publish.call_args[0][1])
         expected = {
             "started_at", "messages_per_second", "processing_time_hwm_ms",
-            "rules_engine_hwm_ms", "rabbitmq_input_queue_depth",
+            "rules_engine_hwm_ms", "rabbitmq_input_queue_depth_hwm",
             "local_archive_queue_depth", "active_flights",
             "registration_misses_hour", "registration_misses_today",
             "aircraft_type_misses_hour", "aircraft_type_misses_today",
@@ -902,6 +1019,23 @@ class TestTelemetryPayload:
         p._publish_telemetry()
         payload = json.loads(mock_mqtt.publish.call_args[0][1])
         assert payload["processing_time_hwm_ms"] == 50
+
+    def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rmq_queue_depth_hwm.record(3)
+        p._rmq_queue_depth_hwm.record(15)
+        p._rmq_queue_depth_hwm.record(8)
+
+        p._publish_telemetry()
+        first_payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        assert first_payload["rabbitmq_input_queue_depth_hwm"] == 15
+
+        p._publish_telemetry()
+        second_payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        assert second_payload["rabbitmq_input_queue_depth_hwm"] == -1
 
     def test_no_publish_when_mqtt_not_connected(self):
         p = self._make_processor()

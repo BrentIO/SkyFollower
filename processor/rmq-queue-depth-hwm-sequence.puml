@@ -1,0 +1,36 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Message Processor — RabbitMQ Queue-Depth High-Water Mark
+
+box "Message Processor" $OnPrem
+    participant "Processor" as Processor
+end box
+
+box "RabbitMQ" $OnPrem
+    queue "adsb-{PROCESSOR_ID}" as InputQ
+end box
+
+box "MQTT" $OnPrem
+    participant "MQTT Broker" as MQTT
+end box
+
+== Every 10 seconds, independent of telemetry_interval_seconds ==
+
+loop until shutdown
+    Processor -> Processor : **Sleep 10 seconds**
+    alt consumer channel connected
+        Processor -> InputQ++ : **Read queue depth**\n""queue_declare(queue=adsb-{id}, durable=True, passive=True)""
+        InputQ --> Processor-- : message_count
+        Processor -> Processor : **Record into high-water mark**\n""hwm.record(message_count)""
+    else not connected yet, or declare raises
+        Processor -> Processor : **Record into high-water mark**\n""hwm.record(-1)""
+    end
+end
+
+== Independently, every telemetry_interval_seconds ==
+
+Processor -> Processor : **Read and reset the high-water mark**\n""depth_hwm = hwm.value_and_reset()""
+Processor -\ MQTT : **Publish telemetry**\n""SkyFollower/processor/{id}/statistics"" (retain=True)\nincludes rabbitmq_input_queue_depth_hwm
+
+@enduml

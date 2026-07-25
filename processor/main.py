@@ -192,6 +192,35 @@ class _TimeTracker:
 
 
 # ---------------------------------------------------------------------------
+# RabbitMQ queue-depth high-water mark
+# ---------------------------------------------------------------------------
+
+class _DepthHWM:
+    """Tracks the highest depth recorded since the last read, resetting on
+    each read — same reset-on-publish contract as _TimeTracker.hwm_ms_and_reset().
+    Starts (and resets to) -1 rather than 0 so "no valid sample landed this
+    window" (e.g. the consumer channel isn't up yet, or the sampler hasn't
+    ticked since the last publish) stays distinguishable from an observed
+    depth of zero — record()'s max keeps a -1 error/no-sample reading from
+    ever overwriting a real one."""
+
+    def __init__(self) -> None:
+        self._hwm = -1
+        self._lock = threading.Lock()
+
+    def record(self, value: int) -> None:
+        with self._lock:
+            if value > self._hwm:
+                self._hwm = value
+
+    def value_and_reset(self) -> int:
+        with self._lock:
+            v = self._hwm
+            self._hwm = -1
+            return v
+
+
+# ---------------------------------------------------------------------------
 # Flight — wraps SQLite state
 # ---------------------------------------------------------------------------
 
@@ -467,6 +496,7 @@ class Processor:
         self._rate = _RateTracker()
         self._processing_time = _TimeTracker()
         self._rules_time = _TimeTracker()
+        self._rmq_queue_depth_hwm = _DepthHWM()
         self._db_lock = threading.Lock()
 
         # Redis
@@ -513,6 +543,9 @@ class Processor:
         threading.Thread(target=self._eviction_loop, daemon=True, name="eviction").start()
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
+        threading.Thread(
+            target=self._rmq_queue_depth_sampler_loop, daemon=True, name="rmq-depth-sampler"
+        ).start()
 
         self._consume_loop()
 
@@ -1032,17 +1065,12 @@ class Processor:
         self._processing_time.reset()
         rules_hwm = self._rules_time.hwm_ms_and_reset()
 
-        try:
-            rmq_depth = self._rmq_queue_depth()
-        except Exception:
-            rmq_depth = -1
-
         payload = {
             "started_at": self._started_at,
             "messages_per_second": round(self._rate.rate(), 2),
             "processing_time_hwm_ms": processing_hwm,
             "rules_engine_hwm_ms": rules_hwm,
-            "rabbitmq_input_queue_depth": rmq_depth,
+            "rabbitmq_input_queue_depth_hwm": self._rmq_queue_depth_hwm.value_and_reset(),
             "local_archive_queue_depth": self._fallback.depth(),
             "active_flights": active,
             "registration_misses_hour": self._redis_counter(
@@ -1080,13 +1108,26 @@ class Processor:
             return 0
 
     def _rmq_queue_depth(self) -> int:
-        """Best-effort queue depth via passive declare."""
+        """Best-effort depth of this processor's input queue via passive
+        declare on the existing consumer channel. Returns -1 on any error
+        (no channel yet, or the declare itself fails)."""
         if not self._rmq_channel:
             return -1
-        result = self._rmq_channel.queue_declare(
-            queue=self._queue_name, durable=True, passive=True
-        )
-        return result.method.message_count
+        try:
+            result = self._rmq_channel.queue_declare(
+                queue=self._queue_name, durable=True, passive=True
+            )
+            return result.method.message_count
+        except Exception:
+            return -1
+
+    def _rmq_queue_depth_sampler_loop(self) -> None:
+        """Samples this processor's input queue depth at most once every 10
+        seconds, independent of telemetry_interval_seconds, feeding the HWM
+        tracker that _publish_telemetry() reads and resets each tick."""
+        while not self._shutdown.is_set():
+            time.sleep(10)
+            self._rmq_queue_depth_hwm.record(self._rmq_queue_depth())
 
     # ------------------------------------------------------------------
     # Config polling
@@ -1147,7 +1188,7 @@ class Processor:
             ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
             ("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms"),
             ("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
-            ("rabbitmq_input_queue_depth", "RabbitMQ Queue Depth", "mdi:tray-full", "measurement", None),
+            ("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement", None),
             ("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement", None),
             ("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing", None),
             ("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing", None),
