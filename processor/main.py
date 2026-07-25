@@ -1001,6 +1001,15 @@ class Processor:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
             time.sleep(interval)
+            # Independent of _consume_loop's reconnect-triggered drain:
+            # _archive() queues to the fallback on any publish exception
+            # without necessarily affecting _rmq_connected or the consume
+            # side at all, so repeated publish-only failures (e.g. a
+            # broker-side rejection on the archive routing key) would
+            # otherwise never trigger a drain again. This periodic sweep
+            # is a cheap no-op when the queue is empty.
+            if self._rmq_connected:
+                self._drain_fallback()
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:

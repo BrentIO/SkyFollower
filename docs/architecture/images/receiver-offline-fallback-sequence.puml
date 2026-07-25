@@ -23,6 +23,8 @@ alt connected
     opt channel already closed locally
         Receiver -> Receiver : **Local publish failure**\n""basic_publish() raises""
         Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+        ReceiverDB --> Receiver-- : OK
     end
 else not connected
     Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""

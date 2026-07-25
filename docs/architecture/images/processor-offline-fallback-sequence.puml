@@ -1,0 +1,81 @@
+@startuml
+!include ../../images/common-sequence.iuml
+
+title Message Processor Offline Fallback
+
+box "Processor" $OnPrem
+    participant "Processor" as Processor
+    database "completed_flights.db" as ProcessorDB
+end box
+
+box "RabbitMQ" $OnPrem
+    queue "archive" as ArchiveQ
+end box
+
+== Normal operation ==
+
+Processor -> ArchiveQ++ : **Connect**
+ArchiveQ --> Processor-- : Connected
+Processor -> Processor : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+Processor -> Processor : **Check if RabbitMQ is connected**\n""if rmq_connected and rmq_channel:""
+alt connected
+    Processor -\ ArchiveQ : **Publish**
+    opt channel already closed locally
+        Processor -> Processor : **Local publish failure**\n""basic_publish() raises""
+        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+        ProcessorDB --> Processor-- : OK
+    end
+else not connected
+    Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+    ProcessorDB --> Processor-- : OK
+end
+
+== Connection drops ==
+
+ArchiveQ ->x Processor : **Connection lost**
+Processor -> Processor : **start_consuming** raises
+Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+
+loop Until reconnected
+    alt Connection fails
+        Processor ->x ArchiveQ : **Connect**
+        Processor -> Processor : **Sleep 10 seconds**
+    else Connection succeeds
+        Processor -> ArchiveQ++ : **Connect**
+        ArchiveQ --> Processor-- : Connected
+        Processor -> Processor : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+    end
+end
+
+opt Message arrives while disconnected from RabbitMQ
+    loop For each message
+        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+        ProcessorDB --> Processor-- : OK
+    end
+end
+
+== Draining completed_flights.db (reconnect-triggered) ==
+
+loop For each row in database
+    Processor -> ProcessorDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+    ProcessorDB --> Processor-- : Record
+    Processor -\ ArchiveQ : **Publish**
+    break basic_publish raises error
+        Processor -> Processor : **Stop draining**
+    end
+    Processor -> ProcessorDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+    ProcessorDB --> Processor-- : OK
+end
+
+== Independently, every telemetry_interval_seconds (catches failures that never dropped the connection) ==
+
+Processor -> Processor : **Check if RabbitMQ is connected**\n""if rmq_connected:""
+alt connected
+    note right of Processor
+        Refer to //Draining completed_flights.db (reconnect-triggered)//
+    end note
+else not connected
+    Processor -> Processor : **Skip — nothing to do this tick**
+end
+
+@enduml

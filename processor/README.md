@@ -151,6 +151,15 @@ before new messages are consumed. Redis and MQTT failures are handled
 gracefully and logged; enrichment lookups that fail leave the flight partially
 enriched rather than dropping it.
 
+Draining is also attempted independently every `telemetry_interval_seconds`,
+not just on a detected reconnect. `_archive()` queues a completed flight to
+the fallback on any publish exception without necessarily affecting
+`_rmq_connected` or the consume side at all — so a run of publish-only
+failures (e.g. a broker-side rejection on the `archive` routing key, with the
+consumer connection itself unaffected) would otherwise never trigger a drain
+again, since that's only ever spawned from the consumer's own reconnect
+path. The periodic check is a cheap no-op when the queue is already empty.
+
 ### Active flight store durability & crash recovery
 
 `active_flights.db` (SQLite, WAL mode, `data_dir`) holds every currently
