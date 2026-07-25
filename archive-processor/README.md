@@ -233,3 +233,10 @@ All statistics are published as a single retained JSON payload every
 published to `homeassistant/sensor/SkyFollower_archive_{field}/config` on
 MQTT connect, each using `value_template` to extract its field from the
 shared statistics topic.
+
+`rabbitmq_archive_queue_depth_hwm` is sampled by a dedicated background
+loop capped at once every 10 seconds, independent of how low
+`telemetry_interval_seconds` is configured, and tracked as a high-water
+mark that resets each time telemetry is published.
+
+![RabbitMQ queue-depth high-water mark](./rmq-queue-depth-hwm-sequence.svg)
