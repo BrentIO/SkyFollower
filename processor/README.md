@@ -201,3 +201,14 @@ Conditions are sorted by evaluation cost before each evaluation pass — cheap
 field comparisons run before expensive geographic checks. See
 [Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) for
 the full condition type reference.
+
+A rule may also carry an optional `force_archive` boolean (default `false`).
+It isn't a condition — it's an ordinary property alongside `identifier`,
+so any number of independent rules can each set it. When a matched rule has
+`force_archive: true`, `flight.force_archive` becomes (and stays) `true` for
+that flight's lifetime; the archive processor reads this to override its
+MLAT-only archive skip (see [archive-processor/README.md](../archive-processor/README.md))
+for MLAT-only flights the user does care about — a specific aircraft, an
+area, etc. — without archiving every MLAT contact indiscriminately. A
+matched `force_archive` rule still publishes its normal MQTT rule
+notification like any other rule; nothing about the flag suppresses that.

@@ -166,7 +166,7 @@ class TestCompletedFlight:
             first_message=datetime(2026, 5, 30, 10, 0, 0, tzinfo=timezone.utc),
             last_message=datetime(2026, 5, 30, 10, 15, 0, tzinfo=timezone.utc),
             total_messages=100,
-            source="1090",
+            receiver_sources=["1090"],
             aircraft={"icao_hex": "A8AE7F"},
         )
         defaults.update(kwargs)
@@ -178,9 +178,37 @@ class TestCompletedFlight:
         assert "_id" in d
         assert "id" not in d
 
-    def test_source_field_present(self):
-        flight = self._make(source="978")
-        assert flight.source == "978"
+    def test_receiver_sources_field_present(self):
+        flight = self._make(receiver_sources=["978"])
+        assert flight.receiver_sources == ["978"]
+
+    def test_receiver_sources_multiple_values(self):
+        flight = self._make(receiver_sources=["MLAT", "1090"])
+        assert flight.receiver_sources == ["MLAT", "1090"]
+
+    def test_receiver_sources_defaults_to_empty_list(self):
+        """Must default, not be required — legacy migrated flights have no
+        receive-source history at all and must still deserialize."""
+        flight = self._make(receiver_sources=[])
+        assert flight.receiver_sources == []
+
+    def test_receiver_sources_absent_from_input_still_defaults(self):
+        flight = CompletedFlight(
+            _id="01900000-0000-7000-8000-000000000002",
+            first_message=datetime(2026, 5, 30, 10, 0, 0, tzinfo=timezone.utc),
+            last_message=datetime(2026, 5, 30, 10, 15, 0, tzinfo=timezone.utc),
+            total_messages=1,
+            aircraft={"icao_hex": "A8AE7F"},
+        )
+        assert flight.receiver_sources == []
+
+    def test_force_archive_defaults_to_false(self):
+        flight = self._make()
+        assert flight.force_archive is False
+
+    def test_force_archive_true(self):
+        flight = self._make(force_archive=True)
+        assert flight.force_archive is True
 
     def test_positions_and_velocities_default_empty(self):
         flight = self._make()

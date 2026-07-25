@@ -139,8 +139,9 @@ class RulesEngine:
         Evaluate all enabled rules against *flight*.
 
         Returns a list of matched rule dicts (keys: name, description,
-        identifier).  Skips rules whose identifier is already in
-        flight.matched_rules (each rule fires at most once per flight).
+        identifier, force_archive, conditions).  Skips rules whose identifier
+        is already in flight.matched_rules (each rule fires at most once per
+        flight).
         """
         matched: list[dict] = []
         for rule in self._rules:
@@ -206,6 +207,10 @@ class RulesEngine:
         if len(rule["conditions"]) == 0:
             raise _RuleError(f"rule '{identifier}' has no conditions")
 
+        force_archive = rule.get("force_archive", False)
+        if not isinstance(force_archive, bool):
+            raise _RuleError(f"rule '{identifier}': 'force_archive' must be a boolean")
+
         staged_conditions: list[dict] = []
         for cidx, cond in enumerate(rule["conditions"]):
             try:
@@ -219,6 +224,7 @@ class RulesEngine:
             "name": str(rule.get("name", "")),
             "description": str(rule.get("description", "")),
             "identifier": identifier,
+            "force_archive": force_archive,
             "conditions": staged_conditions,
         }
 

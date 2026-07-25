@@ -49,7 +49,7 @@ def _make_flight(**overrides) -> CompletedFlight:
         "first_message": datetime(2024, 5, 31, 12, 0, 0, tzinfo=timezone.utc),
         "last_message": datetime(2024, 5, 31, 13, 0, 0, tzinfo=timezone.utc),
         "total_messages": 100,
-        "source": "1090",
+        "receiver_sources": ["1090"],
         "aircraft": {"icao_hex": "A8AE7F", "registration": "N659DL"},
         "ident": "DAL659",
         "positions": [
@@ -416,6 +416,112 @@ class TestRedisCounterIncrements:
 
             mock_redis.incr.assert_not_called()
             assert processor._fallback.depth() == 1
+
+
+# ---------------------------------------------------------------------------
+# MLAT-only flight skip + force_archive override
+# ---------------------------------------------------------------------------
+
+class TestMlatOnlySkip:
+    def _make_processor(self, tmp_dir: str):
+        from archive_processor.main import ArchiveProcessor
+
+        config = {
+            "s3": {"region": "us-east-1", "bucket": "test-bucket",
+                   "access_key_id": "x", "secret_access_key": "x"},
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "redis": {"host": "localhost"},
+            "mqtt": None,
+            "telemetry_interval_seconds": 30,
+            "data_dir": tmp_dir,
+        }
+
+        with patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
+             patch("archive_processor.main.boto3.Session"):
+            mock_redis = MagicMock()
+            MockRedis.return_value = mock_redis
+            processor = ArchiveProcessor(config)
+            processor._redis = mock_redis
+            processor._s3_connected = True
+            return processor, mock_redis
+
+    def test_mlat_only_flight_not_written_to_s3(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+
+            with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
+                processor._process_flight(flight)
+
+            mock_archive.assert_not_called()
+
+    def test_mlat_only_flight_not_queued_to_local_fallback(self):
+        """Skip must happen before the S3-available branch — even when S3 is
+        down, a skipped flight is dropped, not deferred."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            processor._s3_connected = False
+            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+
+            processor._process_flight(flight)
+
+            assert processor._fallback.depth() == 0
+
+    def test_mixed_sources_archived_normally(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["1090", "MLAT"], force_archive=False)
+
+            with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
+                processor._process_flight(flight)
+
+            mock_archive.assert_called_once()
+
+    def test_non_mlat_single_source_archived_normally(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["1090"], force_archive=False)
+
+            with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
+                processor._process_flight(flight)
+
+            mock_archive.assert_called_once()
+
+    def test_force_archive_overrides_mlat_only_skip(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["MLAT"], force_archive=True)
+
+            with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
+                processor._process_flight(flight)
+
+            mock_archive.assert_called_once()
+
+    def test_mlat_only_skip_increments_skipped_metric(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+
+            processor._process_flight(flight)
+
+            from shared.redis_keys import metrics_flights_skipped_key
+            mock_redis.incr.assert_any_call(metrics_flights_skipped_key("hour"))
+            mock_redis.incr.assert_any_call(metrics_flights_skipped_key("today"))
+
+    def test_archived_flight_does_not_increment_skipped_metric(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["1090"], force_archive=False)
+
+            with patch.object(processor, "_archive_flight_to_s3"):
+                processor._process_flight(flight)
+
+            from shared.redis_keys import metrics_flights_skipped_key
+            skipped_calls = [
+                c for c in mock_redis.incr.call_args_list
+                if c.args and c.args[0] in (metrics_flights_skipped_key("hour"), metrics_flights_skipped_key("today"))
+            ]
+            assert skipped_calls == []
 
 
 # ---------------------------------------------------------------------------

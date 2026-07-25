@@ -71,13 +71,19 @@ def _bare_engine() -> RulesEngine:
     return RulesEngine(redis)
 
 
-def _rule(identifier: str, conditions: list, enabled: bool = True) -> dict:
-    return {
+def _rule(
+    identifier: str, conditions: list, enabled: bool = True,
+    force_archive: Optional[bool] = None,
+) -> dict:
+    rule = {
         "name": identifier,
         "identifier": identifier,
         "enabled": enabled,
         "conditions": conditions,
     }
+    if force_archive is not None:
+        rule["force_archive"] = force_archive
+    return rule
 
 
 def _cond(ctype: str, operator: str, value) -> dict:
@@ -131,6 +137,66 @@ class TestLoadRules:
         engine = _engine_with_rules(rules2)
         assert engine._rules[0]["conditions"][0]["type"] == "altitude"
         assert engine._rules[0]["conditions"][1]["type"] == "ident"
+
+
+# ---------------------------------------------------------------------------
+# force_archive rule-level flag
+# ---------------------------------------------------------------------------
+
+class TestForceArchiveFlag:
+    def test_absent_defaults_to_false(self):
+        engine = _engine_with_rules([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        assert engine._rules[0]["force_archive"] is False
+
+    def test_true_is_staged(self):
+        engine = _engine_with_rules([
+            _rule("r1", [_cond("altitude", "maximum", "5000")], force_archive=True),
+        ])
+        assert engine._rules[0]["force_archive"] is True
+
+    def test_false_is_staged(self):
+        engine = _engine_with_rules([
+            _rule("r1", [_cond("altitude", "maximum", "5000")], force_archive=False),
+        ])
+        assert engine._rules[0]["force_archive"] is False
+
+    def test_non_boolean_rejected(self):
+        rule = _rule("r1", [_cond("altitude", "maximum", "5000")])
+        rule["force_archive"] = "yes"
+        engine = _bare_engine()
+        assert engine.load_rules_json(json.dumps([rule])) is False
+
+    def test_not_a_condition_type(self):
+        """force_archive is a rule-level property, not a condition — it must
+        not appear in, or be confused with, the conditions[] validation."""
+        engine = _engine_with_rules([
+            _rule("r1", [_cond("altitude", "maximum", "5000")], force_archive=True),
+        ])
+        types = [c["type"] for c in engine._rules[0]["conditions"]]
+        assert "force_archive" not in types
+
+    def test_multiple_independent_rules_can_each_set_it(self):
+        """The whole point of using a rule-level flag instead of a reserved
+        identifier — any number of independent rules can each force
+        archival, not just one."""
+        rules = [
+            _rule("aircraft-of-interest", [_cond("aircraft_icao_hex", "equals", "A8AE7F")], force_archive=True),
+            _rule("area-of-interest", [_cond("area", "equals", "HOME")], force_archive=True),
+            _rule("unrelated-notification", [_cond("military", "equals", "true")]),
+        ]
+        engine = _engine_with_rules(rules, areas={
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"name": "HOME"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+                },
+            }],
+        })
+        flagged = [r["identifier"] for r in engine._rules if r["force_archive"]]
+        assert flagged == ["aircraft-of-interest", "area-of-interest"]
 
 
 # ---------------------------------------------------------------------------

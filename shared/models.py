@@ -150,8 +150,14 @@ class CompletedFlight(BaseModel):
     """
     Completed flight record published to the RabbitMQ archive queue by the
     message processor. Shape matches the legacy MongoDB document written by
-    Flight.persist() in SkyFollower-legacy, with two additive fields:
-    _id is now UUID-v7 (was UUID-v4) and source is new.
+    Flight.persist() in SkyFollower-legacy, with additive fields:
+    _id is now UUID-v7 (was UUID-v4), and receiver_sources/force_archive are
+    new.
+
+    receiver_sources and matched_rules both default to an empty list rather
+    than being required, since neither exists in legacy flight records —
+    the legacy-to-S3 migration plan deliberately leaves those files
+    untouched rather than backfilling a synthetic value.
 
     Serialise with .model_dump(by_alias=True, mode="json") for RabbitMQ
     transport and S3 storage to produce the {"_id": ...} key expected by
@@ -164,7 +170,8 @@ class CompletedFlight(BaseModel):
     first_message: datetime
     last_message: datetime
     total_messages: int
-    source: Literal["1090", "978", "MLAT"]  # additive; not in legacy format
+    receiver_sources: list[Literal["1090", "978", "MLAT"]] = []  # every distinct ADS-B receive source seen
+    force_archive: bool = False              # True if a matching rule (force_archive) overrides the MLAT-only archive skip
     aircraft: dict                           # AircraftRecord fields; must include icao_hex
     ident: Optional[str] = None
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped
