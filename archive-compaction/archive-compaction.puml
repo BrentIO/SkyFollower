@@ -3,7 +3,7 @@
 
 !startsub COMPONENT
 package "Archive Compaction" as ArchCompaction $OnPrem {
-    component "Compaction Job" as CompactionJob
+    component "Compactor" as Compactor
 }
 !endsub
 
