@@ -73,3 +73,14 @@ RabbitMQ being unreachable: publish attempts that fail buffer to a local
 again.
 
 [![Receiver offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
+
+## Message Processor Offline Fallback
+
+Independent of the receiver, the message processor tolerates RabbitMQ
+being unreachable on its own publish side (archiving completed flights):
+publish attempts that fail buffer to a local `completed_flights.db`
+(SQLite WAL) and drain oldest-first once RabbitMQ is reachable again — on
+reconnect, and independently every `telemetry_interval_seconds`, to catch
+a publish-only failure that never dropped the underlying connection.
+
+[![Message processor offline fallback](./images/processor-offline-fallback-sequence.svg)](./images/processor-offline-fallback-sequence.svg)
