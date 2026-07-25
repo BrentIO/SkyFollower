@@ -131,6 +131,17 @@ class TestAircraftRecord:
         )
         assert rec.special_livery == "America250"
 
+    def test_data_sources_defaults_to_none(self):
+        rec = AircraftRecord(icao_hex="A8AE7F")
+        assert rec.data_sources is None
+
+    def test_data_sources_field(self):
+        rec = AircraftRecord(
+            icao_hex="A8AE7F",
+            data_sources=["mictronics", "us-faa"],
+        )
+        assert rec.data_sources == ["mictronics", "us-faa"]
+
 
 class TestOperatorRecord:
     def test_minimal(self):

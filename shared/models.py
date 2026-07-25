@@ -98,7 +98,7 @@ class AircraftRecord(BaseModel):
     year_built: Optional[str] = None
     is_private_operator: Optional[bool] = None
     special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
-    source: Optional[str] = None            # data runner that wrote this record
+    data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order
 
 
 class OperatorRecord(BaseModel):
