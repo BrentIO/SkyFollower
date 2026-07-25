@@ -3,10 +3,10 @@
 The archive processor consumes completed flight records from the RabbitMQ
 `archive` queue, builds a 3D GeoJSON `LineString` of the flight path
 (interpolating missing altitude from adjacent position reports), writes each
-flight as gzip-compressed JSON to AWS S3, and appends a row to a local Parquet
-metadata index for fast lookups without needing to scan S3. When S3 is
-unavailable, completed flights are queued locally and drained automatically
-once S3 reconnects.
+flight as gzip-compressed JSON to AWS S3, and writes a small per-flight
+Parquet index row alongside it in the same bucket, queryable via AWS
+Athena/Glue without needing to scan S3. When S3 is unavailable, completed
+flights are queued locally and drained automatically once S3 reconnects.
 
 ![Archive processor architecture](./archive-processor.svg)
 
@@ -29,7 +29,7 @@ once S3 reconnects.
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback) and `flight_index.parquet` (the metadata index) are written |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) is written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 `flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
@@ -127,25 +127,46 @@ processor detects and merges this after the fact:
 
 ![Split-flight stitching](./split-flight-stitching-sequence.svg)
 
-## Parquet Metadata Index
+## Parquet Index
 
-Every successful S3 write also appends a row to `flight_index.parquet` (in
-`data_dir`) via DuckDB, so flights can be looked up without scanning S3:
+After a successful flight write, the archive processor also writes a
+single-row Parquet file for that flight to the same S3 bucket, alongside
+the flight object:
 
-| Column | Type | Source |
-|--------|------|--------|
-| `_id` | VARCHAR | Flight UUID-v7 |
-| `icao_hex` | VARCHAR | Aircraft ICAO hex |
-| `registration` | VARCHAR | Aircraft registration, if known |
-| `ident` | VARCHAR | Flight ident/callsign, if known |
-| `first_message` | TIMESTAMP WITH TIME ZONE | Timestamp of the flight's first message |
-| `last_message` | TIMESTAMP WITH TIME ZONE | Timestamp of the flight's last message |
-| `operator_designator` | VARCHAR | Operator ICAO designator, if known |
-| `s3_key` | VARCHAR | The S3 object key the flight was written to |
+```
+index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet
+```
 
-This index is local to each archive processor instance and is not itself
-replicated to S3 (see the Parquet/Athena open item in the top-level
-`CLAUDE.md` for the longer-term cross-instance query strategy).
+- `year=`/`month=`/`day=` — Hive-style partition segments (UTC date of the
+  flight's last message, same as the flight object's own date) — Athena
+  partition projection assumes this layout by default, with no
+  `storage.location.template` table property required.
+- `{uuid}` — the flight's `_id` (UUID-v7), matching the flight object's own
+  key.
+
+| Column | Type | Description |
+|--------|------|--------------|
+| `icao_hex` | string | Aircraft ICAO hex |
+| `registration` | string | Aircraft registration, if known |
+| `type_designator` | string | ICAO aircraft type designator (e.g. `B763`), if known |
+| `military` | boolean | Non-nullable — absent on the source record normalizes to `false` |
+| `operator_designator` | string | Operator ICAO designator, if known |
+| `ident` | string | Flight ident/callsign, if known |
+| `first_message` | timestamp (UTC) | Timestamp of the flight's first message |
+| `last_message` | timestamp (UTC) | Timestamp of the flight's last message |
+| `s3_key` | string | The S3 object key of the matching flight record |
+
+There's no `_id`/UUID column — the uuid lives in the S3 key itself. This
+schema is the authoritative source in
+[specs/data-dictionary.yaml](../specs/data-dictionary.yaml)'s
+`archive_parquet_index` record.
+
+Writing one small file per flight (rather than appending to one shared
+file) is deliberate: it's what makes this index queryable directly from S3
+via Athena/Glue partition projection, with no local-only, single-instance
+state to lose or rebuild. Daily compaction of these small per-flight files
+into one file per partition, and the Glue table/partition projection setup
+itself, are separate, not-yet-built pieces of work.
 
 ## Fault Tolerance
 
@@ -156,6 +177,23 @@ fallback queue is drained oldest-first, with each flight written to S3 and
 indexed exactly as it would have been on the normal path. RabbitMQ
 connection failures are retried every 10 seconds independently of the S3
 fallback logic.
+
+**Parquet index write retries.** The flight object write and the Parquet
+index write are two separate S3 calls — it's possible for the first to
+succeed while the second fails (a transient error, a permissions issue
+scoped to the `index/` prefix, etc.). Unlike the flight object itself, a
+lost index row has no self-healing recovery path: nothing ever rescans S3
+to notice a flight is missing from the index. So a failed index write is
+queued — as `{flight_json, s3_key}`, in a second table (`index_queue`) in
+the same `s3.db` file — and retried without re-archiving the flight object
+itself. This queue is drained in two situations: whenever the main S3
+reconnect loop fires (a full S3 outage), and independently, once per
+`telemetry_interval_seconds`, since a one-off index-write failure doesn't
+necessarily coincide with S3 being seen as fully disconnected. Retrying the
+same row twice (if both triggers race) is harmless — writing the same
+Parquet key to S3 again just overwrites it with identical content.
+
+![Flight & Parquet index write, with retry](./archive-write-sequence.svg)
 
 ## MQTT Topics Published
 
@@ -177,6 +215,7 @@ All topics use the root `SkyFollower`.
 | `flights_skipped_today` | integer | MLAT-only flights dropped instead of archived today, UTC |
 | `s3_connected` | boolean | Current S3 connectivity state |
 | `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
+| `local_index_queue_depth` | integer | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
 
 All statistics are published as a single retained JSON payload every
 `telemetry_interval_seconds`. Home Assistant autodiscovery payloads are

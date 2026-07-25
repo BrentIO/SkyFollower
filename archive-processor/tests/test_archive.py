@@ -5,6 +5,7 @@ infrastructure.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -12,6 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, call, patch
 
+import pyarrow.parquet as pq
 import pytest
 
 # Make sure the archive-processor package is importable when running from the
@@ -32,6 +34,8 @@ from archive_processor.main import (  # noqa: E402  (after sys.path manipulation
     _merge_segments,
     _normalize_timestamps,
     build_geojson_feature,
+    build_index_s3_key,
+    build_parquet_index_row,
     build_s3_key,
 )
 from shared.models import CompletedFlight
@@ -110,6 +114,9 @@ class _FakeS3:
     def read_json(self, key: str) -> dict:
         return json.loads(gzip.decompress(self.objects[key]))
 
+    def read_parquet_bytes(self, key: str) -> bytes:
+        return self.objects[key]
+
 
 # ---------------------------------------------------------------------------
 # S3 key generation
@@ -153,6 +160,75 @@ class TestBuildS3Key:
         )
         key = build_s3_key(flight)
         assert key.startswith("flights/2023/12/01/")
+
+
+class TestBuildIndexS3Key:
+    def test_basic_structure(self):
+        flight = _make_flight()
+        key = build_index_s3_key(flight)
+        assert key == f"index/year=2024/month=05/day=31/{flight.id}.parquet"
+
+    def test_date_from_last_message_utc(self):
+        flight = _make_flight(
+            last_message=datetime(2023, 12, 1, 23, 59, 0, tzinfo=timezone.utc)
+        )
+        key = build_index_s3_key(flight)
+        assert key.startswith("index/year=2023/month=12/day=01/")
+
+
+class TestBuildParquetIndexRow:
+    def _read(self, payload_bytes: bytes) -> dict:
+        table = pq.read_table(io.BytesIO(payload_bytes))
+        rows = table.to_pylist()
+        assert len(rows) == 1
+        return rows[0]
+
+    def test_schema_columns_match_data_dictionary(self):
+        flight = _make_flight()
+        payload = build_parquet_index_row(flight, "flights/2024/05/31/key.json.gz")
+        table = pq.read_table(io.BytesIO(payload))
+        assert table.schema.names == [
+            "icao_hex", "registration", "type_designator", "military",
+            "operator_designator", "ident", "first_message", "last_message", "s3_key",
+        ]
+
+    def test_basic_field_values(self):
+        flight = _make_flight()
+        row = self._read(build_parquet_index_row(flight, "flights/2024/05/31/key.json.gz"))
+        assert row["icao_hex"] == "A8AE7F"
+        assert row["registration"] == "N659DL"
+        assert row["ident"] == "DAL659"
+        assert row["s3_key"] == "flights/2024/05/31/key.json.gz"
+
+    def test_military_absent_normalizes_to_false(self):
+        flight = _make_flight(aircraft={"icao_hex": "A8AE7F"})
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["military"] is False
+
+    def test_military_true_preserved(self):
+        flight = _make_flight(aircraft={"icao_hex": "A8AE7F", "military": True})
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["military"] is True
+
+    def test_type_designator_present(self):
+        flight = _make_flight(aircraft={"icao_hex": "A8AE7F", "type_designator": "B763"})
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["type_designator"] == "B763"
+
+    def test_type_designator_missing_becomes_empty_string(self):
+        flight = _make_flight(aircraft={"icao_hex": "A8AE7F"})
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["type_designator"] == ""
+
+    def test_operator_designator_from_operator_dict(self):
+        flight = _make_flight(operator={"airline_designator": "DAL"})
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["operator_designator"] == "DAL"
+
+    def test_operator_none_becomes_empty_string(self):
+        flight = _make_flight(operator=None)
+        row = self._read(build_parquet_index_row(flight, "k"))
+        assert row["operator_designator"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +436,19 @@ class TestS3FallbackQueue:
             q.drain(process_one)
             assert q.depth() == 2  # only "a" was processed
 
+    def test_table_name_isolates_queues_sharing_one_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            flights_q = _S3FallbackQueue(tmp.name)
+            index_q = _S3FallbackQueue(tmp.name, table_name="index_queue")
+
+            flights_q.put("a flight")
+            assert flights_q.depth() == 1
+            assert index_q.depth() == 0
+
+            index_q.put("an index retry")
+            assert flights_q.depth() == 1
+            assert index_q.depth() == 1
+
 
 # ---------------------------------------------------------------------------
 # Redis counter increments
@@ -397,7 +486,7 @@ class TestRedisCounterIncrements:
 
             # Mock out S3 write and Parquet index
             with patch.object(processor, "_write_to_s3") as mock_s3, \
-                 patch("archive_processor.main.append_to_parquet_index"):
+                 patch.object(processor, "_write_index_to_s3"):
                 processor._s3_connected = True
                 processor._post_write_success(flight, "flights/2024/05/31/key.json.gz")
 
@@ -607,7 +696,7 @@ class TestStitching:
             mock_redis.get.return_value = None
 
             flight = _make_flight()
-            with patch("archive_processor.main.append_to_parquet_index"):
+            with patch.object(processor, "_write_index_to_s3"):
                 processor._archive_flight_to_s3(flight)
 
             assert len(processor._s3_client.objects) == 1
@@ -631,7 +720,7 @@ class TestStitching:
             new_first = datetime.fromtimestamp(1000.0 + 301, tz=timezone.utc)
             flight = _make_flight(_id="new-uuid", first_message=new_first)
 
-            with patch("archive_processor.main.append_to_parquet_index"):
+            with patch.object(processor, "_write_index_to_s3"):
                 processor._archive_flight_to_s3(flight)
 
             # Wrote a fresh object under its own key, not the previous one
@@ -654,7 +743,7 @@ class TestStitching:
                 matched_rules=["rule_a"],
             )
             mock_redis.get.return_value = None
-            with patch("archive_processor.main.append_to_parquet_index"):
+            with patch.object(processor, "_write_index_to_s3"):
                 processor._archive_flight_to_s3(seg1)
 
             assert len(processor._s3_client.objects) == 1
@@ -675,7 +764,7 @@ class TestStitching:
                 total_messages=5,
                 matched_rules=["rule_a", "rule_b"],
             )
-            with patch("archive_processor.main.append_to_parquet_index"):
+            with patch.object(processor, "_write_index_to_s3"):
                 processor._archive_flight_to_s3(seg2)
 
             # Still only one S3 object — segment 2 was merged into segment 1's key
@@ -708,7 +797,7 @@ class TestStitching:
                 positions=[{"timestamp": datetime.fromtimestamp(0.0, tz=timezone.utc),
                             "latitude": 1.0, "longitude": 1.0, "altitude": 1000}],
             )
-            with patch("archive_processor.main.append_to_parquet_index"):
+            with patch.object(processor, "_write_index_to_s3"):
                 processor._archive_flight_to_s3(seg1)
             seg1_key = next(iter(processor._s3_client.objects))
 
@@ -726,7 +815,7 @@ class TestStitching:
                     positions=[{"timestamp": datetime.fromtimestamp(start, tz=timezone.utc),
                                 "latitude": 1.0, "longitude": 1.0, "altitude": 1000}],
                 )
-                with patch("archive_processor.main.append_to_parquet_index"):
+                with patch.object(processor, "_write_index_to_s3"):
                     processor._archive_flight_to_s3(seg)
 
             # All three segments stitched into the original seg1 object —
@@ -737,6 +826,126 @@ class TestStitching:
             assert merged["total_messages"] == 3
             assert merged["matched_rules"] == ["rule_a", "rule_b", "rule_c"]
             assert len(merged["positions"]) == 3  # one per segment
+
+
+# ---------------------------------------------------------------------------
+# Parquet index write, alongside the flight object, and its retry queue
+# ---------------------------------------------------------------------------
+
+class TestArchiveWritesIndexToS3:
+    def test_index_object_written_alongside_flight_object(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            processor._archive_flight_to_s3(flight)
+
+            keys = list(processor._s3_client.objects)
+            flight_keys = [k for k in keys if k.startswith("flights/")]
+            index_keys = [k for k in keys if k.startswith("index/")]
+            assert len(flight_keys) == 1
+            assert len(index_keys) == 1
+            assert index_keys[0] == f"index/year=2024/month=05/day=31/{flight.id}.parquet"
+
+    def test_index_row_content_matches_flight(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            processor._archive_flight_to_s3(flight)
+
+            index_key = next(k for k in processor._s3_client.objects if k.startswith("index/"))
+            payload = processor._s3_client.read_parquet_bytes(index_key)
+            table = pq.read_table(io.BytesIO(payload))
+            row = table.to_pylist()[0]
+            assert row["icao_hex"] == "A8AE7F"
+            flight_key = next(k for k in processor._s3_client.objects if k.startswith("flights/"))
+            assert row["s3_key"] == flight_key
+
+    def test_index_write_failure_does_not_block_archiving(self):
+        """Best-effort semantic: an exception building/uploading the index
+        row must not prevent the flight from being archived, and must not
+        be treated as a full-flight archive failure (no fallback.put)."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.build_parquet_index_row",
+                side_effect=RuntimeError("boom"),
+            ):
+                processor._archive_flight_to_s3(flight)  # must not raise
+
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            assert len(flight_keys) == 1
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert index_keys == []
+            assert processor._fallback.depth() == 0  # not queued as a full re-archive
+
+
+class TestIndexWriteRetryQueue:
+    def test_failed_index_write_is_queued_for_retry(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.build_parquet_index_row",
+                side_effect=RuntimeError("boom"),
+            ):
+                processor._archive_flight_to_s3(flight)
+
+            assert processor._index_fallback.depth() == 1
+            assert processor._fallback.depth() == 0
+
+    def test_drain_index_fallback_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.build_parquet_index_row",
+                side_effect=RuntimeError("boom"),
+            ):
+                processor._archive_flight_to_s3(flight)
+            assert processor._index_fallback.depth() == 1
+
+            processor._drain_index_fallback()
+
+            assert processor._index_fallback.depth() == 0
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert index_keys == [f"index/year=2024/month=05/day=31/{flight.id}.parquet"]
+
+    def test_drain_index_fallback_leaves_row_queued_on_repeat_failure(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.build_parquet_index_row",
+                side_effect=RuntimeError("boom"),
+            ):
+                processor._archive_flight_to_s3(flight)
+            assert processor._index_fallback.depth() == 1
+
+            with patch.object(
+                processor, "_write_index_to_s3", side_effect=RuntimeError("still down")
+            ):
+                processor._drain_index_fallback()
+
+            assert processor._index_fallback.depth() == 1
 
 
 # ---------------------------------------------------------------------------

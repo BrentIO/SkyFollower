@@ -1,0 +1,73 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Archive Processor — Flight & Parquet Index Write
+
+box "Archive Processor" $OnPrem
+    participant "Archiver" as Archiver
+    database "s3.db\n(SQLite WAL)" as FallbackDB
+end box
+
+box "AWS" $AWS
+    participant "S3" as S3
+end box
+
+== Normal write ==
+
+Archiver -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+alt flight write succeeds
+    S3 --> Archiver-- : success
+    Archiver -> Archiver : **Build** the Parquet index row (pyarrow)
+    Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+    alt index write succeeds
+        S3 --> Archiver-- : success
+        note right of Archiver
+            Flight fully archived —
+            searchable via Athena immediately
+        end note
+    else index write fails
+        S3 --> Archiver-- : error
+        Archiver -> FallbackDB : **Queue** ""{flight_json, s3_key}"" for retry\n(""index_queue"" table)
+        note right of Archiver
+            The flight object is already durable in S3.
+            Only the index row is missing — this never
+            blocks archiving or re-queues the flight itself.
+        end note
+    end
+else flight write fails
+    S3 --> Archiver-- : error
+    Archiver -> FallbackDB : **Queue** the full flight for retry\n(""queue"" table)
+    note right of Archiver
+        Neither the flight object nor
+        the index row exist yet
+    end note
+end
+
+== Retry: S3 reconnects, or every telemetry_interval_seconds ==
+
+Archiver -> FallbackDB : **Drain** oldest-first\n(""queue"" table)
+loop for each queued full flight
+    Archiver -> S3++ : **Re-archive**\n(flight write + index write, as above)
+    S3 --> Archiver-- : success
+    Archiver -> FallbackDB : **Delete** drained row
+end
+
+Archiver -> FallbackDB : **Drain** oldest-first\n(""index_queue"" table)
+loop for each queued index-only retry
+    Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+    alt succeeds
+        S3 --> Archiver-- : success
+        Archiver -> FallbackDB : **Delete** drained row
+    else fails again
+        S3 --> Archiver-- : error
+        Archiver -> Archiver : **Stop draining** — retry next cycle
+    end
+end
+
+note over FallbackDB
+    Both queues live in the same s3.db file
+    (separate tables) and are drained independently —
+    an index-only retry never re-archives the flight object.
+end note
+
+@enduml

@@ -13,7 +13,7 @@ package "AWS" $AWS {
 
     component "Glue Catalog\n(partition projection)" as glue
 
-    s3svc -right-> glue : Parquet index\n(index/{YYYY}/{MM}/{DD}/{uuid}.parquet)
+    s3svc -right-> glue : Parquet index\n(index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet)
     athenasvc -up-> glue : Query
     athenasvc -down-> s3svc : Scan matching partitions
 }
