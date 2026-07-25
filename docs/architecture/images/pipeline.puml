@@ -1,17 +1,20 @@
 @startuml
 !include_once ../../images/common-component.iuml
+!include_once ../../images/receiver-instance.iuml
 
 title Message Pipeline
 
 !includesub ../../../receiver/receiver.puml!COMPONENT
+!includesub ../../../receiver/receiver-mlat-topology.puml!COMPONENT
 !includesub ../../../processor/processor.puml!COMPONENT
 !includesub central-server.puml!COMPONENT
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
 !includesub ../../../archive-compaction/archive-compaction.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
-Receiver -right-> adsbq : Publisher
-ProcessorC --> adsbq : Consumer
+ReceiverMlat -> adsbq : Publisher
+Receiver -> adsbq : Publisher
+ProcessorC ----> adsbq : Consumer
 ProcessorC -down--> Redis : Enrichment lookups
 ProcessorC --> archiveq : Publisher
 Archiver -up-> archiveq : Consumer
@@ -21,9 +24,10 @@ Compactor ---> s3 : Read + merge a day's small Parquet files,\nwrite one compact
 Compactor ---> s3 : Delete compacted sources
 
 RevProc -[hidden]down-> MsgProc
+RevProc -[hidden]down-> RevMlat
 MsgProc -[hidden]down-> CentralSvr
-CentralSvr -[hidden]right-> ArchProc
-ArchProc -[hidden]down-> AWS
+CentralSvr -[hidden]down-> ArchProc
+ArchProc -[hidden]down---> AWS
 ArchProc -[hidden]right-> ArchCompaction
 
 @enduml

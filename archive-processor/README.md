@@ -226,9 +226,17 @@ All topics use the root `SkyFollower`.
 | `s3_connected` | boolean | Current S3 connectivity state |
 | `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | integer | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
+| `rabbitmq_archive_queue_depth_hwm` | integer | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 
 All statistics are published as a single retained JSON payload every
 `telemetry_interval_seconds`. Home Assistant autodiscovery payloads are
 published to `homeassistant/sensor/SkyFollower_archive_{field}/config` on
 MQTT connect, each using `value_template` to extract its field from the
 shared statistics topic.
+
+`rabbitmq_archive_queue_depth_hwm` is sampled by a dedicated background
+loop capped at once every 10 seconds, independent of how low
+`telemetry_interval_seconds` is configured, and tracked as a high-water
+mark that resets each time telemetry is published.
+
+![RabbitMQ queue-depth high-water mark](./rmq-queue-depth-hwm-sequence.svg)
