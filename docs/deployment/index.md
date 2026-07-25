@@ -38,8 +38,8 @@ the relevant `config/` settings files, then bring up the appropriate file:
 | `ofelia` | Cron scheduler that runs data runner containers on a schedule | — |
 | `ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
-| `us-faa` runner | Imports US FAA detailed registration data into Redis | — |
-| `ca-transport-canada` runner | Imports Transport Canada detailed registration data into Redis | — |
+| `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |
+| `ca-transport-canada-registry` runner | Imports Transport Canada detailed registration data into Redis | — |
 | `ourairports` runner | Imports airport metadata into Redis | — |
 
 ...and 36 more country-specific registration runners — see [Data Runners](/data-runners/) for the full list.

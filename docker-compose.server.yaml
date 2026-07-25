@@ -41,44 +41,44 @@ services:
     depends_on:
       - runner-mictronics
       - runner-ourairports
-      - runner-us-faa
-      - runner-ca-transport-canada
-      - runner-nz-caa
-      - runner-no-caa
-      - runner-au-casa
-      - runner-fr-dgac
-      - runner-nl-ilt
-      - runner-bs-caa
-      - runner-ch-bazl
-      - runner-at-austrocontrol
-      - runner-ky-caa
-      - runner-uk-caa
-      - runner-br-anac
-      - runner-is-samgongustofa
-      - runner-lu-dac
-      - runner-bz-bdca
-      - runner-im-ardis
-      - runner-es-aesa
-      - runner-kr-koca
-      - runner-hu-kozhaf
-      - runner-cz-caa
-      - runner-ee-transpordiamet
-      - runner-ge-gcaa
-      - runner-gg-2reg
-      - runner-kg-caa
-      - runner-lv-caa
-      - runner-md-caa
-      - runner-me-caa
-      - runner-mv-caa
-      - runner-mk-caa
-      - runner-pg-casapng
-      - runner-rs-cad
-      - runner-sg-caas
-      - runner-sk-nsat
-      - runner-tc-caa
-      - runner-cy-dca
-      - runner-hr-ccaa
-      - runner-bg-caa
+      - runner-us-faa-registry
+      - runner-ca-transport-canada-registry
+      - runner-nz-caa-registry
+      - runner-no-caa-registry
+      - runner-au-casa-registry
+      - runner-fr-dgac-registry
+      - runner-nl-ilt-registry
+      - runner-bs-caa-registry
+      - runner-ch-bazl-registry
+      - runner-at-austrocontrol-registry
+      - runner-ky-caa-registry
+      - runner-uk-caa-registry
+      - runner-br-anac-registry
+      - runner-is-samgongustofa-registry
+      - runner-lu-dac-registry
+      - runner-bz-bdca-registry
+      - runner-im-ardis-registry
+      - runner-es-aesa-registry
+      - runner-kr-koca-registry
+      - runner-hu-kozhaf-registry
+      - runner-cz-caa-registry
+      - runner-ee-transpordiamet-registry
+      - runner-ge-gcaa-registry
+      - runner-gg-2reg-registry
+      - runner-kg-caa-registry
+      - runner-lv-caa-registry
+      - runner-md-caa-registry
+      - runner-me-caa-registry
+      - runner-mv-caa-registry
+      - runner-mk-caa-registry
+      - runner-pg-casapng-registry
+      - runner-rs-cad-registry
+      - runner-sg-caas-registry
+      - runner-sk-nsat-registry
+      - runner-tc-caa-registry
+      - runner-cy-dca-registry
+      - runner-hr-ccaa-registry
+      - runner-bg-caa-registry
       - runner-airportwebcams-special-liveries
       - runner-vrs-standing-data
 
@@ -114,334 +114,324 @@ services:
     depends_on:
       - redis
 
-  runner-us-faa:
-    image: ghcr.io/brentio/skyfollower-runner-us-faa:latest
-    container_name: skyfollower-runner-us-faa
+  runner-us-faa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-us-faa-registry:latest
+    container_name: skyfollower-runner-us-faa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-ca-transport-canada:
-    image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada:latest
-    container_name: skyfollower-runner-ca-transport-canada
+  runner-ca-transport-canada-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:latest
+    container_name: skyfollower-runner-ca-transport-canada-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-nz-caa:
-    image: ghcr.io/brentio/skyfollower-runner-nz-caa:latest
-    container_name: skyfollower-runner-nz-caa
+  runner-nz-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-nz-caa-registry:latest
+    container_name: skyfollower-runner-nz-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-no-caa:
-    image: ghcr.io/brentio/skyfollower-runner-no-caa:latest
-    container_name: skyfollower-runner-no-caa
+  runner-no-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-no-caa-registry:latest
+    container_name: skyfollower-runner-no-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-au-casa:
-    image: ghcr.io/brentio/skyfollower-runner-au-casa:latest
-    container_name: skyfollower-runner-au-casa
+  runner-au-casa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-au-casa-registry:latest
+    container_name: skyfollower-runner-au-casa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-fr-dgac:
-    image: ghcr.io/brentio/skyfollower-runner-fr-dgac:latest
-    container_name: skyfollower-runner-fr-dgac
+  runner-fr-dgac-registry:
+    image: ghcr.io/brentio/skyfollower-runner-fr-dgac-registry:latest
+    container_name: skyfollower-runner-fr-dgac-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-br-anac:
-    image: ghcr.io/brentio/skyfollower-runner-br-anac:latest
-    container_name: skyfollower-runner-br-anac
+  runner-br-anac-registry:
+    image: ghcr.io/brentio/skyfollower-runner-br-anac-registry:latest
+    container_name: skyfollower-runner-br-anac-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-nl-ilt:
-    image: ghcr.io/brentio/skyfollower-runner-nl-ilt:latest
-    container_name: skyfollower-runner-nl-ilt
+  runner-nl-ilt-registry:
+    image: ghcr.io/brentio/skyfollower-runner-nl-ilt-registry:latest
+    container_name: skyfollower-runner-nl-ilt-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-bs-caa:
-    image: ghcr.io/brentio/skyfollower-runner-bs-caa:latest
-    container_name: skyfollower-runner-bs-caa
+  runner-bs-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-bs-caa-registry:latest
+    container_name: skyfollower-runner-bs-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-ch-bazl:
-    image: ghcr.io/brentio/skyfollower-runner-ch-bazl:latest
-    container_name: skyfollower-runner-ch-bazl
+  runner-ch-bazl-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ch-bazl-registry:latest
+    container_name: skyfollower-runner-ch-bazl-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-at-austrocontrol:
-    image: ghcr.io/brentio/skyfollower-runner-at-austrocontrol:latest
-    container_name: skyfollower-runner-at-austrocontrol
+  runner-at-austrocontrol-registry:
+    image: ghcr.io/brentio/skyfollower-runner-at-austrocontrol-registry:latest
+    container_name: skyfollower-runner-at-austrocontrol-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-ky-caa:
-    image: ghcr.io/brentio/skyfollower-runner-ky-caa:latest
-    container_name: skyfollower-runner-ky-caa
+  runner-ky-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ky-caa-registry:latest
+    container_name: skyfollower-runner-ky-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-uk-caa:
-    image: ghcr.io/brentio/skyfollower-runner-uk-caa:latest
-    container_name: skyfollower-runner-uk-caa
+  runner-uk-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-uk-caa-registry:latest
+    container_name: skyfollower-runner-uk-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-is-samgongustofa:
-    image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa:latest
-    container_name: skyfollower-runner-is-samgongustofa
+  runner-is-samgongustofa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:latest
+    container_name: skyfollower-runner-is-samgongustofa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-lu-dac:
-    image: ghcr.io/brentio/skyfollower-runner-lu-dac:latest
-    container_name: skyfollower-runner-lu-dac
+  runner-lu-dac-registry:
+    image: ghcr.io/brentio/skyfollower-runner-lu-dac-registry:latest
+    container_name: skyfollower-runner-lu-dac-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-bz-bdca:
-    image: ghcr.io/brentio/skyfollower-runner-bz-bdca:latest
-    container_name: skyfollower-runner-bz-bdca
+  runner-bz-bdca-registry:
+    image: ghcr.io/brentio/skyfollower-runner-bz-bdca-registry:latest
+    container_name: skyfollower-runner-bz-bdca-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-im-ardis:
-    image: ghcr.io/brentio/skyfollower-runner-im-ardis:latest
-    container_name: skyfollower-runner-im-ardis
+  runner-im-ardis-registry:
+    image: ghcr.io/brentio/skyfollower-runner-im-ardis-registry:latest
+    container_name: skyfollower-runner-im-ardis-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-es-aesa:
-    image: ghcr.io/brentio/skyfollower-runner-es-aesa:latest
-    container_name: skyfollower-runner-es-aesa
+  runner-es-aesa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-es-aesa-registry:latest
+    container_name: skyfollower-runner-es-aesa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-kr-koca:
-    image: ghcr.io/brentio/skyfollower-runner-kr-koca:latest
-    container_name: skyfollower-runner-kr-koca
+  runner-kr-koca-registry:
+    image: ghcr.io/brentio/skyfollower-runner-kr-koca-registry:latest
+    container_name: skyfollower-runner-kr-koca-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-cz-caa:
-    image: ghcr.io/brentio/skyfollower-runner-cz-caa:latest
-    container_name: skyfollower-runner-cz-caa
+  runner-cz-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-cz-caa-registry:latest
+    container_name: skyfollower-runner-cz-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-ee-transpordiamet:
-    image: ghcr.io/brentio/skyfollower-runner-ee-transpordiamet:latest
-    container_name: skyfollower-runner-ee-transpordiamet
+  runner-ee-transpordiamet-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ee-transpordiamet-registry:latest
+    container_name: skyfollower-runner-ee-transpordiamet-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-ge-gcaa:
-    image: ghcr.io/brentio/skyfollower-runner-ge-gcaa:latest
-    container_name: skyfollower-runner-ge-gcaa
+  runner-ge-gcaa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ge-gcaa-registry:latest
+    container_name: skyfollower-runner-ge-gcaa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-gg-2reg:
-    image: ghcr.io/brentio/skyfollower-runner-gg-2reg:latest
-    container_name: skyfollower-runner-gg-2reg
+  runner-gg-2reg-registry:
+    image: ghcr.io/brentio/skyfollower-runner-gg-2reg-registry:latest
+    container_name: skyfollower-runner-gg-2reg-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-kg-caa:
-    image: ghcr.io/brentio/skyfollower-runner-kg-caa:latest
-    container_name: skyfollower-runner-kg-caa
+  runner-kg-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-kg-caa-registry:latest
+    container_name: skyfollower-runner-kg-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-lv-caa:
-    image: ghcr.io/brentio/skyfollower-runner-lv-caa:latest
-    container_name: skyfollower-runner-lv-caa
+  runner-lv-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-lv-caa-registry:latest
+    container_name: skyfollower-runner-lv-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-md-caa:
-    image: ghcr.io/brentio/skyfollower-runner-md-caa:latest
-    container_name: skyfollower-runner-md-caa
+  runner-md-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-md-caa-registry:latest
+    container_name: skyfollower-runner-md-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-mv-caa:
-    image: ghcr.io/brentio/skyfollower-runner-mv-caa:latest
-    container_name: skyfollower-runner-mv-caa
+  runner-mv-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-mv-caa-registry:latest
+    container_name: skyfollower-runner-mv-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-me-caa:
-    image: ghcr.io/brentio/skyfollower-runner-me-caa:latest
-    container_name: skyfollower-runner-me-caa
+  runner-me-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-me-caa-registry:latest
+    container_name: skyfollower-runner-me-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-hu-kozhaf:
-    image: ghcr.io/brentio/skyfollower-runner-hu-kozhaf:latest
-    container_name: skyfollower-runner-hu-kozhaf
+  runner-hu-kozhaf-registry:
+    image: ghcr.io/brentio/skyfollower-runner-hu-kozhaf-registry:latest
+    container_name: skyfollower-runner-hu-kozhaf-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-mk-caa:
-    image: ghcr.io/brentio/skyfollower-runner-mk-caa:latest
-    container_name: skyfollower-runner-mk-caa
+  runner-mk-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-mk-caa-registry:latest
+    container_name: skyfollower-runner-mk-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-pg-casapng:
-    image: ghcr.io/brentio/skyfollower-runner-pg-casapng:latest
-    container_name: skyfollower-runner-pg-casapng
+  runner-pg-casapng-registry:
+    image: ghcr.io/brentio/skyfollower-runner-pg-casapng-registry:latest
+    container_name: skyfollower-runner-pg-casapng-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-rs-cad:
-    image: ghcr.io/brentio/skyfollower-runner-rs-cad:latest
-    container_name: skyfollower-runner-rs-cad
+  runner-rs-cad-registry:
+    image: ghcr.io/brentio/skyfollower-runner-rs-cad-registry:latest
+    container_name: skyfollower-runner-rs-cad-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-sg-caas:
-    image: ghcr.io/brentio/skyfollower-runner-sg-caas:latest
-    container_name: skyfollower-runner-sg-caas
+  runner-sg-caas-registry:
+    image: ghcr.io/brentio/skyfollower-runner-sg-caas-registry:latest
+    container_name: skyfollower-runner-sg-caas-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-sk-nsat:
-    image: ghcr.io/brentio/skyfollower-runner-sk-nsat:latest
-    container_name: skyfollower-runner-sk-nsat
+  runner-sk-nsat-registry:
+    image: ghcr.io/brentio/skyfollower-runner-sk-nsat-registry:latest
+    container_name: skyfollower-runner-sk-nsat-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-tc-caa:
-    image: ghcr.io/brentio/skyfollower-runner-tc-caa:latest
-    container_name: skyfollower-runner-tc-caa
+  runner-tc-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-tc-caa-registry:latest
+    container_name: skyfollower-runner-tc-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
 
-  runner-bg-caa:
-    image: ghcr.io/brentio/skyfollower-runner-bg-caa:latest
-    container_name: skyfollower-runner-bg-caa
-    profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
-    depends_on:
-      - redis
-      - runner-mictronics
-
-  runner-hr-ccaa:
-    image: ghcr.io/brentio/skyfollower-runner-hr-ccaa:latest
-    container_name: skyfollower-runner-hr-ccaa
+  runner-bg-caa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-bg-caa-registry:latest
+    container_name: skyfollower-runner-bg-caa-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro
@@ -449,9 +439,19 @@ services:
       - redis
       - runner-mictronics
 
-  runner-cy-dca:
-    image: ghcr.io/brentio/skyfollower-runner-cy-dca:latest
-    container_name: skyfollower-runner-cy-dca
+  runner-hr-ccaa-registry:
+    image: ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:latest
+    container_name: skyfollower-runner-hr-ccaa-registry
+    profiles: ["runners"]
+    volumes:
+      - ./config/runners/settings.json:/app/settings.json:ro
+    depends_on:
+      - redis
+      - runner-mictronics
+
+  runner-cy-dca-registry:
+    image: ghcr.io/brentio/skyfollower-runner-cy-dca-registry:latest
+    container_name: skyfollower-runner-cy-dca-registry
     profiles: ["runners"]
     volumes:
       - ./config/runners/settings.json:/app/settings.json:ro

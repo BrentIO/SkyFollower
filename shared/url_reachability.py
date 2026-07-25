@@ -2,7 +2,7 @@
 Shared HTTP liveness check used by each data runner's @pytest.mark.network test
 (issue #405) to confirm the runner's source URL is reachable.
 
-Uses GET rather than HEAD: several source sites (e.g. is-samgongustofa)
+Uses GET rather than HEAD: several source sites (e.g. is-samgongustofa-registry)
 reject HEAD with 405 while GET works fine, since GET is the method each
 runner's real download actually uses. The request is streamed and the
 response body is never read, so checking a multi-hundred-MB source file
@@ -13,7 +13,7 @@ runner will successfully parse whatever is there (the runner's own error
 handling already covers that).
 
 Default timeout is 30s rather than a tighter value: some sources (e.g.
-br-anac) build their response server-side before writing anything to the
+br-anac-registry) build their response server-side before writing anything to the
 socket, so streaming doesn't save us from that server-side latency, and this
 runs on a non-blocking weekly schedule with no reason to hold flaky gov
 sites to a tight SLA.

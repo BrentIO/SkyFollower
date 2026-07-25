@@ -12,7 +12,7 @@
 
 The special-liveries page is fetched with a single GET (a browser-like `User-Agent` is required — the site's ModSecurity rule blocks the default `curl`/`requests` User-Agent with `HTTP 406`, though an honest identifying UA such as `"Mozilla/5.0 (compatible; P5Software SkyFollower)"` is accepted). The entire ~2,074-row table is server-rendered into the initial HTML response, so no pagination or AJAX crawling is needed; the DataTables JS on the live page only adds client-side search/sort on top of it.
 
-The `Registration` cell (tail number) is resolved to `icao_hex` in batches via a RediSearch query against the Mictronics index, the same pattern used by `at-austrocontrol`, `bz-bdca`, and the other hex-less country runners. Rows whose `Registration` is the literal string `Various` (whole-fleet special liveries — e.g. a "10 Years" sticker applied across an entire fleet) are skipped, since they can't be resolved to a single aircraft. Registrations with no Mictronics match are also skipped and logged as a miss, not treated as an error.
+The `Registration` cell (tail number) is resolved to `icao_hex` in batches via a RediSearch query against the Mictronics index, the same pattern used by `at-austrocontrol-registry`, `bz-bdca-registry`, and the other hex-less country runners. Rows whose `Registration` is the literal string `Various` (whole-fleet special liveries — e.g. a "10 Years" sticker applied across an entire fleet) are skipped, since they can't be resolved to a single aircraft. Registrations with no Mictronics match are also skipped and logged as a miss, not treated as an error.
 
 The `Description` cell is transformed into `special_livery` rather than stored verbatim, because this field is spoken aloud by Home Assistant TTS on a matched-flight notification and needs to read as a clean phrase. `special_livery` holds the derived livery name directly — there's no separate boolean flag; presence of the field on the merged aircraft record is itself the signal that the aircraft is wearing a special livery:
 
@@ -68,4 +68,4 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 
 (`aircraft.manufacturer_model` above is illustrative only — whatever Mictronics/registry already has on file for this hex; `icao_hex`, `registration`, and `special_livery` are what this runner actually verifies.)
 
-For comparison, an aircraft with no special livery — e.g. the Delta 757 (`N659DL` / `A8AE7F`) used as an example in `../us-faa/README.md` — merges exactly as it does today, with no `special_livery` key present at all.
+For comparison, an aircraft with no special livery — e.g. the Delta 757 (`N659DL` / `A8AE7F`) used as an example in `../us-faa-registry/README.md` — merges exactly as it does today, with no `special_livery` key present at all.

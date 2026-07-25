@@ -93,12 +93,12 @@ See `specs/data-dictionary.yaml` (`mictronics` entry) for full column semantics 
 
 `aircraft:mictronics:{icao_hex}` records are never looked up directly by a
 user — their data is only ever seen merged underneath a country runner's own
-fields. The example below (from `gg-2reg`'s `43EC60`) illustrates this:
+fields. The example below (from `gg-2reg-registry`'s `43EC60`) illustrates this:
 `manufacturer`, `manufacturer_model`, `type_designator`, and
 `wake_turbulence_category` are Mictronics's own contributions from
 `aircraft:mictronics:43EC60` (written by this runner), present before or
 independent of any country-specific enrichment; `model` and `serial_number`
-are `gg-2reg`'s own additions from a separate `aircraft:registry:43EC60` key,
+are `gg-2reg-registry`'s own additions from a separate `aircraft:registry:43EC60` key,
 merged in at read time.
 
 ```bash
@@ -118,7 +118,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "icao_hex": "43EC60",
     "military": false,
     "registration": "2-GOLD",
-    "source": "gg-2reg"
+    "source": "gg-2reg-registry"
 }
 ```
 

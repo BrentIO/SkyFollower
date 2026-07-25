@@ -43,7 +43,7 @@ still logs formatted instead of falling back to Python's default handler.
 **Rule**: any runner that makes more than one HTTP request per run — whether
 paginated (a fixed request per page) or per-entity (one request per record,
 e.g. a list-then-detail pattern) — logs the exact URL of *every* call at
-`DEBUG`, not just the primary one. `cz-caa` and `me-caa` already do this for
+`DEBUG`, not just the primary one. `cz-caa-registry` and `me-caa-registry` already do this for
 their per-record detail fetches:
 ```python
 logger.debug("Fetching Montenegro CAA detail page from %s", url)
@@ -55,6 +55,6 @@ per-entity) — see the audit below for why 2-request runners are exempt.
 
 | Category | Runners | URL-at-DEBUG rule |
 |----------|---------|--------------------|
-| Single request | `airportwebcams-special-liveries`, `at-austrocontrol`, `au-casa`, `br-anac`, `bz-bdca`, `ca-transport-canada`, `ch-bazl`, `cy-dca`, `ee-transpordiamet`, `es-aesa`, `fr-dgac`, `ge-gcaa`, `is-samgongustofa`, `kg-caa`, `kr-koca`, `ky-caa`, `lv-caa`, `md-caa`, `mictronics`, `no-caa`, `nz-caa`, `ourairports`, `rs-cad`, `tc-caa`, `us-faa`, `vrs-standing-data` (26) | N/A — one call, already logged at `INFO` |
-| Two-step discovery (fetch an index/listing page, then fetch the one file URL found there — fixed at 2 calls, not pagination) | `bg-caa`, `bs-caa`, `gg-2reg`, `hr-ccaa`, `hu-kozhaf`, `im-ardis`, `lu-dac`, `mk-caa`, `mv-caa`, `nl-ilt`, `pg-casapng`, `sg-caas`, `sk-nsat` (13) | N/A — already compliant. All 13 already log both the discovery URL and the resolved file URL at `INFO` (e.g. `logger.info("Downloading Bulgaria CAA index page from %s", _INDEX_URL)`). 2 lines for 2 total requests isn't the per-request noise `DEBUG` exists to declutter, and downgrading them would make this visibility opt-in instead of on by default. |
-| Multi-request: pagination or per-entity (unbounded call count) | `cz-caa` (per-ID detail), `me-caa` (paginated list + per-registration detail), `uk-caa` (676 prefix searches + per-aircraft detail) (3) | Compliant — all 3 log the URL of every call at `DEBUG`. |
+| Single request | `airportwebcams-special-liveries`, `at-austrocontrol-registry`, `au-casa-registry`, `br-anac-registry`, `bz-bdca-registry`, `ca-transport-canada-registry`, `ch-bazl-registry`, `cy-dca-registry`, `ee-transpordiamet-registry`, `es-aesa-registry`, `fr-dgac-registry`, `ge-gcaa-registry`, `is-samgongustofa-registry`, `kg-caa-registry`, `kr-koca-registry`, `ky-caa-registry`, `lv-caa-registry`, `md-caa-registry`, `mictronics`, `no-caa-registry`, `nz-caa-registry`, `ourairports`, `rs-cad-registry`, `tc-caa-registry`, `us-faa-registry`, `vrs-standing-data` (26) | N/A — one call, already logged at `INFO` |
+| Two-step discovery (fetch an index/listing page, then fetch the one file URL found there — fixed at 2 calls, not pagination) | `bg-caa-registry`, `bs-caa-registry`, `gg-2reg-registry`, `hr-ccaa-registry`, `hu-kozhaf-registry`, `im-ardis-registry`, `lu-dac-registry`, `mk-caa-registry`, `mv-caa-registry`, `nl-ilt-registry`, `pg-casapng-registry`, `sg-caas-registry`, `sk-nsat-registry` (13) | N/A — already compliant. All 13 already log both the discovery URL and the resolved file URL at `INFO` (e.g. `logger.info("Downloading Bulgaria CAA index page from %s", _INDEX_URL)`). 2 lines for 2 total requests isn't the per-request noise `DEBUG` exists to declutter, and downgrading them would make this visibility opt-in instead of on by default. |
+| Multi-request: pagination or per-entity (unbounded call count) | `cz-caa-registry` (per-ID detail), `me-caa-registry` (paginated list + per-registration detail), `uk-caa-registry` (676 prefix searches + per-aircraft detail) (3) | Compliant — all 3 log the URL of every call at `DEBUG`. |
