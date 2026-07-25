@@ -445,13 +445,8 @@ class ArchiveProcessor:
                     reconnected = self._s3_connected
                 if reconnected:
                     logger.info("S3 reconnected — draining fallback queues.")
-
-                    def _drain_both() -> None:
-                        self._drain_fallback()
-                        self._drain_index_fallback()
-
                     threading.Thread(
-                        target=_drain_both, daemon=True, name="drain-fallback"
+                        target=self._drain_all_fallbacks, daemon=True, name="drain-fallback"
                     ).start()
 
     def _write_to_s3(self, flight: CompletedFlight, payload_bytes: bytes, s3_key: str) -> None:
@@ -578,6 +573,21 @@ class ArchiveProcessor:
 
         self._fallback.drain(process)
         logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+
+    def _drain_all_fallbacks(self) -> None:
+        """
+        Drain both fallback queues. Both get the same two triggers (S3
+        reconnect and every telemetry tick) even though only the index
+        queue strictly needs the periodic one — the flight queue only
+        ever fills while S3 is known to be down, so the reconnect loop's
+        edge-triggered detection is sufficient for it in theory. But a
+        periodic sweep is a strictly stronger guarantee for near-zero
+        extra cost (an empty-queue check when there's nothing to drain),
+        so both queues get both triggers rather than leaving the flight
+        queue with the weaker one.
+        """
+        self._drain_fallback()
+        self._drain_index_fallback()
 
     def _drain_index_fallback(self) -> None:
         """
@@ -815,13 +825,15 @@ class ArchiveProcessor:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
             time.sleep(interval)
-            # Independent of MQTT/_publish_telemetry below: catches an
-            # index-write failure that never coincided with a full S3
-            # down/up transition (so _s3_reconnect_loop never fired for it).
+            # Independent of MQTT/_publish_telemetry below: a periodic
+            # sweep of both fallback queues, not just a reaction to
+            # _s3_reconnect_loop's edge-triggered "was down, now up"
+            # detection — see _drain_all_fallbacks for why both queues
+            # get this even though only the index queue strictly needs it.
             with self._s3_lock:
                 s3_connected = self._s3_connected
             if s3_connected:
-                self._drain_index_fallback()
+                self._drain_all_fallbacks()
             self._publish_telemetry()
 
     def _publish_telemetry(self) -> None:

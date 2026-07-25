@@ -173,27 +173,35 @@ itself, are separate, not-yet-built pieces of work.
 ## Fault Tolerance
 
 When S3 is unavailable — at startup or during operation — completed flights
-are written to `s3.db` (SQLite, in `data_dir`) instead. A background
-thread checks S3 connectivity every 10 seconds; once it reconnects, the
-fallback queue is drained oldest-first, with each flight written to S3 and
-indexed exactly as it would have been on the normal path. RabbitMQ
-connection failures are retried every 10 seconds independently of the S3
-fallback logic.
+are written to `s3.db` (SQLite, in `data_dir`) instead. RabbitMQ connection
+failures are retried every 10 seconds independently of the S3 fallback
+logic.
 
-**Parquet index write retries.** The flight object write and the Parquet
-index write are two separate S3 calls — it's possible for the first to
-succeed while the second fails (a transient error, a permissions issue
-scoped to the `index/` prefix, etc.). Unlike the flight object itself, a
-lost index row has no self-healing recovery path: nothing ever rescans S3
-to notice a flight is missing from the index. So a failed index write is
-queued — as `{flight_json, s3_key}`, in a second table (`index_queue`) in
-the same `s3.db` file — and retried without re-archiving the flight object
-itself. This queue is drained in two situations: whenever the main S3
-reconnect loop fires (a full S3 outage), and independently, once per
-`telemetry_interval_seconds`, since a one-off index-write failure doesn't
-necessarily coincide with S3 being seen as fully disconnected. Retrying the
-same row twice (if both triggers race) is harmless — writing the same
-Parquet key to S3 again just overwrites it with identical content.
+There are actually two fallback queues in that same `s3.db` file (separate
+tables): the main one for flights that couldn't be written at all, and a
+second (`index_queue`) for flights whose object write succeeded but whose
+Parquet index write failed — the flight object write and the Parquet index
+write are two separate S3 calls, so it's possible for the first to succeed
+while the second fails (a transient error, a permissions issue scoped to
+the `index/` prefix, etc.). Unlike the flight object itself, a lost index
+row has no self-healing recovery path: nothing ever rescans S3 to notice a
+flight is missing from the index. So a failed index write is queued — as
+`{flight_json, s3_key}` — and retried without re-archiving the flight
+object itself.
+
+Both queues are drained the same way, on two triggers: whenever the
+background S3-connectivity thread detects a reconnect (checked every 10
+seconds), and independently, once per `telemetry_interval_seconds`. Only
+the index queue strictly needs the second trigger — it can fill even while
+S3 never registers as fully disconnected, so the reconnect-based trigger
+alone wouldn't be enough for it. The flight queue only ever fills while S3
+*is* known to be down, so the reconnect trigger is sufficient for it in
+theory — but it gets the periodic trigger too, since checking an empty
+queue costs nothing and a periodic sweep is a strictly stronger guarantee
+than relying solely on an edge-triggered "was down, now up" detection.
+Retrying an already-drained row twice (if both triggers race) is harmless
+either way — reprocessing the same flight, or rewriting the same Parquet
+key, just overwrites with identical content.
 
 ![Flight & Parquet index write, with retry](./archive-write-sequence.svg)
 

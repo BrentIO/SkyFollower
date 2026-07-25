@@ -1026,6 +1026,39 @@ class TestIndexWriteRetryQueue:
 
             assert processor._index_fallback.depth() == 1
 
+    def test_drain_all_fallbacks_drains_both_queues(self):
+        """Both queues get both triggers (S3 reconnect and every telemetry
+        tick) — _drain_all_fallbacks is what both loops call, so it must
+        actually drain both, not just the index queue."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            # Queue a full flight (as if S3 had been down) and an
+            # index-only retry (as if just the index write had failed).
+            processor._fallback.put(_make_flight(_id="queued-flight").model_dump_json(
+                by_alias=True
+            ))
+            processor._index_fallback.put(json.dumps({
+                "flight_json": _make_flight(_id="queued-index-only").model_dump_json(
+                    by_alias=True
+                ),
+                "s3_key": "flights/2024/05/31/prebuilt-key.json.gz",
+            }))
+            assert processor._fallback.depth() == 1
+            assert processor._index_fallback.depth() == 1
+
+            processor._drain_all_fallbacks()
+
+            assert processor._fallback.depth() == 0
+            assert processor._index_fallback.depth() == 0
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert len(flight_keys) == 1  # the drained full flight
+            assert len(index_keys) == 2  # one from that flight's own index write,
+            # one from the index-only retry
+
 
 # ---------------------------------------------------------------------------
 # flight_ttl_seconds: shared Redis config (#477)

@@ -6,8 +6,8 @@ package "Archive Processor" as ArchProc $OnPrem {
     component "Archiver" as Archiver
     database "s3.db\n(SQLite WAL)" as ArchiveFallback
 
-    Archiver -up-> ArchiveFallback : AWS S3 offline,\nor index write failed
-    ArchiveFallback .down.> Archiver : Drains flight on S3 reconnect;\nindex also retries periodically
+    Archiver -left-> ArchiveFallback : AWS S3 offline,\nor index write failed
+    ArchiveFallback .left.> Archiver : Drains on S3 reconnect\nor every telemetry tick
 }
 !endsub
 
