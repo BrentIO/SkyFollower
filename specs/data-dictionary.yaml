@@ -3422,6 +3422,40 @@ records:
         sources:
           - source: processor
 
+      receiver_sources:
+        type: "array[string]"
+        description: >
+          Every distinct ADS-B receive source (1090, 978, MLAT) seen across
+          this flight's messages, in first-seen order (#492). Accumulated
+          per-message in the processor's SQLite active store, not just set
+          once from the first message. Defaults to an empty array rather
+          than being required — legacy flights (see #496) have no receive-
+          source history at all, since 1090/978/MLAT tracking didn't exist
+          as a concept in the legacy system. Not related to
+          aircraft.data_sources (#494) — that field names which data
+          runner(s) wrote the aircraft enrichment record; this field is the
+          ADS-B receive path for the flight itself. See CLAUDE.md's Source
+          tag note.
+        persisted: true
+        sources:
+          - source: processor
+
+      force_archive:
+        type: boolean
+        description: >
+          True if a rule flagged force_archive matched this flight at any
+          point during its lifetime (#492). The archive processor drops
+          MLAT-only flights (receiver_sources == ["MLAT"]) rather than
+          writing them to S3, to avoid the storage cost of flights the user
+          never asked to keep; force_archive overrides that skip for
+          MLAT-only flights that do matter to the user (a specific
+          aircraft, an area, ...), configured as an ordinary boolean
+          property on any rule in config:rules — not a reserved rule
+          identifier, so any number of independent rules can each set it.
+        persisted: true
+        sources:
+          - source: processor
+
       positions:
         type: "array[object]"
         description: "Time-ordered position reports"

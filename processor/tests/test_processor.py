@@ -371,7 +371,7 @@ class TestFlight:
         f.total_messages = 42
         f.aircraft = {"icao_hex": "A8AE7F", "registration": "N659DL"}
         f.ident = "DAL659"
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         f2 = Flight(db)
@@ -380,6 +380,36 @@ class TestFlight:
         assert f2.total_messages == 42
         assert f2.aircraft["registration"] == "N659DL"
 
+    def test_receiver_sources_and_force_archive_round_trip(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1000.0
+        f.last_message = 2000.0
+        f.total_messages = 3
+        f.receiver_sources = ["MLAT", "1090"]
+        f.force_archive = True
+        f.save()
+
+        f2 = Flight(db)
+        assert f2.load("A8AE7F") is True
+        assert f2.receiver_sources == ["MLAT", "1090"]
+        assert f2.force_archive is True
+
+    def test_receiver_sources_and_force_archive_defaults(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1000.0
+        f.last_message = 1000.0
+        f.total_messages = 1
+        f.save()
+
+        f2 = Flight(db)
+        f2.load("A8AE7F")
+        assert f2.receiver_sources == []
+        assert f2.force_archive is False
+
     def test_add_position(self):
         db = _make_db()
         f = Flight(db)
@@ -387,7 +417,7 @@ class TestFlight:
         f.first_message = 1000.0
         f.last_message = 1000.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
         f.add_position(Position(timestamp=1000.0, latitude=40.0, longitude=-73.0, altitude=5000))
 
@@ -403,7 +433,7 @@ class TestFlight:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
         f.add_velocity(Velocity(timestamp=1.0, velocity=450.0, heading=270.0, vertical_speed=500))
 
@@ -419,7 +449,7 @@ class TestFlight:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
         f.add_position(Position(timestamp=1.0, latitude=0.0, longitude=0.0))
         f.add_velocity(Velocity(timestamp=1.0, velocity=100.0))
@@ -446,7 +476,7 @@ class TestFlight:
         f.origin = "KATL"
         f.destination = "KLAX"
         f.matched_rules = ["rule_1"]
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         cf = f.to_completed_flight()
@@ -465,7 +495,8 @@ class TestFlight:
         assert cf.first_message.tzinfo is not None
         assert cf.destination == "KLAX"
         assert cf.matched_rules == ["rule_1"]
-        assert cf.source == "1090"
+        assert cf.receiver_sources == ["1090"]
+        assert cf.force_archive is False
 
     def test_to_completed_flight_no_aircraft_sets_icao_hex(self):
         db = _make_db()
@@ -474,10 +505,24 @@ class TestFlight:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "978"
+        f.receiver_sources = ["978"]
         f.save()
         cf = f.to_completed_flight()
         assert cf.aircraft["icao_hex"] == "FFFFFF"
+
+    def test_to_completed_flight_force_archive_true(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["MLAT"]
+        f.force_archive = True
+        f.save()
+        cf = f.to_completed_flight()
+        assert cf.receiver_sources == ["MLAT"]
+        assert cf.force_archive is True
 
 
 # ---------------------------------------------------------------------------
@@ -784,9 +829,9 @@ class TestCrashRecovery:
         db.execute(
             "INSERT INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, destination, "
-            "matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "matched_rules, receiver_sources, force_archive) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (icao_hex, flight_id, last_message - 10, last_message, 5,
-             "{}", "", "{}", "", None, None, '["rule_a"]', "1090"),
+             "{}", "", "{}", "", None, None, '["rule_a"]', '["1090"]', 0),
         )
         db.commit()
         db.close()
@@ -840,7 +885,7 @@ class TestPerMessageGapCheck:
         f.last_message = old_time
         f.total_messages = 5
         f.matched_rules = ["rule_a"]
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         ttl = p._flight_ttl_seconds
@@ -876,7 +921,7 @@ class TestPerMessageGapCheck:
         f.first_message = old_time - 100
         f.last_message = old_time
         f.total_messages = 5
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         new_time = old_time + 10  # well within the default 300s ttl
@@ -894,6 +939,122 @@ class TestPerMessageGapCheck:
 
 
 # ---------------------------------------------------------------------------
+# receiver_sources accumulation + force_archive (#492)
+# ---------------------------------------------------------------------------
+
+class TestReceiverSourcesAccumulation:
+    def test_accumulates_across_messages_with_different_sources(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+            p._update_flight({"icao_hex": "A8AE7F"}, msg2)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.receiver_sources == ["MLAT", "1090"]
+
+    def test_dedupes_repeated_same_source(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+            p._update_flight({"icao_hex": "A8AE7F"}, msg2)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.receiver_sources == ["1090"]
+
+    def test_not_only_set_on_first_message(self):
+        """Regression guard for the pre-#492 bug: source used to be set only
+        inside the `if not exists:` branch, so a flight created on MLAT that
+        later got picked up on 1090 never reflected the second source."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        p_db_lock_msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="978")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.receiver_sources == ["MLAT"]
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, p_db_lock_msg2)
+        f2 = Flight(p._db)
+        f2.load("A8AE7F")
+        assert f2.receiver_sources == ["MLAT", "978"]
+
+
+class TestForceArchiveFromRules:
+    def test_set_when_matched_rule_has_force_archive(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        p._rules_engine.evaluate.return_value = [
+            {"identifier": "rule1", "name": "", "description": "", "force_archive": True, "conditions": []},
+        ]
+
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.force_archive is True
+        assert f.matched_rules == ["rule1"]
+
+    def test_not_set_when_matched_rule_lacks_force_archive(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        p._rules_engine.evaluate.return_value = [
+            {"identifier": "rule1", "name": "", "description": "", "force_archive": False, "conditions": []},
+        ]
+
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.force_archive is False
+
+    def test_sticky_once_set_stays_set(self):
+        """A later message with no matching rules must not clear a
+        force_archive already set by an earlier match — only one persist-
+        worthy match ever needs to have happened for the flight."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        p._rules_engine.evaluate.return_value = [
+            {"identifier": "rule1", "name": "", "description": "", "force_archive": True, "conditions": []},
+        ]
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+
+        # Second message: rule already in matched_rules, so evaluate()
+        # would naturally skip it in the real engine — simulate that here.
+        p._rules_engine.evaluate.return_value = []
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="MLAT")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg2)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.force_archive is True
+
+
+# ---------------------------------------------------------------------------
 # Flight ID assigned at creation, not archive time
 # ---------------------------------------------------------------------------
 
@@ -906,7 +1067,7 @@ class TestFlightIdStability:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         f2 = Flight(db)
@@ -921,7 +1082,7 @@ class TestFlightIdStability:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         # A duplicate archive attempt (e.g. a crash between the archive
@@ -951,7 +1112,7 @@ class TestMessageClockGatesEviction:
         f.first_message = last_message - 10
         f.last_message = last_message
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         # Backlog replay has only reached 100s past this flight's last
@@ -982,7 +1143,7 @@ class TestMqttLagGuard:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
         return f
 
@@ -1052,7 +1213,7 @@ class TestFlightTtlLoad:
         f.first_message = old_time
         f.last_message = old_time
         f.total_messages = 1
-        f.source = "1090"
+        f.receiver_sources = ["1090"]
         f.save()
 
         # Gap of 20s exceeds the refreshed 10s ttl, so this should split.

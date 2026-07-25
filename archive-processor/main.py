@@ -41,6 +41,7 @@ from shared.redis_keys import (
     archive_last_segment_key,
     config_flight_ttl_seconds_key,
     metrics_flights_archived_key,
+    metrics_flights_skipped_key,
 )
 
 logger = logging.getLogger("archive-processor")
@@ -489,7 +490,23 @@ class ArchiveProcessor:
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
     def _process_flight(self, flight: CompletedFlight) -> None:
-        """Write to S3 (or fallback) if S3 is currently reachable."""
+        """Write to S3 (or fallback) if S3 is currently reachable.
+
+        MLAT-only flights (see #492) are dropped here, before either the S3
+        write or the local fallback queue — deliberately, not deferred, since
+        the whole point is avoiding the S3 storage cost of flights the user
+        never asked to keep. force_archive (set by a matching rule) overrides
+        the drop for MLAT-only flights the user does care about.
+        """
+        if set(flight.receiver_sources) == {"MLAT"} and not flight.force_archive:
+            try:
+                self._redis.incr(metrics_flights_skipped_key("hour"))
+                self._redis.incr(metrics_flights_skipped_key("today"))
+            except Exception as exc:
+                logger.warning("Redis counter update failed: %s", exc)
+            logger.info("Skipped MLAT-only flight %s (no force_archive match).", flight.id)
+            return
+
         with self._s3_lock:
             s3_available = self._s3_connected
 
@@ -680,6 +697,8 @@ class ArchiveProcessor:
         sensors = [
             ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_hour }}"),
             ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_today }}"),
+            ("flights_skipped_hour", "Flights Skipped MLAT-Only (Hour)", "mdi:airplane-off", "total_increasing", None, "{{ value_json.flights_skipped_hour }}"),
+            ("flights_skipped_today", "Flights Skipped MLAT-Only (Today)", "mdi:airplane-off", "total_increasing", None, "{{ value_json.flights_skipped_today }}"),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, "{{ value_json.s3_connected }}"),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_queue_depth }}"),
             ("started_at", "Archive Started At", "mdi:clock", None, None, "{{ value_json.started_at }}"),
@@ -728,6 +747,12 @@ class ArchiveProcessor:
             ),
             "flights_archived_today": self._redis_counter(
                 metrics_flights_archived_key("today")
+            ),
+            "flights_skipped_hour": self._redis_counter(
+                metrics_flights_skipped_key("hour")
+            ),
+            "flights_skipped_today": self._redis_counter(
+                metrics_flights_skipped_key("today")
             ),
             "s3_connected": s3_connected,
             "local_queue_depth": self._fallback.depth(),

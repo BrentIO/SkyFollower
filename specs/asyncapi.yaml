@@ -355,6 +355,8 @@ components:
       required:
         - flights_archived_hour
         - flights_archived_today
+        - flights_skipped_hour
+        - flights_skipped_today
         - s3_connected
         - local_queue_depth
         - started_at
@@ -367,6 +369,14 @@ components:
           type: integer
           description: Flights successfully written to S3 today (UTC)
           example: 412
+        flights_skipped_hour:
+          type: integer
+          description: MLAT-only flights dropped instead of archived this hour (see #492)
+          example: 118
+        flights_skipped_today:
+          type: integer
+          description: MLAT-only flights dropped instead of archived today, UTC (see #492)
+          example: 2540
         s3_connected:
           type: boolean
           description: True when the last S3 write attempt succeeded
@@ -489,7 +499,7 @@ components:
         Snapshot of a flight at the moment a rule matched. Excludes _id,
         positions, and velocities. operator, origin, and destination are
         omitted when not populated.
-      required: [aircraft, first_message, last_message, total_messages, source, matched_rules, rule]
+      required: [aircraft, first_message, last_message, total_messages, receiver_sources, force_archive, matched_rules, rule]
       properties:
         aircraft:
           $ref: '#/components/schemas/AircraftInfo'
@@ -527,10 +537,17 @@ components:
         destination:
           $ref: '#/components/schemas/AirportInfo'
           description: Arrival airport; omitted when unknown
-        source:
-          type: string
-          enum: ["1090", "978", "MLAT"]
-          description: Receive source
+        receiver_sources:
+          type: array
+          items:
+            type: string
+            enum: ["1090", "978", "MLAT"]
+          description: Every distinct ADS-B receive source seen for this flight, in first-seen order
+          example: ["1090"]
+        force_archive:
+          type: boolean
+          description: True if a matching rule (force_archive) overrides the MLAT-only archive skip for this flight
+          example: false
         first_message:
           type: string
           format: date-time

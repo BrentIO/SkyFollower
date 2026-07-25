@@ -135,6 +135,17 @@ def metrics_flights_archived_key(period: str) -> str:
     return f"metrics:archive:flights_archived:{period}"
 
 
+def metrics_flights_skipped_key(period: str) -> str:
+    """
+    Counter for MLAT-only flights dropped by the archive processor instead
+    of being written to S3 (see #492). period must be one of: hour, today.
+    metrics:archive:flights_skipped:{period}
+    """
+    if period not in _VALID_ARCHIVE_PERIODS:
+        raise ValueError(f"period must be one of {_VALID_ARCHIVE_PERIODS}, got: {period!r}")
+    return f"metrics:archive:flights_skipped:{period}"
+
+
 def archive_last_segment_key(icao_hex: str) -> str:
     """
     Pointer to the most recently archived flight segment for an aircraft.

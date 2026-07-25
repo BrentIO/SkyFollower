@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS flights (
     origin        TEXT,
     destination   TEXT,
     matched_rules TEXT,
-    source        TEXT
+    receiver_sources TEXT,
+    force_archive INTEGER
 );
 CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
@@ -104,6 +105,27 @@ CREATE TABLE IF NOT EXISTS velocities (
 CREATE INDEX IF NOT EXISTS positions_icao_hex  ON positions  (icao_hex);
 CREATE INDEX IF NOT EXISTS velocities_icao_hex ON velocities (icao_hex);
 """
+
+
+def _migrate_schema(db: sqlite3.Connection) -> None:
+    """Upgrade an active_flights.db created before receiver_sources/
+    force_archive existed (#492). CREATE TABLE IF NOT EXISTS only handles a
+    brand-new file; a file created under the old schema still has the old
+    `source` column (left in place, unused) and is missing these two, so
+    ALTER TABLE fills the gap. Safe to call unconditionally on every
+    startup — checks column presence first. No backfill of the old `source`
+    column's values: active_flights.db only ever holds currently-in-progress
+    flights, not historical ones, so at most a handful of mid-flight rows
+    lose their old single-source value on the exact restart that upgrades
+    the schema — they simply start accumulating receiver_sources fresh from
+    that point on.
+    """
+    existing = {row[1] for row in db.execute("PRAGMA table_info(flights)").fetchall()}
+    if "receiver_sources" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN receiver_sources TEXT")
+    if "force_archive" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN force_archive INTEGER")
+    db.commit()
 
 # ---------------------------------------------------------------------------
 # Message rate tracker (30-second rolling window)
@@ -184,7 +206,7 @@ class Flight:
     __slots__ = (
         "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
         "aircraft", "ident", "operator", "squawk", "origin", "destination",
-        "matched_rules", "source", "positions", "velocities", "_db",
+        "matched_rules", "receiver_sources", "force_archive", "positions", "velocities", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -201,7 +223,8 @@ class Flight:
         self.origin: Optional[str] = None
         self.destination: Optional[str] = None
         self.matched_rules: list[str] = []
-        self.source: str = ""
+        self.receiver_sources: list[str] = []
+        self.force_archive: bool = False
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
 
@@ -216,7 +239,7 @@ class Flight:
         cur.execute(
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, squawk, origin, destination, "
-            "matched_rules, source FROM flights WHERE icao_hex=?",
+            "matched_rules, receiver_sources, force_archive FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
         )
         row = cur.fetchone()
@@ -234,7 +257,8 @@ class Flight:
         self.origin = row["origin"]
         self.destination = row["destination"]
         self.matched_rules = json.loads(row["matched_rules"] or "[]")
-        self.source = row["source"] or ""
+        self.receiver_sources = json.loads(row["receiver_sources"] or "[]")
+        self.force_archive = bool(row["force_archive"])
 
         self._load_positions(limit=limit)
         self._load_velocities(limit=limit)
@@ -271,13 +295,15 @@ class Flight:
         cur.execute(
             "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, "
-            "destination, matched_rules, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "destination, matched_rules, receiver_sources, force_archive) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
                 json.dumps(self.operator), self.squawk,
                 self.origin, self.destination,
-                json.dumps(self.matched_rules), self.source,
+                json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
+                int(self.force_archive),
             ),
         )
         self._db.commit()
@@ -335,7 +361,8 @@ class Flight:
             "first_message": datetime.fromtimestamp(self.first_message, tz=timezone.utc),
             "last_message": datetime.fromtimestamp(self.last_message, tz=timezone.utc),
             "total_messages": self.total_messages,
-            "source": self.source or "1090",
+            "receiver_sources": self.receiver_sources,
+            "force_archive": self.force_archive,
             "aircraft": aircraft,
             "ident": self.ident or None,
             "operator": operator,
@@ -424,6 +451,7 @@ class Processor:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(_SCHEMA)
+        _migrate_schema(self._db)
 
         # message_clock drives eviction instead of wall-clock time, so a
         # backlog of messages replayed after a restart doesn't get archived
@@ -746,8 +774,10 @@ class Processor:
             flight.icao_hex = data["icao_hex"].upper()
             flight.flight_id = generate_flight_id()
             flight.first_message = msg.received_at
-            flight.source = msg.source
             self._enrich_aircraft(flight)
+
+        if msg.source not in flight.receiver_sources:
+            flight.receiver_sources.append(msg.source)
 
         flight.last_message = msg.received_at
         flight.total_messages += 1
@@ -792,6 +822,8 @@ class Processor:
 
         for rule in matched:
             flight.matched_rules.append(rule["identifier"])
+            if rule.get("force_archive"):
+                flight.force_archive = True
             self._publish_rule_notification(flight, rule, msg.received_at)
 
         flight.save()
