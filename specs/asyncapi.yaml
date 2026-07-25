@@ -96,6 +96,50 @@ channels:
       ArchiveStatisticsMessage:
         $ref: '#/components/messages/ArchiveStatisticsMessage'
 
+  # ── Archive compaction ────────────────────────────────────────────────────
+  # Unlike receiver/processor/archive-processor's single combined-JSON
+  # statistics payload, archive-compaction is a one-shot job (not a
+  # long-running service) and publishes one retained topic per stat,
+  # matching how it actually publishes in code -- each stat gets its own
+  # channel/message/schema rather than being folded into one object.
+
+  archiveCompactionFilesCompacted:
+    address: SkyFollower/archive-compaction/statistic/files_compacted
+    description: >
+      Count of per-flight Parquet index files merged into this run's
+      compacted output. Published once per run, retained.
+    messages:
+      ArchiveCompactionFilesCompactedMessage:
+        $ref: '#/components/messages/ArchiveCompactionFilesCompactedMessage'
+
+  archiveCompactionFilesDeleteFailed:
+    address: SkyFollower/archive-compaction/statistic/files_delete_failed
+    description: >
+      Count of files included in this run's compacted output whose source
+      delete call failed, and therefore still linger as duplicates.
+      Published once per run, retained.
+    messages:
+      ArchiveCompactionFilesDeleteFailedMessage:
+        $ref: '#/components/messages/ArchiveCompactionFilesDeleteFailedMessage'
+
+  archiveCompactionLastRunAt:
+    address: SkyFollower/archive-compaction/statistic/last_run_at
+    description: >
+      UTC ISO-8601 timestamp when this run completed. Published once per
+      run, retained.
+    messages:
+      ArchiveCompactionLastRunAtMessage:
+        $ref: '#/components/messages/ArchiveCompactionLastRunAtMessage'
+
+  archiveCompactionLastRunStatus:
+    address: SkyFollower/archive-compaction/statistic/last_run_status
+    description: >
+      Outcome of this run (success or failure). Published once per run,
+      retained.
+    messages:
+      ArchiveCompactionLastRunStatusMessage:
+        $ref: '#/components/messages/ArchiveCompactionLastRunStatusMessage'
+
   # ── Rule notifications ────────────────────────────────────────────────────
 
   ruleNotification:
@@ -167,6 +211,30 @@ operations:
       $ref: '#/channels/archiveStatistics'
     summary: Archive processor publishes all telemetry statistics as a JSON payload
 
+  publishArchiveCompactionFilesCompacted:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionFilesCompacted'
+    summary: Archive compaction publishes the files-compacted count for this run
+
+  publishArchiveCompactionFilesDeleteFailed:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionFilesDeleteFailed'
+    summary: Archive compaction publishes the files-delete-failed count for this run
+
+  publishArchiveCompactionLastRunAt:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionLastRunAt'
+    summary: Archive compaction publishes the completion timestamp for this run
+
+  publishArchiveCompactionLastRunStatus:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionLastRunStatus'
+    summary: Archive compaction publishes the outcome of this run
+
   publishRuleNotification:
     action: send
     channel:
@@ -218,6 +286,38 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ArchiveStatistics'
+
+    ArchiveCompactionFilesCompactedMessage:
+      name: ArchiveCompactionFilesCompactedMessage
+      title: Archive compaction files compacted
+      summary: Count of per-flight files merged into this run's compacted output
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionFilesCompacted'
+
+    ArchiveCompactionFilesDeleteFailedMessage:
+      name: ArchiveCompactionFilesDeleteFailedMessage
+      title: Archive compaction files delete failed
+      summary: Count of compacted-but-undeleted source files this run
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionFilesDeleteFailed'
+
+    ArchiveCompactionLastRunAtMessage:
+      name: ArchiveCompactionLastRunAtMessage
+      title: Archive compaction last run at
+      summary: UTC timestamp this run completed
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionLastRunAt'
+
+    ArchiveCompactionLastRunStatusMessage:
+      name: ArchiveCompactionLastRunStatusMessage
+      title: Archive compaction last run status
+      summary: Outcome of this run
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionLastRunStatus'
 
     FlightRuleNotificationMessage:
       name: FlightRuleNotificationMessage
@@ -400,6 +500,30 @@ components:
           format: date-time
           description: UTC ISO-8601 timestamp of process start
           example: "2026-01-15T10:00:00+00:00"
+
+    ArchiveCompactionFilesCompacted:
+      type: integer
+      description: Count of per-flight Parquet index files merged into this run's compacted output
+      example: 142
+
+    ArchiveCompactionFilesDeleteFailed:
+      type: integer
+      description: >
+        Count of files included in this run's compacted output whose delete
+        call failed and therefore still linger as duplicates
+      example: 0
+
+    ArchiveCompactionLastRunAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp when this run completed
+      example: "2026-07-25T04:50:03.123456+00:00"
+
+    ArchiveCompactionLastRunStatus:
+      type: string
+      enum: [success, failure]
+      description: Outcome of this run
+      example: success
 
     RunnerStatistics:
       type: object

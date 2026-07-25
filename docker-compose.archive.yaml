@@ -17,5 +17,29 @@ services:
     volumes:
       - ./config/ui/settings.json:/app/settings.json:ro
 
+  # ---------------------------------------------------------------------------
+  # Archive Compaction — scheduled by its own ofelia instance, not the
+  # central server's (docker-compose.server.yaml). This job only needs S3
+  # credentials, which already live on this host via archive-processor;
+  # the central server has no AWS-facing components today.
+  # ---------------------------------------------------------------------------
+
+  archive-compaction:
+    image: ghcr.io/brentio/skyfollower-archive-compaction:latest
+    container_name: skyfollower-archive-compaction
+    profiles: ["compaction"]
+    volumes:
+      - ./config/archive/compaction-settings.json:/app/settings.json:ro
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    restart: unless-stopped
+    profiles: ["compaction"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/archive/ofelia-config.ini:/etc/ofelia/config.ini:ro
+    depends_on:
+      - archive-compaction
+
 volumes:
   archive-data:
