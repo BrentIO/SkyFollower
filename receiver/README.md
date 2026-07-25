@@ -66,6 +66,14 @@ configured on that instance — each is its own `sources[]` entry with
 }
 ```
 
+These two examples match `config/receiver/settings.json.example` (the
+SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
+dedicated MLAT instance) respectively. Note that only the former is wired
+up in `docker-compose.receiver.yaml` today — deploying a second instance
+means running the same image again with its own `RECEIVER_ID` and the
+MLAT-only settings file; there's no second Compose service or host example
+for it yet.
+
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
 ### `rabbitmq` object
