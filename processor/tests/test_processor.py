@@ -571,6 +571,73 @@ class TestArchiveFallbackQueue:
 
 
 # ---------------------------------------------------------------------------
+# Processor._drain_fallback — and its periodic-tick trigger from
+# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger (#526)
+# ---------------------------------------------------------------------------
+
+class TestProcessorDrainFallback:
+    def test_drain_fallback_publishes_queued_items(self):
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        mock_channel = MagicMock()
+        p._rmq_channel = mock_channel
+
+        p._drain_fallback()
+
+        assert p._fallback.depth() == 0
+        mock_channel.basic_publish.assert_called_once()
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
+
+    def test_drain_fallback_leaves_items_queued_on_publish_error(self):
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        mock_channel = MagicMock()
+        mock_channel.basic_publish.side_effect = ConnectionError("gone")
+        p._rmq_channel = mock_channel
+
+        p._drain_fallback()
+
+        assert p._fallback.depth() == 1
+
+    def _run_one_telemetry_tick(self, p) -> None:
+        """Run the real _telemetry_loop for exactly one iteration, by
+        making the mocked time.sleep set _shutdown so the loop body runs
+        once and then exits — rather than re-implementing the loop's
+        conditional in the test, which wouldn't actually exercise it."""
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("processor.main.time.sleep", side_effect=fake_sleep), \
+             patch.object(p, "_publish_telemetry"):
+            p._telemetry_loop()
+
+    def test_telemetry_loop_drains_when_connected(self):
+        """The periodic tick must attempt a drain when RabbitMQ is
+        connected — this is what lets a stuck/missed reconnect-triggered
+        drain (see #526) still recover on the next tick. Unlike the
+        receiver, _archive() doesn't flip _rmq_connected on a publish
+        failure, so repeated per-flight failures are the way this queue
+        gets stuck here, rather than a pinned flag."""
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        p._rmq_channel = MagicMock()
+        p._rmq_connected = True
+
+        self._run_one_telemetry_tick(p)
+
+        assert p._fallback.depth() == 0
+
+    def test_telemetry_tick_does_not_drain_when_disconnected(self):
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        p._rmq_connected = False
+
+        self._run_one_telemetry_tick(p)
+
+        assert p._fallback.depth() == 1
+
+
+# ---------------------------------------------------------------------------
 # _RateTracker
 # ---------------------------------------------------------------------------
 
