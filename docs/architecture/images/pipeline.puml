@@ -20,5 +20,6 @@ Archiver ---> s3 : Persist Parquet index row\n(index/year={YYYY}/month={MM}/day=
 RevProc -[hidden]down-> MsgProc
 MsgProc -[hidden]down-> CentralSvr
 CentralSvr -[hidden]right-> ArchProc
+ArchProc -[hidden]down-> AWS
 
 @enduml
