@@ -95,7 +95,7 @@ the message processor side.
 |-------------|---------|
 | `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the message processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}`, `aircraft:registry:{icao_hex}`, and `aircraft:livery:{icao_hex}` server-side and returns the deep-merged result (each later source winning on any field overlap — livery over registry over mictronics) in a single round-trip. |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
-| `flight:{IDENT}` | Origin/destination enrichment (read once per flight when ident is first seen) |
+| `EVALSHA` → `shared/lua/route_airports.lua` | Resolves `route:{ident}` into its full ordered array of `airport:{code}` records. Read at most once per flight, the moment ident/position/altitude/heading are all known (not on every message, and not at archive time). See "Route Leg Resolution" below. |
 | `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
 | `config:rules` | JSON rules array; loaded when version changes |
 | `config:areas:version` | SHA-256 hash polled every 5 s; triggers area reload when changed |
@@ -110,6 +110,140 @@ the message processor side.
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
 | `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
 | `metrics:message_processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
+
+## Route Leg Resolution
+
+`origin`/`destination` are resolved at most once per flight — not at archive
+time, and not on every message. `_maybe_resolve_route()` is called from
+`_update_flight()` after each message is applied to the flight's state, and
+runs the actual Redis lookup and resolution logic the moment **all** of the
+following have been seen for the flight (in any order across messages):
+
+- a route-bearing **ident** — present, not `"00000000"` (both already
+  enforced before `flight.ident` is ever set at all — see `_update_flight`),
+  and not just the aircraft's own tail number re-broadcast as the callsign
+  (`_ident_matches_registration()`, dash-insensitive — the same check
+  `_enrich_operator()` uses to decide whether to look up an airline operator,
+  matching SkyFollower-legacy's `setIdent()`/`_getOperator()` precedent)
+- a **position** (latitude/longitude)
+- an **altitude**
+- a **heading**
+
+Once resolution runs, `flight.route_resolution_attempted` is set the moment
+the outcome is *final* — resolved, or confidently ruled out — so a valid
+ident with no known route (or a settled ambiguous/rejected leg) is never
+re-queried against Redis on every subsequent message for the rest of the
+flight. There's one deliberate exception: a multi-leg route whose recent
+headings haven't stabilized yet (see "Heading stability" below) is
+re-evaluated on later messages instead of being settled prematurely — but
+the airport records fetched from Redis are cached on
+`flight.route_candidate_airports` the first time, so every retry re-runs
+only the local (no-I/O) resolution logic, never a second `EVALSHA`. The
+resolution and sanity-check logic itself lives in
+`message_processor/route_resolver.py` as a set of pure functions,
+independent of Redis.
+
+![Route leg resolution workflow](./route-leg-resolution-workflow.svg)
+
+`route:{ident}` (written by the `vrs-standing-data` runner) is a raw,
+dash-delimited string of ICAO airport codes — a simple point-to-point route
+has 2 codes, but a same-day out-and-back reusing one callsign (e.g.
+`KMIA-KJFK-KMIA`) or a multi-stop "milk run" can have 3 or more. `EVALSHA
+route_airports.lua` resolves the whole string into an ordered array of full
+`airport:{code}` records in one round trip (see `shared/lua/route_airports.lua`);
+it returns an empty array if the ident has no known route, or if even one
+code in the route has no matching airport record.
+
+Because resolution runs as soon as the four conditions above are met — not
+at the end of the flight — the position/velocity history it reasons over is
+whatever the flight has accumulated *so far*, not necessarily its eventual
+full track. This is deliberate: it's what makes `origin`/`destination`
+available early enough for the same flight's own rules-engine evaluation or
+MQTT notifications to see them, at the cost of the sanity check below only
+being as strong as the track recorded up to that point.
+
+- **2 airports**: no ambiguity — they're the origin and destination directly.
+- **3+ airports**: the flight is only actually flying one adjacent pair, so it's
+  resolved low-altitude-first, falling back to a cruise heuristic:
+  - **Proximity + climb/descent** — if the flight's *earliest* position is
+    below 10,000ft and near exactly one waypoint (or near a waypoint that
+    appears more than once, e.g. the round-trip case, disambiguated by
+    which occurrence's climb/descent direction is structurally possible —
+    climbing away only makes sense for an occurrence with a next hop,
+    descending toward only for one with a previous hop), that's a
+    near-dispositive signal for whether this is the leg's origin (climbing
+    away) or destination (descending toward).
+  - **Heading vs. bearing** — otherwise (cruise altitude, or the proximity
+    check was inconclusive), the flight's most recent observed heading is
+    compared against each candidate leg's great-circle initial bearing. The
+    closest candidate must be within 30° of the observed heading *and* at
+    least 15° clearer than the second-closest candidate to count as
+    resolved — this is what makes the common out-and-back case tractable
+    (the two legs' bearings are roughly 180° apart), while still refusing
+    to guess among several similarly-plausible legs on a genuine multi-city
+    route. This heuristic only ever runs once heading data has *stabilized*
+    (see below) — never against a single instantaneous reading.
+  - Either heuristic returning nothing resolved (ambiguous proximity with no
+    valid vertical-trend match, or heading inconclusive) leaves both fields
+    `None` rather than guessing.
+
+**Heading stability**: a single instantaneous heading reading is not
+trustworthy on its own — an aircraft circling in a holding pattern (e.g.
+diverted around weather) sweeps its heading through a full circle, and can
+momentarily point in almost any direction, including one that happens to
+align with a completely different leg's bearing. `heading_is_stable()`
+requires at least 3 recent heading samples to agree within 20° of each
+other before the heading-vs-bearing heuristic is trusted at all; ordinary
+cruise flight naturally produces consistent consecutive headings, while
+circling does not. When headings aren't yet stable, resolution defers
+rather than settling — see "one deliberate exception" above.
+
+**Sanity check**: whatever pair is selected — a direct 2-airport pass-through
+or a resolved multi-leg pair — is checked against the flight's actual
+observed track before being trusted. `route:{ident}` is community-maintained
+VRS standing data; a callsign can carry a stale or mismatched route with no
+way to detect that from the string alone. Two independent checks run against
+every recorded position:
+
+- **Cross-track distance** — the perpendicular distance from the position to
+  the great-circle line between the candidate origin and destination; if any
+  position exceeds `max(150nm, 30% × route_distance)`, the pair is rejected.
+  The threshold scales with route length rather than using one flat number:
+  a flat 500nm window would barely constrain a short hop like KJFK-KATL
+  (~660nm) but would reject perfectly normal long-haul routing variance (jet
+  stream, ATC, weather) on a route like MMMX-EGLL (~5,500nm).
+- **Along-track bound** — cross-track distance alone only measures
+  perpendicular distance to the *infinite* line through both airports; it
+  says nothing about whether the position actually falls *between* the two
+  endpoints. A position must project onto that line within `[0,
+  route_distance]` (plus a fixed 50nm slack for ordinary terminal-area
+  maneuvering) or the pair is rejected. This specifically catches a holding
+  pattern whose (now-stabilized) heading matches a *different*, wrong leg's
+  bearing closely enough, and happens to sit within that wrong leg's
+  cross-track tolerance too, while actually being well beyond its
+  destination — real example: an aircraft actually flying KJFK→KMIA,
+  holding at 22,000ft east of Jacksonville on a `KJFK-KMIA-KMCO-KJFK`
+  routing, whose stabilized northbound holding heading (~350°) is a closer
+  match to the wrong `KMIA→KMCO` leg's bearing (~341°) than to the correct
+  `KJFK→KMIA` leg (~202°) and passes that wrong leg's cross-track check
+  (~52nm, under its ~150nm threshold) — but projects ~100nm *past* KMCO
+  along that leg's line, which the along-track bound catches and rejects.
+
+Either check failing rejects the pair — treated the same as an unresolvable
+case, never a partial guess.
+
+**All-or-nothing**: `origin`/`destination` are set only when exactly one
+unambiguous, sanity-checked pair was resolved. Any failure along the way —
+no route data, an unresolvable leg, or a rejected sanity check — leaves
+*both* fields `None`, never a partial or best-guess value.
+
+Whenever a finalized attempt leaves `origin`/`destination` unset — no known
+route, an unresolvable/ambiguous leg, or a rejected sanity check — a `DEBUG`
+log line records the ident, `icao_hex`, the exact `route_airports.lua`
+response that was rejected, and (where applicable) the specific reason (e.g.
+which sanity check failed, at which position, and by how much). Nothing is
+logged for the "not final yet" case (heading still stabilizing) — there's
+nothing to report until an attempt actually settles.
 
 ## MQTT Topics Published
 

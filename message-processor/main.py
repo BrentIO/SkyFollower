@@ -34,6 +34,7 @@ import pyModeS as pms
 import pyModeS978
 import redis as redis_lib
 
+from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.logging_setup import configure_logging
 from shared.models import (
@@ -66,6 +67,16 @@ _US_REG_RE = re.compile(
 )
 
 
+def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
+    """True when the broadcast ident is just the aircraft's own tail number
+    (registration) rather than a route-bearing flight identifier/callsign —
+    dash-insensitive, matching SkyFollower-legacy's setIdent()/_getOperator()
+    precedent. Shared by operator enrichment and route-leg resolution, since
+    both need the same "is this really a flight number" judgment call."""
+    registration = aircraft.get("registration", "")
+    return bool(registration) and registration.replace("-", "") == ident.replace("-", "")
+
+
 # ---------------------------------------------------------------------------
 # SQLite schema (active flight store)
 # ---------------------------------------------------------------------------
@@ -84,7 +95,9 @@ CREATE TABLE IF NOT EXISTS flights (
     destination   TEXT,
     matched_rules TEXT,
     receiver_sources TEXT,
-    force_archive INTEGER
+    force_archive INTEGER,
+    route_resolution_attempted INTEGER,
+    route_candidate_airports TEXT
 );
 CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
@@ -123,6 +136,14 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE flights ADD COLUMN receiver_sources TEXT")
     if "force_archive" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN force_archive INTEGER")
+    if "route_resolution_attempted" not in existing:
+        # A flight recovered from a pre-#498 store has never had route
+        # resolution attempted -- NULL/0 (falsy) is the correct starting
+        # value, same as a brand-new flight, so no backfill needed beyond
+        # adding the column.
+        db.execute("ALTER TABLE flights ADD COLUMN route_resolution_attempted INTEGER")
+    if "route_candidate_airports" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN route_candidate_airports TEXT")
     db.commit()
 
 # ---------------------------------------------------------------------------
@@ -233,7 +254,8 @@ class Flight:
     __slots__ = (
         "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
         "aircraft", "ident", "operator", "squawk", "origin", "destination",
-        "matched_rules", "receiver_sources", "force_archive", "positions", "velocities", "_db",
+        "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
+        "route_candidate_airports", "positions", "velocities", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -252,6 +274,19 @@ class Flight:
         self.matched_rules: list[str] = []
         self.receiver_sources: list[str] = []
         self.force_archive: bool = False
+        # One-shot guard: route:{ident} resolution runs at most once per
+        # flight, the moment ident/altitude/heading are all available (see
+        # _maybe_resolve_route) -- without this, a valid ident with no
+        # known route (or an ambiguous leg) would otherwise be re-queried
+        # against Redis on every subsequent message for the rest of the
+        # flight.
+        self.route_resolution_attempted: bool = False
+        # Raw JSON string of the airport records fetched from route_airports.lua,
+        # cached the first (and only) time it's fetched -- so a flight whose
+        # heading hasn't stabilized enough yet to trust (see
+        # route_resolver.heading_is_stable) can be re-evaluated on later
+        # messages without a repeat Redis round trip. None until fetched.
+        self.route_candidate_airports: Optional[str] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
 
@@ -266,7 +301,9 @@ class Flight:
         cur.execute(
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, squawk, origin, destination, "
-            "matched_rules, receiver_sources, force_archive FROM flights WHERE icao_hex=?",
+            "matched_rules, receiver_sources, force_archive, route_resolution_attempted, "
+            "route_candidate_airports "
+            "FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
         )
         row = cur.fetchone()
@@ -286,6 +323,8 @@ class Flight:
         self.matched_rules = json.loads(row["matched_rules"] or "[]")
         self.receiver_sources = json.loads(row["receiver_sources"] or "[]")
         self.force_archive = bool(row["force_archive"])
+        self.route_resolution_attempted = bool(row["route_resolution_attempted"])
+        self.route_candidate_airports = row["route_candidate_airports"]
 
         self._load_positions(limit=limit)
         self._load_velocities(limit=limit)
@@ -322,15 +361,17 @@ class Flight:
         cur.execute(
             "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, "
-            "destination, matched_rules, receiver_sources, force_archive) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "destination, matched_rules, receiver_sources, force_archive, "
+            "route_resolution_attempted, route_candidate_airports) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
                 json.dumps(self.operator), self.squawk,
                 self.origin, self.destination,
                 json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
-                int(self.force_archive),
+                int(self.force_archive), int(self.route_resolution_attempted),
+                self.route_candidate_airports,
             ),
         )
         self._db.commit()
@@ -533,6 +574,8 @@ class MessageProcessor:
         )
         _lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "merge_aircraft.lua"
         self._merge_sha = self._redis.script_load(_lua_path.read_text())
+        _route_lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "route_airports.lua"
+        self._route_sha = self._redis.script_load(_route_lua_path.read_text())
 
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
@@ -869,6 +912,8 @@ class MessageProcessor:
         if "adsb_version" in data:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
 
+        self._maybe_resolve_route(flight)
+
         # Rules evaluation
         t_rules = time.monotonic()
         matched = self._rules_engine.evaluate(flight)
@@ -915,8 +960,7 @@ class MessageProcessor:
             return
 
         # Skip if ident matches registration
-        reg = flight.aircraft.get("registration", "")
-        if reg and reg.replace("-", "") == ident.replace("-", ""):
+        if _ident_matches_registration(ident, flight.aircraft):
             return
 
         # Extract ICAO airline prefix (letters before first digit)
@@ -934,6 +978,113 @@ class MessageProcessor:
                 self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
         except Exception as exc:
             logger.debug("Redis enrichment (operator) error: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Route leg resolution (origin/destination)
+    # ------------------------------------------------------------------
+
+    def _route_ready(self, flight: Flight) -> bool:
+        """True once every field the resolution heuristics need has been
+        seen at least once for this flight: a route-bearing ident (not
+        empty/"00000000" -- already enforced before flight.ident is ever
+        set -- and not just the aircraft's own tail number), a position, an
+        altitude, and a heading. Order of arrival across messages doesn't
+        matter; each condition is checked against the flight's full history
+        via SQLite, not just whatever _update_flight's single-message
+        Flight.load(limit=True) happened to load in memory."""
+        if not flight.ident or _ident_matches_registration(flight.ident, flight.aircraft):
+            return False
+
+        # A stored position always has latitude/longitude (only ever
+        # inserted together, see _update_flight) -- altitude is the one
+        # that's sometimes absent (e.g. a surface-position typecode), so
+        # requiring it here also guarantees "a lat/long has been received".
+        cur = self._db.cursor()
+        cur.execute(
+            "SELECT 1 FROM positions WHERE icao_hex=? AND altitude IS NOT NULL LIMIT 1",
+            (flight.icao_hex,),
+        )
+        if cur.fetchone() is None:
+            return False
+
+        cur.execute(
+            "SELECT 1 FROM velocities WHERE icao_hex=? AND heading IS NOT NULL LIMIT 1",
+            (flight.icao_hex,),
+        )
+        return cur.fetchone() is not None
+
+    def _maybe_resolve_route(self, flight: Flight) -> None:
+        """Runs route:{ident} leg resolution at most once per flight, the
+        moment ident/position/altitude/heading are all available — not at
+        archive time, so a rules-engine condition or MQTT notification
+        later in the same flight can see origin/destination too. See
+        message-processor/README.md's "Route Leg Resolution" section and
+        message_processor.route_resolver for the resolution/sanity-check
+        logic itself.
+
+        route_resolution_attempted is only set once the result is final
+        (see route_resolver.resolve_origin_destination's is_final) — a
+        settled resolution, or a settled "no route"/"rejected" outcome — so
+        a valid ident with no known route is never re-queried against
+        Redis on every subsequent message for the rest of the flight. The
+        one exception is a multi-leg route whose heading data hasn't
+        stabilized enough yet to trust (e.g. an aircraft circling in a
+        holding pattern): that's deliberately re-evaluated on later
+        messages once more heading samples arrive, but the fetched airport
+        records are cached on route_candidate_airports the first time so
+        those re-evaluations never repeat the Redis round trip.
+        All-or-nothing: leaves both fields None on missing route data, an
+        unresolvable leg, or a failed sanity check, rather than writing a
+        partial or best-guess pair."""
+        if flight.route_resolution_attempted or not self._route_ready(flight):
+            return
+
+        if flight.route_candidate_airports is not None:
+            airports = json.loads(flight.route_candidate_airports)
+        else:
+            try:
+                raw = self._redis.evalsha(self._route_sha, 0, flight.ident)
+                airports = json.loads(raw) if raw else []
+            except Exception as exc:
+                logger.debug("Redis route resolution error: %s", exc)
+                flight.route_resolution_attempted = True
+                return
+            flight.route_candidate_airports = json.dumps(airports)
+
+        if len(airports) < 2:
+            flight.route_resolution_attempted = True
+            logger.debug(
+                "Route resolution: no usable route for ident %s (icao_hex=%s); "
+                "route_airports.lua returned: %s",
+                flight.ident, flight.icao_hex, airports,
+            )
+            return
+
+        # Reload full history -- flight.positions/velocities may hold only
+        # the most recently loaded row (Flight.load's default limit=True),
+        # not the whole flight, and the low-altitude heuristic specifically
+        # needs the earliest position.
+        flight._load_positions(limit=False)
+        flight._load_velocities(limit=False)
+        positions = [p.to_dict() for p in flight.positions]
+        velocities = [v.to_dict() for v in flight.velocities]
+
+        origin, destination, is_final, reason = resolve_origin_destination(
+            airports, positions, velocities
+        )
+        if not is_final:
+            return  # heading not yet stable enough to trust -- try again later
+
+        flight.route_resolution_attempted = True
+        if origin and destination:
+            flight.origin = origin
+            flight.destination = destination
+        else:
+            logger.debug(
+                "Route resolution rejected for ident %s (icao_hex=%s): %s. "
+                "route_airports.lua returned: %s",
+                flight.ident, flight.icao_hex, reason, airports,
+            )
 
     # ------------------------------------------------------------------
     # Stale flight eviction
