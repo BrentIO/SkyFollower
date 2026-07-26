@@ -17,30 +17,19 @@ end box
 Archiver -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
 alt flight write succeeds
     S3 --> Archiver-- : success
-    Archiver -> Archiver : **Build** the Parquet index row (pyarrow)
-    Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+    Archiver -> Archiver : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+    Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
     alt index write succeeds
         S3 --> Archiver-- : success
-        note right of Archiver
-            Flight fully archived —
-            searchable via Athena immediately
-        end note
     else index write fails
-        S3 --> Archiver-- : error
-        Archiver -> FallbackDB : **Queue** ""{flight_json, s3_key}"" for retry\n(""index_queue"" table)
-        note right of Archiver
-            The flight object is already durable in S3.
-            Only the index row is missing — this never
-            blocks archiving or re-queues the flight itself.
-        end note
+        S3 --> Archiver-- : error or timeout
+        Archiver -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+        FallbackDB --> Archiver-- : OK
     end
 else flight write fails
-    S3 --> Archiver-- : error
-    Archiver -> FallbackDB : **Queue** the full flight for retry\n(""queue"" table)
-    note right of Archiver
-        Neither the flight object nor
-        the index row exist yet
-    end note
+    S3 --> Archiver-- : error or timeout
+    Archiver -> FallbackDB++ : **Insert flight into the retry queue**\n""INSERT INTO queue {flight_json}""
+    FallbackDB --> Archiver-- : OK
 end
 
 == Retry: S3 reconnects, or every telemetry_interval_seconds ==
@@ -48,13 +37,31 @@ end
 Archiver -> Archiver : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
 alt guard acquired
     Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    Archiver -> FallbackDB : **Drain** oldest-first\n(""queue"" table)
     loop for each queued full flight
-        Archiver -> S3++ : **Re-archive**\n(flight write + index write, as above)
-        S3 --> Archiver-- : success
-        Archiver -> FallbackDB : **Delete** drained row
+        Archiver -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        FallbackDB --> Archiver-- : Record
+        Archiver -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+        alt flight write succeeds
+            S3 --> Archiver-- : success
+            Archiver -> Archiver : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+            Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+            alt index write succeeds
+                S3 --> Archiver-- : success
+            else index write fails
+                S3 --> Archiver-- : error or timeout
+                Archiver -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+                FallbackDB --> Archiver-- : OK
+            end
+            Archiver -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
+            FallbackDB --> Archiver-- : OK
+        else flight write fails
+            S3 --> Archiver-- : error or timeout
+            break
+                Archiver -> Archiver : **Stop draining — retry next cycle**
+            end
+        end
     end
-    Archiver -> Archiver : **Release the flight-queue drain guard**
+    Archiver -> Archiver : **Release the flight-queue drain guard**\n""_fallback._drain_lock.release()""
 else guard already held
     Archiver -> Archiver : **Skip — a flight-queue drain is already in progress**
 end
@@ -62,28 +69,24 @@ end
 Archiver -> Archiver : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
 alt guard acquired
     Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    Archiver -> FallbackDB : **Drain** oldest-first\n(""index_queue"" table)
     loop for each queued index-only retry
-        Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-        alt succeeds
+        Archiver -> FallbackDB++ : **Get next row**\n""SELECT * FROM index_queue ORDER BY id ASC LIMIT 1""
+        FallbackDB --> Archiver-- : Record
+        Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+        alt index write succeeds
             S3 --> Archiver-- : success
-            Archiver -> FallbackDB : **Delete** drained row
-        else fails again
-            S3 --> Archiver-- : error
-            Archiver -> Archiver : **Stop draining** — retry next cycle
+            Archiver -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
+            FallbackDB --> Archiver-- : OK
+        else index write fails
+            S3 --> Archiver-- : error or timeout
+            break
+                Archiver -> Archiver : **Stop draining — retry next cycle**
+            end
         end
     end
-    Archiver -> Archiver : **Release the index-queue drain guard**
+    Archiver -> Archiver : **Release the index-queue drain guard**\n""_index_fallback._drain_lock.release()""
 else guard already held
     Archiver -> Archiver : **Skip — an index-queue drain is already in progress**
 end
-
-note over FallbackDB
-    Both queues live in the same s3.db file (separate tables)
-    and are drained independently, each with its own
-    single-flight guard — an index-only retry never re-archives
-    the flight object, and draining one queue never blocks a
-    concurrent drain of the other.
-end note
 
 @enduml
