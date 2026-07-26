@@ -85,4 +85,4 @@ publish attempts that fail buffer to a local `completed_flights.db`
 reconnect, and independently every `telemetry_interval_seconds`, to catch
 a publish-only failure that never dropped the underlying connection.
 
-[![Message processor offline fallback](./images/processor-offline-fallback-sequence.svg)](./images/processor-offline-fallback-sequence.svg)
+[![Message processor offline fallback](./images/message-processor-offline-fallback-sequence.svg)](./images/message-processor-offline-fallback-sequence.svg)
