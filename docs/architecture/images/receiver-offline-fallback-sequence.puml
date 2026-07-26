@@ -1,7 +1,7 @@
 @startuml
 !include ../../images/common-sequence.iuml
 
-title Receiver Offline Fallback
+title Receiver — RabbitMQ Offline Fallback
 
 box "Receiver" $OnPrem
     participant "Receiver" as Receiver
@@ -23,15 +23,15 @@ alt connected
     opt channel already closed locally
         Receiver -> Receiver : **Local publish failure**\n""basic_publish() raises""
         Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
         ReceiverDB --> Receiver-- : OK
     end
 else not connected
-    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
     ReceiverDB --> Receiver-- : OK
 end
 
-== Connection drops ==
+== RabbitMQ connection drops ==
 
 AdsbQ ->x Receiver : **Connection lost**
 Receiver -> Receiver : **Connection monitoring detects the drop**\n""conn.process_data_events() raises""
@@ -50,7 +50,7 @@ end
 
 opt Message arrives while disconnected from RabbitMQ
     loop For each message
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue""
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
         ReceiverDB --> Receiver-- : OK
     end
 end
@@ -80,16 +80,11 @@ end
 
 Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
 alt connected
-    Receiver -> Receiver : **Attempt to claim the drain guard**\n""_drain_lock.acquire(blocking=False)""
-    alt guard acquired
-        note right of Receiver
-            Refer to //Draining queue.db (reconnect-triggered)// for the
-            drain loop itself
-        end note
-        Receiver -> Receiver : **Release the drain guard**\n""_drain_lock.release()""
-    else guard already held (reconnect-triggered drain still running)
-        Receiver -> Receiver : **Skip — a drain is already in progress**
-    end
+    note right of Receiver
+        Refer to //Draining queue.db (reconnect-triggered)// above —
+        this trigger calls the identical ""_drain_fallback()"",
+        including its single-flight guard.
+    end note
 else not connected
     Receiver -> Receiver : **Skip — nothing to do this tick**
 end

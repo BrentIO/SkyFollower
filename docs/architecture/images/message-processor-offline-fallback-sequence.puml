@@ -1,7 +1,7 @@
 @startuml
 !include ../../images/common-sequence.iuml
 
-title Message Processor Offline Fallback
+title Message Processor — RabbitMQ Offline Fallback
 
 box "Message Processor" $OnPrem
     participant "Processor" as Processor
@@ -31,7 +31,7 @@ else not connected
     ProcessorDB --> Processor-- : OK
 end
 
-== Connection drops ==
+== RabbitMQ connection drops ==
 
 ArchiveQ ->x Processor : **Connection lost**
 Processor -> Processor : **Connection monitoring detects the drop**\n""start_consuming() raises""
