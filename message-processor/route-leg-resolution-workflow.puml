@@ -54,28 +54,27 @@ else (3+ airports -- multi-leg route)
   endif
 endif
 
-:**Mark this flight as attempted**\n""flight.route_resolution_attempted = True""\n(settled -- resolved or not -- never re-evaluated again);
+:**Mark this flight as attempted**\n""flight.route_resolution_attempted = True"";
 
 if (candidate leg resolved?) then (no)
-  :Leave origin/destination unset;
+  :Reject: Leave origin/destination unset;
   stop
 endif
 
 :**Sanity-check against the observed track**\nfor every position received so far;
 
-if (**Cross-track distance exceeds max(150nm, 30% * route_distance)?**\n""cross_track_distance_nm(position, origin, destination)""\n(perpendicular distance to the great-circle line)) then (yes)
-  :Reject -- leave origin/destination unset;
+if (**Is the position too far off to the side of the route line?**\n""cross_track_distance_nm(position, origin, destination)"" > max(150nm, 30% * route_distance)\n(perpendicular distance to the great-circle line)) then (yes)
+  :Reject: Leave origin/destination unset;
   stop
 endif
 
-if (**Along-track projection falls outside [0, route_distance] (+/-50nm slack)?**\n""along_track_distance_nm(position, origin, destination)""\n(catches a position that's coincidentally near the line's\nbearing but well past one endpoint -- e.g. a holding pattern\nwhose heading matches a different, wrong leg's bearing)) then (yes)
-  :Reject -- leave origin/destination unset;
+if (**Is the position well outside the stretch between the origin and destination?**\n""along_track_distance_nm(position, origin, destination)"" not in [0, route_distance] (+/-50nm slack)\n(catches a position that's coincidentally near the line's\nbearing but well past one endpoint -- e.g. a holding pattern\nwhose heading matches a different, wrong leg's bearing)) then (yes)
+  :Reject: Leave origin/destination unset;
   stop
 else (no)
   :**Set origin/destination**\n""flight.origin, flight.destination = origin.icao_code, destination.icao_code"";
   stop
 endif
-
 }
 
 @enduml
