@@ -354,6 +354,16 @@ function ConditionValueInput({
       );
 
     case "ident":
+      return (
+        <input
+          type="text"
+          placeholder="DAL2"
+          className="input"
+          value={value as string}
+          onChange={(e) => onValueChange(e.target.value)}
+        />
+      );
+
     default:
       return (
         <input
@@ -380,27 +390,99 @@ function HeadingInput({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <input
-        type="number"
-        min={0}
-        max={359}
-        placeholder="min"
-        className="input w-24"
-        value={min}
-        onChange={(e) => update(e.target.value, max)}
-      />
-      <span className="text-slate-400">to</span>
-      <input
-        type="number"
-        min={0}
-        max={359}
-        placeholder="max"
-        className="input w-24"
-        value={max}
-        onChange={(e) => update(min, e.target.value)}
-      />
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          max={359}
+          placeholder="min"
+          className="input w-24"
+          value={min}
+          onChange={(e) => update(e.target.value, max)}
+        />
+        <span className="text-slate-400">to</span>
+        <input
+          type="number"
+          min={0}
+          max={359}
+          placeholder="max"
+          className="input w-24"
+          value={max}
+          onChange={(e) => update(min, e.target.value)}
+        />
+      </div>
+      <HeadingCompass min={min} max={max} />
     </div>
+  );
+}
+
+// A compass-style visual for the min/max heading range -- min/max is
+// stored as "the arc going clockwise from min to max" (message-processor/
+// rules_engine.py's _eval_heading: `lo > hi` means the arc wraps through
+// 0/360, e.g. 340-020 is northbound). Entering the pair backwards silently
+// selects the *other* (usually much larger) arc instead, so this shades
+// the arc that will actually be matched -- min in reversed relative to
+// max is exactly why this exists: 340-013 (through north) looks, as bare
+// numbers, like it could be backwards for 013-340 (the wide southern arc).
+function HeadingCompass({ min, max }: { min: string; max: string }) {
+  const size = 64;
+  const radius = 26;
+  const center = size / 2;
+
+  function pointAt(degrees: number) {
+    const rad = (degrees * Math.PI) / 180;
+    return {
+      x: center + radius * Math.sin(rad),
+      y: center - radius * Math.cos(rad),
+    };
+  }
+
+  const minDeg = Number(min);
+  const maxDeg = Number(max);
+  const hasRange = min !== "" && max !== "" && !Number.isNaN(minDeg) && !Number.isNaN(maxDeg);
+
+  let wedgePath: string | null = null;
+  if (hasRange) {
+    const sweep = (maxDeg - minDeg + 360) % 360;
+    const largeArc = sweep > 180 ? 1 : 0;
+    const start = pointAt(minDeg);
+    const end = pointAt(maxDeg);
+    wedgePath = `M ${center} ${center} L ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+  }
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" aria-hidden="true">
+      <circle
+        cx={center}
+        cy={center}
+        r={radius}
+        className="fill-none stroke-slate-300 dark:stroke-slate-600"
+        strokeWidth={1}
+      />
+      {wedgePath && (
+        <path
+          d={wedgePath}
+          className="fill-sky-500/40 stroke-sky-600 dark:fill-sky-400/30 dark:stroke-sky-400"
+          strokeWidth={1}
+        />
+      )}
+      {(["N", "E", "S", "W"] as const).map((label, i) => {
+        const p = pointAt(i * 90);
+        return (
+          <text
+            key={label}
+            x={p.x}
+            y={p.y}
+            dy="0.3em"
+            textAnchor="middle"
+            className="fill-slate-400 text-[7px] dark:fill-slate-500"
+          >
+            {label}
+          </text>
+        );
+      })}
+    </svg>
   );
 }
 
