@@ -30,17 +30,15 @@ if (**A velocity with heading has been received?**) then (no)
   stop
 endif
 
-:**Mark this flight as attempted**\n""flight.route_resolution_attempted = True""\n(never re-queried again this flight, resolved or not);
-
-}
-
-partition "Redis" $OnPrem {
-:**Resolve the route's airport records**\n""EVALSHA route_airports.lua ident"";
-}
-
-partition "Message Processor" $OnPrem {
+if (**Already fetched this flight's route candidates?**\n""flight.route_candidate_airports is not None"") then (yes)
+  :Reuse the cached airport records\n(no Redis round trip);
+else (no, first time)
+  :**Resolve the route's airport records**\n""EVALSHA route_airports.lua ident""\n(Redis: route_airports.lua);
+  :**Cache the response**\n""flight.route_candidate_airports = airports""\n(so a later retry, if any, never repeats this call);
+endif
 
 if (**Did Redis return fewer than 2 airport records?**\n""len(airports) < 2""\n(no known route for this ident, or a code in the route\nhad no matching airport:{code} record)) then (yes)
+  :**Mark this flight as attempted**\n""flight.route_resolution_attempted = True"";
   stop
 endif
 
@@ -49,17 +47,29 @@ if (**Exactly 2 airports?**\n(direct route, no ambiguity)) then (yes)
 else (3+ airports -- multi-leg route)
   :**Try low-altitude proximity + climb/descent**\nfirst position < 10,000ft and near exactly one waypoint\n(climbing away = origin; descending toward = destination);
   if (resolved?) then (no)
-    :**Try cruise heading vs. candidate-leg bearing**\nclosest candidate <= 30° off, and >= 15° clear of the runner-up;
-    if (resolved?) then (no)
-      :Leave origin/destination unset;
+    if (**Have recent headings stabilized?**\n""heading_is_stable(velocities)""\n(>= 3 consistent recent samples --\na circling/holding aircraft's heading\nnever settles, so this stays false\nfor as long as it keeps circling)) then (no)
+      :**Do not mark attempted -- try again**\non a later message, once more heading\nsamples arrive (no Redis call needed --\nthe cached airport records are reused);
       stop
     endif
+    :**Try cruise heading vs. candidate-leg bearing**\nclosest candidate <= 30° off, and >= 15° clear of the runner-up;
   endif
 endif
 
-:**Sanity-check against the observed track**\n""cross_track_distance_nm(position, origin, destination)""\nfor every position received so far;
+:**Mark this flight as attempted**\n""flight.route_resolution_attempted = True""\n(settled -- resolved or not -- never re-evaluated again);
 
-if (**Any position exceeds max(150nm, 30% * route_distance)?**) then (yes)
+if (candidate leg resolved?) then (no)
+  :Leave origin/destination unset;
+  stop
+endif
+
+:**Sanity-check against the observed track**\nfor every position received so far;
+
+if (**Cross-track distance exceeds max(150nm, 30% * route_distance)?**\n""cross_track_distance_nm(position, origin, destination)""\n(perpendicular distance to the great-circle line)) then (yes)
+  :Reject -- leave origin/destination unset;
+  stop
+endif
+
+if (**Along-track projection falls outside [0, route_distance] (+/-50nm slack)?**\n""along_track_distance_nm(position, origin, destination)""\n(catches a position that's coincidentally near the line's\nbearing but well past one endpoint -- e.g. a holding pattern\nwhose heading matches a different, wrong leg's bearing)) then (yes)
   :Reject -- leave origin/destination unset;
   stop
 else (no)

@@ -1219,6 +1219,86 @@ class TestMaybeResolveRoute:
         mock_redis.evalsha.assert_called_once()
 
 
+class TestMaybeResolveRouteHeadingStability:
+    """A multi-leg route whose heading hasn't stabilized yet (a single
+    reading, or a genuinely circling/holding aircraft) must not be marked
+    route_resolution_attempted -- it's re-evaluated on later messages once
+    more heading samples arrive -- but the fetched airport records are
+    cached so the retry never repeats the Redis round trip (#498 follow-up:
+    the storm-holding-pattern scenario)."""
+
+    KJFK = {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789}
+    KMIA = {"icao_code": "KMIA", "latitude": 25.7959, "longitude": -80.2870}
+    KMCO = {"icao_code": "KMCO", "latitude": 28.4294, "longitude": -81.3089}
+
+    def _make_flight(self, p, ident="DAL659") -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-heading-stability"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.ident = ident
+        f.save()
+        return f
+
+    def test_single_heading_sample_defers_without_marking_attempted(self):
+        p, mock_redis = _make_processor()
+        airports = [self.KJFK, self.KMIA, self.KMCO, self.KJFK]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_flight(p)
+        f.add_position(Position(timestamp=1.0, latitude=30.3, longitude=-81.0, altitude=22000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=350))
+
+        p._maybe_resolve_route(f)
+
+        assert f.route_resolution_attempted is False
+        assert f.origin is None
+        assert f.destination is None
+        mock_redis.evalsha.assert_called_once()  # fetched once, cached
+        assert f.route_candidate_airports == json.dumps(airports)
+
+    def test_retry_uses_cached_airports_not_a_second_redis_call(self):
+        p, mock_redis = _make_processor()
+        airports = [self.KJFK, self.KMIA, self.KMCO, self.KJFK]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_flight(p)
+        f.add_position(Position(timestamp=1.0, latitude=30.3, longitude=-81.0, altitude=22000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=350))
+
+        p._maybe_resolve_route(f)  # first call: fetches + caches, defers
+        p._maybe_resolve_route(f)  # retry: still only one sample -- still deferred
+        p._maybe_resolve_route(f)
+
+        assert f.route_resolution_attempted is False
+        mock_redis.evalsha.assert_called_once()
+
+    def test_stabilizes_after_more_samples_without_a_second_redis_call(self):
+        """Once enough consistent headings accumulate, the same holding
+        heading (~350deg) is trusted -- but the along-track sanity check
+        still rejects the wrong leg it would otherwise match, all without
+        ever calling Redis a second time."""
+        p, mock_redis = _make_processor()
+        airports = [self.KJFK, self.KMIA, self.KMCO, self.KJFK]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_flight(p)
+        f.add_position(Position(timestamp=1.0, latitude=30.3, longitude=-81.0, altitude=22000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=350))
+
+        p._maybe_resolve_route(f)
+        assert f.route_resolution_attempted is False
+
+        for t, heading in enumerate((349, 351, 350), start=2):
+            f.add_velocity(Velocity(timestamp=float(t), heading=heading))
+            p._maybe_resolve_route(f)
+
+        assert f.route_resolution_attempted is True
+        assert f.origin is None
+        assert f.destination is None  # along-track check rejects KMIA->KMCO
+        mock_redis.evalsha.assert_called_once()
+
+
 class TestUpdateFlightTriggersRouteResolution:
     """End-to-end through _update_flight: resolution fires mid-flight, the
     moment the last of ident/position/altitude/heading arrives -- not at

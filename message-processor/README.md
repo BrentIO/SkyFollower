@@ -129,11 +129,16 @@ following have been seen for the flight (in any order across messages):
 - an **altitude**
 - a **heading**
 
-Once resolution actually runs, `flight.route_resolution_attempted` is set —
-regardless of outcome — so a valid ident with no known route (or one that
-resolves ambiguously) is never re-queried against Redis on every subsequent
-message for the rest of the flight; whatever the outcome, it's treated as
-final rather than re-evaluated as more of the flight's track arrives. The
+Once resolution runs, `flight.route_resolution_attempted` is set the moment
+the outcome is *final* — resolved, or confidently ruled out — so a valid
+ident with no known route (or a settled ambiguous/rejected leg) is never
+re-queried against Redis on every subsequent message for the rest of the
+flight. There's one deliberate exception: a multi-leg route whose recent
+headings haven't stabilized yet (see "Heading stability" below) is
+re-evaluated on later messages instead of being settled prematurely — but
+the airport records fetched from Redis are cached on
+`flight.route_candidate_airports` the first time, so every retry re-runs
+only the local (no-I/O) resolution logic, never a second `EVALSHA`. The
 resolution and sanity-check logic itself lives in
 `message_processor/route_resolver.py` as a set of pure functions,
 independent of Redis.
@@ -176,24 +181,56 @@ being as strong as the track recorded up to that point.
     resolved — this is what makes the common out-and-back case tractable
     (the two legs' bearings are roughly 180° apart), while still refusing
     to guess among several similarly-plausible legs on a genuine multi-city
-    route.
+    route. This heuristic only ever runs once heading data has *stabilized*
+    (see below) — never against a single instantaneous reading.
   - Either heuristic returning nothing resolved (ambiguous proximity with no
-    valid vertical-trend match, no heading data, or heading inconclusive)
-    leaves both fields `None` rather than guessing.
+    valid vertical-trend match, or heading inconclusive) leaves both fields
+    `None` rather than guessing.
+
+**Heading stability**: a single instantaneous heading reading is not
+trustworthy on its own — an aircraft circling in a holding pattern (e.g.
+diverted around weather) sweeps its heading through a full circle, and can
+momentarily point in almost any direction, including one that happens to
+align with a completely different leg's bearing. `heading_is_stable()`
+requires at least 3 recent heading samples to agree within 20° of each
+other before the heading-vs-bearing heuristic is trusted at all; ordinary
+cruise flight naturally produces consistent consecutive headings, while
+circling does not. When headings aren't yet stable, resolution defers
+rather than settling — see "one deliberate exception" above.
 
 **Sanity check**: whatever pair is selected — a direct 2-airport pass-through
 or a resolved multi-leg pair — is checked against the flight's actual
 observed track before being trusted. `route:{ident}` is community-maintained
 VRS standing data; a callsign can carry a stale or mismatched route with no
-way to detect that from the string alone. The check computes the
-perpendicular (cross-track) distance from every recorded position to the
-great-circle line between the candidate origin and destination; if any
-position exceeds `max(150nm, 30% × route_distance)`, the pair is rejected —
-treated the same as an unresolvable case. The threshold scales with route
-length rather than using one flat number: a flat 500nm window would barely
-constrain a short hop like KJFK-KATL (~660nm) but would reject perfectly
-normal long-haul routing variance (jet stream, ATC, weather) on a route like
-MMMX-EGLL (~5,500nm).
+way to detect that from the string alone. Two independent checks run against
+every recorded position:
+
+- **Cross-track distance** — the perpendicular distance from the position to
+  the great-circle line between the candidate origin and destination; if any
+  position exceeds `max(150nm, 30% × route_distance)`, the pair is rejected.
+  The threshold scales with route length rather than using one flat number:
+  a flat 500nm window would barely constrain a short hop like KJFK-KATL
+  (~660nm) but would reject perfectly normal long-haul routing variance (jet
+  stream, ATC, weather) on a route like MMMX-EGLL (~5,500nm).
+- **Along-track bound** — cross-track distance alone only measures
+  perpendicular distance to the *infinite* line through both airports; it
+  says nothing about whether the position actually falls *between* the two
+  endpoints. A position must project onto that line within `[0,
+  route_distance]` (plus a fixed 50nm slack for ordinary terminal-area
+  maneuvering) or the pair is rejected. This specifically catches a holding
+  pattern whose (now-stabilized) heading matches a *different*, wrong leg's
+  bearing closely enough, and happens to sit within that wrong leg's
+  cross-track tolerance too, while actually being well beyond its
+  destination — real example: an aircraft actually flying KJFK→KMIA,
+  holding at 22,000ft east of Jacksonville on a `KJFK-KMIA-KMCO-KJFK`
+  routing, whose stabilized northbound holding heading (~350°) is a closer
+  match to the wrong `KMIA→KMCO` leg's bearing (~341°) than to the correct
+  `KJFK→KMIA` leg (~202°) and passes that wrong leg's cross-track check
+  (~52nm, under its ~150nm threshold) — but projects ~100nm *past* KMCO
+  along that leg's line, which the along-track bound catches and rejects.
+
+Either check failing rejects the pair — treated the same as an unresolvable
+case, never a partial guess.
 
 **All-or-nothing**: `origin`/`destination` are set only when exactly one
 unambiguous, sanity-checked pair was resolved. Any failure along the way —

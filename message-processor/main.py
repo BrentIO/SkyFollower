@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS flights (
     matched_rules TEXT,
     receiver_sources TEXT,
     force_archive INTEGER,
-    route_resolution_attempted INTEGER
+    route_resolution_attempted INTEGER,
+    route_candidate_airports TEXT
 );
 CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
@@ -141,6 +142,8 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         # value, same as a brand-new flight, so no backfill needed beyond
         # adding the column.
         db.execute("ALTER TABLE flights ADD COLUMN route_resolution_attempted INTEGER")
+    if "route_candidate_airports" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN route_candidate_airports TEXT")
     db.commit()
 
 # ---------------------------------------------------------------------------
@@ -252,7 +255,7 @@ class Flight:
         "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
         "aircraft", "ident", "operator", "squawk", "origin", "destination",
         "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
-        "positions", "velocities", "_db",
+        "route_candidate_airports", "positions", "velocities", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -278,6 +281,12 @@ class Flight:
         # against Redis on every subsequent message for the rest of the
         # flight.
         self.route_resolution_attempted: bool = False
+        # Raw JSON string of the airport records fetched from route_airports.lua,
+        # cached the first (and only) time it's fetched -- so a flight whose
+        # heading hasn't stabilized enough yet to trust (see
+        # route_resolver.heading_is_stable) can be re-evaluated on later
+        # messages without a repeat Redis round trip. None until fetched.
+        self.route_candidate_airports: Optional[str] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
 
@@ -292,7 +301,8 @@ class Flight:
         cur.execute(
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, squawk, origin, destination, "
-            "matched_rules, receiver_sources, force_archive, route_resolution_attempted "
+            "matched_rules, receiver_sources, force_archive, route_resolution_attempted, "
+            "route_candidate_airports "
             "FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
         )
@@ -314,6 +324,7 @@ class Flight:
         self.receiver_sources = json.loads(row["receiver_sources"] or "[]")
         self.force_archive = bool(row["force_archive"])
         self.route_resolution_attempted = bool(row["route_resolution_attempted"])
+        self.route_candidate_airports = row["route_candidate_airports"]
 
         self._load_positions(limit=limit)
         self._load_velocities(limit=limit)
@@ -351,8 +362,8 @@ class Flight:
             "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, "
             "destination, matched_rules, receiver_sources, force_archive, "
-            "route_resolution_attempted) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "route_resolution_attempted, route_candidate_airports) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
@@ -360,6 +371,7 @@ class Flight:
                 self.origin, self.destination,
                 json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
                 int(self.force_archive), int(self.route_resolution_attempted),
+                self.route_candidate_airports,
             ),
         )
         self._db.commit()
@@ -1010,26 +1022,37 @@ class MessageProcessor:
         message_processor.route_resolver for the resolution/sanity-check
         logic itself.
 
-        route_resolution_attempted is set the moment this runs, regardless
-        of outcome — a valid ident with no known route (or an ambiguous
-        leg) must not be re-queried against Redis on every subsequent
-        message for the rest of the flight; the current data is trusted as
-        final rather than re-evaluated as more of the flight arrives.
+        route_resolution_attempted is only set once the result is final
+        (see route_resolver.resolve_origin_destination's is_final) — a
+        settled resolution, or a settled "no route"/"rejected" outcome — so
+        a valid ident with no known route is never re-queried against
+        Redis on every subsequent message for the rest of the flight. The
+        one exception is a multi-leg route whose heading data hasn't
+        stabilized enough yet to trust (e.g. an aircraft circling in a
+        holding pattern): that's deliberately re-evaluated on later
+        messages once more heading samples arrive, but the fetched airport
+        records are cached on route_candidate_airports the first time so
+        those re-evaluations never repeat the Redis round trip.
         All-or-nothing: leaves both fields None on missing route data, an
-        unresolvable leg, or a failed cross-track sanity check, rather than
-        writing a partial or best-guess pair."""
+        unresolvable leg, or a failed sanity check, rather than writing a
+        partial or best-guess pair."""
         if flight.route_resolution_attempted or not self._route_ready(flight):
             return
 
-        flight.route_resolution_attempted = True
-        try:
-            raw = self._redis.evalsha(self._route_sha, 0, flight.ident)
-            airports = json.loads(raw) if raw else []
-        except Exception as exc:
-            logger.debug("Redis route resolution error: %s", exc)
-            return
+        if flight.route_candidate_airports is not None:
+            airports = json.loads(flight.route_candidate_airports)
+        else:
+            try:
+                raw = self._redis.evalsha(self._route_sha, 0, flight.ident)
+                airports = json.loads(raw) if raw else []
+            except Exception as exc:
+                logger.debug("Redis route resolution error: %s", exc)
+                flight.route_resolution_attempted = True
+                return
+            flight.route_candidate_airports = json.dumps(airports)
 
         if len(airports) < 2:
+            flight.route_resolution_attempted = True
             return
 
         # Reload full history -- flight.positions/velocities may hold only
@@ -1041,7 +1064,11 @@ class MessageProcessor:
         positions = [p.to_dict() for p in flight.positions]
         velocities = [v.to_dict() for v in flight.velocities]
 
-        origin, destination = resolve_origin_destination(airports, positions, velocities)
+        origin, destination, is_final = resolve_origin_destination(airports, positions, velocities)
+        if not is_final:
+            return  # heading not yet stable enough to trust -- try again later
+
+        flight.route_resolution_attempted = True
         if origin and destination:
             flight.origin = origin
             flight.destination = destination
