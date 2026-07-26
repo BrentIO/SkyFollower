@@ -161,6 +161,17 @@ class TestLoadRules:
         assert engine._rules[0]["conditions"][0]["type"] == "altitude"
         assert engine._rules[0]["conditions"][1]["type"] == "ident"
 
+    def test_identifier_with_space_rejected(self):
+        rules = [_rule("my rule", [_cond("altitude", "maximum", "5000")])]
+        engine = _bare_engine()
+        assert engine.load_rules_json(json.dumps(rules)) is False
+        assert "space" in engine.last_error
+
+    def test_empty_identifier_rejected(self):
+        rules = [_rule("", [_cond("altitude", "maximum", "5000")])]
+        engine = _bare_engine()
+        assert engine.load_rules_json(json.dumps(rules)) is False
+
 
 # ---------------------------------------------------------------------------
 # force_archive rule-level flag
@@ -211,7 +222,7 @@ class TestForceArchiveFlag:
             "type": "FeatureCollection",
             "features": [{
                 "type": "Feature",
-                "properties": {"name": "HOME"},
+                "properties": {"name": "Home", "identifier": "HOME"},
                 "geometry": {
                     "type": "Polygon",
                     "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
@@ -471,6 +482,25 @@ class TestDateEval:
         f = FlightStub()
         assert engine.evaluate(f) == []
 
+    def test_datetime_with_offset_minimum_past_matches(self):
+        # -05:00 (US Eastern, standard time) instead of Z -- fromisoformat()
+        # accepts any ISO 8601 offset, not just Z; comparison against
+        # datetime.now(timezone.utc) is offset-correct either way.
+        engine = _engine_with_rules([_rule("r", [_cond("date", "minimum", "2000-01-01T00:00:00-05:00")])])
+        f = FlightStub()
+        assert engine.evaluate(f) != []
+
+    def test_datetime_with_offset_maximum_far_future_no_match(self):
+        engine = _engine_with_rules([_rule("r", [_cond("date", "maximum", "2000-01-01T00:00:00-05:00")])])
+        f = FlightStub()
+        assert engine.evaluate(f) == []
+
+    def test_datetime_missing_timezone_rejected(self):
+        engine = _bare_engine()
+        rules = [_rule("r", [_cond("date", "minimum", "2000-01-01T00:00:00")])]
+        assert engine.load_rules_json(json.dumps(rules)) is False
+        assert "timezone designator" in engine.last_error
+
 
 # ---------------------------------------------------------------------------
 # Other condition types
@@ -564,6 +594,63 @@ class TestWakeTurbulenceEval:
 
 
 # ---------------------------------------------------------------------------
+# Area loading
+# ---------------------------------------------------------------------------
+
+def _area_feature(identifier: str = "LI", name: str = "Long Island") -> dict:
+    props = {"name": name}
+    if identifier is not None:
+        props["identifier"] = identifier
+    return {
+        "type": "Feature",
+        "properties": props,
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+        },
+    }
+
+
+class TestLoadAreas:
+    def test_identifier_staged(self):
+        engine = _bare_engine()
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [_area_feature(identifier="LI", name="Long Island")],
+        }))
+        assert ok is True
+        assert engine._areas[0]["identifier"] == "LI"
+        assert engine._areas[0]["name"] == "Long Island"
+
+    def test_missing_identifier_skipped(self):
+        engine = _bare_engine()
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [_area_feature(identifier=None)],
+        }))
+        assert ok is True
+        assert engine._areas == []
+
+    def test_identifier_with_space_skipped(self):
+        engine = _bare_engine()
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [_area_feature(identifier="Long Island")],
+        }))
+        assert ok is True
+        assert engine._areas == []
+
+    def test_name_optional(self):
+        engine = _bare_engine()
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [_area_feature(identifier="LI", name="")],
+        }))
+        assert ok is True
+        assert engine._areas[0]["identifier"] == "LI"
+
+
+# ---------------------------------------------------------------------------
 # Area evaluation
 # ---------------------------------------------------------------------------
 
@@ -571,7 +658,7 @@ LONG_ISLAND = {
     "type": "FeatureCollection",
     "features": [{
         "type": "Feature",
-        "properties": {"name": "LI"},
+        "properties": {"name": "Long Island", "identifier": "LI"},
         "geometry": {
             "type": "Polygon",
             "coordinates": [[

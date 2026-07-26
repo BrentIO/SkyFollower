@@ -352,7 +352,7 @@ manually — before a replacement container can claim the same ID.
 ## Rules Engine
 
 Rules and areas are loaded from Redis (`config:rules` / `config:areas`) and
-hot-reloaded every 5 seconds when the corresponding version hash keys change.
+hot-reloaded every 30 seconds when the corresponding version hash keys change.
 The rules engine is implemented in `message-processor/rules_engine.py`.
 
 Each rule must have a unique `identifier`, an `enabled` boolean, and a

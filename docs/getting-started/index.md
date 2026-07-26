@@ -18,6 +18,7 @@ real values before starting containers.
 #    e.g. for Host B:
 cp config/runners/settings.json.example config/runners/settings.json
 cp config/ofelia/config.ini.example config/ofelia/config.ini
+cp config/management-ui/settings.json.example config/management-ui/settings.json
 
 # Host A — receiver
 docker compose -f docker-compose.receiver.yaml up -d
@@ -29,11 +30,14 @@ docker compose -f docker-compose.receiver-mlat.yaml up -d
 docker compose -f docker-compose.server.yaml up -d
 # Create runner containers in stopped state so ofelia can schedule them:
 docker compose -f docker-compose.server.yaml --profile runners up --no-start
+# Host B also runs the management UI, as its own compose file (its only
+# dependency is Redis, already on this host):
+docker compose -f docker-compose.management-ui.yaml up -d
 
 # Host C — message processor
 docker compose -f docker-compose.message-processor.yaml up -d
 
-# Host D — archive + UI
+# Host D — archive
 docker compose -f docker-compose.archive.yaml up -d
 ```
 

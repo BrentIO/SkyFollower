@@ -74,7 +74,7 @@ class RulesEngine:
     Usage::
 
         engine = RulesEngine(redis_client)
-        # In a background thread every 5 seconds:
+        # In a background thread every 30 seconds:
         engine.reload_if_changed()
         # On every decoded message:
         matched = engine.evaluate(flight)
@@ -87,6 +87,10 @@ class RulesEngine:
         self._removed_rules: list[dict] = []
         self._rules_version: Optional[str] = None
         self._areas_version: Optional[str] = None
+        # Set on the most recent failed _load_rules/_load_areas call; consumed
+        # by the UI backend (#14) to return a 400 with a useful detail message
+        # instead of only the logger.critical() output below.
+        self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Config reload
@@ -161,11 +165,13 @@ class RulesEngine:
         try:
             rules = json.loads(json_str)
         except json.JSONDecodeError:
-            logger.critical("Rules file contains invalid JSON — keeping previous ruleset.")
+            self.last_error = "Rules file contains invalid JSON"
+            logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
         if not isinstance(rules, list):
-            logger.critical("Rules must be a JSON array — keeping previous ruleset.")
+            self.last_error = "Rules must be a JSON array"
+            logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
         staged: list[dict] = []
@@ -179,12 +185,14 @@ class RulesEngine:
                 seen_identifiers.add(staged_rule["identifier"])
                 staged.append(staged_rule)
             except _RuleError as exc:
-                logger.critical("Rule #%d invalid: %s — keeping previous ruleset.", idx, exc)
+                self.last_error = f"Rule #{idx} invalid: {exc}"
+                logger.critical("%s — keeping previous ruleset.", self.last_error)
                 return False
 
         removed = [r for r in self._rules if r not in staged]
         self._removed_rules = removed
         self._rules = staged
+        self.last_error = None
         logger.info("Rules loaded: %d active.", len(self._rules))
         return True
 
@@ -199,6 +207,8 @@ class RulesEngine:
         if "identifier" not in rule:
             raise _RuleError("missing 'identifier' field")
         identifier = str(rule["identifier"])
+        if not identifier or " " in identifier:
+            raise _RuleError(f"identifier '{identifier}' must be non-empty and contain no spaces")
         if identifier in seen:
             raise _RuleError(f"duplicate identifier '{identifier}'")
 
@@ -258,43 +268,53 @@ class RulesEngine:
         try:
             geo = json.loads(json_str)
         except json.JSONDecodeError:
-            logger.critical("Areas file contains invalid JSON — keeping previous areas.")
+            self.last_error = "Areas file contains invalid JSON"
+            logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
         if geo.get("type", "").lower() != "featurecollection":
-            logger.critical("Areas must be a GeoJSON FeatureCollection — keeping previous areas.")
+            self.last_error = "Areas must be a GeoJSON FeatureCollection"
+            logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
         staged: list[dict] = []
         for feature in geo.get("features", []):
             if feature.get("type") != "Feature":
                 continue
-            name = str(feature.get("properties", {}).get("name", "")).strip()
-            if not name:
+            props = feature.get("properties", {})
+            name = str(props.get("name", "")).strip()
+            identifier = str(props.get("identifier", "")).strip()
+            if not identifier or " " in identifier:
+                logger.warning(
+                    "Area '%s' has no identifier or identifier contains spaces — skipping.",
+                    name or "<unnamed>",
+                )
                 continue
             geometry = feature.get("geometry", {})
             if geometry.get("type") != "Polygon":
-                logger.debug("Area '%s' is not a Polygon — skipping.", name)
+                logger.debug("Area '%s' is not a Polygon — skipping.", identifier)
                 continue
             coords = geometry.get("coordinates", [])
             if len(coords) != 1:
-                logger.warning("Area '%s' has unexpected coordinate structure — skipping.", name)
+                logger.warning("Area '%s' has unexpected coordinate structure — skipping.", identifier)
                 continue
             try:
                 poly = Polygon([tuple(c) for c in coords[0]])
                 if not poly.is_valid:
-                    logger.warning("Area '%s' is not a valid polygon — skipping.", name)
+                    logger.warning("Area '%s' is not a valid polygon — skipping.", identifier)
                     continue
                 staged.append({
                     "name": name,
+                    "identifier": identifier,
                     "geometry": poly,
                     "boundary": poly.bounds,  # (minx, miny, maxx, maxy)
                 })
             except Exception as exc:
-                logger.warning("Area '%s' could not be parsed: %s — skipping.", name, exc)
+                logger.warning("Area '%s' could not be parsed: %s — skipping.", identifier, exc)
                 continue
 
         self._areas = staged
+        self.last_error = None
         logger.info("Areas loaded: %d polygons.", len(self._areas))
         return True
 
@@ -341,18 +361,25 @@ class RulesEngine:
     def _validate_date(self, c: dict) -> dict:
         raw = str(c["value"]).strip()
         if "T" in raw:
-            # YYYY-MM-DDTHH:MMZ
+            # YYYY-MM-DDTHH:MMZ, or any ISO 8601 offset (e.g.
+            # YYYY-MM-DDTHH:MM-05:00) -- datetime.fromisoformat() parses
+            # both; the only requirement enforced below is that *some*
+            # timezone designator is present, not specifically 'Z'.
+            # Comparison in _eval_date() (against datetime.now(timezone.utc))
+            # is offset-correct either way, so no normalisation to UTC is
+            # needed here -- the value is stored/echoed exactly as submitted.
             try:
                 parsed = datetime.fromisoformat(raw)
                 if parsed.tzinfo is None:
                     raise _ConditionError(
-                        "datetime value must include a timezone designator (e.g. 'Z')"
+                        "datetime value must include a timezone designator (e.g. 'Z' or '-05:00')"
                     )
                 c["_date_format"] = "datetime"
                 c["value"] = parsed
             except ValueError:
                 raise _ConditionError(
-                    f"invalid datetime value '{raw}' — expected YYYY-MM-DDTHH:MMZ"
+                    f"invalid datetime value '{raw}' — expected YYYY-MM-DDTHH:MMZ "
+                    "or an ISO 8601 offset, e.g. YYYY-MM-DDTHH:MM-05:00"
                 )
         else:
             # YYYY-MM-DD
@@ -361,7 +388,8 @@ class RulesEngine:
                 c["_date_format"] = "date"
             except ValueError:
                 raise _ConditionError(
-                    f"invalid date value '{raw}' — expected YYYY-MM-DD or YYYY-MM-DDTHH:MMZ"
+                    f"invalid date value '{raw}' — expected YYYY-MM-DD or "
+                    "YYYY-MM-DDTHH:MMZ (or an ISO 8601 offset)"
                 )
         return c
 
@@ -450,10 +478,10 @@ class RulesEngine:
     def _validate_area(self, c: dict) -> dict:
         if c["operator"] != "equals":
             raise _ConditionError("area only supports 'equals'")
-        name = str(c["value"]).strip().upper()
-        if not any(a["name"].upper() == name for a in self._areas):
+        identifier = str(c["value"]).strip()
+        if not any(a["identifier"] == identifier for a in self._areas):
             raise _ConditionError(f"area '{c['value']}' not found in areas config")
-        c["value"] = name
+        c["value"] = identifier
         return c
 
     # ------------------------------------------------------------------
@@ -538,9 +566,9 @@ class RulesEngine:
         pos = flight.positions[-1]
         if pos.latitude is None or pos.longitude is None:
             return False
-        name = c["value"]
+        identifier = c["value"]
         for area in self._areas:
-            if area["name"].upper() != name:
+            if area["identifier"] != identifier:
                 continue
             minx, miny, maxx, maxy = area["boundary"]
             if not (minx <= pos.longitude <= maxx and miny <= pos.latitude <= maxy):
