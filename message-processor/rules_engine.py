@@ -74,7 +74,7 @@ class RulesEngine:
     Usage::
 
         engine = RulesEngine(redis_client)
-        # In a background thread every 5 seconds:
+        # In a background thread every 30 seconds:
         engine.reload_if_changed()
         # On every decoded message:
         matched = engine.evaluate(flight)
@@ -207,6 +207,8 @@ class RulesEngine:
         if "identifier" not in rule:
             raise _RuleError("missing 'identifier' field")
         identifier = str(rule["identifier"])
+        if not identifier or " " in identifier:
+            raise _RuleError(f"identifier '{identifier}' must be non-empty and contain no spaces")
         if identifier in seen:
             raise _RuleError(f"duplicate identifier '{identifier}'")
 
@@ -279,29 +281,36 @@ class RulesEngine:
         for feature in geo.get("features", []):
             if feature.get("type") != "Feature":
                 continue
-            name = str(feature.get("properties", {}).get("name", "")).strip()
-            if not name:
+            props = feature.get("properties", {})
+            name = str(props.get("name", "")).strip()
+            identifier = str(props.get("identifier", "")).strip()
+            if not identifier or " " in identifier:
+                logger.warning(
+                    "Area '%s' has no identifier or identifier contains spaces — skipping.",
+                    name or "<unnamed>",
+                )
                 continue
             geometry = feature.get("geometry", {})
             if geometry.get("type") != "Polygon":
-                logger.debug("Area '%s' is not a Polygon — skipping.", name)
+                logger.debug("Area '%s' is not a Polygon — skipping.", identifier)
                 continue
             coords = geometry.get("coordinates", [])
             if len(coords) != 1:
-                logger.warning("Area '%s' has unexpected coordinate structure — skipping.", name)
+                logger.warning("Area '%s' has unexpected coordinate structure — skipping.", identifier)
                 continue
             try:
                 poly = Polygon([tuple(c) for c in coords[0]])
                 if not poly.is_valid:
-                    logger.warning("Area '%s' is not a valid polygon — skipping.", name)
+                    logger.warning("Area '%s' is not a valid polygon — skipping.", identifier)
                     continue
                 staged.append({
                     "name": name,
+                    "identifier": identifier,
                     "geometry": poly,
                     "boundary": poly.bounds,  # (minx, miny, maxx, maxy)
                 })
             except Exception as exc:
-                logger.warning("Area '%s' could not be parsed: %s — skipping.", name, exc)
+                logger.warning("Area '%s' could not be parsed: %s — skipping.", identifier, exc)
                 continue
 
         self._areas = staged
@@ -461,10 +470,10 @@ class RulesEngine:
     def _validate_area(self, c: dict) -> dict:
         if c["operator"] != "equals":
             raise _ConditionError("area only supports 'equals'")
-        name = str(c["value"]).strip().upper()
-        if not any(a["name"].upper() == name for a in self._areas):
+        identifier = str(c["value"]).strip()
+        if not any(a["identifier"] == identifier for a in self._areas):
             raise _ConditionError(f"area '{c['value']}' not found in areas config")
-        c["value"] = name
+        c["value"] = identifier
         return c
 
     # ------------------------------------------------------------------
@@ -549,9 +558,9 @@ class RulesEngine:
         pos = flight.positions[-1]
         if pos.latitude is None or pos.longitude is None:
             return False
-        name = c["value"]
+        identifier = c["value"]
         for area in self._areas:
-            if area["name"].upper() != name:
+            if area["identifier"] != identifier:
                 continue
             minx, miny, maxx, maxy = area["boundary"]
             if not (minx <= pos.longitude <= maxx and miny <= pos.latitude <= maxy):

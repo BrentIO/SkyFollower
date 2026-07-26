@@ -1321,7 +1321,7 @@ class MessageProcessor:
 
     def _config_poll_loop(self) -> None:
         while not self._shutdown.is_set():
-            time.sleep(5)
+            time.sleep(30)
             try:
                 self._rules_engine.reload_if_changed()
             except Exception as exc:

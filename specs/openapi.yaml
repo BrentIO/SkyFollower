@@ -1,16 +1,16 @@
 openapi: 3.1.0
 info:
-  title: SkyFollower Management UI Backend
+  title: SkyFollower Management
   description: Rules and areas configuration API. Message processors poll config:rules/config:areas
-    in Redis every 5 seconds for changes written here.
+    in Redis every 30 seconds for changes written here.
   version: 9999.99.99
 paths:
   /api/rules:
     get:
       tags:
       - rules
-      summary: Get Rules
-      operationId: get_rules_api_rules_get
+      summary: List Rules
+      operationId: list_rules_api_rules_get
       responses:
         '200':
           description: Successful Response
@@ -20,34 +20,123 @@ paths:
                 items:
                   $ref: '#/components/schemas/Rule'
                 type: array
-                title: Response Get Rules Api Rules Get
-        '204':
-          description: No configuration saved yet
+                title: Response List Rules Api Rules Get
         '500':
           description: Redis error
-    put:
+    post:
       tags:
       - rules
-      summary: Put Rules
-      operationId: put_rules_api_rules_put
+      summary: Create Rule
+      operationId: create_rule_api_rules_post
       requestBody:
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/Rule'
+              $ref: '#/components/schemas/Rule'
         required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '409':
+          description: Identifier already exists
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/rules/{identifier}:
+    get:
+      tags:
+      - rules
+      summary: Get Rule
+      operationId: get_rule_api_rules__identifier__get
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                items:
-                  $ref: '#/components/schemas/Rule'
-                type: array
-                title: Response Put Rules Api Rules Put
+                $ref: '#/components/schemas/Rule'
+        '404':
+          description: Not found
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - rules
+      summary: Update Rule
+      operationId: update_rule_api_rules__identifier__put
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rule'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '404':
+          description: Not found
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - rules
+      summary: Delete Rule
+      operationId: delete_rule_api_rules__identifier__delete
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
+      responses:
+        '204':
+          description: Successful Response
+        '404':
+          description: Not found
         '400':
           description: Validation error
         '500':
@@ -62,37 +151,134 @@ paths:
     get:
       tags:
       - areas
-      summary: Get Areas
-      operationId: get_areas_api_areas_get
+      summary: List Areas
+      operationId: list_areas_api_areas_get
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AreaFeatureCollection'
-        '204':
-          description: No configuration saved yet
+                items:
+                  $ref: '#/components/schemas/Area'
+                type: array
+                title: Response List Areas Api Areas Get
         '500':
           description: Redis error
-    put:
+    post:
       tags:
       - areas
-      summary: Put Areas
-      operationId: put_areas_api_areas_put
+      summary: Create Area
+      operationId: create_area_api_areas_post
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AreaFeatureCollection'
+              $ref: '#/components/schemas/Area'
         required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Area'
+        '409':
+          description: Identifier already exists
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/areas/{identifier}:
+    get:
+      tags:
+      - areas
+      summary: Get Area
+      operationId: get_area_api_areas__identifier__get
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AreaFeatureCollection'
+                $ref: '#/components/schemas/Area'
+        '404':
+          description: Not found
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - areas
+      summary: Update Area
+      operationId: update_area_api_areas__identifier__put
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Area'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Area'
+        '404':
+          description: Not found
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - areas
+      summary: Delete Area
+      operationId: delete_area_api_areas__identifier__delete
+      parameters:
+      - name: identifier
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifier
+      responses:
+        '204':
+          description: Successful Response
+        '404':
+          description: Not found
         '400':
           description: Validation error
         '500':
@@ -105,48 +291,68 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
-    AreaFeature:
+    Area:
       properties:
-        type:
+        identifier:
           type: string
-          const: Feature
-          title: Type
-          default: Feature
-        properties:
-          $ref: '#/components/schemas/AreaFeatureProperties'
+          pattern: ^\S+$
+          title: Identifier
+        name:
+          type: string
+          title: Name
+          default: ''
         geometry:
           $ref: '#/components/schemas/AreaGeometry'
       type: object
       required:
-      - properties
+      - identifier
       - geometry
-      title: AreaFeature
-    AreaFeatureCollection:
-      properties:
-        type:
-          type: string
-          const: FeatureCollection
-          title: Type
-          default: FeatureCollection
-        features:
-          items:
-            $ref: '#/components/schemas/AreaFeature'
-          type: array
-          title: Features
-          default: []
-      type: object
-      title: AreaFeatureCollection
-      description: Named GeoJSON polygon areas, referenced by the `area` condition
-        type.
-    AreaFeatureProperties:
-      properties:
-        name:
-          type: string
-          title: Name
-      type: object
-      required:
-      - name
-      title: AreaFeatureProperties
+      title: Area
+      description: 'A named GeoJSON polygon area, referenced by rules'' `area` condition
+
+        (matched against `identifier`, not `name`). `identifier` is the routing
+
+        key used in /api/areas/{identifier} and must not contain spaces; `name`
+
+        is a free-text display label and may.'
+      examples:
+      - geometry:
+          coordinates:
+          - - - -73.8006591796875
+              - 40.82835864973048
+            - - -73.97369384765625
+              - 40.734770989672406
+            - - -74.03961181640625
+              - 40.54720023441049
+            - - -73.7677001953125
+              - 40.538851525354666
+            - - -73.245849609375
+              - 40.58684239087908
+            - - -72.70751953125
+              - 40.73685214795608
+            - - -71.8560791015625
+              - 40.97160353279909
+            - - -71.80938720703125
+              - 41.044145364313174
+            - - -71.89727783203125
+              - 41.14970617453726
+            - - -72.11700439453125
+              - 41.21998578493921
+            - - -72.36145019531249
+              - 41.17038447781618
+            - - -72.70477294921874
+              - 41.03585891144301
+            - - -72.83935546875
+              - 41.04621681452063
+            - - -73.1964111328125
+              - 40.994410999439516
+            - - -73.553466796875
+              - 40.94671366508002
+            - - -73.8006591796875
+              - 40.82835864973048
+          type: Polygon
+        identifier: LI
+        name: Long Island
     AreaGeometry:
       properties:
         type:
@@ -243,6 +449,7 @@ components:
           default: ''
         identifier:
           type: string
+          pattern: ^\S+$
           title: Identifier
         enabled:
           type: boolean
@@ -265,6 +472,10 @@ components:
       title: Rule
       description: 'A notification rule. Fires at most once per flight per `identifier`.
 
+        `identifier` is the routing key used in /api/rules/{identifier} and must
+
+        not contain spaces; `name` is a free-text display label and may.
+
         Documents the shape of a normal (enabled) rule -- the rules engine
 
         additionally tolerates a disabled placeholder rule with only
@@ -272,6 +483,73 @@ components:
         `enabled: false` and nothing else, silently skipping it rather than
 
         validating it; that leniency is a narrow exception, not reflected here.'
+      examples:
+      - conditions:
+        - operator: maximum
+          type: altitude
+          value: '10000'
+        description: Any aircraft with an altitude at or below 10,000ft
+        enabled: true
+        identifier: acft_10k_and_below
+        name: All aircraft below 10,000
+      - conditions:
+        - operator: maximum
+          type: altitude
+          value: '15000'
+        - operator: minimum
+          type: altitude
+          value: '12000'
+        - operator: equals
+          type: operator_airline_designator
+          value: UAL
+        - operator: equals
+          type: aircraft_type_designator
+          value: B752
+        - operator: equals
+          type: heading
+          value: 340,020
+        - operator: minimum
+          type: vertical_speed
+          value: '500'
+        description: United Airlines Boeing 757-200's between 12,000 and 15,000ft
+          heading north after takeoff
+        enabled: true
+        identifier: Northbound_United_B75s_12k-15k
+        name: UAL B757-200
+      - conditions:
+        - operator: equals
+          type: ident
+          value: DAL2
+        - operator: minimum
+          type: date
+          value: '2022-12-24'
+        - operator: maximum
+          type: date
+          value: '2022-12-24'
+        - operator: equals
+          type: area
+          value: LI
+        description: Grandma's Flight Home Arriving on Christmas Eve
+        enabled: true
+        identifier: grandma
+        name: Grandma's Flight Home
+      - conditions:
+        - operator: equals
+          type: aircraft_type_designator
+          value: B52
+        - operator: minimum
+          type: date
+          value: 2026-01-16T04:31Z
+        - operator: maximum
+          type: date
+          value: 2027-06-27T18:50Z
+        description: Any B-52 (aircraft_type_designator B52) seen between 2026-01-16
+          04:31 UTC and 2027-06-27 18:50 UTC, force-archived even if the flight would
+          otherwise be skipped for being MLAT-only
+        enabled: true
+        force_archive: true
+        identifier: b52_force_persist_2026_2027
+        name: B-52 Force Persist Window
     ValidationError:
       properties:
         loc:

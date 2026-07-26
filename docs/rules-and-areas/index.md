@@ -36,7 +36,13 @@ See the [Message Processor docs](/components/message-processor) for operator and
 
 Named geographic polygons used with the `area` condition type. Stored in Redis
 (`config:areas`) as a GeoJSON FeatureCollection and edited through the UI's map
-editor.
+editor. Each area has an `identifier` (no spaces — this is what a rule's `area`
+condition matches against, e.g. `{ "type": "area", "value": "APPROACH" }`) and
+a separate, optional `name` for display, which can contain spaces.
+
+The management UI's `GET`/`POST`/`PUT`/`DELETE /api/areas` endpoints expose a
+flattened `{identifier, name, geometry}` shape rather than this GeoJSON
+FeatureCollection directly — see `management-ui/README.md`.
 
 Example `areas.example.json`:
 
@@ -46,7 +52,7 @@ Example `areas.example.json`:
   "features": [
     {
       "type": "Feature",
-      "properties": { "name": "Airport Approach" },
+      "properties": { "identifier": "APPROACH", "name": "Airport Approach" },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[

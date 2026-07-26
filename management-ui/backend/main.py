@@ -4,7 +4,7 @@ SkyFollower Management UI Backend
 
 FastAPI service that is the sole write path for the rules and areas
 configuration read by every message processor (config:rules / config:areas
-in Redis, polled every 5 seconds). No authentication — home lab deployment.
+in Redis, polled every 30 seconds). No authentication — home lab deployment.
 
 Named "management" to leave room for a future, separate UI for viewing live
 aircraft movement, distinct from this configuration-focused one.
@@ -80,7 +80,7 @@ logger = logging.getLogger("management-ui-backend")
 # rules.example.json / areas.example.geojson shape (condition values are
 # strings even for numeric fields, e.g. altitude "10000", military "true";
 # only matched_rules is a real array). Not used as the actual route
-# parameter types: the routes below keep plain list[dict]/dict so
+# parameter types: the routes below keep plain dict/list[dict] so
 # RulesEngine (message-processor/rules_engine.py) stays the single source
 # of truth for validation -- these models exist so /docs and
 # specs/openapi.yaml describe the real shape instead of an empty
@@ -89,6 +89,9 @@ logger = logging.getLogger("management-ui-backend")
 # a disabled placeholder rule like {"enabled": false} with no identifier or
 # conditions at all is valid and simply skipped, not rejected.
 # ---------------------------------------------------------------------------
+
+_IDENTIFIER_PATTERN = r"^\S+$"  # non-empty, no whitespace anywhere
+
 
 class Condition(BaseModel):
     """
@@ -113,22 +116,82 @@ class Condition(BaseModel):
 class Rule(BaseModel):
     """
     A notification rule. Fires at most once per flight per `identifier`.
+    `identifier` is the routing key used in /api/rules/{identifier} and must
+    not contain spaces; `name` is a free-text display label and may.
     Documents the shape of a normal (enabled) rule -- the rules engine
     additionally tolerates a disabled placeholder rule with only
     `enabled: false` and nothing else, silently skipping it rather than
     validating it; that leniency is a narrow exception, not reflected here.
     """
 
+    model_config = {
+        # First three adapted from SkyFollower-legacy's rules.example.json
+        # (the third example's "callsign" condition type is renamed "ident",
+        # matching this repo's Conditions table -- legacy predates that
+        # rename). Fourth demonstrates force_archive and a datetime-range
+        # date condition (YYYY-MM-DDTHH:MMZ, not just YYYY-MM-DD).
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "All aircraft below 10,000",
+                    "description": "Any aircraft with an altitude at or below 10,000ft",
+                    "identifier": "acft_10k_and_below",
+                    "enabled": True,
+                    "conditions": [
+                        {"type": "altitude", "operator": "maximum", "value": "10000"},
+                    ],
+                },
+                {
+                    "name": "UAL B757-200",
+                    "description": "United Airlines Boeing 757-200's between 12,000 and "
+                    "15,000ft heading north after takeoff",
+                    "identifier": "Northbound_United_B75s_12k-15k",
+                    "enabled": True,
+                    "conditions": [
+                        {"type": "altitude", "operator": "maximum", "value": "15000"},
+                        {"type": "altitude", "operator": "minimum", "value": "12000"},
+                        {"type": "operator_airline_designator", "operator": "equals", "value": "UAL"},
+                        {"type": "aircraft_type_designator", "operator": "equals", "value": "B752"},
+                        {"type": "heading", "operator": "equals", "value": "340,020"},
+                        {"type": "vertical_speed", "operator": "minimum", "value": "500"},
+                    ],
+                },
+                {
+                    "name": "Grandma's Flight Home",
+                    "description": "Grandma's Flight Home Arriving on Christmas Eve",
+                    "identifier": "grandma",
+                    "enabled": True,
+                    "conditions": [
+                        {"type": "ident", "operator": "equals", "value": "DAL2"},
+                        {"type": "date", "operator": "minimum", "value": "2022-12-24"},
+                        {"type": "date", "operator": "maximum", "value": "2022-12-24"},
+                        {"type": "area", "operator": "equals", "value": "LI"},
+                    ],
+                },
+                {
+                    "name": "B-52 Force Persist Window",
+                    "description": "Any B-52 (aircraft_type_designator B52) seen between "
+                    "2026-01-16 04:31 UTC and 2027-06-27 18:50 UTC, force-archived even "
+                    "if the flight would otherwise be skipped for being MLAT-only",
+                    "identifier": "b52_force_persist_2026_2027",
+                    "enabled": True,
+                    "force_archive": True,
+                    "conditions": [
+                        {"type": "aircraft_type_designator", "operator": "equals", "value": "B52"},
+                        {"type": "date", "operator": "minimum", "value": "2026-01-16T04:31Z"},
+                        {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
+                    ],
+                },
+            ]
+        }
+    }
+
     name: str = ""
     description: str = ""
-    identifier: str
+    identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     enabled: bool
     force_archive: bool = False
     conditions: list[Condition] = Field(min_length=1)
-
-
-class AreaFeatureProperties(BaseModel):
-    name: str
 
 
 class AreaGeometry(BaseModel):
@@ -136,17 +199,52 @@ class AreaGeometry(BaseModel):
     coordinates: list[list[list[float]]]
 
 
-class AreaFeature(BaseModel):
-    type: Literal["Feature"] = "Feature"
-    properties: AreaFeatureProperties
+class Area(BaseModel):
+    """
+    A named GeoJSON polygon area, referenced by rules' `area` condition
+    (matched against `identifier`, not `name`). `identifier` is the routing
+    key used in /api/areas/{identifier} and must not contain spaces; `name`
+    is a free-text display label and may.
+    """
+
+    model_config = {
+        # The "LI" area from SkyFollower-legacy's areas.example.geojson --
+        # referenced by the "Grandma's Flight Home" example rule above.
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "identifier": "LI",
+                    "name": "Long Island",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-73.8006591796875, 40.82835864973048],
+                            [-73.97369384765625, 40.734770989672406],
+                            [-74.03961181640625, 40.54720023441049],
+                            [-73.7677001953125, 40.538851525354666],
+                            [-73.245849609375, 40.58684239087908],
+                            [-72.70751953125, 40.73685214795608],
+                            [-71.8560791015625, 40.97160353279909],
+                            [-71.80938720703125, 41.044145364313174],
+                            [-71.89727783203125, 41.14970617453726],
+                            [-72.11700439453125, 41.21998578493921],
+                            [-72.36145019531249, 41.17038447781618],
+                            [-72.70477294921874, 41.03585891144301],
+                            [-72.83935546875, 41.04621681452063],
+                            [-73.1964111328125, 40.994410999439516],
+                            [-73.553466796875, 40.94671366508002],
+                            [-73.8006591796875, 40.82835864973048],
+                        ]],
+                    },
+                }
+            ]
+        }
+    }
+
+    identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
+    name: str = ""
     geometry: AreaGeometry
 
-
-class AreaFeatureCollection(BaseModel):
-    """Named GeoJSON polygon areas, referenced by the `area` condition type."""
-
-    type: Literal["FeatureCollection"] = "FeatureCollection"
-    features: list[AreaFeature] = []
 
 _redis: Optional[redis_lib.Redis] = None
 _engine: Optional[RulesEngine] = None
@@ -179,28 +277,32 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="SkyFollower Management UI Backend",
+    title="SkyFollower Management",
     description="Rules and areas configuration API. Message processors poll "
-    "config:rules/config:areas in Redis every 5 seconds for changes written here.",
+    "config:rules/config:areas in Redis every 30 seconds for changes written here.",
     version="9999.99.99",
     lifespan=lifespan,
 )
 
 
+_RULE_BODY_PATHS = [("/api/rules", "post"), ("/api/rules/{identifier}", "put")]
+_AREA_BODY_PATHS = [("/api/areas", "post"), ("/api/areas/{identifier}", "put")]
+
+
 def _custom_openapi() -> dict:
     """
-    Replace the auto-generated request body schema for PUT /api/rules and
-    PUT /api/areas with a clean $ref to Rule/AreaFeatureCollection.
+    Replace the auto-generated request body schema on every POST/PUT route
+    with a clean $ref to Rule/Area.
 
     FastAPI infers a request body schema from the route's actual parameter
-    type (list[dict]/dict here, kept plain so RulesEngine -- not Pydantic --
+    type (plain dict here, kept that way so RulesEngine -- not Pydantic --
     stays the one place validation happens; see the Schema models comment
     above). route(openapi_extra=...) can't clean this up: FastAPI merges it
     into the auto-generated operation via a recursive dict merge
-    (fastapi.openapi.utils.deep_dict_update), not a replace, which left
-    "additionalProperties: true" sitting alongside the $ref instead of being
-    replaced by it. Overwriting the generated schema's dict keys directly,
-    after the fact, is a plain assignment instead, so it actually replaces.
+    (fastapi.openapi.utils.deep_dict_update), not a replace, which leaves
+    stale "additionalProperties: true" sitting alongside the injected $ref.
+    Overwriting the generated schema's dict keys directly, after the fact,
+    is a plain assignment instead, so it actually replaces.
     """
     if app.openapi_schema:
         return app.openapi_schema
@@ -211,13 +313,14 @@ def _custom_openapi() -> dict:
         description=app.description,
         routes=app.routes,
     )
-    schema["paths"]["/api/rules"]["put"]["requestBody"]["content"]["application/json"]["schema"] = {
-        "type": "array",
-        "items": {"$ref": "#/components/schemas/Rule"},
-    }
-    schema["paths"]["/api/areas"]["put"]["requestBody"]["content"]["application/json"]["schema"] = {
-        "$ref": "#/components/schemas/AreaFeatureCollection"
-    }
+    for path, method in _RULE_BODY_PATHS:
+        schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"] = {
+            "$ref": "#/components/schemas/Rule"
+        }
+    for path, method in _AREA_BODY_PATHS:
+        schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"] = {
+            "$ref": "#/components/schemas/Area"
+        }
     app.openapi_schema = schema
     return app.openapi_schema
 
@@ -239,35 +342,26 @@ def _redis_set(key: str, value: str) -> None:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# Rules
-# ---------------------------------------------------------------------------
-
-_NO_CONTENT = {204: {"description": "No configuration saved yet"}}
+_NOT_FOUND = {404: {"description": "Not found"}}
+_CONFLICT = {409: {"description": "Identifier already exists"}}
 _REDIS_ERROR = {500: {"description": "Redis error"}}
 _VALIDATION_ERROR = {400: {"description": "Validation error"}}
 
 
-@app.get(
-    "/api/rules",
-    tags=["rules"],
-    response_model=list[Rule],
-    responses={**_NO_CONTENT, **_REDIS_ERROR},
-)
-def get_rules():
+# ---------------------------------------------------------------------------
+# Rules storage helpers -- config:rules stores the full array as one JSON
+# blob (that's what message processors poll and hot-reload), so every
+# per-item operation below is read-full-array, splice, validate, write-back.
+# ---------------------------------------------------------------------------
+
+def _load_rules_array() -> list[dict]:
     raw = _redis_get(config_rules_key())
     if not raw:
-        return Response(status_code=204)
-    return JSONResponse(content=json.loads(raw))
+        return []
+    return json.loads(raw)
 
 
-@app.put(
-    "/api/rules",
-    tags=["rules"],
-    response_model=list[Rule],
-    responses={**_VALIDATION_ERROR, **_REDIS_ERROR},
-)
-def put_rules(rules: list[dict]):
+def _save_rules_array(rules: list[dict]) -> None:
     body = json.dumps(rules)
     if not _engine.load_rules_json(body):
         raise HTTPException(status_code=400, detail=_engine.last_error or "Invalid rules")
@@ -275,38 +369,216 @@ def put_rules(rules: list[dict]):
     version = hashlib.sha256(body.encode()).hexdigest()
     _redis_set(config_rules_key(), body)
     _redis_set(config_rules_version_key(), version)
-    return JSONResponse(content=rules)
 
 
-# ---------------------------------------------------------------------------
-# Areas
-# ---------------------------------------------------------------------------
+@app.get("/api/rules", tags=["rules"], response_model=list[Rule], responses={**_REDIS_ERROR})
+def list_rules():
+    return JSONResponse(content=_load_rules_array())
+
 
 @app.get(
-    "/api/areas",
-    tags=["areas"],
-    response_model=AreaFeatureCollection,
-    responses={**_NO_CONTENT, **_REDIS_ERROR},
+    "/api/rules/{identifier}",
+    tags=["rules"],
+    response_model=Rule,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
 )
-def get_areas():
-    raw = _redis_get(config_areas_key())
-    if not raw:
-        return Response(status_code=204)
-    return JSONResponse(content=json.loads(raw))
+def get_rule(identifier: str):
+    for rule in _load_rules_array():
+        if rule.get("identifier") == identifier:
+            return JSONResponse(content=rule)
+    raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
+
+
+@app.post(
+    "/api/rules",
+    tags=["rules"],
+    status_code=201,
+    response_model=Rule,
+    responses={**_CONFLICT, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def create_rule(rule: dict):
+    rules = _load_rules_array()
+    identifier = rule.get("identifier")
+    if any(r.get("identifier") == identifier for r in rules):
+        raise HTTPException(status_code=409, detail=f"Rule '{identifier}' already exists")
+
+    rules.append(rule)
+    _save_rules_array(rules)
+    return JSONResponse(status_code=201, content=rule)
 
 
 @app.put(
-    "/api/areas",
-    tags=["areas"],
-    response_model=AreaFeatureCollection,
-    responses={**_VALIDATION_ERROR, **_REDIS_ERROR},
+    "/api/rules/{identifier}",
+    tags=["rules"],
+    response_model=Rule,
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def put_areas(areas: dict):
-    body = json.dumps(areas)
+def update_rule(identifier: str, rule: dict):
+    rules = _load_rules_array()
+    idx = next((i for i, r in enumerate(rules) if r.get("identifier") == identifier), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
+
+    body_identifier = rule.get("identifier", identifier)
+    if body_identifier != identifier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Body identifier '{body_identifier}' does not match path identifier '{identifier}'",
+        )
+
+    rules[idx] = {**rule, "identifier": identifier}
+    _save_rules_array(rules)
+    return JSONResponse(content=rules[idx])
+
+
+@app.delete(
+    "/api/rules/{identifier}",
+    tags=["rules"],
+    status_code=204,
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def delete_rule(identifier: str):
+    rules = _load_rules_array()
+    remaining = [r for r in rules if r.get("identifier") != identifier]
+    if len(remaining) == len(rules):
+        raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
+
+    _save_rules_array(remaining)
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Areas storage helpers -- config:areas stores a GeoJSON FeatureCollection
+# (what RulesEngine.load_areas_json and the message processor expect); the
+# API exposes a flattened [{identifier, name, geometry}, ...] array instead,
+# translated to/from that FeatureCollection at this boundary.
+# ---------------------------------------------------------------------------
+
+def _feature_to_area(feature: dict) -> dict:
+    props = feature.get("properties", {})
+    return {
+        "identifier": props.get("identifier", ""),
+        "name": props.get("name", ""),
+        "geometry": feature.get("geometry", {}),
+    }
+
+
+def _area_to_feature(area: dict) -> dict:
+    return {
+        "type": "Feature",
+        "properties": {
+            "identifier": area.get("identifier", ""),
+            "name": area.get("name", ""),
+        },
+        "geometry": area.get("geometry", {}),
+    }
+
+
+def _load_areas_array() -> list[dict]:
+    raw = _redis_get(config_areas_key())
+    if not raw:
+        return []
+    collection = json.loads(raw)
+    return [_feature_to_area(f) for f in collection.get("features", [])]
+
+
+def _save_areas_array(areas: list[dict], expect_identifier: Optional[str] = None) -> None:
+    collection = {
+        "type": "FeatureCollection",
+        "features": [_area_to_feature(a) for a in areas],
+    }
+    body = json.dumps(collection)
     if not _engine.load_areas_json(body):
         raise HTTPException(status_code=400, detail=_engine.last_error or "Invalid areas")
+
+    # _load_areas() is deliberately lenient at the per-feature level (a bad
+    # individual feature is silently dropped, not a hard failure -- see
+    # message-processor/rules_engine.py), so a successful reload doesn't
+    # guarantee the item this call cares about actually survived it.
+    if expect_identifier is not None:
+        if not any(a["identifier"] == expect_identifier for a in _engine._areas):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Area '{expect_identifier}' failed validation "
+                "(check identifier has no spaces and geometry is a valid Polygon)",
+            )
 
     version = hashlib.sha256(body.encode()).hexdigest()
     _redis_set(config_areas_key(), body)
     _redis_set(config_areas_version_key(), version)
-    return JSONResponse(content=areas)
+
+
+@app.get("/api/areas", tags=["areas"], response_model=list[Area], responses={**_REDIS_ERROR})
+def list_areas():
+    return JSONResponse(content=_load_areas_array())
+
+
+@app.get(
+    "/api/areas/{identifier}",
+    tags=["areas"],
+    response_model=Area,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def get_area(identifier: str):
+    for area in _load_areas_array():
+        if area.get("identifier") == identifier:
+            return JSONResponse(content=area)
+    raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
+
+
+@app.post(
+    "/api/areas",
+    tags=["areas"],
+    status_code=201,
+    response_model=Area,
+    responses={**_CONFLICT, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def create_area(area: dict):
+    areas = _load_areas_array()
+    identifier = area.get("identifier")
+    if any(a.get("identifier") == identifier for a in areas):
+        raise HTTPException(status_code=409, detail=f"Area '{identifier}' already exists")
+
+    areas.append(area)
+    _save_areas_array(areas, expect_identifier=identifier)
+    return JSONResponse(status_code=201, content=area)
+
+
+@app.put(
+    "/api/areas/{identifier}",
+    tags=["areas"],
+    response_model=Area,
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def update_area(identifier: str, area: dict):
+    areas = _load_areas_array()
+    idx = next((i for i, a in enumerate(areas) if a.get("identifier") == identifier), None)
+    if idx is None:
+        raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
+
+    body_identifier = area.get("identifier", identifier)
+    if body_identifier != identifier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Body identifier '{body_identifier}' does not match path identifier '{identifier}'",
+        )
+
+    areas[idx] = {**area, "identifier": identifier}
+    _save_areas_array(areas, expect_identifier=identifier)
+    return JSONResponse(content=areas[idx])
+
+
+@app.delete(
+    "/api/areas/{identifier}",
+    tags=["areas"],
+    status_code=204,
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def delete_area(identifier: str):
+    areas = _load_areas_array()
+    remaining = [a for a in areas if a.get("identifier") != identifier]
+    if len(remaining) == len(areas):
+        raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
+
+    _save_areas_array(remaining)
+    return Response(status_code=204)

@@ -1,9 +1,10 @@
 """
 Tests for management-ui/backend/main.py.
 
-Redis is mocked via unittest.mock, matching the
-patch("message_processor.main.redis_lib.Redis") convention used in
-message-processor/tests/test_processor.py.
+Redis is faked with a tiny in-memory dict (FakeRedis below) rather than a
+MagicMock, since the per-item CRUD endpoints are read-modify-write against
+the full stored array/collection -- a static MagicMock return value can't
+reflect a POST/PUT/DELETE's effect on a subsequent GET within the same test.
 
 main.py is loaded directly by file path rather than via a normal package
 import -- the hyphen in "management-ui" isn't a valid Python identifier, so
@@ -17,7 +18,7 @@ import importlib.util
 import json
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,127 +30,269 @@ sys.modules["management_ui_main"] = ui_main
 _spec.loader.exec_module(ui_main)
 
 
-@pytest.fixture
-def mock_redis():
-    redis = MagicMock()
-    redis.get.return_value = None
-    return redis
+class FakeRedis:
+    """Minimal in-memory stand-in for redis.Redis's get/set."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+        self.get_error: Exception | None = None
+        self.set_error: Exception | None = None
+
+    def get(self, key):
+        if self.get_error:
+            raise self.get_error
+        return self.store.get(key)
+
+    def set(self, key, value):
+        if self.set_error:
+            raise self.set_error
+        self.store[key] = value
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch, mock_redis):
+def fake_redis():
+    return FakeRedis()
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch, fake_redis):
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps({"redis": {"host": "localhost", "port": 6379}}))
     monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
 
-    with patch.object(ui_main.redis_lib, "Redis", return_value=mock_redis):
+    with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
         with TestClient(ui_main.app) as c:
             yield c
 
 
-VALID_RULE = {
-    "name": "Test rule",
-    "description": "",
-    "identifier": "test-rule",
-    "enabled": True,
-    "conditions": [
-        {"type": "altitude", "operator": "minimum", "value": 1000},
-    ],
-}
-
-VALID_FEATURE_COLLECTION = {
-    "type": "FeatureCollection",
-    "features": [
-        {
-            "type": "Feature",
-            "properties": {"name": "LI"},
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-        }
-    ],
-}
+def _rule(identifier="test-rule", **overrides) -> dict:
+    rule = {
+        "name": "Test rule",
+        "description": "",
+        "identifier": identifier,
+        "enabled": True,
+        "conditions": [{"type": "altitude", "operator": "minimum", "value": "1000"}],
+    }
+    rule.update(overrides)
+    return rule
 
 
-class TestRules:
-    def test_get_rules_returns_204_when_unset(self, client):
-        resp = client.get("/api/rules")
-        assert resp.status_code == 204
+def _area(identifier="LI", **overrides) -> dict:
+    area = {
+        "identifier": identifier,
+        "name": "Long Island",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+        },
+    }
+    area.update(overrides)
+    return area
 
-    def test_get_rules_returns_stored_rules(self, client, mock_redis):
-        mock_redis.get.return_value = json.dumps([VALID_RULE])
+
+class TestListRules:
+    def test_empty_returns_200_empty_array(self, client):
         resp = client.get("/api/rules")
         assert resp.status_code == 200
-        assert resp.json() == [VALID_RULE]
+        assert resp.json() == []
 
-    def test_get_rules_returns_500_on_redis_error(self, client, mock_redis):
-        mock_redis.get.side_effect = ui_main.redis_lib.RedisError("boom")
+    def test_returns_stored_rules(self, client):
+        client.post("/api/rules", json=_rule("r1"))
+        resp = client.get("/api/rules")
+        assert resp.status_code == 200
+        assert [r["identifier"] for r in resp.json()] == ["r1"]
+
+    def test_returns_500_on_redis_error(self, client, fake_redis):
+        fake_redis.get_error = ui_main.redis_lib.RedisError("boom")
         resp = client.get("/api/rules")
         assert resp.status_code == 500
 
-    def test_put_rules_valid_writes_and_echoes(self, client, mock_redis):
-        resp = client.put("/api/rules", json=[VALID_RULE])
+
+class TestGetRule:
+    def test_found(self, client):
+        client.post("/api/rules", json=_rule("r1"))
+        resp = client.get("/api/rules/r1")
         assert resp.status_code == 200
-        assert resp.json() == [VALID_RULE]
+        assert resp.json()["identifier"] == "r1"
 
-        body = json.dumps([VALID_RULE])
+    def test_not_found_404(self, client):
+        resp = client.get("/api/rules/nope")
+        assert resp.status_code == 404
+
+
+class TestCreateRule:
+    def test_valid_creates_201(self, client, fake_redis):
+        resp = client.post("/api/rules", json=_rule("r1"))
+        assert resp.status_code == 201
+        assert resp.json()["identifier"] == "r1"
+
+        body = json.dumps([_rule("r1")])
         expected_version = ui_main.hashlib.sha256(body.encode()).hexdigest()
-        mock_redis.set.assert_any_call(ui_main.config_rules_key(), body)
-        mock_redis.set.assert_any_call(ui_main.config_rules_version_key(), expected_version)
+        assert fake_redis.store[ui_main.config_rules_key()] == body
+        assert fake_redis.store[ui_main.config_rules_version_key()] == expected_version
 
-    def test_put_rules_invalid_returns_400_with_detail(self, client):
-        bad_rule = {**VALID_RULE, "conditions": []}
-        resp = client.put("/api/rules", json=[bad_rule])
+    def test_duplicate_identifier_returns_409(self, client):
+        client.post("/api/rules", json=_rule("dup"))
+        resp = client.post("/api/rules", json=_rule("dup"))
+        assert resp.status_code == 409
+
+    def test_invalid_rule_returns_400(self, client):
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[]))
         assert resp.status_code == 400
         assert "no conditions" in resp.json()["detail"]
 
-    def test_put_rules_duplicate_identifier_returns_400(self, client):
-        resp = client.put("/api/rules", json=[VALID_RULE, VALID_RULE])
+    def test_identifier_with_space_returns_400(self, client):
+        resp = client.post("/api/rules", json=_rule("my rule"))
         assert resp.status_code == 400
-        assert "duplicate identifier" in resp.json()["detail"]
+        assert "space" in resp.json()["detail"]
+
+    def test_rejected_rule_does_not_persist(self, client):
+        client.post("/api/rules", json=_rule("bad", conditions=[]))
+        resp = client.get("/api/rules")
+        assert resp.json() == []
 
 
-class TestAreas:
-    def test_get_areas_returns_204_when_unset(self, client):
-        resp = client.get("/api/areas")
+class TestUpdateRule:
+    def test_valid_update_returns_200(self, client):
+        client.post("/api/rules", json=_rule("r1", name="Original"))
+        resp = client.put("/api/rules/r1", json=_rule("r1", name="Updated"))
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Updated"
+
+        get_resp = client.get("/api/rules/r1")
+        assert get_resp.json()["name"] == "Updated"
+
+    def test_not_found_returns_404(self, client):
+        resp = client.put("/api/rules/nope", json=_rule("nope"))
+        assert resp.status_code == 404
+
+    def test_body_identifier_mismatch_returns_400(self, client):
+        client.post("/api/rules", json=_rule("r1"))
+        resp = client.put("/api/rules/r1", json=_rule("different"))
+        assert resp.status_code == 400
+
+    def test_invalid_update_returns_400_and_keeps_original(self, client):
+        client.post("/api/rules", json=_rule("r1", name="Original"))
+        resp = client.put("/api/rules/r1", json=_rule("r1", conditions=[]))
+        assert resp.status_code == 400
+
+        get_resp = client.get("/api/rules/r1")
+        assert get_resp.json()["name"] == "Original"
+
+
+class TestDeleteRule:
+    def test_deletes_and_returns_204(self, client):
+        client.post("/api/rules", json=_rule("r1"))
+        resp = client.delete("/api/rules/r1")
         assert resp.status_code == 204
+        assert client.get("/api/rules/r1").status_code == 404
 
-    def test_get_areas_returns_stored_areas(self, client, mock_redis):
-        mock_redis.get.return_value = json.dumps(VALID_FEATURE_COLLECTION)
+    def test_not_found_returns_404(self, client):
+        resp = client.delete("/api/rules/nope")
+        assert resp.status_code == 404
+
+
+class TestListAreas:
+    def test_empty_returns_200_empty_array(self, client):
         resp = client.get("/api/areas")
         assert resp.status_code == 200
-        assert resp.json() == VALID_FEATURE_COLLECTION
+        assert resp.json() == []
 
-    def test_put_areas_valid_writes_and_echoes(self, client, mock_redis):
-        resp = client.put("/api/areas", json=VALID_FEATURE_COLLECTION)
+    def test_returns_flattened_areas(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        resp = client.get("/api/areas")
         assert resp.status_code == 200
-        assert resp.json() == VALID_FEATURE_COLLECTION
-        assert mock_redis.set.call_count == 2
+        assert resp.json() == [_area("LI")]
 
-    def test_put_areas_invalid_returns_400(self, client):
-        resp = client.put("/api/areas", json={"type": "NotAFeatureCollection"})
+
+class TestGetArea:
+    def test_found(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        resp = client.get("/api/areas/LI")
+        assert resp.status_code == 200
+        assert resp.json()["identifier"] == "LI"
+
+    def test_not_found_404(self, client):
+        resp = client.get("/api/areas/nope")
+        assert resp.status_code == 404
+
+
+class TestCreateArea:
+    def test_valid_creates_201(self, client, fake_redis):
+        resp = client.post("/api/areas", json=_area("LI"))
+        assert resp.status_code == 201
+        assert resp.json()["identifier"] == "LI"
+        assert ui_main.config_areas_key() in fake_redis.store
+
+    def test_duplicate_identifier_returns_409(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        resp = client.post("/api/areas", json=_area("LI"))
+        assert resp.status_code == 409
+
+    def test_identifier_with_space_returns_400(self, client):
+        resp = client.post("/api/areas", json=_area("Long Island"))
         assert resp.status_code == 400
-        assert "FeatureCollection" in resp.json()["detail"]
 
-    def test_area_condition_validates_against_saved_areas(self, client, mock_redis):
-        put_resp = client.put("/api/areas", json=VALID_FEATURE_COLLECTION)
-        assert put_resp.status_code == 200
+    def test_non_polygon_geometry_returns_400(self, client):
+        resp = client.post("/api/areas", json=_area(
+            "LI", geometry={"type": "Point", "coordinates": [0, 0]},
+        ))
+        assert resp.status_code == 400
 
-        rule_with_area = {
-            **VALID_RULE,
-            "identifier": "area-rule",
-            "conditions": [{"type": "area", "operator": "equals", "value": "LI"}],
-        }
-        resp = client.put("/api/rules", json=[rule_with_area])
+    def test_rejected_area_does_not_persist(self, client):
+        client.post("/api/areas", json=_area("Long Island"))  # space in identifier
+        resp = client.get("/api/areas")
+        assert resp.json() == []
+
+
+class TestUpdateArea:
+    def test_valid_update_returns_200(self, client):
+        client.post("/api/areas", json=_area("LI", name="Original"))
+        resp = client.put("/api/areas/LI", json=_area("LI", name="Updated"))
         assert resp.status_code == 200
+        assert resp.json()["name"] == "Updated"
 
-    def test_area_condition_rejects_unknown_area(self, client):
-        rule_with_area = {
-            **VALID_RULE,
-            "identifier": "area-rule",
-            "conditions": [{"type": "area", "operator": "equals", "value": "NOWHERE"}],
-        }
-        resp = client.put("/api/rules", json=[rule_with_area])
+    def test_not_found_returns_404(self, client):
+        resp = client.put("/api/areas/nope", json=_area("nope"))
+        assert resp.status_code == 404
+
+    def test_body_identifier_mismatch_returns_400(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        resp = client.put("/api/areas/LI", json=_area("different"))
+        assert resp.status_code == 400
+
+
+class TestDeleteArea:
+    def test_deletes_and_returns_204(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        resp = client.delete("/api/areas/LI")
+        assert resp.status_code == 204
+        assert client.get("/api/areas/LI").status_code == 404
+
+    def test_not_found_returns_404(self, client):
+        resp = client.delete("/api/areas/nope")
+        assert resp.status_code == 404
+
+
+class TestAreaConditionCrossValidation:
+    def test_rule_referencing_existing_area_succeeds(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        rule = _rule("area-rule", conditions=[{"type": "area", "operator": "equals", "value": "LI"}])
+        resp = client.post("/api/rules", json=rule)
+        assert resp.status_code == 201
+
+    def test_rule_referencing_unknown_area_returns_400(self, client):
+        rule = _rule("area-rule", conditions=[{"type": "area", "operator": "equals", "value": "NOWHERE"}])
+        resp = client.post("/api/rules", json=rule)
         assert resp.status_code == 400
         assert "not found in areas config" in resp.json()["detail"]
+
+    def test_rule_matches_area_by_identifier_not_name(self, client):
+        # LI has name "Long Island" but identifier "LI" -- the area
+        # condition must match "LI", not the display name.
+        client.post("/api/areas", json=_area("LI", name="Long Island"))
+        rule = _rule("area-rule", conditions=[
+            {"type": "area", "operator": "equals", "value": "Long Island"},
+        ])
+        resp = client.post("/api/rules", json=rule)
+        assert resp.status_code == 400
