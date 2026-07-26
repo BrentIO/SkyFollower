@@ -16,7 +16,11 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                items:
+                  $ref: '#/components/schemas/Rule'
+                type: array
+                title: Response Get Rules Api Rules Get
         '204':
           description: No configuration saved yet
         '500':
@@ -30,18 +34,20 @@ paths:
         content:
           application/json:
             schema:
-              items:
-                additionalProperties: true
-                type: object
               type: array
-              title: Rules
+              items:
+                $ref: '#/components/schemas/Rule'
         required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                items:
+                  $ref: '#/components/schemas/Rule'
+                type: array
+                title: Response Put Rules Api Rules Put
         '400':
           description: Validation error
         '500':
@@ -63,7 +69,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/AreaFeatureCollection'
         '204':
           description: No configuration saved yet
         '500':
@@ -77,16 +84,15 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: true
-              type: object
-              title: Areas
+              $ref: '#/components/schemas/AreaFeatureCollection'
         required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/AreaFeatureCollection'
         '400':
           description: Validation error
         '500':
@@ -99,6 +105,123 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AreaFeature:
+      properties:
+        type:
+          type: string
+          const: Feature
+          title: Type
+          default: Feature
+        properties:
+          $ref: '#/components/schemas/AreaFeatureProperties'
+        geometry:
+          $ref: '#/components/schemas/AreaGeometry'
+      type: object
+      required:
+      - properties
+      - geometry
+      title: AreaFeature
+    AreaFeatureCollection:
+      properties:
+        type:
+          type: string
+          const: FeatureCollection
+          title: Type
+          default: FeatureCollection
+        features:
+          items:
+            $ref: '#/components/schemas/AreaFeature'
+          type: array
+          title: Features
+          default: []
+      type: object
+      title: AreaFeatureCollection
+      description: Named GeoJSON polygon areas, referenced by the `area` condition
+        type.
+    AreaFeatureProperties:
+      properties:
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - name
+      title: AreaFeatureProperties
+    AreaGeometry:
+      properties:
+        type:
+          type: string
+          const: Polygon
+          title: Type
+        coordinates:
+          items:
+            items:
+              items:
+                type: number
+              type: array
+            type: array
+          type: array
+          title: Coordinates
+      type: object
+      required:
+      - type
+      - coordinates
+      title: AreaGeometry
+    Condition:
+      properties:
+        type:
+          type: string
+          enum:
+          - altitude
+          - heading
+          - velocity
+          - vertical_speed
+          - area
+          - date
+          - ident
+          - squawk
+          - military
+          - operator_airline_designator
+          - aircraft_type_designator
+          - aircraft_registration
+          - aircraft_icao_hex
+          - aircraft_powerplant_count
+          - wake_turbulence_category
+          - matched_rules
+          title: Type
+        operator:
+          type: string
+          enum:
+          - equals
+          - minimum
+          - maximum
+          - in_list
+          - not_in_list
+          title: Operator
+        value:
+          anyOf:
+          - type: string
+          - items:
+              type: string
+            type: array
+          title: Value
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: Condition
+      description: 'One rule condition; every condition in a rule is AND''d together.
+
+        `value`''s shape depends on `type` -- see CLAUDE.md''s Conditions table.
+
+        Matching SkyFollower-legacy''s convention, this is a string even for
+
+        numeric fields (altitude "10000", heading "340,020" for min,max
+
+        wrap-around, military "true"/"false") -- matched_rules is the one
+
+        exception, taking a real list of rule identifiers.'
     HTTPValidationError:
       properties:
         detail:
@@ -108,6 +231,47 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    Rule:
+      properties:
+        name:
+          type: string
+          title: Name
+          default: ''
+        description:
+          type: string
+          title: Description
+          default: ''
+        identifier:
+          type: string
+          title: Identifier
+        enabled:
+          type: boolean
+          title: Enabled
+        force_archive:
+          type: boolean
+          title: Force Archive
+          default: false
+        conditions:
+          items:
+            $ref: '#/components/schemas/Condition'
+          type: array
+          minItems: 1
+          title: Conditions
+      type: object
+      required:
+      - identifier
+      - enabled
+      - conditions
+      title: Rule
+      description: 'A notification rule. Fires at most once per flight per `identifier`.
+
+        Documents the shape of a normal (enabled) rule -- the rules engine
+
+        additionally tolerates a disabled placeholder rule with only
+
+        `enabled: false` and nothing else, silently skipping it rather than
+
+        validating it; that leniency is a narrow exception, not reflected here.'
     ValidationError:
       properties:
         loc:

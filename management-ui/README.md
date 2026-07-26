@@ -45,7 +45,14 @@ in-process `RulesEngine` instance, so save areas before rules that
 reference them.
 
 The full request/response schema is in `specs/openapi.yaml`, exported from
-this app's own OpenAPI document (see below).
+this app's own OpenAPI document (see below). Rule/Condition/Area shapes
+there (`Rule`, `Condition`, `AreaFeatureCollection`) are documentation-only
+Pydantic models roughly matching SkyFollower-legacy's `rules.example.json` /
+`areas.example.geojson` conventions (condition values are strings even for
+numeric fields, e.g. altitude `"10000"`) — they aren't the actual route
+parameter types, so they document the schema without becoming a second
+validation layer that could fight `RulesEngine`'s own (more permissive)
+rules.
 
 ## Configuration (`settings.json`)
 

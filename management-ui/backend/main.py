@@ -22,11 +22,13 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional, Union
 
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 # Add the repo root to sys.path so shared/ is importable when this module is
 # run outside Docker (e.g. tests, local `uvicorn main:app`, OpenAPI export).
@@ -72,6 +74,80 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger("management-ui-backend")
 
+
+# ---------------------------------------------------------------------------
+# Schema models -- documentation only, matching SkyFollower-legacy's
+# rules.example.json / areas.example.geojson shape (condition values are
+# strings even for numeric fields, e.g. altitude "10000", military "true";
+# only matched_rules is a real array). Not used as the actual route
+# parameter types: the routes below keep plain list[dict]/dict so
+# RulesEngine (message-processor/rules_engine.py) stays the single source
+# of truth for validation -- these models exist so /docs and
+# specs/openapi.yaml describe the real shape instead of an empty
+# "additionalProperties: true" object, without a second, stricter
+# validation layer fighting the engine's own (more permissive) rules, e.g.
+# a disabled placeholder rule like {"enabled": false} with no identifier or
+# conditions at all is valid and simply skipped, not rejected.
+# ---------------------------------------------------------------------------
+
+class Condition(BaseModel):
+    """
+    One rule condition; every condition in a rule is AND'd together.
+    `value`'s shape depends on `type` -- see CLAUDE.md's Conditions table.
+    Matching SkyFollower-legacy's convention, this is a string even for
+    numeric fields (altitude "10000", heading "340,020" for min,max
+    wrap-around, military "true"/"false") -- matched_rules is the one
+    exception, taking a real list of rule identifiers.
+    """
+
+    type: Literal[
+        "altitude", "heading", "velocity", "vertical_speed", "area", "date",
+        "ident", "squawk", "military", "operator_airline_designator",
+        "aircraft_type_designator", "aircraft_registration", "aircraft_icao_hex",
+        "aircraft_powerplant_count", "wake_turbulence_category", "matched_rules",
+    ]
+    operator: Literal["equals", "minimum", "maximum", "in_list", "not_in_list"]
+    value: Union[str, list[str]]
+
+
+class Rule(BaseModel):
+    """
+    A notification rule. Fires at most once per flight per `identifier`.
+    Documents the shape of a normal (enabled) rule -- the rules engine
+    additionally tolerates a disabled placeholder rule with only
+    `enabled: false` and nothing else, silently skipping it rather than
+    validating it; that leniency is a narrow exception, not reflected here.
+    """
+
+    name: str = ""
+    description: str = ""
+    identifier: str
+    enabled: bool
+    force_archive: bool = False
+    conditions: list[Condition] = Field(min_length=1)
+
+
+class AreaFeatureProperties(BaseModel):
+    name: str
+
+
+class AreaGeometry(BaseModel):
+    type: Literal["Polygon"]
+    coordinates: list[list[list[float]]]
+
+
+class AreaFeature(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    properties: AreaFeatureProperties
+    geometry: AreaGeometry
+
+
+class AreaFeatureCollection(BaseModel):
+    """Named GeoJSON polygon areas, referenced by the `area` condition type."""
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[AreaFeature] = []
+
 _redis: Optional[redis_lib.Redis] = None
 _engine: Optional[RulesEngine] = None
 
@@ -111,6 +187,44 @@ app = FastAPI(
 )
 
 
+def _custom_openapi() -> dict:
+    """
+    Replace the auto-generated request body schema for PUT /api/rules and
+    PUT /api/areas with a clean $ref to Rule/AreaFeatureCollection.
+
+    FastAPI infers a request body schema from the route's actual parameter
+    type (list[dict]/dict here, kept plain so RulesEngine -- not Pydantic --
+    stays the one place validation happens; see the Schema models comment
+    above). route(openapi_extra=...) can't clean this up: FastAPI merges it
+    into the auto-generated operation via a recursive dict merge
+    (fastapi.openapi.utils.deep_dict_update), not a replace, which left
+    "additionalProperties: true" sitting alongside the $ref instead of being
+    replaced by it. Overwriting the generated schema's dict keys directly,
+    after the fact, is a plain assignment instead, so it actually replaces.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema["paths"]["/api/rules"]["put"]["requestBody"]["content"]["application/json"]["schema"] = {
+        "type": "array",
+        "items": {"$ref": "#/components/schemas/Rule"},
+    }
+    schema["paths"]["/api/areas"]["put"]["requestBody"]["content"]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/AreaFeatureCollection"
+    }
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
+
+
 def _redis_get(key: str) -> Optional[str]:
     try:
         return _redis.get(key)
@@ -137,6 +251,7 @@ _VALIDATION_ERROR = {400: {"description": "Validation error"}}
 @app.get(
     "/api/rules",
     tags=["rules"],
+    response_model=list[Rule],
     responses={**_NO_CONTENT, **_REDIS_ERROR},
 )
 def get_rules():
@@ -149,6 +264,7 @@ def get_rules():
 @app.put(
     "/api/rules",
     tags=["rules"],
+    response_model=list[Rule],
     responses={**_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def put_rules(rules: list[dict]):
@@ -169,6 +285,7 @@ def put_rules(rules: list[dict]):
 @app.get(
     "/api/areas",
     tags=["areas"],
+    response_model=AreaFeatureCollection,
     responses={**_NO_CONTENT, **_REDIS_ERROR},
 )
 def get_areas():
@@ -181,6 +298,7 @@ def get_areas():
 @app.put(
     "/api/areas",
     tags=["areas"],
+    response_model=AreaFeatureCollection,
     responses={**_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def put_areas(areas: dict):
