@@ -265,6 +265,45 @@ def select_candidate_leg(
     return _resolve_by_heading(airports, velocities), True
 
 
+def _sanity_check_violation(
+    positions: list[dict], origin: dict, destination: dict
+) -> Optional[str]:
+    """Returns None if the pair passes both sanity checks; otherwise a short
+    human-readable description of which check failed, at which position,
+    and by how much -- used to build a diagnostic log message when a
+    candidate is rejected. See passes_cross_track_check for what each check
+    means; this is the same logic, just reporting *why* instead of a bare
+    bool."""
+    a, b = _coords(origin), _coords(destination)
+    if a is None or b is None:
+        return "origin or destination airport record is missing latitude/longitude"
+    if a == b:
+        return "origin and destination resolve to the same coordinates"
+    if not positions:
+        return "no positions recorded yet to sanity-check against"
+
+    route_distance_nm = haversine_nm(a[0], a[1], b[0], b[1])
+    if route_distance_nm == 0:
+        return "origin and destination resolve to the same coordinates"
+    cross_track_threshold_nm = max(CROSS_TRACK_FLOOR_NM, CROSS_TRACK_PERCENTAGE * route_distance_nm)
+
+    for pos in positions:
+        point = (pos["latitude"], pos["longitude"])
+        xtrack = cross_track_distance_nm(point, a, b)
+        if xtrack > cross_track_threshold_nm:
+            return (
+                f"cross-track distance {xtrack:.1f}nm at position {point} exceeds "
+                f"threshold {cross_track_threshold_nm:.1f}nm (route distance {route_distance_nm:.1f}nm)"
+            )
+        along_track = along_track_distance_nm(point, a, b)
+        if along_track < -ALONG_TRACK_SLACK_NM or along_track > route_distance_nm + ALONG_TRACK_SLACK_NM:
+            return (
+                f"along-track projection {along_track:.1f}nm at position {point} falls outside "
+                f"[0, {route_distance_nm:.1f}]nm (+/-{ALONG_TRACK_SLACK_NM}nm slack)"
+            )
+    return None
+
+
 def passes_cross_track_check(positions: list[dict], origin: dict, destination: dict) -> bool:
     """Rejects a candidate origin/destination pair whose great-circle line
     the flight's actual track never came close to, or which the track only
@@ -285,38 +324,39 @@ def passes_cross_track_check(positions: list[dict], origin: dict, destination: d
       near the line's bearing but nowhere close to the actual leg, e.g. well
       past the destination (see route_resolver module docstring / #498
       discussion for the holding-pattern case this specifically catches)."""
-    a, b = _coords(origin), _coords(destination)
-    if a is None or b is None or a == b or not positions:
-        return False
-
-    route_distance_nm = haversine_nm(a[0], a[1], b[0], b[1])
-    if route_distance_nm == 0:
-        return False
-    cross_track_threshold_nm = max(CROSS_TRACK_FLOOR_NM, CROSS_TRACK_PERCENTAGE * route_distance_nm)
-
-    for pos in positions:
-        point = (pos["latitude"], pos["longitude"])
-        if cross_track_distance_nm(point, a, b) > cross_track_threshold_nm:
-            return False
-        along_track = along_track_distance_nm(point, a, b)
-        if along_track < -ALONG_TRACK_SLACK_NM or along_track > route_distance_nm + ALONG_TRACK_SLACK_NM:
-            return False
-    return True
+    return _sanity_check_violation(positions, origin, destination) is None
 
 
 def resolve_origin_destination(
     airports: list[dict], positions: list[dict], velocities: list[dict]
-) -> tuple[Optional[str], Optional[str], bool]:
+) -> tuple[Optional[str], Optional[str], bool, Optional[str]]:
     """Top-level entry point. Returns (origin_icao, destination_icao,
-    is_final): the ICAO pair is both None unless exactly one unambiguous,
-    sanity-checked leg was resolved -- never a partial or best-guess pair.
-    is_final is False only for the "heading not yet stable" case (see
-    select_candidate_leg) -- the caller should not treat a (None, None,
-    False) result as a permanent answer."""
+    is_final, rejection_reason):
+    - The ICAO pair is both None unless exactly one unambiguous,
+      sanity-checked leg was resolved -- never a partial or best-guess pair.
+    - is_final is False only for the "heading not yet stable" case (see
+      select_candidate_leg) -- the caller should not treat a (None, None,
+      False, None) result as a permanent answer.
+    - rejection_reason is None whenever a pair was resolved (or is_final is
+      False -- nothing to report yet); otherwise a short human-readable
+      string describing why a final result has no origin/destination, for
+      the caller to log alongside what Redis returned."""
     leg, is_final = select_candidate_leg(airports, positions, velocities)
     if leg is None:
-        return None, None, is_final
+        if not is_final:
+            return None, None, False, None
+        return (
+            None, None, True,
+            "no candidate leg could be confidently determined "
+            "(low-altitude proximity was inconclusive, and heading-vs-bearing "
+            "either lacked a match within tolerance or wasn't clear of the runner-up)",
+        )
     origin, destination = leg
-    if not passes_cross_track_check(positions, origin, destination):
-        return None, None, True
-    return origin.get("icao_code"), destination.get("icao_code"), True
+    violation = _sanity_check_violation(positions, origin, destination)
+    if violation is not None:
+        reason = (
+            f"candidate leg {origin.get('icao_code')}->{destination.get('icao_code')} "
+            f"failed the sanity check: {violation}"
+        )
+        return None, None, True, reason
+    return origin.get("icao_code"), destination.get("icao_code"), True, None

@@ -1177,6 +1177,18 @@ class TestMaybeResolveRoute:
         assert f.destination is None
         assert f.route_resolution_attempted is True
 
+    def test_no_route_known_logs_debug_with_redis_response(self, caplog):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return="[]")
+        f = self._make_ready_flight(p, ident="DAL659")
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            p._maybe_resolve_route(f)
+
+        assert "DAL659" in caplog.text
+        assert "A8AE7F" in caplog.text
+        assert "[]" in caplog.text
+
     def test_sanity_check_rejection_leaves_unset(self):
         """Real-world case from #498: a flight's actual track ran ~800nm
         from the KMSP-KMKE great-circle line -- the route entry was bogus
@@ -1193,6 +1205,24 @@ class TestMaybeResolveRoute:
 
         assert f.origin is None
         assert f.destination is None
+
+    def test_sanity_check_rejection_logs_debug_with_reason_and_redis_response(self, caplog):
+        """The requested DEBUG log: what route_airports.lua returned, and
+        why the candidate was rejected."""
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "KMSP", "latitude": 44.882, "longitude": -93.222},
+            {"icao_code": "KMKE", "latitude": 42.947, "longitude": -87.897},
+        ]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_ready_flight(p, ident="BOGUS1", positions=[(25.0, -90.0, 35000)])
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            p._maybe_resolve_route(f)
+
+        assert "BOGUS1" in caplog.text
+        assert "KMSP" in caplog.text and "KMKE" in caplog.text
+        assert "sanity check" in caplog.text
 
     def test_redis_error_leaves_unset_but_marks_attempted(self):
         p, mock_redis = _make_processor()

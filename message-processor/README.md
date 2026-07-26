@@ -237,6 +237,14 @@ unambiguous, sanity-checked pair was resolved. Any failure along the way —
 no route data, an unresolvable leg, or a rejected sanity check — leaves
 *both* fields `None`, never a partial or best-guess value.
 
+Whenever a finalized attempt leaves `origin`/`destination` unset — no known
+route, an unresolvable/ambiguous leg, or a rejected sanity check — a `DEBUG`
+log line records the ident, `icao_hex`, the exact `route_airports.lua`
+response that was rejected, and (where applicable) the specific reason (e.g.
+which sanity check failed, at which position, and by how much). Nothing is
+logged for the "not final yet" case (heading still stabilizing) — there's
+nothing to report until an attempt actually settles.
+
 ## MQTT Topics Published
 
 All topics use the root `SkyFollower`.

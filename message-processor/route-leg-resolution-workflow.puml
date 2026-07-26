@@ -1,13 +1,12 @@
 @startuml
 !include ../docs/images/common.iuml
 
-!$OnPrem = "#a8e5fa"
 
 title Message Processor — Route Leg Resolution Workflow
 
 start
 
-partition "Message Processor" $OnPrem {
+partition "Message Processor" {
 
 :**A message updates the flight's state**\nident / position / velocity / etc.;
 

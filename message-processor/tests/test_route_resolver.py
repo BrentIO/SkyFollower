@@ -328,34 +328,52 @@ class TestCrossTrackCheck:
 class TestResolveOriginDestination:
     def test_direct_route_resolves(self):
         positions = [_pos(37.0, -79.0)]
-        origin, destination, is_final = resolve_origin_destination([KJFK, KATL], positions, [])
+        origin, destination, is_final, reason = resolve_origin_destination([KJFK, KATL], positions, [])
         assert (origin, destination) == ("KJFK", "KATL")
         assert is_final is True
+        assert reason is None
 
     def test_direct_route_sanity_check_rejection_leaves_both_none(self):
         positions = [_pos(25.0, -90.0)]
-        origin, destination, is_final = resolve_origin_destination([KMSP, KMKE], positions, [])
+        origin, destination, is_final, reason = resolve_origin_destination([KMSP, KMKE], positions, [])
         assert (origin, destination) == (None, None)
         assert is_final is True
+        assert "sanity check" in reason
+        assert "KMSP" in reason and "KMKE" in reason
 
     def test_unstable_heading_multi_leg_is_not_final(self):
         """Not enough heading history yet (or genuinely circling) -- the
         caller must retry later rather than treat this as a settled
-        unresolvable case."""
+        unresolvable case. No reason yet -- nothing settled to report."""
         a = {"icao_code": "AAAA", "latitude": 0.0, "longitude": 0.0}
         b = {"icao_code": "BBBB", "latitude": 0.0, "longitude": 10.0}
         c = {"icao_code": "CCCC", "latitude": 0.0, "longitude": 20.0}
-        origin, destination, is_final = resolve_origin_destination([a, b, c], [], [_vel(heading=90)])
+        origin, destination, is_final, reason = resolve_origin_destination(
+            [a, b, c], [], [_vel(heading=90)]
+        )
         assert (origin, destination) == (None, None)
         assert is_final is False
+        assert reason is None
 
     def test_multi_leg_resolved_and_sanity_checked(self):
         positions = [_pos(37.0, -76.0)]  # roughly on the KJFK->KMIA return corridor
-        origin, destination, is_final = resolve_origin_destination(
+        origin, destination, is_final, reason = resolve_origin_destination(
             [KMIA, KJFK, KMIA], positions, _vels(204, 205, 206)
         )
         assert (origin, destination) == ("KJFK", "KMIA")
         assert is_final is True
+        assert reason is None
+
+    def test_ambiguous_leg_gives_a_reason(self):
+        a = {"icao_code": "AAAA", "latitude": 0.0, "longitude": 0.0}
+        b = {"icao_code": "BBBB", "latitude": 0.0, "longitude": 10.0}
+        c = {"icao_code": "CCCC", "latitude": 0.0, "longitude": 20.0}
+        origin, destination, is_final, reason = resolve_origin_destination(
+            [a, b, c], [], _vels(89, 90, 91)
+        )
+        assert (origin, destination) == (None, None)
+        assert is_final is True
+        assert reason is not None and "candidate leg" in reason
 
     def test_holding_pattern_scenario_end_to_end(self):
         """Full reproduction of the reported scenario: aircraft actually
@@ -367,14 +385,16 @@ class TestResolveOriginDestination:
         airports = [KJFK, KMIA, KMCO, KJFK]
         hold_point = _pos(30.3, -81.0, altitude=22000)
         velocities = _vels(349, 350, 351, 350, 349)
-        origin, destination, is_final = resolve_origin_destination(
+        origin, destination, is_final, reason = resolve_origin_destination(
             airports, [hold_point], velocities
         )
         assert (origin, destination) == (None, None)
         assert is_final is True
+        assert "KMIA" in reason and "KMCO" in reason
+        assert "along-track" in reason
 
     def test_never_partial_never_guesses(self):
         """Every branch returns either a fully-resolved pair or (None, None) --
         there is no code path that can set one field without the other."""
-        origin, destination, _is_final = resolve_origin_destination([], [], [])
+        origin, destination, _is_final, _reason = resolve_origin_destination([], [], [])
         assert origin is None and destination is None

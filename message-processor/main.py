@@ -1053,6 +1053,11 @@ class MessageProcessor:
 
         if len(airports) < 2:
             flight.route_resolution_attempted = True
+            logger.debug(
+                "Route resolution: no usable route for ident %s (icao_hex=%s); "
+                "route_airports.lua returned: %s",
+                flight.ident, flight.icao_hex, airports,
+            )
             return
 
         # Reload full history -- flight.positions/velocities may hold only
@@ -1064,7 +1069,9 @@ class MessageProcessor:
         positions = [p.to_dict() for p in flight.positions]
         velocities = [v.to_dict() for v in flight.velocities]
 
-        origin, destination, is_final = resolve_origin_destination(airports, positions, velocities)
+        origin, destination, is_final, reason = resolve_origin_destination(
+            airports, positions, velocities
+        )
         if not is_final:
             return  # heading not yet stable enough to trust -- try again later
 
@@ -1072,6 +1079,12 @@ class MessageProcessor:
         if origin and destination:
             flight.origin = origin
             flight.destination = destination
+        else:
+            logger.debug(
+                "Route resolution rejected for ident %s (icao_hex=%s): %s. "
+                "route_airports.lua returned: %s",
+                flight.ident, flight.icao_hex, reason, airports,
+            )
 
     # ------------------------------------------------------------------
     # Stale flight eviction
