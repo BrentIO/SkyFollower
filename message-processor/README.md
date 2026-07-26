@@ -95,7 +95,7 @@ the message processor side.
 |-------------|---------|
 | `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the message processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}`, `aircraft:registry:{icao_hex}`, and `aircraft:livery:{icao_hex}` server-side and returns the deep-merged result (each later source winning on any field overlap — livery over registry over mictronics) in a single round-trip. |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
-| `EVALSHA` → `shared/lua/route_airports.lua` | Resolves `route:{ident}` into its full ordered array of `airport:{code}` records (read once per completed flight with a known ident, at archive time — not per-message). See "Route Leg Resolution" below. |
+| `EVALSHA` → `shared/lua/route_airports.lua` | Resolves `route:{ident}` into its full ordered array of `airport:{code}` records. Read at most once per flight, the moment ident/position/altitude/heading are all known (not on every message, and not at archive time). See "Route Leg Resolution" below. |
 | `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
 | `config:rules` | JSON rules array; loaded when version changes |
 | `config:areas:version` | SHA-256 hash polled every 5 s; triggers area reload when changed |
@@ -113,14 +113,32 @@ the message processor side.
 
 ## Route Leg Resolution
 
-`CompletedFlight.origin`/`.destination` are filled in once per flight, at
-archive time (`_resolve_route()`, called from `_archive()` — not on the
-per-message hot path), by reconciling the flight's `route:{ident}` entry
-against its own observed position/heading/altitude. The resolution and
-sanity-check logic lives in `message_processor/route_resolver.py` as a set
-of pure functions, independent of Redis.
+`origin`/`destination` are resolved at most once per flight — not at archive
+time, and not on every message. `_maybe_resolve_route()` is called from
+`_update_flight()` after each message is applied to the flight's state, and
+runs the actual Redis lookup and resolution logic the moment **all** of the
+following have been seen for the flight (in any order across messages):
 
-![Route leg resolution](./route-leg-resolution-sequence.svg)
+- a route-bearing **ident** — present, not `"00000000"` (both already
+  enforced before `flight.ident` is ever set at all — see `_update_flight`),
+  and not just the aircraft's own tail number re-broadcast as the callsign
+  (`_ident_matches_registration()`, dash-insensitive — the same check
+  `_enrich_operator()` uses to decide whether to look up an airline operator,
+  matching SkyFollower-legacy's `setIdent()`/`_getOperator()` precedent)
+- a **position** (latitude/longitude)
+- an **altitude**
+- a **heading**
+
+Once resolution actually runs, `flight.route_resolution_attempted` is set —
+regardless of outcome — so a valid ident with no known route (or one that
+resolves ambiguously) is never re-queried against Redis on every subsequent
+message for the rest of the flight; whatever the outcome, it's treated as
+final rather than re-evaluated as more of the flight's track arrives. The
+resolution and sanity-check logic itself lives in
+`message_processor/route_resolver.py` as a set of pure functions,
+independent of Redis.
+
+![Route leg resolution workflow](./route-leg-resolution-workflow.svg)
 
 `route:{ident}` (written by the `vrs-standing-data` runner) is a raw,
 dash-delimited string of ICAO airport codes — a simple point-to-point route
@@ -130,6 +148,14 @@ route_airports.lua` resolves the whole string into an ordered array of full
 `airport:{code}` records in one round trip (see `shared/lua/route_airports.lua`);
 it returns an empty array if the ident has no known route, or if even one
 code in the route has no matching airport record.
+
+Because resolution runs as soon as the four conditions above are met — not
+at the end of the flight — the position/velocity history it reasons over is
+whatever the flight has accumulated *so far*, not necessarily its eventual
+full track. This is deliberate: it's what makes `origin`/`destination`
+available early enough for the same flight's own rules-engine evaluation or
+MQTT notifications to see them, at the cost of the sanity check below only
+being as strong as the track recorded up to that point.
 
 - **2 airports**: no ambiguity — they're the origin and destination directly.
 - **3+ airports**: the flight is only actually flying one adjacent pair, so it's

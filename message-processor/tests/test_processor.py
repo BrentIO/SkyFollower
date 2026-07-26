@@ -1041,69 +1041,143 @@ class TestProcessorEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_route / _archive — route:{ident} leg resolution (#498)
+# _route_ready / _maybe_resolve_route — route:{ident} leg resolution (#498)
 #
 # The heuristics themselves (proximity, heading-vs-bearing, cross-track
 # sanity check) are unit tested in isolation in test_route_resolver.py;
-# these tests only cover the message-processor-side wiring: the EVALSHA
-# call, the all-or-nothing persistence rule, and that _archive() runs
-# resolution before publishing.
+# these tests cover the message-processor-side wiring: resolution runs the
+# moment ident/position/altitude/heading are all known for a flight (not at
+# archive time), at most once per flight, and never for an ident that's
+# just the aircraft's own tail number.
 # ---------------------------------------------------------------------------
 
-class TestResolveRoute:
-    def _make_completed_flight(self, ident="", positions=None):
-        db = _make_db()
-        f = Flight(db)
+def _evalsha_dispatch(route_sha: str, route_return=None, aircraft_return=None):
+    """mock_redis.evalsha is shared between merge_aircraft.lua (icao_hex)
+    and route_airports.lua (ident) calls -- dispatch on which sha was
+    passed so a test can control each independently."""
+    def _side_effect(sha, _numkeys, *_args):
+        if sha == route_sha:
+            return route_return
+        return aircraft_return
+
+    return _side_effect
+
+
+class TestRouteReady:
+    def _make_flight(self, p, ident="", registration=None) -> Flight:
+        f = Flight(p._db)
         f.icao_hex = "A8AE7F"
-        f.flight_id = "fid-route-test"
+        f.flight_id = "fid-route-ready"
         f.first_message = 1.0
-        f.last_message = 2.0
-        f.total_messages = 2
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.ident = ident
+        if registration is not None:
+            f.aircraft = {"icao_hex": "A8AE7F", "registration": registration}
+        f.save()
+        return f
+
+    def test_not_ready_without_ident(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="")
+        assert p._route_ready(f) is False
+
+    def test_not_ready_when_ident_matches_registration(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="VPCKA", registration="VP-CKA")
+        f.add_position(Position(timestamp=1.0, latitude=1.0, longitude=1.0, altitude=1000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=90))
+        assert p._route_ready(f) is False
+
+    def test_not_ready_without_altitude(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="DAL659")
+        f.add_position(Position(timestamp=1.0, latitude=1.0, longitude=1.0, altitude=None))
+        f.add_velocity(Velocity(timestamp=1.0, heading=90))
+        assert p._route_ready(f) is False
+
+    def test_not_ready_without_heading(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="DAL659")
+        f.add_position(Position(timestamp=1.0, latitude=1.0, longitude=1.0, altitude=1000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=None))
+        assert p._route_ready(f) is False
+
+    def test_ready_when_all_conditions_met(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="DAL659")
+        f.add_position(Position(timestamp=1.0, latitude=1.0, longitude=1.0, altitude=1000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=90))
+        assert p._route_ready(f) is True
+
+    def test_ready_regardless_of_arrival_order(self):
+        """Altitude/heading recorded on earlier messages than the ident
+        still counts -- readiness is checked against the flight's full
+        history, not just this message's fields."""
+        p, _ = _make_processor()
+        f = self._make_flight(p, ident="")
+        f.add_position(Position(timestamp=1.0, latitude=1.0, longitude=1.0, altitude=1000))
+        f.add_velocity(Velocity(timestamp=1.0, heading=90))
+        assert p._route_ready(f) is False  # no ident yet
+        f.ident = "DAL659"
+        assert p._route_ready(f) is True
+
+
+class TestMaybeResolveRoute:
+    def _make_ready_flight(self, p, ident="DAL659", positions=None, velocities=None) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-resolve-route"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
         f.receiver_sources = ["1090"]
         f.ident = ident
         f.save()
-        cf = f.to_completed_flight()
-        if positions is not None:
-            cf.positions = positions
-        return cf
+        for pos in positions or [(37.0, -79.0, 35000)]:
+            f.add_position(Position(timestamp=1.0, latitude=pos[0], longitude=pos[1], altitude=pos[2]))
+        for vel in velocities or [(90,)]:
+            f.add_velocity(Velocity(timestamp=1.0, heading=vel[0]))
+        return f
 
-    def test_skips_when_no_ident(self):
+    def test_not_triggered_until_ready(self):
         p, mock_redis = _make_processor()
-        flight = self._make_completed_flight(ident="")
+        f = self._make_ready_flight(p, positions=[(37.0, -79.0, None)])  # no altitude yet
 
-        result = p._resolve_route(flight)
+        p._maybe_resolve_route(f)
 
         mock_redis.evalsha.assert_not_called()
-        assert result.origin is None
-        assert result.destination is None
+        assert f.route_resolution_attempted is False
 
-    def test_sets_origin_destination_for_direct_two_airport_route(self):
+    def test_resolves_direct_two_airport_route(self):
         p, mock_redis = _make_processor()
         airports = [
             {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
             {"icao_code": "KATL", "latitude": 33.6367, "longitude": -84.4281},
         ]
-        mock_redis.evalsha.return_value = json.dumps(airports)
-        positions = [{"latitude": 37.0, "longitude": -79.0, "altitude": 35000}]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_ready_flight(p)
 
-        flight = self._make_completed_flight(ident="DAL659", positions=positions)
-        result = p._resolve_route(flight)
+        p._maybe_resolve_route(f)
 
         mock_redis.evalsha.assert_called_once_with(p._route_sha, 0, "DAL659")
-        assert result.origin == "KJFK"
-        assert result.destination == "KATL"
+        assert f.origin == "KJFK"
+        assert f.destination == "KATL"
+        assert f.route_resolution_attempted is True
 
     def test_leaves_unset_when_no_route_known(self):
         p, mock_redis = _make_processor()
-        mock_redis.evalsha.return_value = "[]"
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return="[]")
+        f = self._make_ready_flight(p)
 
-        flight = self._make_completed_flight(ident="DAL659")
-        result = p._resolve_route(flight)
+        p._maybe_resolve_route(f)
 
-        assert result.origin is None
-        assert result.destination is None
+        assert f.origin is None
+        assert f.destination is None
+        assert f.route_resolution_attempted is True
 
-    def test_all_or_nothing_on_sanity_check_rejection(self):
+    def test_sanity_check_rejection_leaves_unset(self):
         """Real-world case from #498: a flight's actual track ran ~800nm
         from the KMSP-KMKE great-circle line -- the route entry was bogus
         for this flight, and neither field should be set."""
@@ -1112,55 +1186,103 @@ class TestResolveRoute:
             {"icao_code": "KMSP", "latitude": 44.882, "longitude": -93.222},
             {"icao_code": "KMKE", "latitude": 42.947, "longitude": -87.897},
         ]
-        mock_redis.evalsha.return_value = json.dumps(airports)
-        positions = [{"latitude": 25.0, "longitude": -90.0, "altitude": 35000}]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_ready_flight(p, ident="BOGUS1", positions=[(25.0, -90.0, 35000)])
 
-        flight = self._make_completed_flight(ident="BOGUS1", positions=positions)
-        result = p._resolve_route(flight)
+        p._maybe_resolve_route(f)
 
-        assert result.origin is None
-        assert result.destination is None
+        assert f.origin is None
+        assert f.destination is None
 
-    def test_redis_error_leaves_unset(self):
+    def test_redis_error_leaves_unset_but_marks_attempted(self):
         p, mock_redis = _make_processor()
         mock_redis.evalsha.side_effect = RuntimeError("boom")
+        f = self._make_ready_flight(p)
 
-        flight = self._make_completed_flight(ident="DAL659")
-        result = p._resolve_route(flight)
+        p._maybe_resolve_route(f)
 
-        assert result.origin is None
-        assert result.destination is None
+        assert f.origin is None
+        assert f.destination is None
+        assert f.route_resolution_attempted is True
+
+    def test_does_not_requery_redis_once_attempted(self):
+        """The one-shot guard: a valid ident with no known route must not
+        be re-queried against Redis on every subsequent message."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return="[]")
+        f = self._make_ready_flight(p)
+
+        p._maybe_resolve_route(f)
+        p._maybe_resolve_route(f)
+        p._maybe_resolve_route(f)
+
+        mock_redis.evalsha.assert_called_once()
 
 
-class TestArchiveResolvesRoute:
-    def test_archive_sets_origin_destination_before_publish(self):
+class TestUpdateFlightTriggersRouteResolution:
+    """End-to-end through _update_flight: resolution fires mid-flight, the
+    moment the last of ident/position/altitude/heading arrives -- not at
+    archive time -- and never re-fires afterward."""
+
+    def test_resolves_as_soon_as_all_fields_present_across_messages(self):
         p, mock_redis = _make_processor()
         airports = [
             {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
             {"icao_code": "KATL", "latitude": 33.6367, "longitude": -84.4281},
         ]
-        mock_redis.evalsha.return_value = json.dumps(airports)
-        mock_channel = MagicMock()
-        p._rmq_channel = mock_channel
-        p._rmq_connected = True
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
 
-        db = _make_db()
-        f = Flight(db)
-        f.icao_hex = "A8AE7F"
-        f.first_message = 1.0
-        f.last_message = 1.0
-        f.total_messages = 1
-        f.receiver_sources = ["1090"]
-        f.ident = "DAL659"
-        f.save()
-        cf = f.to_completed_flight()
-        cf.positions = [{"latitude": 37.0, "longitude": -79.0, "altitude": 35000}]
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
 
-        p._archive(cf)
+        # Message 1: ident only.
+        with p._db_lock:
+            p._update_flight({"icao_hex": icao_hex, "ident": "DAL659"},
+                              InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"))
+        mock_redis.evalsha.assert_called_once()  # aircraft enrichment only
 
-        payload = json.loads(mock_channel.basic_publish.call_args.kwargs["body"])
-        assert payload["origin"] == "KJFK"
-        assert payload["destination"] == "KATL"
+        # Message 2: position + altitude, still no heading.
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "latitude": 37.0, "longitude": -79.0, "altitude": 35000},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 1, source="1090"),
+            )
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.route_resolution_attempted is False
+
+        # Message 3: heading arrives (alongside velocity, as a real airborne
+        # velocity message would) -- all four conditions now satisfied.
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "velocity": 450, "heading": 20},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 2, source="1090"),
+            )
+
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.route_resolution_attempted is True
+        assert f.origin == "KJFK"
+        assert f.destination == "KATL"
+
+    def test_never_triggers_for_tail_number_ident(self):
+        p, mock_redis = _make_processor()
+        aircraft = {"icao_hex": "A8AE7F", "registration": "VP-CKA"}
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, aircraft_return=json.dumps(aircraft))
+
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "ident": "VPCKA", "latitude": 1.0, "longitude": 1.0,
+                 "altitude": 1000, "velocity": 200, "heading": 90},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
+            )
+
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.route_resolution_attempted is False
+        mock_redis.evalsha.assert_called_once()  # aircraft enrichment only, no route lookup
 
 
 # ---------------------------------------------------------------------------

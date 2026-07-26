@@ -3382,9 +3382,11 @@ records:
         sources:
           - source: message-processor
             description: >
-              Resolved once per flight at archive time from route:{ident}
-              (via EVALSHA route_airports.lua), reconciled against the
-              flight's own observed position/heading/altitude and sanity-
+              Resolved at most once per flight from route:{ident} (via
+              EVALSHA route_airports.lua), the moment ident/position/
+              altitude/heading have all been observed for the flight — not
+              at archive time. Reconciled against the flight's own observed
+              position/heading/altitude accumulated so far and sanity-
               checked by cross-track distance from the candidate great-
               circle line. All-or-nothing with destination: set only when
               exactly one unambiguous, sanity-checked pair was resolved,
@@ -3413,9 +3415,11 @@ records:
         sources:
           - source: message-processor
             description: >
-              Resolved once per flight at archive time from route:{ident}
-              (via EVALSHA route_airports.lua), reconciled against the
-              flight's own observed position/heading/altitude and sanity-
+              Resolved at most once per flight from route:{ident} (via
+              EVALSHA route_airports.lua), the moment ident/position/
+              altitude/heading have all been observed for the flight — not
+              at archive time. Reconciled against the flight's own observed
+              position/heading/altitude accumulated so far and sanity-
               checked by cross-track distance from the candidate great-
               circle line. All-or-nothing with origin: set only when
               exactly one unambiguous, sanity-checked pair was resolved,

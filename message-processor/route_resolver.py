@@ -1,8 +1,10 @@
 """
-Resolves a completed flight's origin/destination from its route:{ident} entry
-(already normalized into an ordered array of full airport records by
+Resolves a flight's origin/destination from its route:{ident} entry (already
+normalized into an ordered array of full airport records by
 shared/lua/route_airports.lua), reconciled against the flight's own observed
-position/heading/altitude.
+position/heading/altitude. Called mid-flight, the moment ident/position/
+altitude/heading are all known -- see message_processor.main's
+_maybe_resolve_route -- not at archive time.
 
 See message-processor/README.md's "Route Leg Resolution" section for the
 full design rationale and worked examples.
