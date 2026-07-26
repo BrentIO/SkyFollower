@@ -157,7 +157,9 @@ export function RuleForm({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{isNew ? "New Rule" : rule.identifier}</h1>
+        <h1 className="text-xl font-semibold">
+          {isNew ? "New Rule" : rule.name || rule.identifier}
+        </h1>
         <div className="flex gap-2">
           {!isNew && (
             <button

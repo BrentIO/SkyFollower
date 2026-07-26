@@ -199,18 +199,23 @@ export function RulesView() {
         <ul className="flex flex-col gap-1 overflow-y-auto">
           {rules.map((rule) => {
             const dateActive = isRuleDateActive(rule);
+            const isSelected = draft?.identifier === rule.identifier && !isNew;
             return (
               <li
                 key={rule.identifier}
-                className={`rounded-md ${
-                  draft?.identifier === rule.identifier && !isNew
-                    ? "bg-sky-100 dark:bg-sky-900"
-                    : "hover:bg-slate-100 dark:hover:bg-slate-800"
+                className={`rounded-r-md border-l-4 ${
+                  isSelected
+                    ? "border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800"
+                    : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800"
                 }`}
               >
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm"
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
+                    isSelected
+                      ? "font-semibold text-sky-700 dark:text-sky-400"
+                      : "text-slate-700 dark:text-slate-200"
+                  }`}
                   onClick={() => selectRule(rule)}
                   title={rule.identifier}
                 >
