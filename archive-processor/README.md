@@ -199,9 +199,19 @@ alone wouldn't be enough for it. The flight queue only ever fills while S3
 theory — but it gets the periodic trigger too, since checking an empty
 queue costs nothing and a periodic sweep is a strictly stronger guarantee
 than relying solely on an edge-triggered "was down, now up" detection.
-Retrying an already-drained row twice (if both triggers race) is harmless
-either way — reprocessing the same flight, or rewriting the same Parquet
-key, just overwrites with identical content.
+
+Both triggers go through the same `drain_in_background()` on each queue: it
+spawns the actual drain on a background thread and returns immediately, so
+a slow drain never delays that telemetry cycle's publish. Each queue has
+its own single-flight guard (a non-blocking lock, independent per queue),
+ensuring at most one drain is ever in progress *for that queue* regardless
+of which trigger started it — draining the flight queue never blocks a
+concurrent drain of the index queue, but two overlapping drains of the
+*same* queue (e.g. the periodic tick firing while the reconnect-triggered
+drain is still working through a backlog) would otherwise both select the
+same oldest row before either deletes it, genuinely duplicate-processing
+that row — a duplicate archived flight or a duplicate Parquet index write,
+not just a harmless retry.
 
 ![Flight & Parquet index write, with retry](./archive-write-sequence.svg)
 

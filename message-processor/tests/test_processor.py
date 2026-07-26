@@ -655,11 +655,63 @@ class TestArchiveFallbackQueue:
         q2 = _ArchiveFallbackQueue(path)
         assert q2.depth() == 1
 
+    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
+        """Simulates the reconnect-triggered and periodic telemetry-tick
+        triggers firing close together (#534): if a drain is already
+        holding the single-flight guard, a second call must not spawn
+        another drain -- overlapping drains could otherwise both SELECT
+        the same oldest row before either DELETEs it and duplicate-publish
+        it."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _ArchiveFallbackQueue(tmp.name)
+            q.put("payload")
+            q._drain_lock.acquire()  # simulate an in-progress drain
+            try:
+                calls = []
+                q.drain_in_background(calls.append)
+                time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
+                assert calls == []
+                assert q.depth() == 1
+            finally:
+                q._drain_lock.release()
+
+    def test_drain_in_background_runs_and_releases_the_guard(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _ArchiveFallbackQueue(tmp.name)
+            q.put("payload")
+            calls = []
+
+            q.drain_in_background(calls.append)
+
+            deadline = time.monotonic() + 2
+            while q.depth() != 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            assert calls == ["payload"]
+            assert q.depth() == 0
+            assert not q._drain_lock.locked()
+
 
 # ---------------------------------------------------------------------------
 # MessageProcessor._drain_fallback — and its periodic-tick trigger from
 # _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger (#526)
 # ---------------------------------------------------------------------------
+
+def _synchronous_drain_thread():
+    """Patch threading.Thread so drain_in_background's spawned thread runs
+    synchronously in the caller's thread instead of racing the test's own
+    assertions against a real background thread. Production code still
+    spawns a genuine thread; this only affects the test."""
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    return patch("message_processor.main.threading.Thread", _ImmediateThread)
+
 
 class TestProcessorDrainFallback:
     def test_drain_fallback_publishes_queued_items(self):
@@ -668,7 +720,8 @@ class TestProcessorDrainFallback:
         mock_channel = MagicMock()
         p._rmq_channel = mock_channel
 
-        p._drain_fallback()
+        with _synchronous_drain_thread():
+            p._drain_fallback()
 
         assert p._fallback.depth() == 0
         mock_channel.basic_publish.assert_called_once()
@@ -681,7 +734,8 @@ class TestProcessorDrainFallback:
         mock_channel.basic_publish.side_effect = ConnectionError("gone")
         p._rmq_channel = mock_channel
 
-        p._drain_fallback()
+        with _synchronous_drain_thread():
+            p._drain_fallback()
 
         assert p._fallback.depth() == 1
 
@@ -696,7 +750,8 @@ class TestProcessorDrainFallback:
         p._rmq_channel = mock_channel
         p._rmq_connected = True
 
-        p._drain_fallback()
+        with _synchronous_drain_thread():
+            p._drain_fallback()
 
         assert p._rmq_connected is False
         assert p._fallback.depth() == 1
@@ -725,7 +780,8 @@ class TestProcessorDrainFallback:
         p._rmq_channel = MagicMock()
         p._rmq_connected = True
 
-        self._run_one_telemetry_tick(p)
+        with _synchronous_drain_thread():
+            self._run_one_telemetry_tick(p)
 
         assert p._fallback.depth() == 0
 

@@ -335,6 +335,16 @@ class _S3FallbackQueue:
         )
         self._conn.commit()
         self._lock = threading.Lock()
+        # Single-flight guard: drain() only locks around each individual
+        # SELECT/DELETE, not the whole fetch-process-delete cycle for a
+        # row, so two overlapping drain() calls (reconnect-triggered and
+        # periodic telemetry-tick both firing close together) could each
+        # SELECT the same oldest row before either DELETEs it and
+        # duplicate-process it. This lock ensures at most one drain runs
+        # at a time for *this* queue instance -- each table (queue vs.
+        # index_queue) gets its own instance and therefore its own
+        # independent lock, so draining one never blocks the other.
+        self._drain_lock = threading.Lock()
 
     def put(self, payload: str) -> None:
         with self._lock:
@@ -362,6 +372,29 @@ class _S3FallbackQueue:
                     self._conn.commit()
             except Exception:
                 break  # S3 went away again; stop draining
+
+    def drain_in_background(self, process_fn, on_done=None) -> None:
+        """Spawn a background thread to drain(), unless a drain is already
+        in progress for this queue -- in which case this is a cheap no-op
+        rather than a second overlapping drain. Never blocks the caller
+        (the telemetry loop calling this can publish its own stats
+        immediately regardless of how long the actual drain takes).
+        on_done(), if given, runs after the drain completes -- e.g. to log
+        the resulting depth once the drain is actually finished rather
+        than at spawn time."""
+        if not self._drain_lock.acquire(blocking=False):
+            logger.debug("Drain already in progress; skipping this trigger.")
+            return
+
+        def _run() -> None:
+            try:
+                self.drain(process_fn)
+            finally:
+                self._drain_lock.release()
+            if on_done:
+                on_done()
+
+        threading.Thread(target=_run, daemon=True, name="fallback-drain").start()
 
     def depth(self) -> int:
         with self._lock:
@@ -478,9 +511,10 @@ class ArchiveProcessor:
                     reconnected = self._s3_connected
                 if reconnected:
                     logger.info("S3 reconnected — draining fallback queues.")
-                    threading.Thread(
-                        target=self._drain_all_fallbacks, daemon=True, name="drain-fallback"
-                    ).start()
+                    # _drain_all_fallbacks() spawns its own background
+                    # threads (or skips if one's already running per
+                    # queue) -- see drain_in_background.
+                    self._drain_all_fallbacks()
 
     def _write_to_s3(self, flight: CompletedFlight, payload_bytes: bytes, s3_key: str) -> None:
         s3_cfg = self._cfg.get("s3", {})
@@ -626,8 +660,10 @@ class ArchiveProcessor:
             flight = CompletedFlight.model_validate_json(payload)
             self._archive_flight_to_s3(flight)
 
-        self._fallback.drain(process)
-        logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+        def _log_done() -> None:
+            logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+
+        self._fallback.drain_in_background(process, on_done=_log_done)
 
     def _drain_all_fallbacks(self) -> None:
         """
@@ -658,10 +694,12 @@ class ArchiveProcessor:
             index_bytes = build_parquet_index_row(flight, s3_key)
             self._write_index_to_s3(index_bytes, index_key)
 
-        self._index_fallback.drain(process)
-        logger.info(
-            "Index-fallback drain complete. Remaining depth: %d", self._index_fallback.depth()
-        )
+        def _log_done() -> None:
+            logger.info(
+                "Index-fallback drain complete. Remaining depth: %d", self._index_fallback.depth()
+            )
+
+        self._index_fallback.drain_in_background(process, on_done=_log_done)
 
     def _archive_flight_to_s3(self, flight: CompletedFlight) -> None:
         """
@@ -885,6 +923,10 @@ class ArchiveProcessor:
             # _s3_reconnect_loop's edge-triggered "was down, now up"
             # detection — see _drain_all_fallbacks for why both queues
             # get this even though only the index queue strictly needs it.
+            # Each queue's _drain_fallback()/_drain_index_fallback() spawns
+            # its own background thread (or skips if one's already
+            # running for that specific queue), so this call returns
+            # immediately and never delays the telemetry publish below it.
             with self._s3_lock:
                 s3_connected = self._s3_connected
             if s3_connected:

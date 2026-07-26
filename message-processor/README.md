@@ -170,6 +170,15 @@ consumer connection itself unaffected) would otherwise never trigger a drain
 again, since that's only ever spawned from the consumer's own reconnect
 path. The periodic check is a cheap no-op when the queue is already empty.
 
+Both triggers go through the same `drain_in_background()`: it spawns the
+actual drain on a background thread and returns immediately, so a slow
+drain (e.g. a large backlog) never delays that telemetry cycle's publish.
+A single-flight guard (a non-blocking lock) ensures only one drain is ever
+in progress at a time regardless of which trigger started it — if the
+periodic tick fires while the reconnect-triggered drain is still running,
+it's a no-op rather than a second overlapping drain, which could otherwise
+select the same queued row twice and publish it twice.
+
 ### Active flight store durability & crash recovery
 
 `active_flights.db` (SQLite, WAL mode, `data_dir`) holds every currently

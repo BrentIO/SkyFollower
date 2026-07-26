@@ -67,16 +67,16 @@ the container was down.
 
 [![Message processor crash recovery and backlog replay](./images/crash-recovery-sequence.svg)](./images/crash-recovery-sequence.svg)
 
-## Receiver Offline Fallback
+## Receiver — RabbitMQ Offline Fallback
 
 Independent of whether a message processor is up, the receiver itself tolerates
 RabbitMQ being unreachable: publish attempts that fail buffer to a local
 `queue.db` (SQLite WAL) and drain oldest-first once RabbitMQ is reachable
 again.
 
-[![Receiver offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
+[![Receiver — RabbitMQ offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
 
-## Message Processor Offline Fallback
+## Message Processor — RabbitMQ Offline Fallback
 
 Independent of the receiver, the message processor tolerates RabbitMQ
 being unreachable on its own publish side (archiving completed flights):
@@ -85,4 +85,4 @@ publish attempts that fail buffer to a local `completed_flights.db`
 reconnect, and independently every `telemetry_interval_seconds`, to catch
 a publish-only failure that never dropped the underlying connection.
 
-[![Message processor offline fallback](./images/message-processor-offline-fallback-sequence.svg)](./images/message-processor-offline-fallback-sequence.svg)
+[![Message processor — RabbitMQ offline fallback](./images/message-processor-offline-fallback-sequence.svg)](./images/message-processor-offline-fallback-sequence.svg)
