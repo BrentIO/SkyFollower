@@ -87,6 +87,10 @@ class RulesEngine:
         self._removed_rules: list[dict] = []
         self._rules_version: Optional[str] = None
         self._areas_version: Optional[str] = None
+        # Set on the most recent failed _load_rules/_load_areas call; consumed
+        # by the UI backend (#14) to return a 400 with a useful detail message
+        # instead of only the logger.critical() output below.
+        self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Config reload
@@ -161,11 +165,13 @@ class RulesEngine:
         try:
             rules = json.loads(json_str)
         except json.JSONDecodeError:
-            logger.critical("Rules file contains invalid JSON — keeping previous ruleset.")
+            self.last_error = "Rules file contains invalid JSON"
+            logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
         if not isinstance(rules, list):
-            logger.critical("Rules must be a JSON array — keeping previous ruleset.")
+            self.last_error = "Rules must be a JSON array"
+            logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
         staged: list[dict] = []
@@ -179,12 +185,14 @@ class RulesEngine:
                 seen_identifiers.add(staged_rule["identifier"])
                 staged.append(staged_rule)
             except _RuleError as exc:
-                logger.critical("Rule #%d invalid: %s — keeping previous ruleset.", idx, exc)
+                self.last_error = f"Rule #{idx} invalid: {exc}"
+                logger.critical("%s — keeping previous ruleset.", self.last_error)
                 return False
 
         removed = [r for r in self._rules if r not in staged]
         self._removed_rules = removed
         self._rules = staged
+        self.last_error = None
         logger.info("Rules loaded: %d active.", len(self._rules))
         return True
 
@@ -258,11 +266,13 @@ class RulesEngine:
         try:
             geo = json.loads(json_str)
         except json.JSONDecodeError:
-            logger.critical("Areas file contains invalid JSON — keeping previous areas.")
+            self.last_error = "Areas file contains invalid JSON"
+            logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
         if geo.get("type", "").lower() != "featurecollection":
-            logger.critical("Areas must be a GeoJSON FeatureCollection — keeping previous areas.")
+            self.last_error = "Areas must be a GeoJSON FeatureCollection"
+            logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
         staged: list[dict] = []
@@ -295,6 +305,7 @@ class RulesEngine:
                 continue
 
         self._areas = staged
+        self.last_error = None
         logger.info("Areas loaded: %d polygons.", len(self._areas))
         return True
 

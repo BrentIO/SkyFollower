@@ -1,0 +1,207 @@
+openapi: 3.1.0
+info:
+  title: SkyFollower UI Backend
+  description: Rules and areas configuration API. Message processors poll config:rules/config:areas
+    in Redis every 5 seconds for changes written here.
+  version: 9999.99.99
+paths:
+  /api/rules:
+    get:
+      tags:
+      - rules
+      summary: Get Rules
+      operationId: get_rules_api_rules_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '204':
+          description: No configuration saved yet
+        '500':
+          description: Redis error
+    put:
+      tags:
+      - rules
+      summary: Put Rules
+      operationId: put_rules_api_rules_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              items:
+                additionalProperties: true
+                type: object
+              type: array
+              title: Rules
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/areas:
+    get:
+      tags:
+      - areas
+      summary: Get Areas
+      operationId: get_areas_api_areas_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '204':
+          description: No configuration saved yet
+        '500':
+          description: Redis error
+    put:
+      tags:
+      - areas
+      summary: Put Areas
+      operationId: put_areas_api_areas_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+              title: Areas
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Validation error
+        '500':
+          description: Redis error
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/aircraft/{icao_hex}:
+    get:
+      tags:
+      - aircraft
+      summary: Get Aircraft By Icao Hex
+      operationId: get_aircraft_by_icao_hex_api_aircraft__icao_hex__get
+      parameters:
+      - name: icao_hex
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Icao Hex
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '501':
+          description: Not implemented — reserved for future use
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/aircraft:
+    get:
+      tags:
+      - aircraft
+      summary: Get Aircraft By Registration
+      operationId: get_aircraft_by_registration_api_aircraft_get
+      parameters:
+      - name: registration
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '501':
+          description: Not implemented — reserved for future use
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/operators/missing:
+    get:
+      tags:
+      - operators
+      summary: Get Missing Operators
+      operationId: get_missing_operators_api_operators_missing_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '501':
+          description: Not implemented — reserved for future use
+components:
+  schemas:
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+
