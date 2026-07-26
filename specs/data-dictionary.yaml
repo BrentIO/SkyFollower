@@ -890,7 +890,7 @@ sources:
     format: csv
     cadence: daily
 
-  processor:
+  message-processor:
     description: "Derived in real time by the message processor from ADS-B messages"
 
 
@@ -921,7 +921,7 @@ records:
         description: "UUID-v7 unique flight identifier"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
             transform:
               type: generate
               function: uuid7
@@ -931,28 +931,28 @@ records:
         description: "UTC timestamp of the first ADS-B message in this flight"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       last_message:
         type: datetime
         description: "UTC timestamp of the most recent ADS-B message"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       total_messages:
         type: integer
         description: "Total count of ADS-B messages received for this flight"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       icao_hex:
         type: string
         description: "6-character uppercase ICAO Mode S hex identifier (e.g. A8AE7F); primary key for Redis enrichment records"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
             description: "Present in every ADS-B message"
           - source: mictronics
             file: aircrafts.json
@@ -3092,7 +3092,7 @@ records:
               "source" scalar so it never leaks through. Not to be confused
               with the flight-level "source" field elsewhere in this record
               (1090/978/MLAT ADS-B receive path, tracked separately by the
-              processor, unrelated despite the shared word).
+              message processor, unrelated despite the shared word).
             persisted: true
 
       military:
@@ -3315,7 +3315,7 @@ records:
         description: "Callsign/flight number broadcast by the aircraft (e.g. DAL2)"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
             description: "DF 17 TC 1-4 ident message"
 
       operator:
@@ -3356,7 +3356,7 @@ records:
         description: "4-digit Mode A transponder squawk code (e.g. 7314)"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
             description: "DF 5/21 squawk message"
 
       origin:
@@ -3406,14 +3406,14 @@ records:
         description: "Rule name identifiers that fired for this flight"
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       receiver_sources:
         type: "array[string]"
         description: >
           Every distinct ADS-B receive source (1090, 978, MLAT) seen across
           this flight's messages, in first-seen order. Accumulated
-          per-message in the processor's SQLite active store, not just set
+          per-message in the message processor's SQLite active store, not just set
           once from the first message. Defaults to an empty array rather
           than being required — legacy migrated flights have no receive-
           source history at all, since 1090/978/MLAT tracking didn't exist
@@ -3424,7 +3424,7 @@ records:
           note.
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       force_archive:
         type: boolean
@@ -3440,7 +3440,7 @@ records:
           identifier, so any number of independent rules can each set it.
         persisted: true
         sources:
-          - source: processor
+          - source: message-processor
 
       positions:
         type: "array[object]"
@@ -3451,20 +3451,20 @@ records:
             type: datetime
             description: "UTC timestamp of the position report"
             sources:
-              - source: processor
+              - source: message-processor
           latitude:
             type: float
             sources:
-              - source: processor
+              - source: message-processor
           longitude:
             type: float
             sources:
-              - source: processor
+              - source: message-processor
           altitude:
             type: integer
             description: "Altitude in feet MSL; null if not present in the ADS-B message"
             sources:
-              - source: processor
+              - source: message-processor
 
       velocities:
         type: "array[object]"
@@ -3475,22 +3475,22 @@ records:
             type: datetime
             description: "UTC timestamp of the velocity report"
             sources:
-              - source: processor
+              - source: message-processor
           velocity:
             type: float
             description: "Ground speed in knots"
             sources:
-              - source: processor
+              - source: message-processor
           heading:
             type: float
             description: "True heading in degrees (0–359)"
             sources:
-              - source: processor
+              - source: message-processor
           vertical_speed:
             type: integer
             description: "Vertical speed in feet per minute; negative = descending"
             sources:
-              - source: processor
+              - source: message-processor
 
   route:
     description: >

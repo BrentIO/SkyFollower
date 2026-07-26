@@ -7,8 +7,8 @@ flight state in a file-backed SQLite database (survives a process restart),
 enriches with Redis lookups, runs the rules engine, publishes MQTT
 notifications, and hands completed flights to the archive queue.
 
-One container = one processor instance.  PROCESSOR_ID is set via the
-environment variable of the same name.
+One container = one message processor instance.  MESSAGE_PROCESSOR_ID is set
+via the environment variable of the same name.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ import pyModeS as pms
 import pyModeS978
 import redis as redis_lib
 
-from processor.rules_engine import RulesEngine
+from message_processor.rules_engine import RulesEngine
 from shared.logging_setup import configure_logging
 from shared.models import (
     AircraftRecord,
@@ -50,13 +50,13 @@ from shared.redis_keys import (
     config_areas_version_key,
     config_flight_ttl_seconds_key,
     config_rules_version_key,
+    message_processor_heartbeat_key,
     metrics_aircraft_type_misses_key,
     metrics_registration_misses_key,
     operator_key,
-    processor_heartbeat_key,
 )
 
-logger = logging.getLogger("processor")
+logger = logging.getLogger("message_processor")
 
 # ---------------------------------------------------------------------------
 # US registration regex (skip operator lookup for tail numbers)
@@ -452,15 +452,15 @@ class _ArchiveFallbackQueue:
 
 
 # ---------------------------------------------------------------------------
-# Processor
+# Message Processor
 # ---------------------------------------------------------------------------
 
-class Processor:
+class MessageProcessor:
 
-    def __init__(self, config: dict, processor_id: int) -> None:
+    def __init__(self, config: dict, message_processor_id: int) -> None:
         self._cfg = config
-        self._id = processor_id
-        self._queue_name = f"adsb-{processor_id}"
+        self._id = message_processor_id
+        self._queue_name = f"adsb-{message_processor_id}"
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
@@ -533,7 +533,7 @@ class Processor:
 
     def start(self) -> None:
         self._setup_logging()
-        self._claim_processor_id()
+        self._claim_message_processor_id()
         self._connect_mqtt()
         self._rules_engine.reload_if_changed()
         self._load_flight_ttl_seconds()
@@ -552,17 +552,17 @@ class Processor:
     def _setup_logging(self) -> None:
         configure_logging(self._cfg.get("log_level"))
 
-    def _claim_processor_id(self) -> None:
-        """Prevent two processors with the same ID running simultaneously."""
+    def _claim_message_processor_id(self) -> None:
+        """Prevent two message processors with the same ID running simultaneously."""
         interval = self._cfg.get("telemetry_interval_seconds", 30)
-        key = processor_heartbeat_key(self._id)
+        key = message_processor_heartbeat_key(self._id)
         claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
         if not claimed:
             logger.critical(
-                "PROCESSOR_ID %d is already running on another instance. Exiting.", self._id
+                "MESSAGE_PROCESSOR_ID %d is already running on another instance. Exiting.", self._id
             )
             sys.exit(1)
-        logger.info("Processor %d claimed.", self._id)
+        logger.info("Message processor %d claimed.", self._id)
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -979,7 +979,7 @@ class Processor:
         mc = self._cfg.get("mqtt")
         if not mc:
             return
-        lwtopic = f"SkyFollower/processor/{self._id}/status"
+        lwtopic = f"SkyFollower/message-processor/{self._id}/status"
         self._mqtt = build_mqtt_client(mc, will_topic=lwtopic)
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
@@ -991,7 +991,7 @@ class Processor:
 
     def _on_mqtt_connect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = True
-        client.publish(f"SkyFollower/processor/{self._id}/status", "ONLINE", retain=True)
+        client.publish(f"SkyFollower/message-processor/{self._id}/status", "ONLINE", retain=True)
         self._publish_ha_autodiscovery()
         logger.info("MQTT connected.")
 
@@ -1065,7 +1065,7 @@ class Processor:
         self._processing_time.reset()
         rules_hwm = self._rules_time.hwm_ms_and_reset()
 
-        base = f"SkyFollower/processor/{pid}/statistic"
+        base = f"SkyFollower/message-processor/{pid}/statistic"
 
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
         self._mqtt.publish(f"{base}/messages_per_second", str(round(self._rate.rate(), 2)), retain=True)
@@ -1102,7 +1102,7 @@ class Processor:
         # Refresh heartbeat
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         try:
-            self._redis.expire(processor_heartbeat_key(self._id), int(interval * 2))
+            self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
         except Exception:
             pass
 
@@ -1167,7 +1167,7 @@ class Processor:
         while not self._shutdown.is_set():
             time.sleep(interval)
             try:
-                self._redis.expire(processor_heartbeat_key(self._id), int(interval * 2))
+                self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
             except Exception:
                 pass
 
@@ -1180,16 +1180,16 @@ class Processor:
             return
         pid = self._id
         device = {
-            "ids": f"SkyFollower_processor_{pid}",
-            "name": f"SkyFollower Processor {pid}",
+            "ids": f"SkyFollower_message_processor_{pid}",
+            "name": f"SkyFollower Message Processor {pid}",
             "manufacturer": "P5Software, LLC",
         }
         availability = {
-            "availability_topic": f"SkyFollower/processor/{pid}/status",
+            "availability_topic": f"SkyFollower/message-processor/{pid}/status",
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        base = f"SkyFollower/processor/{pid}/statistic"
+        base = f"SkyFollower/message-processor/{pid}/statistic"
         sensors = [
             ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
             ("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms"),
@@ -1207,8 +1207,8 @@ class Processor:
                 **availability,
                 "state_topic": f"{base}/{field}",
                 "name": desc,
-                "unique_id": f"SkyFollower_processor_{pid}_{field}",
-                "object_id": f"SkyFollower_processor_{pid}_{field}",
+                "unique_id": f"SkyFollower_message_processor_{pid}_{field}",
+                "object_id": f"SkyFollower_message_processor_{pid}_{field}",
                 "device": device,
                 "icon": icon,
                 "state_class": state_class,
@@ -1216,7 +1216,7 @@ class Processor:
             if unit:
                 payload["unit_of_measurement"] = unit
             self._mqtt.publish(
-                f"homeassistant/sensor/SkyFollower_processor_{pid}_{field}/config",
+                f"homeassistant/sensor/SkyFollower_message_processor_{pid}_{field}/config",
                 json.dumps(payload),
                 retain=True,
             )
@@ -1238,7 +1238,7 @@ class Processor:
                 pass
         if self._mqtt:
             self._mqtt.publish(
-                f"SkyFollower/processor/{self._id}/status", "OFFLINE", retain=True
+                f"SkyFollower/message-processor/{self._id}/status", "OFFLINE", retain=True
             )
             self._mqtt.loop_stop()
         self._db.close()
@@ -1256,18 +1256,18 @@ def _load_config() -> dict:
 
 
 def main() -> None:
-    processor_id_str = os.environ.get("PROCESSOR_ID")
-    if processor_id_str is None:
-        print("PROCESSOR_ID environment variable is required.", file=sys.stderr)
+    message_processor_id_str = os.environ.get("MESSAGE_PROCESSOR_ID")
+    if message_processor_id_str is None:
+        print("MESSAGE_PROCESSOR_ID environment variable is required.", file=sys.stderr)
         sys.exit(1)
     try:
-        processor_id = int(processor_id_str)
+        message_processor_id = int(message_processor_id_str)
     except ValueError:
-        print(f"PROCESSOR_ID must be an integer, got: {processor_id_str!r}", file=sys.stderr)
+        print(f"MESSAGE_PROCESSOR_ID must be an integer, got: {message_processor_id_str!r}", file=sys.stderr)
         sys.exit(1)
 
     config = _load_config()
-    processor = Processor(config, processor_id)
+    processor = MessageProcessor(config, message_processor_id)
 
     def _handle_signal(sig, frame):
         processor.shutdown()

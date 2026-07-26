@@ -6,7 +6,7 @@
 //
 // Content is copied rather than referenced via VitePress's `@include`
 // because these READMEs also render as plain files on GitHub, where they
-// need plain relative links to each other (e.g. `../processor/README.md`).
+// need plain relative links to each other (e.g. `../message-processor/README.md`).
 // Splicing that raw text into a docs page verbatim leaves a relative link
 // that resolves against the *including* page's location instead, which
 // VitePress's dead-link checker correctly rejects. Rewriting known
@@ -34,9 +34,9 @@ for (const component of components) {
 }
 const runners = discoverRunners();
 
-// Maps a README's containing directory name (e.g. "processor") to the
-// docs-site route it's generated to (e.g. "/components/processor"), so a
-// source link like "../processor/README.md" can be rewritten to the page
+// Maps a README's containing directory name (e.g. "message-processor") to the
+// docs-site route it's generated to (e.g. "/components/message-processor"), so a
+// source link like "../message-processor/README.md" can be rewritten to the page
 // that actually renders it.
 const ROUTE_BY_DIR = new Map([
   ...components.map((c) => [c.name, `/components/${c.name}`]),
@@ -44,7 +44,7 @@ const ROUTE_BY_DIR = new Map([
 ]);
 
 // Matches a markdown link target that is a relative path ending in
-// `<dirname>/README.md`, e.g. "../processor/README.md" or
+// `<dirname>/README.md`, e.g. "../message-processor/README.md" or
 // "data-runners/ourairports/README.md".
 const README_LINK_RE = /\]\((?:\.\.\/|[\w.-]+\/)*([\w.-]+)\/README\.md\)/g;
 

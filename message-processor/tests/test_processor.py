@@ -1,13 +1,16 @@
 """
-Tests for processor/main.py components that don't require live infrastructure.
+Tests for message-processor/main.py components that don't require live
+infrastructure.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
 import sqlite3
+import sys
 import tempfile
 import time
 from datetime import timezone
@@ -15,9 +18,35 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from processor.main import (
+# message-processor/ can't be imported as a normal package -- the hyphen in
+# the directory name isn't a valid Python identifier -- so register it under
+# the dotted name 'message_processor' via importlib, the same workaround
+# archive-processor/tests/conftest.py uses. This has to live inline here
+# (not in a conftest.py) because pytest derives every conftest.py's plugin
+# name from its "tests/conftest.py" path once the hyphenated parent breaks
+# the dotted-name walk, so a second same-named conftest.py collides with
+# archive-processor's at collection time.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_MESSAGE_PROCESSOR_DIR = os.path.dirname(_HERE)
+_REPO_ROOT = os.path.dirname(_MESSAGE_PROCESSOR_DIR)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+if "message_processor" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location(
+        "message_processor",
+        os.path.join(_MESSAGE_PROCESSOR_DIR, "__init__.py"),
+        submodule_search_locations=[_MESSAGE_PROCESSOR_DIR],
+    )
+    _pkg = importlib.util.module_from_spec(_spec)
+    _pkg.__path__ = [_MESSAGE_PROCESSOR_DIR]
+    _pkg.__package__ = "message_processor"
+    sys.modules["message_processor"] = _pkg
+    _spec.loader.exec_module(_pkg)
+
+from message_processor.main import (  # noqa: E402  (after sys.path/package setup)
     Flight,
-    Processor,
+    MessageProcessor,
     _ArchiveFallbackQueue,
     _DepthHWM,
     _RateTracker,
@@ -47,20 +76,20 @@ def _minimal_config() -> dict:
     }
 
 
-def _make_processor(cfg: dict | None = None) -> tuple[Processor, MagicMock]:
-    """Construct a real Processor (file-backed active store) with Redis/rules/
+def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMock]:
+    """Construct a real MessageProcessor (file-backed active store) with Redis/rules/
     processor-ID-claim mocked out, matching TestProcessorEnrichment's pattern
     but keeping the real on-disk DB instead of swapping in an in-memory one —
     needed for the crash-recovery/message-clock tests below."""
     cfg = cfg or _minimal_config()
-    with patch("processor.main.redis_lib.Redis") as MockRedis, \
-         patch("processor.main.RulesEngine"), \
-         patch("processor.main.pathlib.Path"), \
-         patch.object(Processor, "_claim_processor_id"):
+    with patch("message_processor.main.redis_lib.Redis") as MockRedis, \
+         patch("message_processor.main.RulesEngine"), \
+         patch("message_processor.main.pathlib.Path"), \
+         patch.object(MessageProcessor, "_claim_message_processor_id"):
         mock_redis = MagicMock()
         mock_redis.script_load.return_value = "abc123sha"
         MockRedis.return_value = mock_redis
-        p = Processor(cfg, processor_id=0)
+        p = MessageProcessor(cfg, message_processor_id=0)
         p._redis = mock_redis
         p._merge_sha = "abc123sha"
         p._rules_engine.evaluate.return_value = []
@@ -527,7 +556,7 @@ class TestFlight:
 
 
 # ---------------------------------------------------------------------------
-# Processor._archive — live-path publish, mirroring receiver._publish()'s
+# MessageProcessor._archive — live-path publish, mirroring receiver._publish()'s
 # rmq_connected reset on a basic_publish failure (see #533)
 # ---------------------------------------------------------------------------
 
@@ -628,7 +657,7 @@ class TestArchiveFallbackQueue:
 
 
 # ---------------------------------------------------------------------------
-# Processor._drain_fallback — and its periodic-tick trigger from
+# MessageProcessor._drain_fallback — and its periodic-tick trigger from
 # _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger (#526)
 # ---------------------------------------------------------------------------
 
@@ -680,7 +709,7 @@ class TestProcessorDrainFallback:
         def fake_sleep(_seconds):
             p._shutdown.set()
 
-        with patch("processor.main.time.sleep", side_effect=fake_sleep), \
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep), \
              patch.object(p, "_publish_telemetry"):
             p._telemetry_loop()
 
@@ -789,7 +818,7 @@ class TestDepthHWM:
 
 
 # ---------------------------------------------------------------------------
-# Processor._rmq_queue_depth — passive queue_declare on this processor's own
+# MessageProcessor._rmq_queue_depth — passive queue_declare on this processor's own
 # input queue, reusing the existing consumer channel
 # ---------------------------------------------------------------------------
 
@@ -820,7 +849,7 @@ class TestRmqQueueDepth:
 
 
 # ---------------------------------------------------------------------------
-# Processor._rmq_queue_depth_sampler_loop — polls at most once every 10
+# MessageProcessor._rmq_queue_depth_sampler_loop — polls at most once every 10
 # seconds, independent of telemetry_interval_seconds
 # ---------------------------------------------------------------------------
 
@@ -833,7 +862,7 @@ class TestRmqQueueDepthSamplerLoop:
         def fake_sleep(_seconds):
             p._shutdown.set()
 
-        with patch("processor.main.time.sleep", side_effect=fake_sleep):
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep):
             p._rmq_queue_depth_sampler_loop()
 
     def test_sleeps_ten_seconds_between_samples(self):
@@ -842,7 +871,7 @@ class TestRmqQueueDepthSamplerLoop:
         mock_channel.queue_declare.return_value.method.message_count = 0
         p._rmq_channel = mock_channel
 
-        with patch("processor.main.time.sleep") as mock_sleep:
+        with patch("message_processor.main.time.sleep") as mock_sleep:
             mock_sleep.side_effect = lambda _s: p._shutdown.set()
             p._rmq_queue_depth_sampler_loop()
 
@@ -868,20 +897,20 @@ class TestRmqQueueDepthSamplerLoop:
 
 
 # ---------------------------------------------------------------------------
-# Processor enrichment logic (unit tests with mocked Redis)
+# MessageProcessor enrichment logic (unit tests with mocked Redis)
 # ---------------------------------------------------------------------------
 
 class TestProcessorEnrichment:
     def _make_processor(self):
         cfg = _minimal_config()
-        with patch("processor.main.redis_lib.Redis") as MockRedis, \
-             patch("processor.main.RulesEngine"), \
-             patch("processor.main.pathlib.Path"), \
-             patch.object(Processor, "_claim_processor_id"):
+        with patch("message_processor.main.redis_lib.Redis") as MockRedis, \
+             patch("message_processor.main.RulesEngine"), \
+             patch("message_processor.main.pathlib.Path"), \
+             patch.object(MessageProcessor, "_claim_message_processor_id"):
             mock_redis = MagicMock()
             mock_redis.script_load.return_value = "abc123sha"
             MockRedis.return_value = mock_redis
-            p = Processor(cfg, processor_id=0)
+            p = MessageProcessor(cfg, message_processor_id=0)
             p._redis = mock_redis
             p._merge_sha = "abc123sha"
             p._db = _make_db()
@@ -961,9 +990,9 @@ class TestProcessorEnrichment:
 class TestTelemetryPayload:
     """Tests for _publish_telemetry()'s one-retained-topic-per-stat behaviour."""
 
-    def _make_processor(self) -> Processor:
-        with patch("processor.main.redis_lib.Redis"):
-            p = Processor(_minimal_config(), processor_id=0)
+    def _make_processor(self) -> MessageProcessor:
+        with patch("message_processor.main.redis_lib.Redis"):
+            p = MessageProcessor(_minimal_config(), message_processor_id=0)
         return p
 
     def test_correct_base_topic(self):
@@ -973,7 +1002,7 @@ class TestTelemetryPayload:
         p._mqtt_connected = True
         p._publish_telemetry()
         topics = [c.args[0] for c in mock_mqtt.publish.call_args_list]
-        assert all(t.startswith("SkyFollower/processor/0/statistic/") for t in topics)
+        assert all(t.startswith("SkyFollower/message-processor/0/statistic/") for t in topics)
 
     def test_retained(self):
         p = self._make_processor()
@@ -990,7 +1019,7 @@ class TestTelemetryPayload:
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_telemetry()
-        base = "SkyFollower/processor/0/statistic"
+        base = "SkyFollower/message-processor/0/statistic"
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         expected = {
             "started_at", "messages_per_second", "processing_time_hwm_ms",
@@ -1012,7 +1041,7 @@ class TestTelemetryPayload:
         p._processing_time.record_hwm(50.0)
         p._publish_telemetry()
         calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-        assert calls["SkyFollower/processor/0/statistic/processing_time_hwm_ms"] == "50.0"
+        assert calls["SkyFollower/message-processor/0/statistic/processing_time_hwm_ms"] == "50.0"
 
     def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
         p = self._make_processor()
@@ -1022,7 +1051,7 @@ class TestTelemetryPayload:
         p._rmq_queue_depth_hwm.record(3)
         p._rmq_queue_depth_hwm.record(15)
         p._rmq_queue_depth_hwm.record(8)
-        topic = "SkyFollower/processor/0/statistic/rabbitmq_input_queue_depth_hwm"
+        topic = "SkyFollower/message-processor/0/statistic/rabbitmq_input_queue_depth_hwm"
 
         p._publish_telemetry()
         first_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
@@ -1047,7 +1076,7 @@ class TestTelemetryPayload:
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_ha_autodiscovery()
-        base = "SkyFollower/processor/0/statistic/"
+        base = "SkyFollower/message-processor/0/statistic/"
         for call in mock_mqtt.publish.call_args_list:
             if call.args[0].startswith("homeassistant/"):
                 cfg = json.loads(call.args[1])
@@ -1099,7 +1128,7 @@ class TestCrashRecovery:
         p, _ = _make_processor(cfg)
 
         # message_clock floors at the recovered flight's last_message, not
-        # at wall-clock "now" — see Processor.__init__.
+        # at wall-clock "now" — see MessageProcessor.__init__.
         assert p._message_clock == pytest.approx(old_last_message)
 
         f = Flight(p._db)
@@ -1149,7 +1178,7 @@ class TestPerMessageGapCheck:
             p._update_flight(data, msg)
 
         # Old flight landed in the local fallback (no RabbitMQ connected in
-        # this test — Processor was never start()ed).
+        # this test — MessageProcessor was never start()ed).
         assert p._fallback.depth() == 1
 
         # A fresh row now exists for the same icao_hex, not an extension of
@@ -1406,7 +1435,7 @@ class TestMqttLagGuard:
         f = self._make_flight(p)
 
         old_received_at = time.time() - 3600  # an hour old — backlog replay
-        with caplog.at_level(logging.DEBUG, logger="processor"):
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
             p._publish_rule_notification(f, {"identifier": "rule_a"}, old_received_at)
 
         mock_mqtt.publish.assert_not_called()

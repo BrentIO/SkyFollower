@@ -27,7 +27,7 @@ Every runner calls `configure_logging(cfg.get("log_level"))` from
 `shared/logging_setup.py` right after loading `settings.json`, wiring the
 `log_level` config field (`"debug"` or `"info"`, see
 `config/runners/settings.json.example`) to the root logger — `receiver` and
-`processor` use the same helper. `configure_logging()` is called once more,
+`message-processor` use the same helper. `configure_logging()` is called once more,
 with no argument, if `settings.json` itself can't be loaded, so that failure
 still logs formatted instead of falling back to Python's default handler.
 

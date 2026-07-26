@@ -120,156 +120,156 @@ channels:
       ReceiverStartedAtMessage:
         $ref: '#/components/messages/ReceiverStartedAtMessage'
 
-  # ── Processor ─────────────────────────────────────────────────────────────
+  # ── Message Processor ─────────────────────────────────────────────────────
 
-  processorStatus:
-    address: 'SkyFollower/processor/{processor_id}/status'
+  messageProcessorStatus:
+    address: 'SkyFollower/message-processor/{message_processor_id}/status'
     description: >
-      Per-processor liveness. Published ONLINE on connect and OFFLINE via
-      LWT. Both messages are retained.
+      Per-message-processor liveness. Published ONLINE on connect and OFFLINE
+      via LWT. Both messages are retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
   # One retained topic per stat (see #542), matching the receiver above.
 
-  processorMessagesPerSecond:
-    address: 'SkyFollower/processor/{processor_id}/statistic/messages_per_second'
+  messageProcessorMessagesPerSecond:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/messages_per_second'
     description: >
       Average message processing rate since last report. Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorMessagesPerSecondMessage:
-        $ref: '#/components/messages/ProcessorMessagesPerSecondMessage'
+      MessageProcessorMessagesPerSecondMessage:
+        $ref: '#/components/messages/MessageProcessorMessagesPerSecondMessage'
 
-  processorProcessingTimeHwmMs:
-    address: 'SkyFollower/processor/{processor_id}/statistic/processing_time_hwm_ms'
+  messageProcessorProcessingTimeHwmMs:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/processing_time_hwm_ms'
     description: >
       End-to-end message processing time high-water mark since last publish;
       resets on publish. Published every telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorProcessingTimeHwmMsMessage:
-        $ref: '#/components/messages/ProcessorProcessingTimeHwmMsMessage'
+      MessageProcessorProcessingTimeHwmMsMessage:
+        $ref: '#/components/messages/MessageProcessorProcessingTimeHwmMsMessage'
 
-  processorRulesEngineHwmMs:
-    address: 'SkyFollower/processor/{processor_id}/statistic/rules_engine_hwm_ms'
+  messageProcessorRulesEngineHwmMs:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_engine_hwm_ms'
     description: >
       Rules engine duration high-water mark since last publish; resets on
       publish. Published every telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorRulesEngineHwmMsMessage:
-        $ref: '#/components/messages/ProcessorRulesEngineHwmMsMessage'
+      MessageProcessorRulesEngineHwmMsMessage:
+        $ref: '#/components/messages/MessageProcessorRulesEngineHwmMsMessage'
 
-  processorRabbitmqInputQueueDepthHwm:
-    address: 'SkyFollower/processor/{processor_id}/statistic/rabbitmq_input_queue_depth_hwm'
+  messageProcessorRabbitmqInputQueueDepthHwm:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rabbitmq_input_queue_depth_hwm'
     description: >
-      High-water mark of this processor's RabbitMQ input queue depth since
+      High-water mark of this message processor's RabbitMQ input queue depth since
       last publish, sampled at most once every 10 seconds; resets on
       publish. -1 if no valid sample landed this window. Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorRabbitmqInputQueueDepthHwmMessage:
-        $ref: '#/components/messages/ProcessorRabbitmqInputQueueDepthHwmMessage'
+      MessageProcessorRabbitmqInputQueueDepthHwmMessage:
+        $ref: '#/components/messages/MessageProcessorRabbitmqInputQueueDepthHwmMessage'
 
-  processorLocalArchiveQueueDepth:
-    address: 'SkyFollower/processor/{processor_id}/statistic/local_archive_queue_depth'
+  messageProcessorLocalArchiveQueueDepth:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/local_archive_queue_depth'
     description: >
       Number of completed flights queued in the local SQLite fallback
       (completed_flights.db). Published every telemetry_interval_seconds,
       retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorLocalArchiveQueueDepthMessage:
-        $ref: '#/components/messages/ProcessorLocalArchiveQueueDepthMessage'
+      MessageProcessorLocalArchiveQueueDepthMessage:
+        $ref: '#/components/messages/MessageProcessorLocalArchiveQueueDepthMessage'
 
-  processorRegistrationMissesHour:
-    address: 'SkyFollower/processor/{processor_id}/statistic/registration_misses_hour'
+  messageProcessorRegistrationMissesHour:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_hour'
     description: >
       Aircraft Redis cache misses this hour. Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorRegistrationMissesHourMessage:
-        $ref: '#/components/messages/ProcessorRegistrationMissesHourMessage'
+      MessageProcessorRegistrationMissesHourMessage:
+        $ref: '#/components/messages/MessageProcessorRegistrationMissesHourMessage'
 
-  processorRegistrationMissesToday:
-    address: 'SkyFollower/processor/{processor_id}/statistic/registration_misses_today'
+  messageProcessorRegistrationMissesToday:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_today'
     description: >
       Aircraft Redis cache misses today (UTC). Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorRegistrationMissesTodayMessage:
-        $ref: '#/components/messages/ProcessorRegistrationMissesTodayMessage'
+      MessageProcessorRegistrationMissesTodayMessage:
+        $ref: '#/components/messages/MessageProcessorRegistrationMissesTodayMessage'
 
-  processorAircraftTypeMissesHour:
-    address: 'SkyFollower/processor/{processor_id}/statistic/aircraft_type_misses_hour'
+  messageProcessorAircraftTypeMissesHour:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/aircraft_type_misses_hour'
     description: >
       Aircraft type lookup misses this hour. Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorAircraftTypeMissesHourMessage:
-        $ref: '#/components/messages/ProcessorAircraftTypeMissesHourMessage'
+      MessageProcessorAircraftTypeMissesHourMessage:
+        $ref: '#/components/messages/MessageProcessorAircraftTypeMissesHourMessage'
 
-  processorAircraftTypeMissesToday:
-    address: 'SkyFollower/processor/{processor_id}/statistic/aircraft_type_misses_today'
+  messageProcessorAircraftTypeMissesToday:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/aircraft_type_misses_today'
     description: >
       Aircraft type lookup misses today (UTC). Published every
       telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorAircraftTypeMissesTodayMessage:
-        $ref: '#/components/messages/ProcessorAircraftTypeMissesTodayMessage'
+      MessageProcessorAircraftTypeMissesTodayMessage:
+        $ref: '#/components/messages/MessageProcessorAircraftTypeMissesTodayMessage'
 
-  processorActiveFlights:
-    address: 'SkyFollower/processor/{processor_id}/statistic/active_flights'
+  messageProcessorActiveFlights:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/active_flights'
     description: >
       Number of flights currently tracked in the in-memory SQLite store.
       Published every telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorActiveFlightsMessage:
-        $ref: '#/components/messages/ProcessorActiveFlightsMessage'
+      MessageProcessorActiveFlightsMessage:
+        $ref: '#/components/messages/MessageProcessorActiveFlightsMessage'
 
-  processorStartedAt:
-    address: 'SkyFollower/processor/{processor_id}/statistic/started_at'
+  messageProcessorStartedAt:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/started_at'
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
       Published every telemetry_interval_seconds, retained.
     parameters:
-      processor_id:
-        $ref: '#/components/parameters/ProcessorId'
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      ProcessorStartedAtMessage:
-        $ref: '#/components/messages/ProcessorStartedAtMessage'
+      MessageProcessorStartedAtMessage:
+        $ref: '#/components/messages/MessageProcessorStartedAtMessage'
 
   # ── Archive processor ─────────────────────────────────────────────────────
 
@@ -282,8 +282,8 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  # One retained topic per stat (see #542), matching the receiver/processor
-  # above.
+  # One retained topic per stat (see #542), matching the receiver/message
+  # processor above.
 
   archiveFlightsArchivedHour:
     address: SkyFollower/archive/statistic/flights_archived_hour
@@ -418,7 +418,7 @@ channels:
   ruleNotification:
     address: 'SkyFollower/rule/{identifier}'
     description: >
-      Published by the processor when a rule matches a tracked flight. The
+      Published by the message processor when a rule matches a tracked flight. The
       identifier in the topic matches the rule's identifier field. Not
       retained.
     parameters:
@@ -521,77 +521,77 @@ operations:
       $ref: '#/channels/receiverStartedAt'
     summary: Receiver publishes its process start time
 
-  publishProcessorStatus:
+  publishMessageProcessorStatus:
     action: send
     channel:
-      $ref: '#/channels/processorStatus'
-    summary: Processor publishes its online / offline status
+      $ref: '#/channels/messageProcessorStatus'
+    summary: Message processor publishes its online / offline status
 
-  publishProcessorMessagesPerSecond:
+  publishMessageProcessorMessagesPerSecond:
     action: send
     channel:
-      $ref: '#/channels/processorMessagesPerSecond'
-    summary: Processor publishes its message processing rate
+      $ref: '#/channels/messageProcessorMessagesPerSecond'
+    summary: Message processor publishes its message processing rate
 
-  publishProcessorProcessingTimeHwmMs:
+  publishMessageProcessorProcessingTimeHwmMs:
     action: send
     channel:
-      $ref: '#/channels/processorProcessingTimeHwmMs'
-    summary: Processor publishes its processing time high-water mark
+      $ref: '#/channels/messageProcessorProcessingTimeHwmMs'
+    summary: Message processor publishes its processing time high-water mark
 
-  publishProcessorRulesEngineHwmMs:
+  publishMessageProcessorRulesEngineHwmMs:
     action: send
     channel:
-      $ref: '#/channels/processorRulesEngineHwmMs'
-    summary: Processor publishes its rules engine duration high-water mark
+      $ref: '#/channels/messageProcessorRulesEngineHwmMs'
+    summary: Message processor publishes its rules engine duration high-water mark
 
-  publishProcessorRabbitmqInputQueueDepthHwm:
+  publishMessageProcessorRabbitmqInputQueueDepthHwm:
     action: send
     channel:
-      $ref: '#/channels/processorRabbitmqInputQueueDepthHwm'
-    summary: Processor publishes its RabbitMQ input queue depth high-water mark
+      $ref: '#/channels/messageProcessorRabbitmqInputQueueDepthHwm'
+    summary: Message processor publishes its RabbitMQ input queue depth high-water mark
 
-  publishProcessorLocalArchiveQueueDepth:
+  publishMessageProcessorLocalArchiveQueueDepth:
     action: send
     channel:
-      $ref: '#/channels/processorLocalArchiveQueueDepth'
-    summary: Processor publishes its local archive fallback queue depth
+      $ref: '#/channels/messageProcessorLocalArchiveQueueDepth'
+    summary: Message processor publishes its local archive fallback queue depth
 
-  publishProcessorRegistrationMissesHour:
+  publishMessageProcessorRegistrationMissesHour:
     action: send
     channel:
-      $ref: '#/channels/processorRegistrationMissesHour'
-    summary: Processor publishes hourly aircraft registration cache misses
+      $ref: '#/channels/messageProcessorRegistrationMissesHour'
+    summary: Message processor publishes hourly aircraft registration cache misses
 
-  publishProcessorRegistrationMissesToday:
+  publishMessageProcessorRegistrationMissesToday:
     action: send
     channel:
-      $ref: '#/channels/processorRegistrationMissesToday'
-    summary: Processor publishes today's aircraft registration cache misses
+      $ref: '#/channels/messageProcessorRegistrationMissesToday'
+    summary: Message processor publishes today's aircraft registration cache misses
 
-  publishProcessorAircraftTypeMissesHour:
+  publishMessageProcessorAircraftTypeMissesHour:
     action: send
     channel:
-      $ref: '#/channels/processorAircraftTypeMissesHour'
-    summary: Processor publishes hourly aircraft type lookup misses
+      $ref: '#/channels/messageProcessorAircraftTypeMissesHour'
+    summary: Message processor publishes hourly aircraft type lookup misses
 
-  publishProcessorAircraftTypeMissesToday:
+  publishMessageProcessorAircraftTypeMissesToday:
     action: send
     channel:
-      $ref: '#/channels/processorAircraftTypeMissesToday'
-    summary: Processor publishes today's aircraft type lookup misses
+      $ref: '#/channels/messageProcessorAircraftTypeMissesToday'
+    summary: Message processor publishes today's aircraft type lookup misses
 
-  publishProcessorActiveFlights:
+  publishMessageProcessorActiveFlights:
     action: send
     channel:
-      $ref: '#/channels/processorActiveFlights'
-    summary: Processor publishes its count of currently tracked flights
+      $ref: '#/channels/messageProcessorActiveFlights'
+    summary: Message processor publishes its count of currently tracked flights
 
-  publishProcessorStartedAt:
+  publishMessageProcessorStartedAt:
     action: send
     channel:
-      $ref: '#/channels/processorStartedAt'
-    summary: Processor publishes its process start time
+      $ref: '#/channels/messageProcessorStartedAt'
+    summary: Message processor publishes its process start time
 
   publishArchiveStatus:
     action: send
@@ -681,7 +681,7 @@ operations:
     action: send
     channel:
       $ref: '#/channels/ruleNotification'
-    summary: Processor publishes a rule match notification
+    summary: Message processor publishes a rule match notification
 
   publishRunnerRecordsImported:
     action: send
@@ -765,93 +765,93 @@ components:
       payload:
         $ref: '#/components/schemas/ReceiverStartedAt'
 
-    ProcessorMessagesPerSecondMessage:
-      name: ProcessorMessagesPerSecondMessage
-      title: Processor message rate
+    MessageProcessorMessagesPerSecondMessage:
+      name: MessageProcessorMessagesPerSecondMessage
+      title: Message Processor message rate
       summary: Average message processing rate since last report
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorMessagesPerSecond'
+        $ref: '#/components/schemas/MessageProcessorMessagesPerSecond'
 
-    ProcessorProcessingTimeHwmMsMessage:
-      name: ProcessorProcessingTimeHwmMsMessage
-      title: Processor processing time high-water mark
+    MessageProcessorProcessingTimeHwmMsMessage:
+      name: MessageProcessorProcessingTimeHwmMsMessage
+      title: Message Processor processing time high-water mark
       summary: End-to-end message processing time high-water mark since last publish
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorProcessingTimeHwmMs'
+        $ref: '#/components/schemas/MessageProcessorProcessingTimeHwmMs'
 
-    ProcessorRulesEngineHwmMsMessage:
-      name: ProcessorRulesEngineHwmMsMessage
-      title: Processor rules engine duration high-water mark
+    MessageProcessorRulesEngineHwmMsMessage:
+      name: MessageProcessorRulesEngineHwmMsMessage
+      title: Message Processor rules engine duration high-water mark
       summary: Rules engine duration high-water mark since last publish
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorRulesEngineHwmMs'
+        $ref: '#/components/schemas/MessageProcessorRulesEngineHwmMs'
 
-    ProcessorRabbitmqInputQueueDepthHwmMessage:
-      name: ProcessorRabbitmqInputQueueDepthHwmMessage
-      title: Processor RabbitMQ input queue depth high-water mark
-      summary: High-water mark of this processor's RabbitMQ input queue depth
+    MessageProcessorRabbitmqInputQueueDepthHwmMessage:
+      name: MessageProcessorRabbitmqInputQueueDepthHwmMessage
+      title: Message Processor RabbitMQ input queue depth high-water mark
+      summary: High-water mark of this message processor's RabbitMQ input queue depth
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorRabbitmqInputQueueDepthHwm'
+        $ref: '#/components/schemas/MessageProcessorRabbitmqInputQueueDepthHwm'
 
-    ProcessorLocalArchiveQueueDepthMessage:
-      name: ProcessorLocalArchiveQueueDepthMessage
-      title: Processor local archive queue depth
+    MessageProcessorLocalArchiveQueueDepthMessage:
+      name: MessageProcessorLocalArchiveQueueDepthMessage
+      title: Message Processor local archive queue depth
       summary: Completed flights queued in the local SQLite fallback (completed_flights.db)
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorLocalArchiveQueueDepth'
+        $ref: '#/components/schemas/MessageProcessorLocalArchiveQueueDepth'
 
-    ProcessorRegistrationMissesHourMessage:
-      name: ProcessorRegistrationMissesHourMessage
-      title: Processor registration misses this hour
+    MessageProcessorRegistrationMissesHourMessage:
+      name: MessageProcessorRegistrationMissesHourMessage
+      title: Message Processor registration misses this hour
       summary: Aircraft Redis cache misses this hour
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorRegistrationMissesHour'
+        $ref: '#/components/schemas/MessageProcessorRegistrationMissesHour'
 
-    ProcessorRegistrationMissesTodayMessage:
-      name: ProcessorRegistrationMissesTodayMessage
-      title: Processor registration misses today
+    MessageProcessorRegistrationMissesTodayMessage:
+      name: MessageProcessorRegistrationMissesTodayMessage
+      title: Message Processor registration misses today
       summary: Aircraft Redis cache misses today (UTC)
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorRegistrationMissesToday'
+        $ref: '#/components/schemas/MessageProcessorRegistrationMissesToday'
 
-    ProcessorAircraftTypeMissesHourMessage:
-      name: ProcessorAircraftTypeMissesHourMessage
-      title: Processor aircraft type misses this hour
+    MessageProcessorAircraftTypeMissesHourMessage:
+      name: MessageProcessorAircraftTypeMissesHourMessage
+      title: Message Processor aircraft type misses this hour
       summary: Aircraft type lookup misses this hour
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorAircraftTypeMissesHour'
+        $ref: '#/components/schemas/MessageProcessorAircraftTypeMissesHour'
 
-    ProcessorAircraftTypeMissesTodayMessage:
-      name: ProcessorAircraftTypeMissesTodayMessage
-      title: Processor aircraft type misses today
+    MessageProcessorAircraftTypeMissesTodayMessage:
+      name: MessageProcessorAircraftTypeMissesTodayMessage
+      title: Message Processor aircraft type misses today
       summary: Aircraft type lookup misses today (UTC)
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorAircraftTypeMissesToday'
+        $ref: '#/components/schemas/MessageProcessorAircraftTypeMissesToday'
 
-    ProcessorActiveFlightsMessage:
-      name: ProcessorActiveFlightsMessage
-      title: Processor active flights
+    MessageProcessorActiveFlightsMessage:
+      name: MessageProcessorActiveFlightsMessage
+      title: Message Processor active flights
       summary: Flights currently tracked in the in-memory SQLite store
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorActiveFlights'
+        $ref: '#/components/schemas/MessageProcessorActiveFlights'
 
-    ProcessorStartedAtMessage:
-      name: ProcessorStartedAtMessage
-      title: Processor process start time
+    MessageProcessorStartedAtMessage:
+      name: MessageProcessorStartedAtMessage
+      title: Message Processor process start time
       summary: UTC ISO-8601 timestamp of process start
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorStartedAt'
+        $ref: '#/components/schemas/MessageProcessorStartedAt'
 
     ArchiveFlightsArchivedHourMessage:
       name: ArchiveFlightsArchivedHourMessage
@@ -1033,57 +1033,57 @@ components:
       description: UTC ISO-8601 timestamp of process start
       example: "2026-01-15T10:00:00+00:00"
 
-    ProcessorMessagesPerSecond:
+    MessageProcessorMessagesPerSecond:
       type: number
       description: Average message processing rate since last report (messages received ÷ elapsed seconds)
       example: 45.1
 
-    ProcessorProcessingTimeHwmMs:
+    MessageProcessorProcessingTimeHwmMs:
       type: number
       description: End-to-end message processing time high-water mark since last publish; resets on publish
       example: 12.3
 
-    ProcessorRulesEngineHwmMs:
+    MessageProcessorRulesEngineHwmMs:
       type: integer
       description: Rules engine duration high-water mark since last publish; resets on publish
       example: 45
 
-    ProcessorRabbitmqInputQueueDepthHwm:
+    MessageProcessorRabbitmqInputQueueDepthHwm:
       type: integer
-      description: High-water mark of this processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
+      description: High-water mark of this message processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
       example: 0
 
-    ProcessorLocalArchiveQueueDepth:
+    MessageProcessorLocalArchiveQueueDepth:
       type: integer
       description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
       example: 0
 
-    ProcessorRegistrationMissesHour:
+    MessageProcessorRegistrationMissesHour:
       type: integer
       description: Aircraft Redis cache misses this hour
       example: 2
 
-    ProcessorRegistrationMissesToday:
+    MessageProcessorRegistrationMissesToday:
       type: integer
       description: Aircraft Redis cache misses today (UTC)
       example: 14
 
-    ProcessorAircraftTypeMissesHour:
+    MessageProcessorAircraftTypeMissesHour:
       type: integer
       description: Aircraft type lookup misses this hour
       example: 0
 
-    ProcessorAircraftTypeMissesToday:
+    MessageProcessorAircraftTypeMissesToday:
       type: integer
       description: Aircraft type lookup misses today (UTC)
       example: 3
 
-    ProcessorActiveFlights:
+    MessageProcessorActiveFlights:
       type: integer
       description: Number of flights currently tracked in the in-memory SQLite store
       example: 8
 
-    ProcessorStartedAt:
+    MessageProcessorStartedAt:
       type: string
       format: date-time
       description: UTC ISO-8601 timestamp of process start
@@ -1355,11 +1355,11 @@ components:
         environment variable (default 0). Allows multiple receiver
         containers to coexist on the same broker.
 
-    ProcessorId:
+    MessageProcessorId:
       description: >
-        Integer processor instance identifier. Set via the PROCESSOR_ID
-        environment variable. Used to distinguish multiple processor
-        containers running simultaneously.
+        Integer message processor instance identifier. Set via the
+        MESSAGE_PROCESSOR_ID environment variable. Used to distinguish
+        multiple message processor containers running simultaneously.
 
     RuleIdentifier:
       description: >

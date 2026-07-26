@@ -136,7 +136,7 @@ def main() -> None:
         "--processor-count",
         type=int,
         required=True,
-        help="Number of processor queues (must match receiver/processor config)",
+        help="Number of processor queues (must match receiver/message-processor config)",
     )
     parser.add_argument("--rabbitmq-host", required=True)
     parser.add_argument("--rabbitmq-port", type=int, default=5672)

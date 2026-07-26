@@ -3,12 +3,12 @@
 
 !startsub COMPONENT
 package "Message Processor" as MsgProc $OnPrem {
-    component "Processor\n--\nPROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups\nRules engine → MQTT notifications" as ProcessorC
+    component "Message Processor\n--\nMESSAGE_PROCESSOR_ID unique-checked via Redis NX key on startup\nSQLite in-memory active store\nRedis enrichment lookups\nRules engine → MQTT notifications" as ProcessorC
     database "completed_flights.db\n(SQLite WAL)" as ProcessorFallback
     ProcessorC -right-> ProcessorFallback : RabbitMQ offline
     ProcessorFallback .left.> ProcessorC : Drains on RabbitMQ reconnect\nor every telemetry tick
 
-    note top of ProcessorC : One to many processors supported
+    note top of ProcessorC : One to many message processors supported
 }
 !endsub
 

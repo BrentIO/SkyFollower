@@ -13,11 +13,11 @@ from shared.redis_keys import (
     config_flight_ttl_seconds_key,
     config_rules_key,
     config_rules_version_key,
+    message_processor_heartbeat_key,
     metrics_aircraft_type_misses_key,
     metrics_flights_archived_key,
     metrics_registration_misses_key,
     operator_key,
-    processor_heartbeat_key,
 )
 
 
@@ -73,24 +73,24 @@ class TestArchiveKeys:
 
 class TestProcessorKeys:
     def test_heartbeat_key(self):
-        assert processor_heartbeat_key(0) == "processor:0:heartbeat"
-        assert processor_heartbeat_key(3) == "processor:3:heartbeat"
+        assert message_processor_heartbeat_key(0) == "message_processor:0:heartbeat"
+        assert message_processor_heartbeat_key(3) == "message_processor:3:heartbeat"
 
 
 class TestMetricKeys:
     def test_registration_misses_valid_periods(self):
-        assert metrics_registration_misses_key(0, "hour") == "metrics:processor:0:registration_misses:hour"
-        assert metrics_registration_misses_key(0, "today") == "metrics:processor:0:registration_misses:today"
-        assert metrics_registration_misses_key(0, "lifetime") == "metrics:processor:0:registration_misses:lifetime"
-        assert metrics_registration_misses_key(1, "hour") == "metrics:processor:1:registration_misses:hour"
+        assert metrics_registration_misses_key(0, "hour") == "metrics:message_processor:0:registration_misses:hour"
+        assert metrics_registration_misses_key(0, "today") == "metrics:message_processor:0:registration_misses:today"
+        assert metrics_registration_misses_key(0, "lifetime") == "metrics:message_processor:0:registration_misses:lifetime"
+        assert metrics_registration_misses_key(1, "hour") == "metrics:message_processor:1:registration_misses:hour"
 
     def test_registration_misses_invalid_period(self):
         with pytest.raises(ValueError, match="period"):
             metrics_registration_misses_key(0, "week")
 
     def test_aircraft_type_misses_valid_periods(self):
-        assert metrics_aircraft_type_misses_key(0, "hour") == "metrics:processor:0:aircraft_type_misses:hour"
-        assert metrics_aircraft_type_misses_key(2, "lifetime") == "metrics:processor:2:aircraft_type_misses:lifetime"
+        assert metrics_aircraft_type_misses_key(0, "hour") == "metrics:message_processor:0:aircraft_type_misses:hour"
+        assert metrics_aircraft_type_misses_key(2, "lifetime") == "metrics:message_processor:2:aircraft_type_misses:lifetime"
 
     def test_aircraft_type_misses_invalid_period(self):
         with pytest.raises(ValueError, match="period"):

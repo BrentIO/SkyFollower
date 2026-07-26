@@ -19,7 +19,7 @@ def configure_logging(log_level: str | None = None, stream: TextIO = sys.stdout)
 
     `log_level == "debug"` maps to DEBUG; anything else (including None,
     missing, or an unrecognized value) maps to INFO — matching the
-    receiver/processor convention this replaces.
+    receiver/message-processor convention this replaces.
     """
     logging.basicConfig(
         level=logging.DEBUG if log_level == "debug" else logging.INFO,

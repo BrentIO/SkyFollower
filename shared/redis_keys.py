@@ -89,8 +89,8 @@ def config_areas_version_key() -> str:
 
 def config_flight_ttl_seconds_key() -> str:
     """
-    Shared flight_ttl_seconds value, read by both the processor and the
-    archive processor. Read once at startup and cached, not hot-reloaded —
+    Shared flight_ttl_seconds value, read by both the message processor and
+    the archive processor. Read once at startup and cached, not hot-reloaded —
     a changed value takes effect on the next container restart. Callers
     should default to 300 if unset.
     config:flight_ttl_seconds
@@ -98,35 +98,35 @@ def config_flight_ttl_seconds_key() -> str:
     return "config:flight_ttl_seconds"
 
 
-def processor_heartbeat_key(processor_id: int) -> str:
+def message_processor_heartbeat_key(message_processor_id: int) -> str:
     """
-    Processor liveness key used to detect duplicate PROCESSOR_ID on startup.
-    Set with NX + TTL = 2 × telemetry_interval.
-    processor:{id}:heartbeat
+    Message processor liveness key used to detect duplicate
+    MESSAGE_PROCESSOR_ID on startup. Set with NX + TTL = 2 × telemetry_interval.
+    message_processor:{id}:heartbeat
     """
-    return f"processor:{processor_id}:heartbeat"
+    return f"message_processor:{message_processor_id}:heartbeat"
 
 
-def metrics_registration_misses_key(processor_id: int, period: str) -> str:
+def metrics_registration_misses_key(message_processor_id: int, period: str) -> str:
     """
-    Counter for Redis enrichment misses (aircraft not found) per processor.
+    Counter for Redis enrichment misses (aircraft not found) per message processor.
     period must be one of: hour, today, lifetime.
-    metrics:processor:{id}:registration_misses:{period}
+    metrics:message_processor:{id}:registration_misses:{period}
     """
     if period not in _VALID_PERIODS:
         raise ValueError(f"period must be one of {_VALID_PERIODS}, got: {period!r}")
-    return f"metrics:processor:{processor_id}:registration_misses:{period}"
+    return f"metrics:message_processor:{message_processor_id}:registration_misses:{period}"
 
 
-def metrics_aircraft_type_misses_key(processor_id: int, period: str) -> str:
+def metrics_aircraft_type_misses_key(message_processor_id: int, period: str) -> str:
     """
-    Counter for aircraft type lookup misses per processor.
+    Counter for aircraft type lookup misses per message processor.
     period must be one of: hour, today, lifetime.
-    metrics:processor:{id}:aircraft_type_misses:{period}
+    metrics:message_processor:{id}:aircraft_type_misses:{period}
     """
     if period not in _VALID_PERIODS:
         raise ValueError(f"period must be one of {_VALID_PERIODS}, got: {period!r}")
-    return f"metrics:processor:{processor_id}:aircraft_type_misses:{period}"
+    return f"metrics:message_processor:{message_processor_id}:aircraft_type_misses:{period}"
 
 
 def metrics_flights_archived_key(period: str) -> str:

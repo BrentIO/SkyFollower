@@ -3,7 +3,7 @@ Integration tests for shared/lua/merge_aircraft.lua, run against a live Redis
 (RedisJSON + Lua scripting required — a redis-stack instance).
 
 These tests exercise the actual Lua script via EVALSHA, the same way the
-processor calls it, rather than mocking the merge behavior. There's no way to
+message processor calls it, rather than mocking the merge behavior. There's no way to
 verify Lua semantics (e.g. cjson.null handling) by testing Python code alone.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to

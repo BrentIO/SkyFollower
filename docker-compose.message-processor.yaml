@@ -1,0 +1,30 @@
+name: skyfollower-message-processor
+
+services:
+
+  message-processor-0:
+    image: ghcr.io/brentio/skyfollower-message-processor:latest
+    restart: unless-stopped
+    volumes:
+      - ./config/message-processor/settings.json:/app/settings.json:ro
+      - message-processor-0-archive:/app/data
+    environment:
+      MESSAGE_PROCESSOR_ID: "0"
+
+  # To add a second message processor on this host:
+  #   1. Uncomment the block below and add a message-processor-1-archive volume entry.
+  #   2. Set PROCESSOR_COUNT=2 in the receiver's settings.json.
+  #   3. Restart the receiver for new routing to take effect.
+  #
+  # message-processor-1:
+  #   image: ghcr.io/brentio/skyfollower-message-processor:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./config/message-processor/settings.json:/app/settings.json:ro
+  #     - message-processor-1-archive:/app/data
+  #   environment:
+  #     MESSAGE_PROCESSOR_ID: "1"
+
+volumes:
+  message-processor-0-archive:
+  # message-processor-1-archive:
