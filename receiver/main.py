@@ -498,17 +498,17 @@ class Receiver:
         with self._rmq_lock:
             rmq_connected = self._rmq_connected
 
-        payload: dict = {"started_at": self._started_at}
-        for source, tracker in self._rates.items():
-            payload[f"messages_{source}_per_second"] = round(tracker.rate(), 2)
-        payload["local_queue_depth"] = self._fallback.depth()
-        payload["rabbitmq_connected"] = rmq_connected
+        base = f"SkyFollower/receiver/{self._id}/statistic"
 
-        self._mqtt.publish(
-            f"SkyFollower/receiver/{self._id}/statistics",
-            json.dumps(payload),
-            retain=True,
-        )
+        self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
+        for source, tracker in self._rates.items():
+            self._mqtt.publish(
+                f"{base}/messages_{source}_per_second",
+                str(round(tracker.rate(), 2)),
+                retain=True,
+            )
+        self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
+        self._mqtt.publish(f"{base}/rabbitmq_connected", str(rmq_connected), retain=True)
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -519,7 +519,7 @@ class Receiver:
             return
 
         rid = self._id
-        stats_topic = f"SkyFollower/receiver/{rid}/statistics"
+        base = f"SkyFollower/receiver/{rid}/statistic"
         device = {
             "ids": f"SkyFollower_receiver_{rid}",
             "name": f"SkyFollower Receiver {rid}",
@@ -546,8 +546,7 @@ class Receiver:
         for field, desc, icon, state_class, unit in sensors:
             payload: dict = {
                 **availability,
-                "state_topic": stats_topic,
-                "value_template": f"{{{{ value_json.{field} }}}}",
+                "state_topic": f"{base}/{field}",
                 "name": desc,
                 "unique_id": f"SkyFollower_receiver_{rid}_{field}",
                 "object_id": f"SkyFollower_receiver_{rid}_{field}",

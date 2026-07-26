@@ -118,29 +118,32 @@ All topics use the root `SkyFollower`.
 | Topic | Payload | Retained |
 |-------|---------|----------|
 | `SkyFollower/processor/{ID}/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/processor/{ID}/statistics` | JSON stats payload (see fields below) | Yes |
+| `SkyFollower/processor/{ID}/statistic/{name}` | One retained topic per stat (see fields below) | Yes |
 | `SkyFollower/rule/{IDENTIFIER}` | JSON flight snapshot (no positions/velocities) with `rule` key | No |
 
-**Statistics payload fields:**
+**Statistic topic suffixes (`{name}`):**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `started_at` | string | UTC ISO-8601 timestamp of process start |
-| `messages_per_second` | float | Rolling 30-second average message rate |
-| `processing_time_hwm_ms` | float | End-to-end processing time high-water mark since last publish; resets on publish |
-| `rules_engine_hwm_ms` | integer | Rules engine duration high-water mark since last publish; resets on publish |
-| `rabbitmq_input_queue_depth_hwm` | integer | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
-| `local_archive_queue_depth` | integer | Completed flights queued in `completed_flights.db` fallback |
-| `registration_misses_hour` | integer | Aircraft Redis cache misses this hour |
-| `registration_misses_today` | integer | Aircraft Redis cache misses today (UTC) |
-| `aircraft_type_misses_hour` | integer | Aircraft type lookup misses this hour |
-| `aircraft_type_misses_today` | integer | Aircraft type lookup misses today (UTC) |
-| `active_flights` | integer | Flights currently tracked in the active store |
+| Field | Format | Description |
+|-------|--------|-------------|
+| `started_at` | UTC ISO-8601 timestamp | Process start time |
+| `messages_per_second` | Float as string | Rolling 30-second average message rate |
+| `processing_time_hwm_ms` | Float as string | End-to-end processing time high-water mark since last publish; resets on publish |
+| `rules_engine_hwm_ms` | Integer as string | Rules engine duration high-water mark since last publish; resets on publish |
+| `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
+| `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
+| `registration_misses_hour` | Integer as string | Aircraft Redis cache misses this hour |
+| `registration_misses_today` | Integer as string | Aircraft Redis cache misses today (UTC) |
+| `aircraft_type_misses_hour` | Integer as string | Aircraft type lookup misses this hour |
+| `aircraft_type_misses_today` | Integer as string | Aircraft type lookup misses today (UTC) |
+| `active_flights` | Integer as string | Flights currently tracked in the active store |
 
-All statistics are published as a single retained JSON payload every `telemetry_interval_seconds`.
-Home Assistant autodiscovery payloads are published to
-`homeassistant/sensor/SkyFollower_processor_{ID}_{field}/config` on MQTT connect,
-each using `value_template` to extract its field from the shared statistics topic.
+Each stat is published as its own retained topic (not a combined JSON
+payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
+payloads are published to
+`homeassistant/sensor/SkyFollower_processor_{ID}_{field}/config` on MQTT
+connect; each sensor's `state_topic` points directly at its own
+`SkyFollower/processor/{ID}/statistic/{field}` topic — no `value_template`
+needed.
 
 `rabbitmq_input_queue_depth_hwm` is sampled by a dedicated background
 loop capped at once every 10 seconds, independent of how low

@@ -840,23 +840,22 @@ class ArchiveProcessor:
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        stats_topic = "SkyFollower/archive/statistics"
+        base = "SkyFollower/archive/statistic"
         sensors = [
-            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_hour }}"),
-            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, "{{ value_json.flights_archived_today }}"),
-            ("flights_skipped_hour", "Flights Skipped MLAT-Only (Hour)", "mdi:airplane-off", "total_increasing", None, "{{ value_json.flights_skipped_hour }}"),
-            ("flights_skipped_today", "Flights Skipped MLAT-Only (Today)", "mdi:airplane-off", "total_increasing", None, "{{ value_json.flights_skipped_today }}"),
-            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, "{{ value_json.s3_connected }}"),
-            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_queue_depth }}"),
-            ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, "{{ value_json.local_index_queue_depth }}"),
-            ("rabbitmq_archive_queue_depth_hwm", "RabbitMQ Archive Queue Depth HWM", "mdi:tray-full", "measurement", None, "{{ value_json.rabbitmq_archive_queue_depth_hwm }}"),
-            ("started_at", "Archive Started At", "mdi:clock", None, None, "{{ value_json.started_at }}"),
+            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None),
+            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None),
+            ("flights_skipped_hour", "Flights Skipped MLAT-Only (Hour)", "mdi:airplane-off", "total_increasing", None),
+            ("flights_skipped_today", "Flights Skipped MLAT-Only (Today)", "mdi:airplane-off", "total_increasing", None),
+            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None),
+            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
+            ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),
+            ("rabbitmq_archive_queue_depth_hwm", "RabbitMQ Archive Queue Depth HWM", "mdi:tray-full", "measurement", None),
+            ("started_at", "Archive Started At", "mdi:clock", None, None),
         ]
-        for name, desc, icon, state_class, unit, tmpl in sensors:
+        for name, desc, icon, state_class, unit in sensors:
             payload: dict = {
                 **availability,
-                "state_topic": stats_topic,
-                "value_template": tmpl,
+                "state_topic": f"{base}/{name}",
                 "name": desc,
                 "unique_id": f"SkyFollower_archive_{name}",
                 "object_id": f"SkyFollower_archive_{name}",
@@ -899,31 +898,39 @@ class ArchiveProcessor:
         with self._s3_lock:
             s3_connected = self._s3_connected
 
-        payload = {
-            "flights_archived_hour": self._redis_counter(
-                metrics_flights_archived_key("hour")
-            ),
-            "flights_archived_today": self._redis_counter(
-                metrics_flights_archived_key("today")
-            ),
-            "flights_skipped_hour": self._redis_counter(
-                metrics_flights_skipped_key("hour")
-            ),
-            "flights_skipped_today": self._redis_counter(
-                metrics_flights_skipped_key("today")
-            ),
-            "s3_connected": s3_connected,
-            "local_queue_depth": self._fallback.depth(),
-            "local_index_queue_depth": self._index_fallback.depth(),
-            "rabbitmq_archive_queue_depth_hwm": self._rmq_queue_depth_hwm.value_and_reset(),
-            "started_at": self._started_at,
-        }
+        base = "SkyFollower/archive/statistic"
 
         self._mqtt.publish(
-            "SkyFollower/archive/statistics",
-            json.dumps(payload),
+            f"{base}/flights_archived_hour",
+            str(self._redis_counter(metrics_flights_archived_key("hour"))),
             retain=True,
         )
+        self._mqtt.publish(
+            f"{base}/flights_archived_today",
+            str(self._redis_counter(metrics_flights_archived_key("today"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/flights_skipped_hour",
+            str(self._redis_counter(metrics_flights_skipped_key("hour"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/flights_skipped_today",
+            str(self._redis_counter(metrics_flights_skipped_key("today"))),
+            retain=True,
+        )
+        self._mqtt.publish(f"{base}/s3_connected", str(s3_connected), retain=True)
+        self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
+        self._mqtt.publish(
+            f"{base}/local_index_queue_depth", str(self._index_fallback.depth()), retain=True
+        )
+        self._mqtt.publish(
+            f"{base}/rabbitmq_archive_queue_depth_hwm",
+            str(self._rmq_queue_depth_hwm.value_and_reset()),
+            retain=True,
+        )
+        self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
 
     def _redis_counter(self, key: str) -> int:
         try:

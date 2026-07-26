@@ -549,11 +549,11 @@ class TestReceiverIdAndTopics:
 
 
 # ---------------------------------------------------------------------------
-# Telemetry — single JSON payload
+# Telemetry — one retained topic per stat
 # ---------------------------------------------------------------------------
 
 class TestTelemetryPayload:
-    """Tests for _publish_telemetry() single-JSON-payload behaviour."""
+    """Tests for _publish_telemetry()'s one-retained-topic-per-stat behaviour."""
 
     def _make_receiver(self, receiver_id: int = 0):
         import tempfile
@@ -570,22 +570,14 @@ class TestTelemetryPayload:
         }
         return Receiver(cfg, receiver_id)
 
-    def test_publish_telemetry_single_publish_call(self):
-        r = self._make_receiver(receiver_id=1)
-        mock_mqtt = MagicMock()
-        r._mqtt = mock_mqtt
-        r._mqtt_connected = True
-        r._publish_telemetry()
-        assert mock_mqtt.publish.call_count == 1
-
-    def test_publish_telemetry_correct_topic(self):
+    def test_publish_telemetry_correct_base_topic(self):
         r = self._make_receiver(receiver_id=2)
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        topic = mock_mqtt.publish.call_args[0][0]
-        assert topic == "SkyFollower/receiver/2/statistics"
+        topics = [c.args[0] for c in mock_mqtt.publish.call_args_list]
+        assert all(t.startswith("SkyFollower/receiver/2/statistic/") for t in topics)
 
     def test_publish_telemetry_retained(self):
         r = self._make_receiver()
@@ -593,8 +585,8 @@ class TestTelemetryPayload:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        kwargs = mock_mqtt.publish.call_args[1]
-        assert kwargs.get("retain") is True
+        for call in mock_mqtt.publish.call_args_list:
+            assert call.kwargs.get("retain") is True
 
     def test_publish_telemetry_payload_fields(self):
         r = self._make_receiver()
@@ -602,24 +594,24 @@ class TestTelemetryPayload:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        import json
-        payload = json.loads(mock_mqtt.publish.call_args[0][1])
-        assert "messages_1090_per_second" in payload
-        assert "messages_978_per_second" in payload
-        assert "messages_MLAT_per_second" in payload
-        assert "local_queue_depth" in payload
-        assert "rabbitmq_connected" in payload
-        assert "started_at" in payload
+        base = "SkyFollower/receiver/0/statistic"
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert f"{base}/messages_1090_per_second" in topics
+        assert f"{base}/messages_978_per_second" in topics
+        assert f"{base}/messages_MLAT_per_second" in topics
+        assert f"{base}/local_queue_depth" in topics
+        assert f"{base}/rabbitmq_connected" in topics
+        assert f"{base}/started_at" in topics
 
-    def test_rabbitmq_connected_is_boolean(self):
+    def test_rabbitmq_connected_value(self):
         r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
+        r._rmq_connected = True
         r._publish_telemetry()
-        import json
-        payload = json.loads(mock_mqtt.publish.call_args[0][1])
-        assert isinstance(payload["rabbitmq_connected"], bool)
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/receiver/0/statistic/rabbitmq_connected"] == "True"
 
     def test_no_publish_when_mqtt_not_connected(self):
         r = self._make_receiver()
@@ -629,7 +621,7 @@ class TestTelemetryPayload:
         r._publish_telemetry()
         mock_mqtt.publish.assert_not_called()
 
-    def test_ha_autodiscovery_uses_value_template(self):
+    def test_ha_autodiscovery_uses_direct_state_topic(self):
         r = self._make_receiver(receiver_id=0)
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
@@ -637,7 +629,9 @@ class TestTelemetryPayload:
         r._publish_ha_autodiscovery()
         import json
         for call in mock_mqtt.publish.call_args_list:
-            if call[0][0].startswith("homeassistant/"):
-                cfg_payload = json.loads(call[0][1])
-                assert "value_template" in cfg_payload
-                assert cfg_payload["state_topic"] == "SkyFollower/receiver/0/statistics"
+            if call.args[0].startswith("homeassistant/"):
+                cfg_payload = json.loads(call.args[1])
+                assert "value_template" not in cfg_payload
+                assert cfg_payload["state_topic"].startswith(
+                    "SkyFollower/receiver/0/statistic/"
+                )

@@ -1235,6 +1235,8 @@ class TestRmqQueueDepthSamplerLoop:
 # ---------------------------------------------------------------------------
 
 class TestPublishTelemetryRmqQueueDepthHwm:
+    _TOPIC = "SkyFollower/archive/statistic/rabbitmq_archive_queue_depth_hwm"
+
     def test_field_present_in_payload(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, _ = _make_processor(tmp_dir)
@@ -1244,8 +1246,8 @@ class TestPublishTelemetryRmqQueueDepthHwm:
 
             processor._publish_telemetry()
 
-            payload = json.loads(mock_mqtt.publish.call_args[0][1])
-            assert "rabbitmq_archive_queue_depth_hwm" in payload
+            topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+            assert self._TOPIC in topics
 
     def test_publishes_recorded_max_then_resets(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1258,9 +1260,10 @@ class TestPublishTelemetryRmqQueueDepthHwm:
             processor._rmq_queue_depth_hwm.record(8)
 
             processor._publish_telemetry()
-            first_payload = json.loads(mock_mqtt.publish.call_args[0][1])
-            assert first_payload["rabbitmq_archive_queue_depth_hwm"] == 15
+            first_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert first_calls[self._TOPIC] == "15"
 
+            mock_mqtt.reset_mock()
             processor._publish_telemetry()
-            second_payload = json.loads(mock_mqtt.publish.call_args[0][1])
-            assert second_payload["rabbitmq_archive_queue_depth_hwm"] == -1
+            second_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert second_calls[self._TOPIC] == "-1"

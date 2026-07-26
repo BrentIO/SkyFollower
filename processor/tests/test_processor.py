@@ -955,33 +955,25 @@ class TestProcessorEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# Telemetry — single JSON payload
+# Telemetry — one retained topic per stat
 # ---------------------------------------------------------------------------
 
 class TestTelemetryPayload:
-    """Tests for _publish_telemetry() single-JSON-payload behaviour."""
+    """Tests for _publish_telemetry()'s one-retained-topic-per-stat behaviour."""
 
     def _make_processor(self) -> Processor:
         with patch("processor.main.redis_lib.Redis"):
             p = Processor(_minimal_config(), processor_id=0)
         return p
 
-    def test_single_publish_call(self):
+    def test_correct_base_topic(self):
         p = self._make_processor()
         mock_mqtt = MagicMock()
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_telemetry()
-        assert mock_mqtt.publish.call_count == 1
-
-    def test_correct_topic(self):
-        p = self._make_processor()
-        mock_mqtt = MagicMock()
-        p._mqtt = mock_mqtt
-        p._mqtt_connected = True
-        p._publish_telemetry()
-        topic = mock_mqtt.publish.call_args[0][0]
-        assert topic == "SkyFollower/processor/0/statistics"
+        topics = [c.args[0] for c in mock_mqtt.publish.call_args_list]
+        assert all(t.startswith("SkyFollower/processor/0/statistic/") for t in topics)
 
     def test_retained(self):
         p = self._make_processor()
@@ -989,7 +981,8 @@ class TestTelemetryPayload:
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_telemetry()
-        assert mock_mqtt.publish.call_args[1].get("retain") is True
+        for call in mock_mqtt.publish.call_args_list:
+            assert call.kwargs.get("retain") is True
 
     def test_payload_fields(self):
         p = self._make_processor()
@@ -997,7 +990,8 @@ class TestTelemetryPayload:
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_telemetry()
-        payload = json.loads(mock_mqtt.publish.call_args[0][1])
+        base = "SkyFollower/processor/0/statistic"
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         expected = {
             "started_at", "messages_per_second", "processing_time_hwm_ms",
             "rules_engine_hwm_ms", "rabbitmq_input_queue_depth_hwm",
@@ -1005,7 +999,7 @@ class TestTelemetryPayload:
             "registration_misses_hour", "registration_misses_today",
             "aircraft_type_misses_hour", "aircraft_type_misses_today",
         }
-        assert expected.issubset(payload.keys())
+        assert {f"{base}/{name}" for name in expected}.issubset(topics)
 
     def test_processing_time_hwm_not_avg(self):
         p = self._make_processor()
@@ -1017,8 +1011,8 @@ class TestTelemetryPayload:
         p._processing_time.record(50.0)
         p._processing_time.record_hwm(50.0)
         p._publish_telemetry()
-        payload = json.loads(mock_mqtt.publish.call_args[0][1])
-        assert payload["processing_time_hwm_ms"] == 50
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/processor/0/statistic/processing_time_hwm_ms"] == "50.0"
 
     def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
         p = self._make_processor()
@@ -1028,14 +1022,16 @@ class TestTelemetryPayload:
         p._rmq_queue_depth_hwm.record(3)
         p._rmq_queue_depth_hwm.record(15)
         p._rmq_queue_depth_hwm.record(8)
+        topic = "SkyFollower/processor/0/statistic/rabbitmq_input_queue_depth_hwm"
 
         p._publish_telemetry()
-        first_payload = json.loads(mock_mqtt.publish.call_args[0][1])
-        assert first_payload["rabbitmq_input_queue_depth_hwm"] == 15
+        first_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert first_calls[topic] == "15"
 
+        mock_mqtt.reset_mock()
         p._publish_telemetry()
-        second_payload = json.loads(mock_mqtt.publish.call_args[0][1])
-        assert second_payload["rabbitmq_input_queue_depth_hwm"] == -1
+        second_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert second_calls[topic] == "-1"
 
     def test_no_publish_when_mqtt_not_connected(self):
         p = self._make_processor()
@@ -1045,18 +1041,18 @@ class TestTelemetryPayload:
         p._publish_telemetry()
         mock_mqtt.publish.assert_not_called()
 
-    def test_ha_autodiscovery_uses_value_template(self):
+    def test_ha_autodiscovery_uses_direct_state_topic(self):
         p = self._make_processor()
         mock_mqtt = MagicMock()
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
         p._publish_ha_autodiscovery()
-        stats_topic = "SkyFollower/processor/0/statistics"
+        base = "SkyFollower/processor/0/statistic/"
         for call in mock_mqtt.publish.call_args_list:
-            if call[0][0].startswith("homeassistant/"):
-                cfg = json.loads(call[0][1])
-                assert "value_template" in cfg
-                assert cfg["state_topic"] == stats_topic
+            if call.args[0].startswith("homeassistant/"):
+                cfg = json.loads(call.args[1])
+                assert "value_template" not in cfg
+                assert cfg["state_topic"].startswith(base)
 
     def test_ha_autodiscovery_no_avg_processing_time(self):
         p = self._make_processor()

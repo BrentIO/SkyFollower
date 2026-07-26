@@ -4,8 +4,12 @@ info:
   version: '9999.99.99'
   description: >
     ADS-B aircraft tracking and alerting system.
-    Statistic values within JSON payloads use their native types (number,
-    boolean, string). All timestamps are UTC ISO-8601.
+    Every component publishes one retained MQTT topic per statistic
+    (SkyFollower/{component}/statistic/{name}) as a plain-text value —
+    booleans as "True"/"False", numbers as their string representation —
+    rather than a single combined JSON payload; only structured payloads
+    like the rule match notification use application/json. All timestamps
+    are UTC ISO-8601.
 
 servers:
   mqtt:
@@ -37,18 +41,84 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  receiverStatistics:
-    address: 'SkyFollower/receiver/{receiver_id}/statistics'
+  # Rather than a single combined-JSON statistics payload, the receiver
+  # publishes one retained topic per stat, matching how archive-compaction
+  # and every data runner already publish (see #542) -- each stat gets its
+  # own channel/message/schema rather than being folded into one object.
+
+  receiverMessages1090PerSecond:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_1090_per_second'
     description: >
-      All receiver telemetry as a single retained JSON payload, published
-      every telemetry_interval_seconds. Home Assistant sensors extract
-      individual fields via value_template.
+      Average 1090 MHz message rate since last report. Published every
+      telemetry_interval_seconds, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
     messages:
-      ReceiverStatisticsMessage:
-        $ref: '#/components/messages/ReceiverStatisticsMessage'
+      ReceiverMessages1090PerSecondMessage:
+        $ref: '#/components/messages/ReceiverMessages1090PerSecondMessage'
+
+  receiverMessages978PerSecond:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_978_per_second'
+    description: >
+      Average 978 MHz UAT message rate since last report. Only published if
+      a 978 source is configured. Published every telemetry_interval_seconds,
+      retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverMessages978PerSecondMessage:
+        $ref: '#/components/messages/ReceiverMessages978PerSecondMessage'
+
+  receiverMessagesMlatPerSecond:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_MLAT_per_second'
+    description: >
+      Average MLAT message rate since last report. Only published if an
+      MLAT source is configured. Published every telemetry_interval_seconds,
+      retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverMessagesMlatPerSecondMessage:
+        $ref: '#/components/messages/ReceiverMessagesMlatPerSecondMessage'
+
+  receiverLocalQueueDepth:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
+    description: >
+      Number of messages queued in the local SQLite fallback (queue.db).
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverLocalQueueDepthMessage:
+        $ref: '#/components/messages/ReceiverLocalQueueDepthMessage'
+
+  receiverRabbitmqConnected:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/rabbitmq_connected'
+    description: >
+      Whether the receiver currently has an active RabbitMQ connection.
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverRabbitmqConnectedMessage:
+        $ref: '#/components/messages/ReceiverRabbitmqConnectedMessage'
+
+  receiverStartedAt:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/started_at'
+    description: >
+      UTC ISO-8601 timestamp of process start; never changes after startup.
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverStartedAtMessage:
+        $ref: '#/components/messages/ReceiverStartedAtMessage'
 
   # ── Processor ─────────────────────────────────────────────────────────────
 
@@ -64,17 +134,142 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  processorStatistics:
-    address: 'SkyFollower/processor/{processor_id}/statistics'
+  # One retained topic per stat (see #542), matching the receiver above.
+
+  processorMessagesPerSecond:
+    address: 'SkyFollower/processor/{processor_id}/statistic/messages_per_second'
     description: >
-      All processor telemetry as a single retained JSON payload, published
-      every telemetry_interval_seconds.
+      Average message processing rate since last report. Published every
+      telemetry_interval_seconds, retained.
     parameters:
       processor_id:
         $ref: '#/components/parameters/ProcessorId'
     messages:
-      ProcessorStatisticsMessage:
-        $ref: '#/components/messages/ProcessorStatisticsMessage'
+      ProcessorMessagesPerSecondMessage:
+        $ref: '#/components/messages/ProcessorMessagesPerSecondMessage'
+
+  processorProcessingTimeHwmMs:
+    address: 'SkyFollower/processor/{processor_id}/statistic/processing_time_hwm_ms'
+    description: >
+      End-to-end message processing time high-water mark since last publish;
+      resets on publish. Published every telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorProcessingTimeHwmMsMessage:
+        $ref: '#/components/messages/ProcessorProcessingTimeHwmMsMessage'
+
+  processorRulesEngineHwmMs:
+    address: 'SkyFollower/processor/{processor_id}/statistic/rules_engine_hwm_ms'
+    description: >
+      Rules engine duration high-water mark since last publish; resets on
+      publish. Published every telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorRulesEngineHwmMsMessage:
+        $ref: '#/components/messages/ProcessorRulesEngineHwmMsMessage'
+
+  processorRabbitmqInputQueueDepthHwm:
+    address: 'SkyFollower/processor/{processor_id}/statistic/rabbitmq_input_queue_depth_hwm'
+    description: >
+      High-water mark of this processor's RabbitMQ input queue depth since
+      last publish, sampled at most once every 10 seconds; resets on
+      publish. -1 if no valid sample landed this window. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorRabbitmqInputQueueDepthHwmMessage:
+        $ref: '#/components/messages/ProcessorRabbitmqInputQueueDepthHwmMessage'
+
+  processorLocalArchiveQueueDepth:
+    address: 'SkyFollower/processor/{processor_id}/statistic/local_archive_queue_depth'
+    description: >
+      Number of completed flights queued in the local SQLite fallback
+      (completed_flights.db). Published every telemetry_interval_seconds,
+      retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorLocalArchiveQueueDepthMessage:
+        $ref: '#/components/messages/ProcessorLocalArchiveQueueDepthMessage'
+
+  processorRegistrationMissesHour:
+    address: 'SkyFollower/processor/{processor_id}/statistic/registration_misses_hour'
+    description: >
+      Aircraft Redis cache misses this hour. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorRegistrationMissesHourMessage:
+        $ref: '#/components/messages/ProcessorRegistrationMissesHourMessage'
+
+  processorRegistrationMissesToday:
+    address: 'SkyFollower/processor/{processor_id}/statistic/registration_misses_today'
+    description: >
+      Aircraft Redis cache misses today (UTC). Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorRegistrationMissesTodayMessage:
+        $ref: '#/components/messages/ProcessorRegistrationMissesTodayMessage'
+
+  processorAircraftTypeMissesHour:
+    address: 'SkyFollower/processor/{processor_id}/statistic/aircraft_type_misses_hour'
+    description: >
+      Aircraft type lookup misses this hour. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorAircraftTypeMissesHourMessage:
+        $ref: '#/components/messages/ProcessorAircraftTypeMissesHourMessage'
+
+  processorAircraftTypeMissesToday:
+    address: 'SkyFollower/processor/{processor_id}/statistic/aircraft_type_misses_today'
+    description: >
+      Aircraft type lookup misses today (UTC). Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorAircraftTypeMissesTodayMessage:
+        $ref: '#/components/messages/ProcessorAircraftTypeMissesTodayMessage'
+
+  processorActiveFlights:
+    address: 'SkyFollower/processor/{processor_id}/statistic/active_flights'
+    description: >
+      Number of flights currently tracked in the in-memory SQLite store.
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorActiveFlightsMessage:
+        $ref: '#/components/messages/ProcessorActiveFlightsMessage'
+
+  processorStartedAt:
+    address: 'SkyFollower/processor/{processor_id}/statistic/started_at'
+    description: >
+      UTC ISO-8601 timestamp of process start; never changes after startup.
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      processor_id:
+        $ref: '#/components/parameters/ProcessorId'
+    messages:
+      ProcessorStartedAtMessage:
+        $ref: '#/components/messages/ProcessorStartedAtMessage'
 
   # ── Archive processor ─────────────────────────────────────────────────────
 
@@ -87,14 +282,92 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  archiveStatistics:
-    address: SkyFollower/archive/statistics
+  # One retained topic per stat (see #542), matching the receiver/processor
+  # above.
+
+  archiveFlightsArchivedHour:
+    address: SkyFollower/archive/statistic/flights_archived_hour
     description: >
-      All archive processor telemetry as a single retained JSON payload,
-      published every telemetry_interval_seconds.
+      Flights successfully written to S3 this hour. Published every
+      telemetry_interval_seconds, retained.
     messages:
-      ArchiveStatisticsMessage:
-        $ref: '#/components/messages/ArchiveStatisticsMessage'
+      ArchiveFlightsArchivedHourMessage:
+        $ref: '#/components/messages/ArchiveFlightsArchivedHourMessage'
+
+  archiveFlightsArchivedToday:
+    address: SkyFollower/archive/statistic/flights_archived_today
+    description: >
+      Flights successfully written to S3 today (UTC). Published every
+      telemetry_interval_seconds, retained.
+    messages:
+      ArchiveFlightsArchivedTodayMessage:
+        $ref: '#/components/messages/ArchiveFlightsArchivedTodayMessage'
+
+  archiveFlightsSkippedHour:
+    address: SkyFollower/archive/statistic/flights_skipped_hour
+    description: >
+      MLAT-only flights dropped instead of archived this hour. Published
+      every telemetry_interval_seconds, retained.
+    messages:
+      ArchiveFlightsSkippedHourMessage:
+        $ref: '#/components/messages/ArchiveFlightsSkippedHourMessage'
+
+  archiveFlightsSkippedToday:
+    address: SkyFollower/archive/statistic/flights_skipped_today
+    description: >
+      MLAT-only flights dropped instead of archived today (UTC). Published
+      every telemetry_interval_seconds, retained.
+    messages:
+      ArchiveFlightsSkippedTodayMessage:
+        $ref: '#/components/messages/ArchiveFlightsSkippedTodayMessage'
+
+  archiveS3Connected:
+    address: SkyFollower/archive/statistic/s3_connected
+    description: >
+      Whether the last S3 write attempt succeeded. Published every
+      telemetry_interval_seconds, retained.
+    messages:
+      ArchiveS3ConnectedMessage:
+        $ref: '#/components/messages/ArchiveS3ConnectedMessage'
+
+  archiveLocalQueueDepth:
+    address: SkyFollower/archive/statistic/local_queue_depth
+    description: >
+      Number of completed flights queued in the local SQLite fallback
+      (s3.db). Published every telemetry_interval_seconds, retained.
+    messages:
+      ArchiveLocalQueueDepthMessage:
+        $ref: '#/components/messages/ArchiveLocalQueueDepthMessage'
+
+  archiveLocalIndexQueueDepth:
+    address: SkyFollower/archive/statistic/local_index_queue_depth
+    description: >
+      Number of Parquet index rows queued for retry (index_queue table in
+      s3.db) after their flight object wrote successfully but the index
+      write failed. Published every telemetry_interval_seconds, retained.
+    messages:
+      ArchiveLocalIndexQueueDepthMessage:
+        $ref: '#/components/messages/ArchiveLocalIndexQueueDepthMessage'
+
+  archiveRabbitmqArchiveQueueDepthHwm:
+    address: SkyFollower/archive/statistic/rabbitmq_archive_queue_depth_hwm
+    description: >
+      High-water mark of the RabbitMQ 'archive' queue's depth since last
+      publish, sampled at most once every 10 seconds; resets on publish. -1
+      if no valid sample landed this window. Published every
+      telemetry_interval_seconds, retained.
+    messages:
+      ArchiveRabbitmqArchiveQueueDepthHwmMessage:
+        $ref: '#/components/messages/ArchiveRabbitmqArchiveQueueDepthHwmMessage'
+
+  archiveStartedAt:
+    address: SkyFollower/archive/statistic/started_at
+    description: >
+      UTC ISO-8601 timestamp of process start; never changes after startup.
+      Published every telemetry_interval_seconds, retained.
+    messages:
+      ArchiveStartedAtMessage:
+        $ref: '#/components/messages/ArchiveStartedAtMessage'
 
   # ── Archive compaction ────────────────────────────────────────────────────
   # Unlike receiver/processor/archive-processor's single combined-JSON
@@ -157,17 +430,48 @@ channels:
 
   # ── Data runners ──────────────────────────────────────────────────────────
 
-  runnerStatistics:
-    address: 'SkyFollower/runner/{runner_name}/statistics'
+  # A data runner publishes one retained topic per stat at the end of its
+  # run, not a single combined JSON payload -- confirmed in
+  # ourairports/main.py's publish_completion_stats(). These three
+  # (records_imported, last_run_at, last_run_status) are the common
+  # baseline every runner publishes; some runners (e.g. mictronics) publish
+  # additional stats beyond this set.
+
+  runnerRecordsImported:
+    address: 'SkyFollower/runner/{runner_name}/statistic/records_imported'
     description: >
-      Completion statistics published by a data runner after each run.
-      Not retained — published once on completion.
+      Number of records written to Redis during this run. Published once
+      per run, retained.
     parameters:
       runner_name:
         $ref: '#/components/parameters/RunnerName'
     messages:
-      RunnerStatisticsMessage:
-        $ref: '#/components/messages/RunnerStatisticsMessage'
+      RunnerRecordsImportedMessage:
+        $ref: '#/components/messages/RunnerRecordsImportedMessage'
+
+  runnerLastRunAt:
+    address: 'SkyFollower/runner/{runner_name}/statistic/last_run_at'
+    description: >
+      UTC ISO-8601 timestamp when the run completed. Published once per
+      run, retained.
+    parameters:
+      runner_name:
+        $ref: '#/components/parameters/RunnerName'
+    messages:
+      RunnerLastRunAtMessage:
+        $ref: '#/components/messages/RunnerLastRunAtMessage'
+
+  runnerLastRunStatus:
+    address: 'SkyFollower/runner/{runner_name}/statistic/last_run_status'
+    description: >
+      Outcome of the run (success or failure). Published once per run,
+      retained.
+    parameters:
+      runner_name:
+        $ref: '#/components/parameters/RunnerName'
+    messages:
+      RunnerLastRunStatusMessage:
+        $ref: '#/components/messages/RunnerLastRunStatusMessage'
 
 # ---------------------------------------------------------------------------
 # Operations
@@ -181,11 +485,41 @@ operations:
       $ref: '#/channels/receiverStatus'
     summary: Receiver publishes its online / offline status
 
-  publishReceiverStatistics:
+  publishReceiverMessages1090PerSecond:
     action: send
     channel:
-      $ref: '#/channels/receiverStatistics'
-    summary: Receiver publishes all telemetry statistics as a JSON payload
+      $ref: '#/channels/receiverMessages1090PerSecond'
+    summary: Receiver publishes the 1090 MHz message rate
+
+  publishReceiverMessages978PerSecond:
+    action: send
+    channel:
+      $ref: '#/channels/receiverMessages978PerSecond'
+    summary: Receiver publishes the 978 MHz UAT message rate
+
+  publishReceiverMessagesMlatPerSecond:
+    action: send
+    channel:
+      $ref: '#/channels/receiverMessagesMlatPerSecond'
+    summary: Receiver publishes the MLAT message rate
+
+  publishReceiverLocalQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/receiverLocalQueueDepth'
+    summary: Receiver publishes its local fallback queue depth
+
+  publishReceiverRabbitmqConnected:
+    action: send
+    channel:
+      $ref: '#/channels/receiverRabbitmqConnected'
+    summary: Receiver publishes its RabbitMQ connectivity state
+
+  publishReceiverStartedAt:
+    action: send
+    channel:
+      $ref: '#/channels/receiverStartedAt'
+    summary: Receiver publishes its process start time
 
   publishProcessorStatus:
     action: send
@@ -193,11 +527,71 @@ operations:
       $ref: '#/channels/processorStatus'
     summary: Processor publishes its online / offline status
 
-  publishProcessorStatistics:
+  publishProcessorMessagesPerSecond:
     action: send
     channel:
-      $ref: '#/channels/processorStatistics'
-    summary: Processor publishes all telemetry statistics as a JSON payload
+      $ref: '#/channels/processorMessagesPerSecond'
+    summary: Processor publishes its message processing rate
+
+  publishProcessorProcessingTimeHwmMs:
+    action: send
+    channel:
+      $ref: '#/channels/processorProcessingTimeHwmMs'
+    summary: Processor publishes its processing time high-water mark
+
+  publishProcessorRulesEngineHwmMs:
+    action: send
+    channel:
+      $ref: '#/channels/processorRulesEngineHwmMs'
+    summary: Processor publishes its rules engine duration high-water mark
+
+  publishProcessorRabbitmqInputQueueDepthHwm:
+    action: send
+    channel:
+      $ref: '#/channels/processorRabbitmqInputQueueDepthHwm'
+    summary: Processor publishes its RabbitMQ input queue depth high-water mark
+
+  publishProcessorLocalArchiveQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/processorLocalArchiveQueueDepth'
+    summary: Processor publishes its local archive fallback queue depth
+
+  publishProcessorRegistrationMissesHour:
+    action: send
+    channel:
+      $ref: '#/channels/processorRegistrationMissesHour'
+    summary: Processor publishes hourly aircraft registration cache misses
+
+  publishProcessorRegistrationMissesToday:
+    action: send
+    channel:
+      $ref: '#/channels/processorRegistrationMissesToday'
+    summary: Processor publishes today's aircraft registration cache misses
+
+  publishProcessorAircraftTypeMissesHour:
+    action: send
+    channel:
+      $ref: '#/channels/processorAircraftTypeMissesHour'
+    summary: Processor publishes hourly aircraft type lookup misses
+
+  publishProcessorAircraftTypeMissesToday:
+    action: send
+    channel:
+      $ref: '#/channels/processorAircraftTypeMissesToday'
+    summary: Processor publishes today's aircraft type lookup misses
+
+  publishProcessorActiveFlights:
+    action: send
+    channel:
+      $ref: '#/channels/processorActiveFlights'
+    summary: Processor publishes its count of currently tracked flights
+
+  publishProcessorStartedAt:
+    action: send
+    channel:
+      $ref: '#/channels/processorStartedAt'
+    summary: Processor publishes its process start time
 
   publishArchiveStatus:
     action: send
@@ -205,11 +599,59 @@ operations:
       $ref: '#/channels/archiveStatus'
     summary: Archive processor publishes its online / offline status
 
-  publishArchiveStatistics:
+  publishArchiveFlightsArchivedHour:
     action: send
     channel:
-      $ref: '#/channels/archiveStatistics'
-    summary: Archive processor publishes all telemetry statistics as a JSON payload
+      $ref: '#/channels/archiveFlightsArchivedHour'
+    summary: Archive processor publishes hourly flights archived
+
+  publishArchiveFlightsArchivedToday:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFlightsArchivedToday'
+    summary: Archive processor publishes today's flights archived
+
+  publishArchiveFlightsSkippedHour:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFlightsSkippedHour'
+    summary: Archive processor publishes hourly MLAT-only flights skipped
+
+  publishArchiveFlightsSkippedToday:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFlightsSkippedToday'
+    summary: Archive processor publishes today's MLAT-only flights skipped
+
+  publishArchiveS3Connected:
+    action: send
+    channel:
+      $ref: '#/channels/archiveS3Connected'
+    summary: Archive processor publishes its S3 connectivity state
+
+  publishArchiveLocalQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/archiveLocalQueueDepth'
+    summary: Archive processor publishes its local fallback queue depth
+
+  publishArchiveLocalIndexQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/archiveLocalIndexQueueDepth'
+    summary: Archive processor publishes its local index-retry queue depth
+
+  publishArchiveRabbitmqArchiveQueueDepthHwm:
+    action: send
+    channel:
+      $ref: '#/channels/archiveRabbitmqArchiveQueueDepthHwm'
+    summary: Archive processor publishes its RabbitMQ archive queue depth high-water mark
+
+  publishArchiveStartedAt:
+    action: send
+    channel:
+      $ref: '#/channels/archiveStartedAt'
+    summary: Archive processor publishes its process start time
 
   publishArchiveCompactionFilesCompacted:
     action: send
@@ -241,11 +683,23 @@ operations:
       $ref: '#/channels/ruleNotification'
     summary: Processor publishes a rule match notification
 
-  publishRunnerStatistics:
+  publishRunnerRecordsImported:
     action: send
     channel:
-      $ref: '#/channels/runnerStatistics'
-    summary: Data runner publishes completion statistics
+      $ref: '#/channels/runnerRecordsImported'
+    summary: Data runner publishes its imported record count
+
+  publishRunnerLastRunAt:
+    action: send
+    channel:
+      $ref: '#/channels/runnerLastRunAt'
+    summary: Data runner publishes its completion timestamp
+
+  publishRunnerLastRunStatus:
+    action: send
+    channel:
+      $ref: '#/channels/runnerLastRunStatus'
+    summary: Data runner publishes its run outcome
 
 components:
 
@@ -263,29 +717,213 @@ components:
       payload:
         $ref: '#/components/schemas/StatusPayload'
 
-    ReceiverStatisticsMessage:
-      name: ReceiverStatisticsMessage
-      title: Receiver statistics
-      summary: All receiver telemetry in one retained JSON payload
-      contentType: application/json
+    ReceiverMessages1090PerSecondMessage:
+      name: ReceiverMessages1090PerSecondMessage
+      title: Receiver 1090 MHz message rate
+      summary: Average 1090 MHz message rate since last report
+      contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ReceiverStatistics'
+        $ref: '#/components/schemas/ReceiverMessages1090PerSecond'
 
-    ProcessorStatisticsMessage:
-      name: ProcessorStatisticsMessage
-      title: Processor statistics
-      summary: All processor telemetry in one retained JSON payload
-      contentType: application/json
+    ReceiverMessages978PerSecondMessage:
+      name: ReceiverMessages978PerSecondMessage
+      title: Receiver 978 MHz UAT message rate
+      summary: Average 978 MHz UAT message rate since last report
+      contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ProcessorStatistics'
+        $ref: '#/components/schemas/ReceiverMessages978PerSecond'
 
-    ArchiveStatisticsMessage:
-      name: ArchiveStatisticsMessage
-      title: Archive processor statistics
-      summary: All archive processor telemetry in one retained JSON payload
-      contentType: application/json
+    ReceiverMessagesMlatPerSecondMessage:
+      name: ReceiverMessagesMlatPerSecondMessage
+      title: Receiver MLAT message rate
+      summary: Average MLAT message rate since last report
+      contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ArchiveStatistics'
+        $ref: '#/components/schemas/ReceiverMessagesMlatPerSecond'
+
+    ReceiverLocalQueueDepthMessage:
+      name: ReceiverLocalQueueDepthMessage
+      title: Receiver local queue depth
+      summary: Messages queued in the local SQLite fallback (queue.db)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverLocalQueueDepth'
+
+    ReceiverRabbitmqConnectedMessage:
+      name: ReceiverRabbitmqConnectedMessage
+      title: Receiver RabbitMQ connectivity
+      summary: Whether the receiver has an active RabbitMQ connection
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverRabbitmqConnected'
+
+    ReceiverStartedAtMessage:
+      name: ReceiverStartedAtMessage
+      title: Receiver process start time
+      summary: UTC ISO-8601 timestamp of process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverStartedAt'
+
+    ProcessorMessagesPerSecondMessage:
+      name: ProcessorMessagesPerSecondMessage
+      title: Processor message rate
+      summary: Average message processing rate since last report
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorMessagesPerSecond'
+
+    ProcessorProcessingTimeHwmMsMessage:
+      name: ProcessorProcessingTimeHwmMsMessage
+      title: Processor processing time high-water mark
+      summary: End-to-end message processing time high-water mark since last publish
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorProcessingTimeHwmMs'
+
+    ProcessorRulesEngineHwmMsMessage:
+      name: ProcessorRulesEngineHwmMsMessage
+      title: Processor rules engine duration high-water mark
+      summary: Rules engine duration high-water mark since last publish
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorRulesEngineHwmMs'
+
+    ProcessorRabbitmqInputQueueDepthHwmMessage:
+      name: ProcessorRabbitmqInputQueueDepthHwmMessage
+      title: Processor RabbitMQ input queue depth high-water mark
+      summary: High-water mark of this processor's RabbitMQ input queue depth
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorRabbitmqInputQueueDepthHwm'
+
+    ProcessorLocalArchiveQueueDepthMessage:
+      name: ProcessorLocalArchiveQueueDepthMessage
+      title: Processor local archive queue depth
+      summary: Completed flights queued in the local SQLite fallback (completed_flights.db)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorLocalArchiveQueueDepth'
+
+    ProcessorRegistrationMissesHourMessage:
+      name: ProcessorRegistrationMissesHourMessage
+      title: Processor registration misses this hour
+      summary: Aircraft Redis cache misses this hour
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorRegistrationMissesHour'
+
+    ProcessorRegistrationMissesTodayMessage:
+      name: ProcessorRegistrationMissesTodayMessage
+      title: Processor registration misses today
+      summary: Aircraft Redis cache misses today (UTC)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorRegistrationMissesToday'
+
+    ProcessorAircraftTypeMissesHourMessage:
+      name: ProcessorAircraftTypeMissesHourMessage
+      title: Processor aircraft type misses this hour
+      summary: Aircraft type lookup misses this hour
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorAircraftTypeMissesHour'
+
+    ProcessorAircraftTypeMissesTodayMessage:
+      name: ProcessorAircraftTypeMissesTodayMessage
+      title: Processor aircraft type misses today
+      summary: Aircraft type lookup misses today (UTC)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorAircraftTypeMissesToday'
+
+    ProcessorActiveFlightsMessage:
+      name: ProcessorActiveFlightsMessage
+      title: Processor active flights
+      summary: Flights currently tracked in the in-memory SQLite store
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorActiveFlights'
+
+    ProcessorStartedAtMessage:
+      name: ProcessorStartedAtMessage
+      title: Processor process start time
+      summary: UTC ISO-8601 timestamp of process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ProcessorStartedAt'
+
+    ArchiveFlightsArchivedHourMessage:
+      name: ArchiveFlightsArchivedHourMessage
+      title: Archive flights archived this hour
+      summary: Flights successfully written to S3 this hour
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsArchivedHour'
+
+    ArchiveFlightsArchivedTodayMessage:
+      name: ArchiveFlightsArchivedTodayMessage
+      title: Archive flights archived today
+      summary: Flights successfully written to S3 today (UTC)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsArchivedToday'
+
+    ArchiveFlightsSkippedHourMessage:
+      name: ArchiveFlightsSkippedHourMessage
+      title: Archive flights skipped this hour
+      summary: MLAT-only flights dropped instead of archived this hour
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsSkippedHour'
+
+    ArchiveFlightsSkippedTodayMessage:
+      name: ArchiveFlightsSkippedTodayMessage
+      title: Archive flights skipped today
+      summary: MLAT-only flights dropped instead of archived today (UTC)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsSkippedToday'
+
+    ArchiveS3ConnectedMessage:
+      name: ArchiveS3ConnectedMessage
+      title: Archive S3 connectivity
+      summary: Whether the last S3 write attempt succeeded
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveS3Connected'
+
+    ArchiveLocalQueueDepthMessage:
+      name: ArchiveLocalQueueDepthMessage
+      title: Archive local queue depth
+      summary: Completed flights queued in the local SQLite fallback (s3.db)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveLocalQueueDepth'
+
+    ArchiveLocalIndexQueueDepthMessage:
+      name: ArchiveLocalIndexQueueDepthMessage
+      title: Archive local index queue depth
+      summary: Parquet index rows queued for retry (index_queue table in s3.db)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveLocalIndexQueueDepth'
+
+    ArchiveRabbitmqArchiveQueueDepthHwmMessage:
+      name: ArchiveRabbitmqArchiveQueueDepthHwmMessage
+      title: Archive RabbitMQ archive queue depth high-water mark
+      summary: High-water mark of the RabbitMQ 'archive' queue's depth since last publish
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveRabbitmqArchiveQueueDepthHwm'
+
+    ArchiveStartedAtMessage:
+      name: ArchiveStartedAtMessage
+      title: Archive processor process start time
+      summary: UTC ISO-8601 timestamp of process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveStartedAt'
 
     ArchiveCompactionFilesCompactedMessage:
       name: ArchiveCompactionFilesCompactedMessage
@@ -327,13 +965,29 @@ components:
       payload:
         $ref: '#/components/schemas/FlightRuleNotification'
 
-    RunnerStatisticsMessage:
-      name: RunnerStatisticsMessage
-      title: Data runner completion statistics
-      summary: Completion stats published once after a data runner finishes
-      contentType: application/json
+    RunnerRecordsImportedMessage:
+      name: RunnerRecordsImportedMessage
+      title: Data runner records imported
+      summary: Number of records written to Redis during this run
+      contentType: text/plain
       payload:
-        $ref: '#/components/schemas/RunnerStatistics'
+        $ref: '#/components/schemas/RunnerRecordsImported'
+
+    RunnerLastRunAtMessage:
+      name: RunnerLastRunAtMessage
+      title: Data runner last run at
+      summary: UTC ISO-8601 timestamp when the run completed
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/RunnerLastRunAt'
+
+    RunnerLastRunStatusMessage:
+      name: RunnerLastRunStatusMessage
+      title: Data runner last run status
+      summary: Outcome of the run
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/RunnerLastRunStatus'
 
   # ---------------------------------------------------------------------------
   # Schemas
@@ -348,158 +1002,138 @@ components:
         Component liveness indicator. ONLINE published on connect (retained);
         OFFLINE sent as LWT when the connection drops (retained).
 
-    ReceiverStatistics:
-      type: object
-      description: >
-        Receiver telemetry snapshot. Published with retain=true every
-        telemetry_interval_seconds. started_at never changes after startup.
-      required:
-        - messages_1090_per_second
-        - messages_978_per_second
-        - local_queue_depth
-        - rabbitmq_connected
-        - started_at
-      properties:
-        messages_1090_per_second:
-          type: number
-          description: Average 1090 MHz message rate since last report (messages received ÷ elapsed seconds)
-          example: 12.4
-        messages_978_per_second:
-          type: number
-          description: Average 978 MHz UAT message rate since last report; 0.0 if no UAT source configured
-          example: 0.0
-        local_queue_depth:
-          type: integer
-          description: Number of messages queued in the local SQLite fallback (queue.db)
-          example: 0
-        rabbitmq_connected:
-          type: boolean
-          description: True when the receiver has an active RabbitMQ connection
-          example: true
-        started_at:
-          type: string
-          format: date-time
-          description: UTC ISO-8601 timestamp of process start
-          example: "2026-01-15T10:00:00+00:00"
+    ReceiverMessages1090PerSecond:
+      type: number
+      description: Average 1090 MHz message rate since last report (messages received ÷ elapsed seconds)
+      example: 12.4
 
-    ProcessorStatistics:
-      type: object
-      description: >
-        Processor telemetry snapshot. Published with retain=true every
-        telemetry_interval_seconds. HWM fields reset after each publish.
-        started_at never changes after startup.
-      required:
-        - messages_per_second
-        - processing_time_hwm_ms
-        - rules_engine_hwm_ms
-        - rabbitmq_input_queue_depth_hwm
-        - local_archive_queue_depth
-        - registration_misses_hour
-        - registration_misses_today
-        - aircraft_type_misses_hour
-        - aircraft_type_misses_today
-        - active_flights
-        - started_at
-      properties:
-        messages_per_second:
-          type: number
-          description: Average message processing rate since last report (messages received ÷ elapsed seconds)
-          example: 45.1
-        processing_time_hwm_ms:
-          type: number
-          description: End-to-end message processing time high-water mark since last publish; resets on publish
-          example: 12.3
-        rules_engine_hwm_ms:
-          type: integer
-          description: Rules engine duration high-water mark since last publish; resets on publish
-          example: 45
-        rabbitmq_input_queue_depth_hwm:
-          type: integer
-          description: High-water mark of this processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
-          example: 0
-        local_archive_queue_depth:
-          type: integer
-          description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
-          example: 0
-        registration_misses_hour:
-          type: integer
-          description: Aircraft Redis cache misses this hour
-          example: 2
-        registration_misses_today:
-          type: integer
-          description: Aircraft Redis cache misses today (UTC)
-          example: 14
-        aircraft_type_misses_hour:
-          type: integer
-          description: Aircraft type lookup misses this hour
-          example: 0
-        aircraft_type_misses_today:
-          type: integer
-          description: Aircraft type lookup misses today (UTC)
-          example: 3
-        active_flights:
-          type: integer
-          description: Number of flights currently tracked in the in-memory SQLite store
-          example: 8
-        started_at:
-          type: string
-          format: date-time
-          description: UTC ISO-8601 timestamp of process start
-          example: "2026-01-15T10:00:00+00:00"
+    ReceiverMessages978PerSecond:
+      type: number
+      description: Average 978 MHz UAT message rate since last report. Only published if a 978 source is configured
+      example: 0.0
 
-    ArchiveStatistics:
-      type: object
-      description: >
-        Archive processor telemetry snapshot. Published with retain=true
-        every telemetry_interval_seconds.
-      required:
-        - flights_archived_hour
-        - flights_archived_today
-        - flights_skipped_hour
-        - flights_skipped_today
-        - s3_connected
-        - local_queue_depth
-        - local_index_queue_depth
-        - rabbitmq_archive_queue_depth_hwm
-        - started_at
-      properties:
-        flights_archived_hour:
-          type: integer
-          description: Flights successfully written to S3 this hour
-          example: 34
-        flights_archived_today:
-          type: integer
-          description: Flights successfully written to S3 today (UTC)
-          example: 412
-        flights_skipped_hour:
-          type: integer
-          description: MLAT-only flights dropped instead of archived this hour
-          example: 118
-        flights_skipped_today:
-          type: integer
-          description: MLAT-only flights dropped instead of archived today, UTC
-          example: 2540
-        s3_connected:
-          type: boolean
-          description: True when the last S3 write attempt succeeded
-          example: true
-        local_queue_depth:
-          type: integer
-          description: Number of completed flights queued in the local SQLite fallback (s3.db)
-          example: 0
-        local_index_queue_depth:
-          type: integer
-          description: Number of Parquet index rows queued for retry (index_queue table in s3.db) after their flight object wrote successfully but the index write failed
-          example: 0
-        rabbitmq_archive_queue_depth_hwm:
-          type: integer
-          description: High-water mark of the RabbitMQ 'archive' queue's depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
-          example: 0
-        started_at:
-          type: string
-          format: date-time
-          description: UTC ISO-8601 timestamp of process start
-          example: "2026-01-15T10:00:00+00:00"
+    ReceiverMessagesMlatPerSecond:
+      type: number
+      description: Average MLAT message rate since last report. Only published if an MLAT source is configured
+      example: 0.0
+
+    ReceiverLocalQueueDepth:
+      type: integer
+      description: Number of messages queued in the local SQLite fallback (queue.db)
+      example: 0
+
+    ReceiverRabbitmqConnected:
+      type: boolean
+      description: True when the receiver has an active RabbitMQ connection
+      example: true
+
+    ReceiverStartedAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp of process start
+      example: "2026-01-15T10:00:00+00:00"
+
+    ProcessorMessagesPerSecond:
+      type: number
+      description: Average message processing rate since last report (messages received ÷ elapsed seconds)
+      example: 45.1
+
+    ProcessorProcessingTimeHwmMs:
+      type: number
+      description: End-to-end message processing time high-water mark since last publish; resets on publish
+      example: 12.3
+
+    ProcessorRulesEngineHwmMs:
+      type: integer
+      description: Rules engine duration high-water mark since last publish; resets on publish
+      example: 45
+
+    ProcessorRabbitmqInputQueueDepthHwm:
+      type: integer
+      description: High-water mark of this processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
+      example: 0
+
+    ProcessorLocalArchiveQueueDepth:
+      type: integer
+      description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
+      example: 0
+
+    ProcessorRegistrationMissesHour:
+      type: integer
+      description: Aircraft Redis cache misses this hour
+      example: 2
+
+    ProcessorRegistrationMissesToday:
+      type: integer
+      description: Aircraft Redis cache misses today (UTC)
+      example: 14
+
+    ProcessorAircraftTypeMissesHour:
+      type: integer
+      description: Aircraft type lookup misses this hour
+      example: 0
+
+    ProcessorAircraftTypeMissesToday:
+      type: integer
+      description: Aircraft type lookup misses today (UTC)
+      example: 3
+
+    ProcessorActiveFlights:
+      type: integer
+      description: Number of flights currently tracked in the in-memory SQLite store
+      example: 8
+
+    ProcessorStartedAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp of process start
+      example: "2026-01-15T10:00:00+00:00"
+
+    ArchiveFlightsArchivedHour:
+      type: integer
+      description: Flights successfully written to S3 this hour
+      example: 34
+
+    ArchiveFlightsArchivedToday:
+      type: integer
+      description: Flights successfully written to S3 today (UTC)
+      example: 412
+
+    ArchiveFlightsSkippedHour:
+      type: integer
+      description: MLAT-only flights dropped instead of archived this hour
+      example: 118
+
+    ArchiveFlightsSkippedToday:
+      type: integer
+      description: MLAT-only flights dropped instead of archived today, UTC
+      example: 2540
+
+    ArchiveS3Connected:
+      type: boolean
+      description: True when the last S3 write attempt succeeded
+      example: true
+
+    ArchiveLocalQueueDepth:
+      type: integer
+      description: Number of completed flights queued in the local SQLite fallback (s3.db)
+      example: 0
+
+    ArchiveLocalIndexQueueDepth:
+      type: integer
+      description: Number of Parquet index rows queued for retry (index_queue table in s3.db) after their flight object wrote successfully but the index write failed
+      example: 0
+
+    ArchiveRabbitmqArchiveQueueDepthHwm:
+      type: integer
+      description: High-water mark of the RabbitMQ 'archive' queue's depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
+      example: 0
+
+    ArchiveStartedAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp of process start
+      example: "2026-01-15T10:00:00+00:00"
 
     ArchiveCompactionFilesCompacted:
       type: integer
@@ -525,28 +1159,25 @@ components:
       description: Outcome of this run
       example: success
 
-    RunnerStatistics:
-      type: object
-      description: Published once when a data runner completes (success or failure). Not retained.
-      required:
-        - records_imported
-        - last_run_at
-        - last_run_status
-      properties:
-        records_imported:
-          type: integer
-          description: Number of records written to Redis during this run
-          example: 487203
-        last_run_at:
-          type: string
-          format: date-time
-          description: UTC ISO-8601 timestamp when the run completed
-          example: "2026-01-15T05:12:34+00:00"
-        last_run_status:
-          type: string
-          enum: [success, failure]
-          description: Outcome of the run
-          example: success
+    RunnerRecordsImported:
+      type: integer
+      description: >
+        Number of records written to Redis during this run. This is the
+        common baseline stat every data runner publishes; some runners
+        (e.g. mictronics) publish additional stats beyond this one.
+      example: 487203
+
+    RunnerLastRunAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp when the run completed
+      example: "2026-01-15T05:12:34+00:00"
+
+    RunnerLastRunStatus:
+      type: string
+      enum: [success, failure]
+      description: Outcome of the run
+      example: success
 
     AirportInfo:
       type: object
