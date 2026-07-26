@@ -392,7 +392,7 @@ components:
         - messages_per_second
         - processing_time_hwm_ms
         - rules_engine_hwm_ms
-        - rabbitmq_input_queue_depth
+        - rabbitmq_input_queue_depth_hwm
         - local_archive_queue_depth
         - registration_misses_hour
         - registration_misses_today
@@ -413,9 +413,9 @@ components:
           type: integer
           description: Rules engine duration high-water mark since last publish; resets on publish
           example: 45
-        rabbitmq_input_queue_depth:
+        rabbitmq_input_queue_depth_hwm:
           type: integer
-          description: Current depth of this processor's RabbitMQ input queue
+          description: High-water mark of this processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
           example: 0
         local_archive_queue_depth:
           type: integer

@@ -129,7 +129,7 @@ All topics use the root `SkyFollower`.
 | `messages_per_second` | float | Rolling 30-second average message rate |
 | `processing_time_hwm_ms` | float | End-to-end processing time high-water mark since last publish; resets on publish |
 | `rules_engine_hwm_ms` | integer | Rules engine duration high-water mark since last publish; resets on publish |
-| `rabbitmq_input_queue_depth` | integer | Current input queue depth (`-1` on error) |
+| `rabbitmq_input_queue_depth_hwm` | integer | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 | `local_archive_queue_depth` | integer | Completed flights queued in `completed_flights.db` fallback |
 | `registration_misses_hour` | integer | Aircraft Redis cache misses this hour |
 | `registration_misses_today` | integer | Aircraft Redis cache misses today (UTC) |
@@ -141,6 +141,13 @@ All statistics are published as a single retained JSON payload every `telemetry_
 Home Assistant autodiscovery payloads are published to
 `homeassistant/sensor/SkyFollower_processor_{ID}_{field}/config` on MQTT connect,
 each using `value_template` to extract its field from the shared statistics topic.
+
+`rabbitmq_input_queue_depth_hwm` is sampled by a dedicated background
+loop capped at once every 10 seconds, independent of how low
+`telemetry_interval_seconds` is configured, and tracked as a high-water
+mark that resets each time telemetry is published.
+
+![RabbitMQ queue-depth high-water mark](./rmq-queue-depth-hwm-sequence.svg)
 
 ## Fault Tolerance
 
