@@ -1,9 +1,10 @@
 # Getting Started
 
-SkyFollower runs across up to four hosts, each bringing up exactly one
-Docker Compose file. See [Deployment](/deployment/) for the full host
-topology and compose-file mapping before you start — this page only
-covers the commands to actually bring each host up.
+SkyFollower runs across up to four hosts (five if you add the optional
+dedicated MLAT receiver), each bringing up exactly one Docker Compose file.
+See [Deployment](/deployment/) for the full host topology and compose-file
+mapping before you start — this page only covers the commands to actually
+bring each host up.
 
 Clone the repo on every host that will run a SkyFollower component, then
 copy the example settings for whichever components run on that host (see
@@ -20,6 +21,9 @@ cp config/ofelia/config.ini.example config/ofelia/config.ini
 
 # Host A — receiver
 docker compose -f docker-compose.receiver.yaml up -d
+
+# Host A2 — dedicated MLAT receiver (optional)
+docker compose -f docker-compose.receiver-mlat.yaml up -d
 
 # Host B — central server
 docker compose -f docker-compose.server.yaml up -d
