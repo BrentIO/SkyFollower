@@ -147,8 +147,10 @@ _RULE_EXAMPLES: dict[str, dict] = {
     "B-52 Force Persist Window": {
         "name": "B-52 Force Persist Window",
         "description": "Any B-52 (aircraft_type_designator B52) seen between "
-        "2026-01-16 04:31 UTC and 2027-06-27 18:50 UTC, force-archived even "
-        "if the flight would otherwise be skipped for being MLAT-only",
+        "2026-01-15 11:31 PM EST and 2027-06-27 2:50 PM EDT (entered in US "
+        "Eastern time, stored as UTC -- note the date rolls back a day for "
+        "the first one), force-archived even if the flight would otherwise "
+        "be skipped for being MLAT-only",
         "identifier": "b52_force_persist_2026_2027",
         "enabled": True,
         "force_archive": True,
