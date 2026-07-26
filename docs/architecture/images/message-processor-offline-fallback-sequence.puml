@@ -23,18 +23,18 @@ alt connected
     opt channel already closed locally
         Processor -> Processor : **Local publish failure**\n""basic_publish() raises""
         Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue {flight_json}""
         ProcessorDB --> Processor-- : OK
     end
 else not connected
-    Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+    Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue {flight_json}""
     ProcessorDB --> Processor-- : OK
 end
 
 == Connection drops ==
 
 ArchiveQ ->x Processor : **Connection lost**
-Processor -> Processor : **start_consuming** raises
+Processor -> Processor : **Connection monitoring detects the drop**\n""start_consuming() raises""
 Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
 
 loop Until reconnected
@@ -50,7 +50,7 @@ end
 
 opt Message arrives while disconnected from RabbitMQ
     loop For each message
-        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue""
+        Processor -> ProcessorDB++ : **Write database entry**\n""INSERT INTO queue {flight_json}""
         ProcessorDB --> Processor-- : OK
     end
 end
@@ -80,16 +80,11 @@ end
 
 Processor -> Processor : **Check if RabbitMQ is connected**\n""if rmq_connected:""
 alt connected
-    Processor -> Processor : **Attempt to claim the drain guard**\n""_drain_lock.acquire(blocking=False)""
-    alt guard acquired
-        note right of Processor
-            Refer to //Draining completed_flights.db (reconnect-triggered)//
-            for the drain loop itself
-        end note
-        Processor -> Processor : **Release the drain guard**\n""_drain_lock.release()""
-    else guard already held (reconnect-triggered drain still running)
-        Processor -> Processor : **Skip — a drain is already in progress**
-    end
+    note right of Processor
+        Refer to //Draining completed_flights.db (reconnect-triggered)//
+        above — this trigger calls the identical ""_drain_fallback()"",
+        including its single-flight guard.
+    end note
 else not connected
     Processor -> Processor : **Skip — nothing to do this tick**
 end
