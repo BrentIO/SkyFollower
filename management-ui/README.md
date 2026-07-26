@@ -48,11 +48,10 @@ backend turns into an explicit `400` by checking the identifier actually
 survived the reload). `name` is a separate, optional free-text display
 label that *can* contain spaces.
 
-Reference-data lookup (aircraft, operator, airport, route — reading current
-Redis enrichment state, not the S3/Parquet flight archive) isn't built yet;
-see CLAUDE.md's Open Items ("UI expansion"). A previously-considered
-missing-operator reporting endpoint (`GET /api/operators/missing`) was
-dropped as a legacy carryover rather than planned.
+Aircraft lookup (`GET /api/aircraft/{icao_hex}`, `GET /api/aircraft?registration={reg}`)
+and missing-operator reporting (`GET /api/operators/missing`) aren't built yet —
+removed for now rather than kept as `501` stubs; see CLAUDE.md's Open Items
+("UI expansion").
 
 Every successful write recomputes the full array/collection, computes a
 SHA-256 hash of it, and writes both to Redis (`config:rules` /
