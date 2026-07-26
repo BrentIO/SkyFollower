@@ -3598,13 +3598,16 @@ records:
       Every column is copied directly from the same completed flight's
       records.flight fields at archive-write time — no data runner writes
       this record; archive-processor is the sole source for all columns. A
-      daily compaction job consolidates each day's small per-flight files
-      into one file (targeting the day before yesterday, to absorb
-      flight_ttl_seconds and offline-queue drain lag), deleting originals
-      only once included in the compacted output; Glue Catalog partition
-      projection reads every file under a year/month/day partition as one
-      table regardless of how many files exist for that day, so late
-      stragglers self-heal without duplication risk.
+      daily compaction job walks forward from a persisted watermark up to
+      the day before yesterday (to absorb flight_ttl_seconds and
+      offline-queue drain lag), consolidating each date's small per-flight
+      files into one file and deleting originals only once included in the
+      compacted output; Glue Catalog partition projection reads every file
+      under a year/month/day partition as one table regardless of how many
+      files exist for that day, so late stragglers self-heal without
+      duplication risk. A date whose flight objects don't all have a
+      matching index row yet is not compacted — the job stops its catch-up
+      loop there instead, distinct from the late-straggler case.
     storage: S3
     s3_path: "index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet"
     format: parquet
