@@ -188,6 +188,7 @@ function ConditionValueInput({
             type="number"
             min={0}
             step={1}
+            placeholder={condition.type === "aircraft_powerplant_count" ? "1" : undefined}
             className="input"
             value={value as string}
             onChange={(e) => onValueChange(e.target.value)}
