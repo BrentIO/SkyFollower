@@ -26,9 +26,11 @@ port mapping moves from `8080:8000` back to `8080:80` at that point.
 | `PUT` | `/api/rules` | Replace the full rules array. Validated with the same logic the message processor's rules engine uses (`message-processor/rules_engine.py`, imported directly — not duplicated). `200` with the saved array echoed back, `400` with a detail message on validation failure |
 | `GET` | `/api/areas` | Current GeoJSON FeatureCollection of named areas. `200`, or `204` if none configured yet |
 | `PUT` | `/api/areas` | Replace the areas FeatureCollection. Same validate-then-write pattern as rules |
-| `GET` | `/api/aircraft/{icao_hex}` | Stub — `501` until built |
-| `GET` | `/api/aircraft?registration={reg}` | Stub — `501` until built |
-| `GET` | `/api/operators/missing` | Stub — `501` until built |
+
+Aircraft lookup (`GET /api/aircraft/{icao_hex}`, `GET /api/aircraft?registration={reg}`)
+and missing-operator reporting (`GET /api/operators/missing`) aren't built yet —
+removed for now rather than kept as `501` stubs; see CLAUDE.md's Open Items
+("UI expansion").
 
 Every successful `PUT` computes a SHA-256 hash of the saved JSON and writes
 it to the matching `:version` key (`config:rules:version` /

@@ -153,17 +153,3 @@ class TestAreas:
         resp = client.put("/api/rules", json=[rule_with_area])
         assert resp.status_code == 400
         assert "not found in areas config" in resp.json()["detail"]
-
-
-class TestStubs:
-    def test_aircraft_by_hex_not_implemented(self, client):
-        resp = client.get("/api/aircraft/A8AE7F")
-        assert resp.status_code == 501
-
-    def test_aircraft_by_registration_not_implemented(self, client):
-        resp = client.get("/api/aircraft", params={"registration": "N12345"})
-        assert resp.status_code == 501
-
-    def test_missing_operators_not_implemented(self, client):
-        resp = client.get("/api/operators/missing")
-        assert resp.status_code == 501

@@ -132,7 +132,6 @@ def _redis_set(key: str, value: str) -> None:
 _NO_CONTENT = {204: {"description": "No configuration saved yet"}}
 _REDIS_ERROR = {500: {"description": "Redis error"}}
 _VALIDATION_ERROR = {400: {"description": "Validation error"}}
-_NOT_IMPLEMENTED = {501: {"description": "Not implemented — reserved for future use"}}
 
 
 @app.get(
@@ -193,23 +192,3 @@ def put_areas(areas: dict):
     _redis_set(config_areas_key(), body)
     _redis_set(config_areas_version_key(), version)
     return JSONResponse(content=areas)
-
-
-# ---------------------------------------------------------------------------
-# Future-ready stubs (#14 acceptance criteria: documented in OpenAPI, 501
-# until the corresponding lookup feature is built)
-# ---------------------------------------------------------------------------
-
-@app.get("/api/aircraft/{icao_hex}", tags=["aircraft"], responses=_NOT_IMPLEMENTED)
-def get_aircraft_by_icao_hex(icao_hex: str):
-    raise HTTPException(status_code=501, detail="Not implemented")
-
-
-@app.get("/api/aircraft", tags=["aircraft"], responses=_NOT_IMPLEMENTED)
-def get_aircraft_by_registration(registration: Optional[str] = None):
-    raise HTTPException(status_code=501, detail="Not implemented")
-
-
-@app.get("/api/operators/missing", tags=["operators"], responses=_NOT_IMPLEMENTED)
-def get_missing_operators():
-    raise HTTPException(status_code=501, detail="Not implemented")
