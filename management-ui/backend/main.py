@@ -198,7 +198,10 @@ class Condition(BaseModel):
     Matching SkyFollower-legacy's convention, this is a string even for
     numeric fields (altitude "10000", heading "340,020" for min,max
     wrap-around, military "true"/"false") -- matched_rules is the one
-    exception, taking a real list of rule identifiers.
+    exception, taking a real list of rule identifiers. A `date` value with
+    a `T` is a datetime and must carry a timezone designator -- `Z` (UTC)
+    or any ISO 8601 offset, e.g. `2026-01-15T23:31:00-05:00` -- stored and
+    echoed back exactly as submitted, not normalised to `Z`.
     """
 
     type: Literal[
@@ -250,6 +253,33 @@ class Area(BaseModel):
     identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     name: str = ""
     geometry: AreaGeometry
+
+
+class ErrorDetail(BaseModel):
+    """Shape of every 4xx/5xx response -- FastAPI's HTTPException(detail=...) serializes to this."""
+
+    detail: str
+
+
+# Named 400 examples, same picker mechanism as _RULE_EXAMPLES/_AREA_EXAMPLES
+# above -- these are exact detail messages RulesEngine actually raises (see
+# message-processor/rules_engine.py's _parse_rule/_validate_area), not
+# invented text, so they show real failure modes.
+_RULE_ERROR_EXAMPLES: dict[str, dict] = {
+    "Rule has no conditions": {
+        "detail": "Rule #0 invalid: rule 'bad-rule' has no conditions",
+    },
+    "Identifier contains spaces": {
+        "detail": "Rule #0 invalid: identifier 'my rule' must be non-empty and contain no spaces",
+    },
+}
+
+_AREA_ERROR_EXAMPLES: dict[str, dict] = {
+    "Identifier contains spaces or invalid geometry": {
+        "detail": "Area 'Long Island' failed validation (check identifier has no "
+        "spaces and geometry is a valid Polygon)",
+    },
+}
 
 
 _redis: Optional[redis_lib.Redis] = None
@@ -325,7 +355,11 @@ def _custom_openapi() -> dict:
     -- an Example Object map at the request/response body level -- not from
     a schema's own JSON-Schema-level `examples` array, which Rule/Area also
     carry for other tooling but which Swagger UI doesn't turn into a
-    selector on its own).
+    selector on its own). Also adds the same kind of named-example picker to
+    each route's 400 response (real RulesEngine failure messages, not
+    invented text), and fills in field descriptions on FastAPI's own
+    built-in ValidationError model (used for every route's 422), which
+    ships with no descriptions of its own.
 
     FastAPI infers a request body schema from the route's actual parameter
     type (plain dict here, kept that way so RulesEngine -- not Pydantic --
@@ -364,6 +398,30 @@ def _custom_openapi() -> dict:
         schema["paths"][path][method]["responses"][status]["content"]["application/json"]["examples"] = (
             _named_examples(_AREA_EXAMPLES)
         )
+    for path, method in _RULE_BODY_PATHS:
+        schema["paths"][path][method]["responses"]["400"]["content"]["application/json"]["examples"] = (
+            _named_examples(_RULE_ERROR_EXAMPLES)
+        )
+    for path, method in _AREA_BODY_PATHS:
+        schema["paths"][path][method]["responses"]["400"]["content"]["application/json"]["examples"] = (
+            _named_examples(_AREA_ERROR_EXAMPLES)
+        )
+
+    # FastAPI's own built-in ValidationError model (used for the 422s every
+    # route gets automatically) ships with no field descriptions -- add
+    # them so the schema explains what loc/msg/type/input/ctx actually mean
+    # instead of just their bare types.
+    validation_error_props = schema["components"]["schemas"]["ValidationError"]["properties"]
+    validation_error_props["loc"]["description"] = (
+        "Path to the invalid field, e.g. [\"body\", \"identifier\"] or [\"path\", \"identifier\"]"
+    )
+    validation_error_props["msg"]["description"] = "Human-readable description of the error"
+    validation_error_props["type"]["description"] = (
+        "Machine-readable error type, e.g. \"missing\" or \"string_type\""
+    )
+    validation_error_props["input"]["description"] = "The value that was actually submitted"
+    validation_error_props["ctx"]["description"] = "Extra context about the error, if any (varies by type)"
+
     app.openapi_schema = schema
     return app.openapi_schema
 
@@ -385,10 +443,10 @@ def _redis_set(key: str, value: str) -> None:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
 
-_NOT_FOUND = {404: {"description": "Not found"}}
-_CONFLICT = {409: {"description": "Identifier already exists"}}
-_REDIS_ERROR = {500: {"description": "Redis error"}}
-_VALIDATION_ERROR = {400: {"description": "Validation error"}}
+_NOT_FOUND = {404: {"description": "Not found", "model": ErrorDetail}}
+_CONFLICT = {409: {"description": "Identifier already exists", "model": ErrorDetail}}
+_REDIS_ERROR = {500: {"description": "Redis error", "model": ErrorDetail}}
+_VALIDATION_ERROR = {400: {"description": "Validation error", "model": ErrorDetail}}
 
 
 # ---------------------------------------------------------------------------

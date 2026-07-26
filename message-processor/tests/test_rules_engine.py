@@ -482,6 +482,25 @@ class TestDateEval:
         f = FlightStub()
         assert engine.evaluate(f) == []
 
+    def test_datetime_with_offset_minimum_past_matches(self):
+        # -05:00 (US Eastern, standard time) instead of Z -- fromisoformat()
+        # accepts any ISO 8601 offset, not just Z; comparison against
+        # datetime.now(timezone.utc) is offset-correct either way.
+        engine = _engine_with_rules([_rule("r", [_cond("date", "minimum", "2000-01-01T00:00:00-05:00")])])
+        f = FlightStub()
+        assert engine.evaluate(f) != []
+
+    def test_datetime_with_offset_maximum_far_future_no_match(self):
+        engine = _engine_with_rules([_rule("r", [_cond("date", "maximum", "2000-01-01T00:00:00-05:00")])])
+        f = FlightStub()
+        assert engine.evaluate(f) == []
+
+    def test_datetime_missing_timezone_rejected(self):
+        engine = _bare_engine()
+        rules = [_rule("r", [_cond("date", "minimum", "2000-01-01T00:00:00")])]
+        assert engine.load_rules_json(json.dumps(rules)) is False
+        assert "timezone designator" in engine.last_error
+
 
 # ---------------------------------------------------------------------------
 # Other condition types

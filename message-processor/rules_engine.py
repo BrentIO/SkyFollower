@@ -361,18 +361,25 @@ class RulesEngine:
     def _validate_date(self, c: dict) -> dict:
         raw = str(c["value"]).strip()
         if "T" in raw:
-            # YYYY-MM-DDTHH:MMZ
+            # YYYY-MM-DDTHH:MMZ, or any ISO 8601 offset (e.g.
+            # YYYY-MM-DDTHH:MM-05:00) -- datetime.fromisoformat() parses
+            # both; the only requirement enforced below is that *some*
+            # timezone designator is present, not specifically 'Z'.
+            # Comparison in _eval_date() (against datetime.now(timezone.utc))
+            # is offset-correct either way, so no normalisation to UTC is
+            # needed here -- the value is stored/echoed exactly as submitted.
             try:
                 parsed = datetime.fromisoformat(raw)
                 if parsed.tzinfo is None:
                     raise _ConditionError(
-                        "datetime value must include a timezone designator (e.g. 'Z')"
+                        "datetime value must include a timezone designator (e.g. 'Z' or '-05:00')"
                     )
                 c["_date_format"] = "datetime"
                 c["value"] = parsed
             except ValueError:
                 raise _ConditionError(
-                    f"invalid datetime value '{raw}' — expected YYYY-MM-DDTHH:MMZ"
+                    f"invalid datetime value '{raw}' — expected YYYY-MM-DDTHH:MMZ "
+                    "or an ISO 8601 offset, e.g. YYYY-MM-DDTHH:MM-05:00"
                 )
         else:
             # YYYY-MM-DD
@@ -381,7 +388,8 @@ class RulesEngine:
                 c["_date_format"] = "date"
             except ValueError:
                 raise _ConditionError(
-                    f"invalid date value '{raw}' — expected YYYY-MM-DD or YYYY-MM-DDTHH:MMZ"
+                    f"invalid date value '{raw}' — expected YYYY-MM-DD or "
+                    "YYYY-MM-DDTHH:MMZ (or an ISO 8601 offset)"
                 )
         return c
 

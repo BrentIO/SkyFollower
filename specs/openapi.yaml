@@ -23,6 +23,10 @@ paths:
                 title: Response List Rules Api Rules Get
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
     post:
       tags:
       - rules
@@ -129,10 +133,30 @@ paths:
                   value: *id004
         '409':
           description: Identifier already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+              examples:
+                Rule has no conditions:
+                  value: &id005
+                    detail: 'Rule #0 invalid: rule ''bad-rule'' has no conditions'
+                Identifier contains spaces:
+                  value: &id006
+                    detail: 'Rule #0 invalid: identifier ''my rule'' must be non-empty
+                      and contain no spaces'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -170,8 +194,16 @@ paths:
                   value: *id004
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -223,10 +255,27 @@ paths:
                   value: *id004
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+              examples:
+                Rule has no conditions:
+                  value: *id005
+                Identifier contains spaces:
+                  value: *id006
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -250,10 +299,22 @@ paths:
           description: Successful Response
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -278,6 +339,10 @@ paths:
                 title: Response List Areas Api Areas Get
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
     post:
       tags:
       - areas
@@ -290,7 +355,7 @@ paths:
               $ref: '#/components/schemas/Area'
             examples:
               Long Island (LI):
-                value: &id005
+                value: &id007
                   identifier: LI
                   name: Long Island
                   geometry:
@@ -338,13 +403,30 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id005
+                  value: *id007
         '409':
           description: Identifier already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+              examples:
+                Identifier contains spaces or invalid geometry:
+                  value: &id008
+                    detail: Area 'Long Island' failed validation (check identifier
+                      has no spaces and geometry is a valid Polygon)
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -373,11 +455,19 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id005
+                  value: *id007
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -404,7 +494,7 @@ paths:
               $ref: '#/components/schemas/Area'
             examples:
               Long Island (LI):
-                value: *id005
+                value: *id007
       responses:
         '200':
           description: Successful Response
@@ -414,13 +504,28 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id005
+                  value: *id007
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+              examples:
+                Identifier contains spaces or invalid geometry:
+                  value: *id008
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -444,10 +549,22 @@ paths:
           description: Successful Response
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -592,7 +709,24 @@ components:
 
         wrap-around, military "true"/"false") -- matched_rules is the one
 
-        exception, taking a real list of rule identifiers.'
+        exception, taking a real list of rule identifiers. A `date` value with
+
+        a `T` is a datetime and must carry a timezone designator -- `Z` (UTC)
+
+        or any ISO 8601 offset, e.g. `2026-01-15T23:31:00-05:00` -- stored and
+
+        echoed back exactly as submitted, not normalised to `Z`.'
+    ErrorDetail:
+      properties:
+        detail:
+          type: string
+          title: Detail
+      type: object
+      required:
+      - detail
+      title: ErrorDetail
+      description: Shape of every 4xx/5xx response -- FastAPI's HTTPException(detail=...)
+        serializes to this.
     HTTPValidationError:
       properties:
         detail:
@@ -725,17 +859,23 @@ components:
             - type: integer
           type: array
           title: Location
+          description: Path to the invalid field, e.g. ["body", "identifier"] or ["path",
+            "identifier"]
         msg:
           type: string
           title: Message
+          description: Human-readable description of the error
         type:
           type: string
           title: Error Type
+          description: Machine-readable error type, e.g. "missing" or "string_type"
         input:
           title: Input
+          description: The value that was actually submitted
         ctx:
           type: object
           title: Context
+          description: Extra context about the error, if any (varies by type)
       type: object
       required:
       - loc
