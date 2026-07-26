@@ -15,7 +15,7 @@ notifications over MQTT (with Home Assistant autodiscovery).
 
 - [Getting Started](https://brentio.github.io/SkyFollower/getting-started/) — bring up each host and do a first-time data load
 - [Deployment](https://brentio.github.io/SkyFollower/deployment/) — host topology, compose files, components, and configuration reference
-- [Architecture](https://brentio.github.io/SkyFollower/architecture/) — pipeline diagram plus scaling processors horizontally
+- [Architecture](https://brentio.github.io/SkyFollower/architecture/) — pipeline diagram plus scaling message processors horizontally
 - [Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) — condition types, example `rules.json`/`areas.json`
 - [Data Runners](https://brentio.github.io/SkyFollower/data-runners/) — settings fields for every registration/airport data source
 - [MQTT Reference](https://brentio.github.io/SkyFollower/specs/asyncapi) — every topic published, including Home Assistant autodiscovery behavior
@@ -28,4 +28,4 @@ Run the test suite:
 python -m pytest
 ```
 
-Tests live under `processor/tests/`, `receiver/tests/`, and `shared/tests/`.
+Tests live under `message-processor/tests/`, `receiver/tests/`, and `shared/tests/`.

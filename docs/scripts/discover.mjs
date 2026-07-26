@@ -1,7 +1,7 @@
 // Shared filesystem discovery for docs generation (see #434).
 //
 // Components are a fixed, explicit set — mirroring the explicit
-// receiver/processor/archive-processor/ui cases in
+// receiver/message-processor/archive-processor/ui cases in
 // .github/workflows/build-images.yaml's discover-images job (shared has no
 // Dockerfile/image but still gets a docs page). Data runners are discovered
 // dynamically from the filesystem, mirroring that same job's `data-runners/*`
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(__dirname, "..", "..");
 
-const COMPONENT_DIRS = ["receiver", "processor", "shared", "archive-processor"];
+const COMPONENT_DIRS = ["receiver", "message-processor", "shared", "archive-processor"];
 
 function h1Title(readmePath, fallback) {
   const firstLine = readFileSync(readmePath, "utf-8").split("\n", 1)[0];

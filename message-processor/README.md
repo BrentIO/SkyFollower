@@ -6,10 +6,10 @@ database so it survives a process restart, enriches each flight with
 registration and operator data from Redis, evaluates
 the configured rules engine, publishes MQTT notifications when rules match, and
 routes completed flights to the archive queue (or a local SQLite fallback when
-RabbitMQ is unavailable). One container equals one processor instance; scale
-horizontally by adding processor containers on separate hosts.
+RabbitMQ is unavailable). One container equals one message processor instance;
+scale horizontally by adding message processor containers on separate hosts.
 
-![Processor architecture](./processor.svg)
+![Message Processor architecture](./message-processor.svg)
 
 ## Configuration (`settings.json`)
 
@@ -25,40 +25,40 @@ horizontally by adding processor containers on separate hosts.
 | `mqtt.port` | integer | `1883` | MQTT broker port |
 | `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `mqtt.password` | string | — | MQTT password |
-| `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a processor reconnects. |
-| `telemetry_interval_seconds` | integer | `30` | How often (seconds) the processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
+| `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a message processor reconnects. |
+| `telemetry_interval_seconds` | integer | `30` | How often (seconds) the message processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
 | `latitude` | float | — | Receiver location latitude (decimal degrees). Required for single-message CPR airborne position decoding. Omit if position decoding is not needed. |
 | `longitude` | float | — | Receiver location longitude (decimal degrees). |
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `active_flights.db` (the durable active flight store) and `completed_flights.db` (the RabbitMQ offline fallback) are written. |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
-### `PROCESSOR_ID` Environment Variable
+### `MESSAGE_PROCESSOR_ID` Environment Variable
 
-`PROCESSOR_ID` is a required integer environment variable set in the Docker
-Compose service definition. It must match one of the queue names declared by
-the receiver (`adsb-0`, `adsb-1`, …). The processor consumes from
-`adsb-{PROCESSOR_ID}`.
+`MESSAGE_PROCESSOR_ID` is a required integer environment variable set in the
+Docker Compose service definition. It must match one of the queue names
+declared by the receiver (`adsb-0`, `adsb-1`, …). The message processor
+consumes from `adsb-{MESSAGE_PROCESSOR_ID}`.
 
-On startup the processor attempts to claim a Redis key
-`processor:{PROCESSOR_ID}:heartbeat` using `SET NX`. If the key already exists
-(i.e., another instance with the same ID is running), the process exits
-immediately to prevent duplicate-ID conflicts.
+On startup the message processor attempts to claim a Redis key
+`message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat` using `SET NX`. If the
+key already exists (i.e., another instance with the same ID is running), the
+process exits immediately to prevent duplicate-ID conflicts.
 
 Example:
 
 ```yaml
 environment:
-  PROCESSOR_ID: "0"
+  MESSAGE_PROCESSOR_ID: "0"
 ```
 
 ## Decoding
 
 Raw Mode-S/ADS-B frames are decoded via pyModeS 3.x's single unified
 `decode()` call, which returns every decodable field for a message in one
-dict. The processor extracts fields purely by presence — if a field is in
+dict. The message processor extracts fields purely by presence — if a field is in
 the result, it's used; there's no downlink-format or typecode dispatch, and
 no downlink-format allowlist. Message types that don't populate any field
-the processor cares about (e.g. ACAS RA broadcasts) simply produce nothing
+the message processor cares about (e.g. ACAS RA broadcasts) simply produce nothing
 and are dropped, with nothing to explicitly filter.
 
 Any message pyModeS flags as CRC-invalid is rejected outright — but this
@@ -70,7 +70,7 @@ address itself rather than providing an independent integrity check —
 there's no single-message corruption signal available for those message
 types at all. A squawk value is trusted once decoded; there's nothing
 further to verify it against outside of multi-message/pipe-mode decoding,
-which this processor doesn't use.
+which this message processor doesn't use.
 
 `wake_turbulence_category` is sourced directly from pyModeS's own computed
 `wake_vortex` field, which is aware of which identification sub-type
@@ -85,7 +85,7 @@ call — same pure field-presence extraction, no message-type dispatch.
 title-cased (e.g. `"Medium Large High Vortex"`); unlike pyModeS's raw 1090
 `category` int, pyModeS978's `category` is already typecode-independent and
 fully resolved by the library, so no further interpretation is needed on
-the processor side.
+the message processor side.
 
 ## Redis Key Dependencies
 
@@ -93,7 +93,7 @@ the processor side.
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}`, `aircraft:registry:{icao_hex}`, and `aircraft:livery:{icao_hex}` server-side and returns the deep-merged result (each later source winning on any field overlap — livery over registry over mictronics) in a single round-trip. |
+| `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the message processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}`, `aircraft:registry:{icao_hex}`, and `aircraft:livery:{icao_hex}` server-side and returns the deep-merged result (each later source winning on any field overlap — livery over registry over mictronics) in a single round-trip. |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
 | `flight:{IDENT}` | Origin/destination enrichment (read once per flight when ident is first seen) |
 | `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
@@ -106,10 +106,10 @@ the processor side.
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `processor:{ID}:heartbeat` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
+| `message_processor:{ID}:heartbeat` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
-| `metrics:processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
-| `metrics:processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
+| `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
+| `metrics:message_processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
 
 ## MQTT Topics Published
 
@@ -117,8 +117,8 @@ All topics use the root `SkyFollower`.
 
 | Topic | Payload | Retained |
 |-------|---------|----------|
-| `SkyFollower/processor/{ID}/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/processor/{ID}/statistic/{name}` | One retained topic per stat (see fields below) | Yes |
+| `SkyFollower/message-processor/{ID}/status` | `ONLINE` or `OFFLINE` | Yes |
+| `SkyFollower/message-processor/{ID}/statistic/{name}` | One retained topic per stat (see fields below) | Yes |
 | `SkyFollower/rule/{IDENTIFIER}` | JSON flight snapshot (no positions/velocities) with `rule` key | No |
 
 **Statistic topic suffixes (`{name}`):**
@@ -140,9 +140,9 @@ All topics use the root `SkyFollower`.
 Each stat is published as its own retained topic (not a combined JSON
 payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
 payloads are published to
-`homeassistant/sensor/SkyFollower_processor_{ID}_{field}/config` on MQTT
+`homeassistant/sensor/SkyFollower_message_processor_{ID}_{field}/config` on MQTT
 connect; each sensor's `state_topic` points directly at its own
-`SkyFollower/processor/{ID}/statistic/{field}` topic — no `value_template`
+`SkyFollower/message-processor/{ID}/statistic/{field}` topic — no `value_template`
 needed.
 
 `rabbitmq_input_queue_depth_hwm` is sampled by a dedicated background
@@ -179,7 +179,7 @@ whether a deliberate stop (`SIGTERM`/`SIGINT`) or an ungraceful one (OOM-kill,
 there is no special "flush everything" shutdown path, since nothing needs
 force-archiving when the store already survives on its own.
 
-On startup, the processor reopens `active_flights.db` and recovers whatever
+On startup, the message processor reopens `active_flights.db` and recovers whatever
 flights were still tracked. Recovery is driven by message timestamps, not by
 how long the container was down: an internal clock is floored at the most
 recent `last_message` among recovered flights (not wall-clock "now"), and
@@ -187,21 +187,22 @@ only advances as RabbitMQ messages are actually consumed. This means a
 recovered flight is **not** archived just because real time passed while the
 container was stopped — if a continuation message for that aircraft is
 sitting in the RabbitMQ backlog, it resumes the same flight once the
-processor reconnects and drains the backlog. A genuine gap longer than
+message processor reconnects and drains the backlog. A genuine gap longer than
 `flight_ttl_seconds` — whether it happens live or is discovered while
 replaying a backlog — still correctly splits the flight into two records.
 
 MQTT rule notifications for messages older than
 `rule_notification_max_lag_seconds` are suppressed during backlog replay
-(logged at debug) to avoid flooding MQTT the instant a processor reconnects
-after downtime; the rule still fires and is still recorded in
+(logged at debug) to avoid flooding MQTT the instant a message processor
+reconnects after downtime; the rule still fires and is still recorded in
 `matched_rules`/the eventual archived flight.
 
-Because `active_flights.db` only depends on `PROCESSOR_ID` (which determines
-the RabbitMQ queue consumed, `adsb-{PROCESSOR_ID}`) and not on container
-identity, moving the file to a replacement container with the same
-`PROCESSOR_ID` resumes tracking the same way a restart does. One caveat: the
-Redis heartbeat key (`processor:{PROCESSOR_ID}:heartbeat`, `SET NX` with a
+Because `active_flights.db` only depends on `MESSAGE_PROCESSOR_ID` (which
+determines the RabbitMQ queue consumed, `adsb-{MESSAGE_PROCESSOR_ID}`) and
+not on container identity, moving the file to a replacement container with
+the same `MESSAGE_PROCESSOR_ID` resumes tracking the same way a restart
+does. One caveat: the Redis heartbeat key
+(`message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat`, `SET NX` with a
 TTL of `2 × telemetry_interval_seconds`) must expire — or be deleted
 manually — before a replacement container can claim the same ID.
 
@@ -209,7 +210,7 @@ manually — before a replacement container can claim the same ID.
 
 Rules and areas are loaded from Redis (`config:rules` / `config:areas`) and
 hot-reloaded every 5 seconds when the corresponding version hash keys change.
-The rules engine is implemented in `processor/rules_engine.py`.
+The rules engine is implemented in `message-processor/rules_engine.py`.
 
 Each rule must have a unique `identifier`, an `enabled` boolean, and a
 non-empty `conditions` array. All conditions within a rule are ANDed together.

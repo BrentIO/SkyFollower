@@ -41,7 +41,7 @@ from shared.uat import parse_978_line
 logger = logging.getLogger("receiver")
 
 # ---------------------------------------------------------------------------
-# Rate tracker — 30-second rolling window (copied from processor pattern)
+# Rate tracker — 30-second rolling window (copied from message processor pattern)
 # ---------------------------------------------------------------------------
 
 class _RateTracker:

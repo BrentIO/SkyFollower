@@ -31,7 +31,7 @@
 -- livery order, distinct from #492's unrelated per-flight
 -- `receiver_sources` field (1090/978/MLAT).
 --
--- Called by the processor via EVALSHA so the merge is a single round-trip.
+-- Called by the message processor via EVALSHA so the merge is a single round-trip.
 
 local icao_hex = ARGV[1]
 

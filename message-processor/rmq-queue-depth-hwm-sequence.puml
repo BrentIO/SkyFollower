@@ -8,7 +8,7 @@ box "Message Processor" $OnPrem
 end box
 
 box "RabbitMQ" $OnPrem
-    queue "adsb-{PROCESSOR_ID}" as InputQ
+    queue "adsb-{MESSAGE_PROCESSOR_ID}" as InputQ
 end box
 
 box "MQTT" $OnPrem
@@ -31,6 +31,6 @@ end
 == Independently, every telemetry_interval_seconds ==
 
 Processor -> Processor : **Read and reset the high-water mark**\n""depth_hwm = hwm.value_and_reset()""
-Processor -\ MQTT : **Publish telemetry**\n""SkyFollower/processor/{id}/statistics"" (retain=True)\nincludes rabbitmq_input_queue_depth_hwm
+Processor -\ MQTT : **Publish telemetry**\n""SkyFollower/message-processor/{id}/statistic/rabbitmq_input_queue_depth_hwm"" (retain=True)
 
 @enduml

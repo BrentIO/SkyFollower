@@ -6,7 +6,7 @@ title Message Pipeline
 
 !includesub ../../../receiver/receiver.puml!COMPONENT
 !includesub ../../../receiver/receiver-mlat-topology.puml!COMPONENT
-!includesub ../../../processor/processor.puml!COMPONENT
+!includesub ../../../message-processor/message-processor.puml!COMPONENT
 !includesub central-server.puml!COMPONENT
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
 !includesub ../../../archive-compaction/archive-compaction.puml!COMPONENT

@@ -17,7 +17,7 @@ reconnect. One receiver container handles all configured sources concurrently
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `sources` | array | — | List of readsb source objects (see below). At least one is required. |
-| `processor_count` | integer | `1` | Total number of processor containers. Must match the number of active processor services. Used to compute `queue_name = adsb-{int(icao_hex, 16) % processor_count}`. Increment this when adding a processor. |
+| `processor_count` | integer | `1` | Total number of message processor containers. Must match the number of active message processor services. Used to compute `queue_name = adsb-{int(icao_hex, 16) % processor_count}`. Increment this when adding a message processor. |
 | `rabbitmq` | object | — | RabbitMQ connection settings (see below). |
 | `mqtt` | object | — | MQTT broker settings (see below). Omit the key entirely to disable MQTT. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the receiver publishes MQTT statistic messages. |
@@ -51,7 +51,7 @@ so no separate parsing is required. Nothing prevents adding an `MLAT` entry
 to the same `sources[]` list above, but a **separate receiver container and
 `RECEIVER_ID`** is recommended instead — message routing is keyed on
 `icao_hex`, not receiver identity, so a second instance publishes into the
-exact same pipeline with no special handling on the processor side, while
+exact same pipeline with no special handling on the message processor side, while
 keeping internet-facing MLAT ingestion off the resource-constrained device
 handling the local RTL-SDR hardware. Any number of MLAT providers can be
 configured on that instance — each is its own `sources[]` entry with
@@ -120,8 +120,8 @@ Each incoming message is routed to a durable RabbitMQ queue named
 n = int(icao_hex, 16) % processor_count
 ```
 
-This ensures all messages for a given aircraft always go to the same processor,
-preserving per-aircraft flight state without coordination between processors.
+This ensures all messages for a given aircraft always go to the same message processor,
+preserving per-aircraft flight state without coordination between message processors.
 On RabbitMQ connect the receiver pre-declares all queues (`adsb-0` through
 `adsb-{processor_count - 1}`).
 

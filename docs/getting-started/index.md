@@ -30,8 +30,8 @@ docker compose -f docker-compose.server.yaml up -d
 # Create runner containers in stopped state so ofelia can schedule them:
 docker compose -f docker-compose.server.yaml --profile runners up --no-start
 
-# Host C — processor
-docker compose -f docker-compose.processor.yaml up -d
+# Host C — message processor
+docker compose -f docker-compose.message-processor.yaml up -d
 
 # Host D — archive + UI
 docker compose -f docker-compose.archive.yaml up -d
@@ -60,4 +60,4 @@ done
 ## Next steps
 
 - [Deployment](/deployment/) — host topology, compose-file mapping, and full component list
-- Component READMEs for settings fields: [receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md), [processor](https://github.com/BrentIO/SkyFollower/blob/main/processor/README.md), [data runners](https://github.com/BrentIO/SkyFollower/blob/main/data-runners/README.md)
+- Component READMEs for settings fields: [receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md), [message processor](https://github.com/BrentIO/SkyFollower/blob/main/message-processor/README.md), [data runners](https://github.com/BrentIO/SkyFollower/blob/main/data-runners/README.md)

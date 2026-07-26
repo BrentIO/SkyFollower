@@ -1,7 +1,7 @@
 @startuml
 !include ../../images/common-sequence.iuml
 
-title Processor Crash Recovery & Backlog Replay
+title Message Processor Crash Recovery & Backlog Replay
 
 box "Receiver" $OnPrem
     participant "Receiver" as Receiver
@@ -12,7 +12,7 @@ box "RabbitMQ" $OnPrem
     queue "archive" as ArchiveQ
 end box
 
-box "Processor" $OnPrem
+box "Message Processor" $OnPrem
     participant "Processor" as Proc
     database "active_flights.db" as ActiveDB
     database "completed_flights.db" as FallbackDB
@@ -37,7 +37,7 @@ opt Rule matched
     end
 end
 
-== Processor goes down (crash or deliberate stop — handled identically) ==
+== Message Processor goes down (crash or deliberate stop — handled identically) ==
 
 note over Proc
     SIGKILL / OOM-kill / ""docker kill"" / SIGTERM
@@ -47,10 +47,10 @@ end note
 Receiver -> AdsbQ : **Publish** (still up)
 note over AdsbQ
     Messages accumulate in the
-    durable queue while Processor is down
+    durable queue while Message Processor is down
 end note
 
-== Processor restarts ==
+== Message Processor restarts ==
 
 Proc -> ActiveDB++ : **Reopen** ""active_flights.db""
 ActiveDB --> Proc-- : recovered flight rows

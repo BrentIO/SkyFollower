@@ -5,7 +5,7 @@ one described in its own page below. See [Deployment](/deployment/) for how
 these map onto hosts and Docker Compose files.
 
 - [Receiver](/components/receiver) — connects to readsb, tags and routes raw ADS-B messages to RabbitMQ
-- [Processor](/components/processor) — flight state, enrichment, rules engine, MQTT notifications
+- [Message Processor](/components/message-processor) — flight state, enrichment, rules engine, MQTT notifications
 - [Archive Processor](/components/archive-processor) — writes completed flights to S3 with a local Parquet index
 
 Data runners (registration, operator, and airport data sources) have their

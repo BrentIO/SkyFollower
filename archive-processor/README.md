@@ -33,7 +33,7 @@ flights are queued locally and drained automatically once S3 reconnects.
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 `flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
-in Redis (shared with the processor) once at startup and cached; not
+in Redis (shared with the message processor) once at startup and cached; not
 hot-reloaded, restart the container to pick up a changed value. Defaults to
 `300` if unset. See [Split-Flight Stitching](#split-flight-stitching) below
 for how it's used.
@@ -43,7 +43,7 @@ for how it's used.
 The archive processor declares and consumes from a single durable queue
 named `archive` (`prefetch_count=1`, manual ack). This is the queue the
 message processor publishes completed flights to — see
-[processor/README.md](../processor/README.md).
+[message-processor/README.md](../message-processor/README.md).
 A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
 loops.
@@ -59,9 +59,9 @@ includes a non-MLAT source (e.g. `["1090", "MLAT"]`) archives normally,
 since the aircraft was independently seen on a real receive path at some
 point.
 
-`force_archive: true` on the flight (set by the processor when any matched
+`force_archive: true` on the flight (set by the message processor when any matched
 rule in `config:rules` carries a `force_archive: true` property — see
-[processor/README.md](../processor/README.md)) overrides the skip for
+[message-processor/README.md](../message-processor/README.md)) overrides the skip for
 MLAT-only flights the user does care about, without having to archive
 every MLAT contact indiscriminately. Skipped flights increment
 `flights_skipped_hour`/`flights_skipped_today` (see Statistics below).
@@ -91,11 +91,11 @@ before upload, with `ContentType: application/json` and
 
 ## Split-Flight Stitching
 
-Resizing a deployment's processor count reshuffles which processor an
-aircraft routes to, which can force a flight to be archived early even
-though the aircraft keeps flying — the continuation shows up as a second,
-separate flight on whichever processor it's now routed to. The archive
-processor detects and merges this after the fact:
+Resizing a deployment's message processor count reshuffles which message
+processor an aircraft routes to, which can force a flight to be archived
+early even though the aircraft keeps flying — the continuation shows up as
+a second, separate flight on whichever message processor it's now routed
+to. The archive processor detects and merges this after the fact:
 
 - After archiving a flight, it writes a small pointer to Redis —
   `archive:last_segment:{icao_hex}` (see `shared/redis_keys.py`), containing

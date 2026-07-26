@@ -1,13 +1,16 @@
 """
-Tests for processor/rules_engine.py.
+Tests for message-processor/rules_engine.py.
 
 Uses a lightweight FlightStub instead of the full Flight class so this test
-module has no dependency on the processor's main.py or SQLite.
+module has no dependency on the message processor's main.py or SQLite.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -15,7 +18,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from processor.rules_engine import RulesEngine
+# See test_processor.py's top-of-file comment for why this registration is
+# inlined here rather than in a conftest.py.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_MESSAGE_PROCESSOR_DIR = os.path.dirname(_HERE)
+_REPO_ROOT = os.path.dirname(_MESSAGE_PROCESSOR_DIR)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+if "message_processor" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location(
+        "message_processor",
+        os.path.join(_MESSAGE_PROCESSOR_DIR, "__init__.py"),
+        submodule_search_locations=[_MESSAGE_PROCESSOR_DIR],
+    )
+    _pkg = importlib.util.module_from_spec(_spec)
+    _pkg.__path__ = [_MESSAGE_PROCESSOR_DIR]
+    _pkg.__package__ = "message_processor"
+    sys.modules["message_processor"] = _pkg
+    _spec.loader.exec_module(_pkg)
+
+from message_processor.rules_engine import RulesEngine  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ jobs:
             dir="$(dirname "$dockerfile")"
             case "$dir" in
               receiver) name="receiver" ;;
-              processor) name="processor" ;;
+              message-processor) name="message-processor" ;;
               archive-processor) name="archive" ;;
               ui) name="ui" ;;
               data-runners/*) name="runner-$(basename "$dir")" ;;

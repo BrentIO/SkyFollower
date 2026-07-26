@@ -30,7 +30,7 @@ Available condition types: `altitude`, `heading`, `velocity`, `vertical_speed`,
 `aircraft_type_designator`, `aircraft_registration`, `aircraft_icao_hex`,
 `aircraft_powerplant_count`, `wake_turbulence_category`, `matched_rules`.
 
-See the [Processor docs](/components/processor) for operator and constraint details.
+See the [Message Processor docs](/components/message-processor) for operator and constraint details.
 
 ## Areas
 

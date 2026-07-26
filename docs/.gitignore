@@ -6,7 +6,7 @@ node_modules
 # truth is the READMEs these are copied and link-rewritten from, not these
 # files.
 components/receiver.md
-components/processor.md
+components/message-processor.md
 components/shared.md
 components/archive-processor.md
 data-runners/

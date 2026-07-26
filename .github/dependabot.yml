@@ -169,7 +169,7 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"
-    directory: "/processor"
+    directory: "/message-processor"
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"

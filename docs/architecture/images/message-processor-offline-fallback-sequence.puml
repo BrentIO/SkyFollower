@@ -3,7 +3,7 @@
 
 title Message Processor Offline Fallback
 
-box "Processor" $OnPrem
+box "Message Processor" $OnPrem
     participant "Processor" as Processor
     database "completed_flights.db" as ProcessorDB
 end box
