@@ -40,7 +40,7 @@ partition "Redis" $OnPrem {
 
 partition "Message Processor" $OnPrem {
 
-if (**Fewer than 2 airport records resolved?**) then (yes)
+if (**Did Redis return fewer than 2 airport records?**\n""len(airports) < 2""\n(no known route for this ident, or a code in the route\nhad no matching airport:{code} record)) then (yes)
   stop
 endif
 
