@@ -53,9 +53,30 @@ function titleCase(category: WakeTurbulenceCategory): string {
   return category.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const SORTED_WAKE_TURBULENCE_CATEGORIES = [...WAKE_TURBULENCE_CATEGORIES].sort((a, b) =>
-  titleCase(a).localeCompare(titleCase(b)),
-);
+// Light-to-heavy by weight, not alphabetical -- Light/Medium/Heavy/Super
+// is the standard ICAO ordering; Medium 1/Medium 2 are subdivisions of
+// Medium, and High Vortex Aircraft sits just below Heavy. Rotorcraft and
+// High Performance aren't part of that weight spectrum at all (wake
+// behavior driven by rotor downwash / flight characteristics rather than
+// mass), so they're placed after Super instead of interleaved into it.
+const WAKE_TURBULENCE_ORDER: readonly WakeTurbulenceCategory[] = [
+  "light",
+  "medium 1",
+  "medium",
+  "medium 2",
+  "high vortex aircraft",
+  "heavy",
+  "super",
+  "rotorcraft",
+  "high performance",
+];
+
+// Catches drift if WAKE_TURBULENCE_CATEGORIES (the actual validated set,
+// from message-processor/rules_engine.py) ever changes without this
+// hand-written order being updated to match.
+if (WAKE_TURBULENCE_ORDER.length !== WAKE_TURBULENCE_CATEGORIES.length) {
+  throw new Error("WAKE_TURBULENCE_ORDER is out of sync with WAKE_TURBULENCE_CATEGORIES");
+}
 
 // Units shown alongside the "Value" label for the condition types where a
 // bare number would otherwise be ambiguous. Types not listed here (text,
@@ -290,7 +311,7 @@ function ConditionValueInput({
           <option value="" disabled>
             Select...
           </option>
-          {SORTED_WAKE_TURBULENCE_CATEGORIES.map((category) => (
+          {WAKE_TURBULENCE_ORDER.map((category) => (
             <option key={category} value={category}>
               {titleCase(category)}
             </option>
