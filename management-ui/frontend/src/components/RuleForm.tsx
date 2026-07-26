@@ -31,8 +31,8 @@ function newCondition(): Condition {
 // validators as a fast-fail UX nicety -- the server's 400 is still the
 // source of truth, this just avoids a round trip for the common mistakes.
 export function validateRule(rule: Rule, otherRules: Rule[]): string | null {
-  if (!rule.identifier || /\s/.test(rule.identifier)) {
-    return "Identifier is required and must not contain spaces.";
+  if (!rule.identifier || !/^[A-Za-z0-9_-]+$/.test(rule.identifier)) {
+    return "Identifier is required and may only contain letters, numbers, hyphens, and underscores.";
   }
   if (otherRules.some((r) => r.identifier === rule.identifier)) {
     return `Identifier '${rule.identifier}' is already used by another rule.`;
@@ -211,7 +211,9 @@ export function RuleForm({
             className="input"
             value={rule.identifier}
             disabled={!isNew}
-            onChange={(e) => onChange({ ...rule, identifier: e.target.value })}
+            onChange={(e) =>
+              onChange({ ...rule, identifier: e.target.value.replace(/[^A-Za-z0-9_-]/g, "") })
+            }
           />
         </label>
 

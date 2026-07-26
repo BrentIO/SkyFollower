@@ -1,9 +1,10 @@
+import { FileCheck } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 // Section list -- Rules is the only entry for now; a future areas editor
 // adds an "Areas" entry here. Deliberately a plain array, not hardcoded
 // JSX, so adding a section is a one-line change.
-const SECTIONS = [{ path: "/rules", label: "Rules" }];
+const SECTIONS = [{ path: "/rules", label: "Rules", icon: FileCheck }];
 
 export function SideNav() {
   return (
@@ -17,13 +18,14 @@ export function SideNav() {
             <NavLink
               to={section.path}
               className={({ isActive }) =>
-                `block rounded-md px-3 py-2 text-sm font-medium ${
+                `flex items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium ${
                   isActive
-                    ? "bg-sky-600 text-white"
-                    : "text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800"
+                    ? "border-sky-600 text-sky-600 dark:text-sky-400"
+                    : "border-transparent text-slate-600 hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400"
                 }`
               }
             >
+              <section.icon size={16} />
               {section.label}
             </NavLink>
           </li>

@@ -111,8 +111,10 @@ component library, to keep dependencies minimal for ARM builds.
   editor and its per-condition, type-aware value input (number, hex,
   wake-turbulence dropdown, heading min/max pair, `matched_rules`
   multi-select, area dropdown sourced from `GET /api/areas`, and the `date`
-  condition's Date vs. Date-and-time format selector, which converts a
-  local `datetime-local` input to UTC and appends `Z` before saving).
+  condition's datetime input, which converts a local `datetime-local` value
+  to UTC and appends `Z` before saving -- the UI always saves the
+  `YYYY-MM-DDTHH:MMZ` form; the backend's date-only `YYYY-MM-DD` format is
+  still accepted if written some other way, e.g. directly via the API).
 
 Client-side validation (`validateRule`/`validateCondition` in `RuleForm.tsx`)
 mirrors `message-processor/rules_engine.py`'s per-type checks as a fast-fail

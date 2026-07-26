@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   CONDITION_TYPES,
   OPERATORS_BY_TYPE,
@@ -43,6 +44,33 @@ function defaultValueFor(type: ConditionType): string | string[] {
   return type === "matched_rules" ? [] : "";
 }
 
+// Units shown alongside the "Value" label for the condition types where a
+// bare number would otherwise be ambiguous. Types not listed here (text,
+// dropdown, or otherwise self-explanatory values) get no suffix.
+const UNIT_LABELS: Partial<Record<ConditionType, string>> = {
+  altitude: "Feet",
+  heading: "Degrees",
+  velocity: "Knots",
+  vertical_speed: "Feet/min",
+};
+
+// Small text appended to the right of the value input itself (not the
+// "Value" label) for the condition types where a bare number would
+// otherwise be ambiguous.
+function UnitSuffix({ type }: { type: ConditionType }) {
+  const unit = UNIT_LABELS[type];
+  if (!unit) return null;
+  return <span className="whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">{unit}</span>;
+}
+
+// Dropdown order is alphabetical by display label, independent of
+// CONDITION_TYPES' declaration order (which mirrors CLAUDE.md's Conditions
+// table and message-processor/rules_engine.py's evaluation-priority
+// grouping -- neither is meant to dictate UI ordering).
+const SORTED_CONDITION_TYPES = [...CONDITION_TYPES].sort((a, b) =>
+  TYPE_LABELS[a].localeCompare(TYPE_LABELS[b]),
+);
+
 // When the condition type changes, the operator must still be valid for the
 // new type (e.g. switching from `heading` (equals-only) to `altitude`
 // (minimum/maximum-only) would otherwise leave an operator the new type
@@ -74,11 +102,11 @@ export function ConditionForm({
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Type
         <select
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"
+          className="input"
           value={condition.type}
           onChange={(e) => onChange(retypeCondition(e.target.value as ConditionType))}
         >
-          {CONDITION_TYPES.map((type) => (
+          {SORTED_CONDITION_TYPES.map((type) => (
             <option key={type} value={type}>
               {TYPE_LABELS[type]}
             </option>
@@ -89,7 +117,7 @@ export function ConditionForm({
       <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
         Operator
         <select
-          className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"
+          className="input"
           value={condition.operator}
           onChange={(e) => setOperator(e.target.value as Operator)}
         >
@@ -141,29 +169,40 @@ function ConditionValueInput({
     case "velocity":
     case "aircraft_powerplant_count":
       return (
-        <input
-          type="number"
-          min={0}
-          step={1}
-          className="input"
-          value={value as string}
-          onChange={(e) => onValueChange(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            className="input"
+            value={value as string}
+            onChange={(e) => onValueChange(e.target.value)}
+          />
+          <UnitSuffix type={condition.type} />
+        </div>
       );
 
     case "vertical_speed":
       return (
-        <input
-          type="number"
-          step={1}
-          className="input"
-          value={value as string}
-          onChange={(e) => onValueChange(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            step={1}
+            className="input"
+            value={value as string}
+            onChange={(e) => onValueChange(e.target.value)}
+          />
+          <UnitSuffix type={condition.type} />
+        </div>
       );
 
     case "heading":
-      return <HeadingInput value={value as string} onValueChange={onValueChange} />;
+      return (
+        <div className="flex items-center gap-2">
+          <HeadingInput value={value as string} onValueChange={onValueChange} />
+          <UnitSuffix type={condition.type} />
+        </div>
+      );
 
     case "date":
       return <DateConditionInput value={value as string} onValueChange={onValueChange} />;
@@ -210,10 +249,11 @@ function ConditionValueInput({
         <input
           type="text"
           maxLength={3}
-          placeholder="DAL"
           className="input uppercase"
           value={value as string}
-          onChange={(e) => onValueChange(e.target.value.toUpperCase().slice(0, 3))}
+          onChange={(e) =>
+            onValueChange(e.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 3))
+          }
         />
       );
 
@@ -329,31 +369,55 @@ function HeadingInput({
   );
 }
 
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+// A native <input type="datetime-local"> renders in whatever numeric
+// mm/dd vs. dd/mm order the browser's own locale prefers, and has no way
+// to force a specific display format -- so the display format below
+// (dd-MMM-yyyy HH:mm, e.g. "24-Dec-2026 22:00") is a plain text input with
+// manual parse/format instead, always in the browser's local timezone and
+// converted to `YYYY-MM-DDTHH:MMZ` on save, per the spec's "UI converts
+// local time to UTC (Z) before saving."
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const DATE_DISPLAY_PATTERN = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})[ T](\d{1,2}):(\d{2})$/;
 
-// Converts a `datetime-local` input value (always in the browser's local
-// timezone, no offset of its own) to `YYYY-MM-DDTHH:MMZ`, per the spec's
-// "UI converts local time to UTC (Z) before saving."
-function localToUtcZ(local: string): string {
-  const asDate = new Date(local);
-  const pad = (n: number) => String(n).padStart(2, "0");
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function localToUtcZ(local: Date): string {
   return (
-    `${asDate.getUTCFullYear()}-${pad(asDate.getUTCMonth() + 1)}-${pad(asDate.getUTCDate())}` +
-    `T${pad(asDate.getUTCHours())}:${pad(asDate.getUTCMinutes())}Z`
+    `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}` +
+    `T${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}Z`
   );
 }
 
-// Reverse of localToUtcZ, for populating the datetime-local input when
-// editing an existing datetime condition (any ISO 8601 offset parses fine
-// via the Date constructor, not just Z).
-function isoToLocalInput(iso: string): string {
+// Reverse direction, for populating the display input when editing an
+// existing condition (any ISO 8601 offset parses fine via the Date
+// constructor, not just Z, and so does a bare date-only value).
+function isoToDisplay(iso: string): string {
   const asDate = new Date(iso);
   if (Number.isNaN(asDate.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
   return (
-    `${asDate.getFullYear()}-${pad(asDate.getMonth() + 1)}-${pad(asDate.getDate())}` +
-    `T${pad(asDate.getHours())}:${pad(asDate.getMinutes())}`
+    `${pad2(asDate.getDate())}-${MONTHS[asDate.getMonth()]}-${asDate.getFullYear()} ` +
+    `${pad2(asDate.getHours())}:${pad2(asDate.getMinutes())}`
   );
+}
+
+// Parses "dd-MMM-yyyy HH:mm" as a local-timezone Date, or null if the text
+// doesn't match or names an out-of-range day (e.g. "31-Feb-2026" -- the
+// Date constructor would otherwise silently roll that over into March).
+function parseDisplay(text: string): Date | null {
+  const match = DATE_DISPLAY_PATTERN.exec(text.trim());
+  if (!match) return null;
+  const [, day, monthName, year, hour, minute] = match;
+  const monthIndex = MONTHS.findIndex((m) => m.toLowerCase() === monthName.toLowerCase());
+  if (monthIndex === -1) return null;
+
+  const parsed = new Date(Number(year), monthIndex, Number(day), Number(hour), Number(minute));
+  if (parsed.getMonth() !== monthIndex || parsed.getDate() !== Number(day)) return null;
+  return parsed;
 }
 
 const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -365,44 +429,35 @@ function DateConditionInput({
   value: string;
   onValueChange: (value: string) => void;
 }) {
-  const isDateOnly = value === "" || DATE_ONLY.test(value);
+  const [text, setText] = useState(() => isoToDisplay(value));
+  const [invalid, setInvalid] = useState(false);
 
-  function setFormat(format: "date" | "datetime") {
-    const now = new Date().toISOString();
-    onValueChange(format === "date" ? now.slice(0, 10) : `${now.slice(0, 16)}Z`);
+  // Re-sync the visible text when switching to a different condition
+  // (e.g. selecting a different row), not on every keystroke of our own.
+  useEffect(() => {
+    setText(isoToDisplay(value));
+    setInvalid(false);
+  }, [value]);
+
+  function handleChange(next: string) {
+    setText(next);
+    const parsed = parseDisplay(next);
+    setInvalid(parsed === null);
+    if (parsed) onValueChange(localToUtcZ(parsed));
   }
 
   return (
     <div className="flex flex-col gap-1">
-      <select
-        className="input"
-        value={isDateOnly ? "date" : "datetime"}
-        onChange={(e) => setFormat(e.target.value as "date" | "datetime")}
-      >
-        <option value="date">Date</option>
-        <option value="datetime">Date and time</option>
-      </select>
-
-      {isDateOnly ? (
-        <input
-          type="date"
-          className="input"
-          value={value}
-          onChange={(e) => onValueChange(e.target.value)}
-        />
-      ) : (
-        <>
-          <input
-            type="datetime-local"
-            className="input"
-            value={isoToLocalInput(value)}
-            onChange={(e) => onValueChange(localToUtcZ(e.target.value))}
-          />
-          <p className="text-xs text-slate-400">
-            Entered in your local timezone ({browserTimeZone}), stored as UTC.
-          </p>
-        </>
-      )}
+      <input
+        type="text"
+        placeholder="dd-MMM-yyyy HH:mm"
+        className={`input ${invalid ? "border-red-500 dark:border-red-500" : ""}`}
+        value={text}
+        onChange={(e) => handleChange(e.target.value)}
+      />
+      <p className="text-xs text-slate-400">
+        Format: dd-MMM-yyyy HH:mm, in your local timezone ({browserTimeZone}); stored as UTC.
+      </p>
     </div>
   );
 }
