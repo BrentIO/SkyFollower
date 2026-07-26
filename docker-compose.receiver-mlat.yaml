@@ -1,0 +1,21 @@
+name: skyfollower-receiver-mlat
+
+# Optional second Receiver instance dedicated to MLAT ingestion. Runs on its
+# own host (e.g. a small always-on box with outbound internet access) rather
+# than the Raspberry Pi handling the local RTL-SDR hardware — see
+# receiver/README.md's MLAT section for why a separate instance is
+# recommended over adding MLAT sources to docker-compose.receiver.yaml.
+
+services:
+
+  receiver:
+    image: ghcr.io/brentio/skyfollower-receiver:latest
+    restart: unless-stopped
+    volumes:
+      - ./config/receiver/mlat-settings.json:/app/settings.json:ro
+      - receiver-mlat-queue:/app/data
+    environment:
+      RECEIVER_ID: "1"
+
+volumes:
+  receiver-mlat-queue:
