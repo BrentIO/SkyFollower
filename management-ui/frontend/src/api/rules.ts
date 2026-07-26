@@ -30,6 +30,17 @@ export const OPERATORS = ["equals", "minimum", "maximum", "in_list", "not_in_lis
 
 export type Operator = (typeof OPERATORS)[number];
 
+// Display labels for the operator dropdown -- `in_list`/`not_in_list` only
+// ever apply to `matched_rules` (see OPERATORS_BY_TYPE below), where
+// "includes"/"excludes" reads far better than the raw wire values.
+export const OPERATOR_LABELS: Record<Operator, string> = {
+  equals: "equals",
+  minimum: "minimum",
+  maximum: "maximum",
+  in_list: "includes",
+  not_in_list: "excludes",
+};
+
 // Which operators are valid for each condition type -- mirrors CLAUDE.md's
 // Conditions table (aircraft_powerplant_count allows `equals` too, unlike
 // the other numeric range fields -- message-processor/rules_engine.py's
@@ -66,6 +77,8 @@ export const WAKE_TURBULENCE_CATEGORIES = [
   "rotorcraft",
   "high performance",
 ] as const;
+
+export type WakeTurbulenceCategory = (typeof WAKE_TURBULENCE_CATEGORIES)[number];
 
 export interface Condition {
   type: ConditionType;

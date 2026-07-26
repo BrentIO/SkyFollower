@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import {
   CONDITION_TYPES,
+  OPERATOR_LABELS,
   OPERATORS_BY_TYPE,
   WAKE_TURBULENCE_CATEGORIES,
   type Condition,
   type ConditionType,
   type Operator,
+  type WakeTurbulenceCategory,
 } from "../api/rules";
 
 interface AreaOption {
@@ -43,6 +45,18 @@ const TYPE_LABELS: Record<ConditionType, string> = {
 function defaultValueFor(type: ConditionType): string | string[] {
   return type === "matched_rules" ? [] : "";
 }
+
+// WAKE_TURBULENCE_CATEGORIES stores the exact lowercase strings
+// message-processor/rules_engine.py validates against (e.g. "medium 1",
+// "high vortex aircraft") -- this only formats the dropdown's visible
+// text; the submitted `value` is always the original lowercase form.
+function titleCase(category: WakeTurbulenceCategory): string {
+  return category.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const SORTED_WAKE_TURBULENCE_CATEGORIES = [...WAKE_TURBULENCE_CATEGORIES].sort((a, b) =>
+  titleCase(a).localeCompare(titleCase(b)),
+);
 
 // Units shown alongside the "Value" label for the condition types where a
 // bare number would otherwise be ambiguous. Types not listed here (text,
@@ -123,7 +137,7 @@ export function ConditionForm({
         >
           {validOperators.map((op) => (
             <option key={op} value={op}>
-              {op}
+              {OPERATOR_LABELS[op]}
             </option>
           ))}
         </select>
@@ -275,9 +289,9 @@ function ConditionValueInput({
           <option value="" disabled>
             Select...
           </option>
-          {WAKE_TURBULENCE_CATEGORIES.map((category) => (
+          {SORTED_WAKE_TURBULENCE_CATEGORIES.map((category) => (
             <option key={category} value={category}>
-              {category}
+              {titleCase(category)}
             </option>
           ))}
         </select>
@@ -299,21 +313,31 @@ function ConditionValueInput({
 
     case "matched_rules": {
       const selected = Array.isArray(value) ? value : [];
+
+      function toggle(identifier: string) {
+        onValueChange(
+          selected.includes(identifier)
+            ? selected.filter((id) => id !== identifier)
+            : [...selected, identifier],
+        );
+      }
+
       return (
-        <select
-          multiple
-          className="input h-24"
-          value={selected}
-          onChange={(e) =>
-            onValueChange(Array.from(e.target.selectedOptions).map((o) => o.value))
-          }
-        >
+        <div className="input flex max-h-32 flex-col gap-1 overflow-y-auto">
+          {otherRuleIdentifiers.length === 0 && (
+            <span className="text-sm text-slate-400">No other rules to match against yet.</span>
+          )}
           {otherRuleIdentifiers.map((identifier) => (
-            <option key={identifier} value={identifier}>
+            <label key={identifier} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={selected.includes(identifier)}
+                onChange={() => toggle(identifier)}
+              />
               {identifier}
-            </option>
+            </label>
           ))}
-        </select>
+        </div>
       );
     }
 

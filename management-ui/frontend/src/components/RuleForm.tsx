@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ConditionForm } from "./ConditionForm";
-import type { Condition, ConditionType, Rule } from "../api/rules";
+import type { Condition, ConditionType, Rule, WakeTurbulenceCategory } from "../api/rules";
 import { OPERATORS_BY_TYPE, WAKE_TURBULENCE_CATEGORIES } from "../api/rules";
 
 interface AreaOption {
@@ -93,7 +93,7 @@ function validateCondition(condition: Condition): string | null {
       return null;
 
     case "wake_turbulence_category":
-      if (!WAKE_TURBULENCE_CATEGORIES.includes(value as (typeof WAKE_TURBULENCE_CATEGORIES)[number])) {
+      if (!WAKE_TURBULENCE_CATEGORIES.includes(value as WakeTurbulenceCategory)) {
         return "must be selected";
       }
       return null;

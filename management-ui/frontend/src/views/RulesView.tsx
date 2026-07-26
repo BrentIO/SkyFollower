@@ -8,6 +8,7 @@ import {
   emptyRule,
   listRules,
   updateRule,
+  type Condition,
   type Rule,
 } from "../api/rules";
 import { useToast } from "../hooks/useToast";
@@ -18,6 +19,58 @@ interface AreaOption {
 }
 
 const clone = (rule: Rule): Rule => JSON.parse(JSON.stringify(rule));
+
+// Mirrors message-processor/rules_engine.py's _eval_date/_compare_ordered:
+// a date-only value compares at UTC day granularity, a datetime value at
+// UTC minute granularity (seconds/microseconds zeroed on both sides).
+function isDateConditionActiveNow(condition: Condition): boolean {
+  const raw = condition.value as string;
+  const target = new Date(raw);
+  if (Number.isNaN(target.getTime())) return true; // can't evaluate -- don't flag bad data as inactive
+
+  const now = new Date();
+  let current: number;
+  let threshold: number;
+  if (raw.includes("T")) {
+    current = Math.floor(now.getTime() / 60000) * 60000;
+    threshold = Math.floor(target.getTime() / 60000) * 60000;
+  } else {
+    current = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    threshold = Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate());
+  }
+
+  switch (condition.operator) {
+    case "equals":
+      return current === threshold;
+    case "minimum":
+      return current >= threshold;
+    case "maximum":
+      return current <= threshold;
+    default:
+      return true;
+  }
+}
+
+// null = rule has no date condition at all (no pill); false = at least one
+// date condition isn't satisfied right now (conditions AND together, so
+// the rule can't currently match) -- "Inactive" pill.
+function isRuleDateActive(rule: Rule): boolean | null {
+  const dateConditions = rule.conditions.filter((c) => c.type === "date");
+  if (dateConditions.length === 0) return null;
+  return dateConditions.every(isDateConditionActiveNow);
+}
+
+function StatusPill({ label, tone }: { label: string; tone: "danger" | "neutral" }) {
+  const toneClasses =
+    tone === "danger"
+      ? "bg-red-600 text-white"
+      : "border border-slate-400 text-slate-500 dark:border-slate-500 dark:text-slate-400";
+  return (
+    <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${toneClasses}`}>
+      {label}
+    </span>
+  );
+}
 
 export function RulesView() {
   const { showToast } = useToast();
@@ -128,20 +181,6 @@ export function RulesView() {
     }
   }
 
-  async function toggleEnabled(rule: Rule) {
-    try {
-      const saved = await updateRule(rule.identifier, { ...rule, enabled: !rule.enabled });
-      setRules((current) => current.map((r) => (r.identifier === saved.identifier ? saved : r)));
-      if (draft?.identifier === saved.identifier && original?.identifier === saved.identifier) {
-        setDraft(clone(saved));
-        setOriginal(clone(saved));
-      }
-      showToast("success", `Rule '${saved.identifier}' ${saved.enabled ? "enabled" : "disabled"}.`);
-    } catch (err) {
-      showToast("error", err instanceof ApiError ? err.message : "Failed to update rule.");
-    }
-  }
-
   if (loading) {
     return <p className="text-slate-400">Loading rules...</p>;
   }
@@ -158,31 +197,33 @@ export function RulesView() {
         </button>
 
         <ul className="flex flex-col gap-1 overflow-y-auto">
-          {rules.map((rule) => (
-            <li
-              key={rule.identifier}
-              className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm ${
-                draft?.identifier === rule.identifier && !isNew
-                  ? "bg-sky-100 dark:bg-sky-900"
-                  : "hover:bg-slate-100 dark:hover:bg-slate-800"
-              }`}
-            >
-              <button
-                type="button"
-                className="flex-1 truncate text-left"
-                onClick={() => selectRule(rule)}
-                title={rule.identifier}
+          {rules.map((rule) => {
+            const dateActive = isRuleDateActive(rule);
+            return (
+              <li
+                key={rule.identifier}
+                className={`rounded-md ${
+                  draft?.identifier === rule.identifier && !isNew
+                    ? "bg-sky-100 dark:bg-sky-900"
+                    : "hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
               >
-                {rule.name || rule.identifier}
-              </button>
-              <input
-                type="checkbox"
-                checked={rule.enabled}
-                onChange={() => toggleEnabled(rule)}
-                title="Enabled"
-              />
-            </li>
-          ))}
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm"
+                  onClick={() => selectRule(rule)}
+                  title={rule.identifier}
+                >
+                  <span className="truncate">{rule.name || rule.identifier}</span>
+                  {!rule.enabled ? (
+                    <StatusPill label="Not Enabled" tone="danger" />
+                  ) : dateActive === false ? (
+                    <StatusPill label="Inactive" tone="neutral" />
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
           {rules.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">No rules yet.</li>}
         </ul>
       </div>
