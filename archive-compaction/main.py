@@ -2,14 +2,24 @@
 """
 SkyFollower Archive Compaction
 
-Daily one-shot job that consolidates a single day's small per-flight
-Parquet index files (index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet,
-written one per flight by archive-processor) into one file per partition,
-so Athena/Glue partition projection isn't scanning thousands of tiny files
-per day indefinitely.
+Daily job that consolidates each day's small per-flight Parquet index files
+(index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet, written one per
+flight by archive-processor) into one file per partition, so Athena/Glue
+partition projection isn't scanning thousands of tiny files per day
+indefinitely.
 
-Targets "the day before yesterday" (UTC) to absorb flight_ttl_seconds
-archival delay and any lag from the offline s3.db fallback draining late.
+Tracks a `_compaction_state/watermark.json` "last compacted date" in S3 and
+walks forward one date at a time from watermark+1 up to today-2 (UTC) --
+absorbing flight_ttl_seconds archival delay and any lag from the archive
+processor's offline s3.db fallback draining late -- so a single run can
+clear a multi-day backlog once whatever stalled it is fixed, rather than
+advancing one day per scheduled run regardless of how far behind it is.
+
+Before compacting each date, verifies every flight object under that date's
+flights/ prefix has a matching Parquet index row under its index/ prefix.
+A mismatch stops the loop at that date (nothing later is attempted either)
+and leaves the watermark exactly where it was, rather than silently
+compacting an index that's missing rows.
 """
 
 from __future__ import annotations
@@ -21,7 +31,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import boto3
 import paho.mqtt.client as mqtt
@@ -61,27 +71,52 @@ _PARQUET_INDEX_SCHEMA = pa.schema([
 # rows that have already been compacted and had their sources deleted.
 _COMPACTED_PREFIX = "compacted-"
 
+# Sibling to flights/ and index/, not nested inside either -- so Glue's
+# year=/month=/day= partition projection template never mistakes this for
+# a partition file.
+_WATERMARK_KEY = "_compaction_state/watermark.json"
+
 
 # ---------------------------------------------------------------------------
 # Partition targeting
 # ---------------------------------------------------------------------------
 
+def _utc_today(now: datetime | None = None) -> date:
+    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+
+
+def _cutoff_date(now: datetime | None = None) -> date:
+    """
+    Latest date this job will ever compact: today - 2, UTC. Not yesterday
+    -- this absorbs flight_ttl_seconds archival delay and any lag from the
+    archive processor's local s3.db offline-fallback queue draining late,
+    so a flight that logically belongs to that day but was archived a bit
+    late is still present before compaction runs.
+    """
+    return _utc_today(now) - timedelta(days=2)
+
+
+def index_prefix_for_date(d: date) -> str:
+    return (
+        f"index/year={d.strftime('%Y')}/"
+        f"month={d.strftime('%m')}/"
+        f"day={d.strftime('%d')}/"
+    )
+
+
+def flights_prefix_for_date(d: date) -> str:
+    return f"flights/{d.strftime('%Y')}/{d.strftime('%m')}/{d.strftime('%d')}/"
+
+
 def target_partition_prefix(now: datetime | None = None) -> str:
     """
-    Return the S3 prefix for the partition this run should compact: "the
-    day before yesterday" in UTC, not yesterday -- this absorbs
-    flight_ttl_seconds archival delay and any lag from the local s3.db
-    offline-fallback queue draining late, so a flight that logically
-    belongs to that day but was archived a bit late is still present
-    before compaction runs.
+    The index/ prefix for the cutoff date (today - 2, UTC) -- the single
+    date this job used to always target before the watermark-driven
+    catch-up loop (run_compaction) existed. Kept as a thin wrapper around
+    index_prefix_for_date/_cutoff_date since it's still the right prefix
+    for "the latest date we'd ever compact right now."
     """
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    target = now - timedelta(days=2)
-    return (
-        f"index/year={target.strftime('%Y')}/"
-        f"month={target.strftime('%m')}/"
-        f"day={target.strftime('%d')}/"
-    )
+    return index_prefix_for_date(_cutoff_date(now))
 
 
 def is_per_flight_file(key: str) -> bool:
@@ -147,6 +182,93 @@ def delete_keys(s3_client, bucket: str, keys: list[str]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Flight / index parity
+# ---------------------------------------------------------------------------
+
+def _uuid_from_flight_key(key: str) -> str | None:
+    """
+    Extract the flight UUID from a flights/ object key
+    (flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz). icao_hex
+    and ident never contain underscores themselves (icao_hex is hex
+    digits; ident is sanitized to alnum-only in archive-processor's
+    build_s3_key), so splitting the basename on "_" always yields exactly
+    three segments. Returns None for a key that doesn't match this shape.
+    """
+    basename = key.rsplit("/", 1)[-1]
+    if not basename.endswith(".json.gz"):
+        return None
+    parts = basename[: -len(".json.gz")].split("_")
+    if len(parts) != 3:
+        return None
+    return parts[2]
+
+
+def _uuid_from_index_key(key: str) -> str | None:
+    """
+    Extract the flight UUID from a per-flight index/ object key
+    (index/year=/month=/day=/{uuid}.parquet). Returns None for an
+    already-compacted file (compacted-* basename) or a key that otherwise
+    doesn't match this shape.
+    """
+    if not is_per_flight_file(key):
+        return None
+    basename = key.rsplit("/", 1)[-1]
+    if not basename.endswith(".parquet"):
+        return None
+    return basename[: -len(".parquet")]
+
+
+def check_date_parity(s3_client, bucket: str, d: date) -> set[str]:
+    """
+    Return the set of flight UUIDs present under `d`'s flights/ prefix with
+    no matching Parquet index row under its index/ prefix -- exactly the
+    flights that would be missing from the index forever if this date were
+    compacted as-is. An empty set means a clean match (safe to compact).
+
+    Not checked in the other direction: an index row with no matching
+    flight object doesn't lose any data when compacted, so it isn't a
+    reason to block compaction here.
+    """
+    flight_keys = list_partition_objects(s3_client, bucket, flights_prefix_for_date(d))
+    index_keys = list_partition_objects(s3_client, bucket, index_prefix_for_date(d))
+
+    flight_uuids = {u for k in flight_keys if (u := _uuid_from_flight_key(k))}
+    index_uuids = {u for k in index_keys if (u := _uuid_from_index_key(k))}
+
+    return flight_uuids - index_uuids
+
+
+# ---------------------------------------------------------------------------
+# Watermark
+# ---------------------------------------------------------------------------
+
+def read_watermark(s3_client, bucket: str) -> date | None:
+    """
+    Read the last successfully compacted date from
+    _compaction_state/watermark.json. Returns None if the object doesn't
+    exist yet (first run ever) or can't be read/parsed for any other
+    reason -- either way, the caller treats an absent watermark as
+    "nothing compacted yet" rather than failing the whole run over it.
+    """
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=_WATERMARK_KEY)
+        data = json.loads(response["Body"].read())
+        return datetime.strptime(data["last_compacted_date"], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def write_watermark(s3_client, bucket: str, d: date) -> None:
+    body = json.dumps({"last_compacted_date": d.strftime("%Y-%m-%d")}).encode("utf-8")
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=_WATERMARK_KEY,
+        Body=body,
+        ContentType="application/json",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Compaction
 # ---------------------------------------------------------------------------
 
@@ -208,23 +330,88 @@ def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
     }
 
 
+def run_compaction(s3_client, bucket: str, now: datetime | None = None) -> dict:
+    """
+    Catch-up loop: starting the day after the watermark (or cutoff - 1 day
+    if no watermark exists yet, matching the old fixed single-date
+    behavior on a first run), compact one date at a time up to the cutoff
+    (today - 2, UTC). Each date is gated by check_date_parity first -- a
+    mismatch stops the loop immediately, leaving that date and every later
+    one uncompacted and the watermark exactly where it was, so a later run
+    resumes at the same stuck date once whatever caused the mismatch
+    resolves (the row lands late, or drains from index_queue) instead of
+    silently skipping past it.
+    """
+    cutoff = _cutoff_date(now)
+    watermark = read_watermark(s3_client, bucket)
+    if watermark is None:
+        watermark = cutoff - timedelta(days=1)
+
+    files_compacted = 0
+    files_delete_failed = 0
+    days_compacted = 0
+    mismatch_date: date | None = None
+    mismatch_uuids: set[str] = set()
+
+    target = watermark + timedelta(days=1)
+    while target <= cutoff:
+        missing = check_date_parity(s3_client, bucket, target)
+        if missing:
+            mismatch_date = target
+            mismatch_uuids = missing
+            logger.error(
+                "Parity mismatch for %s: %d flight(s) missing their index row; "
+                "stopping catch-up here. UUIDs: %s",
+                target.isoformat(), len(missing), ", ".join(sorted(missing)),
+            )
+            break
+
+        prefix = index_prefix_for_date(target)
+        logger.info("Compacting partition %s", prefix)
+        result = compact_partition(s3_client, bucket, prefix)
+        files_compacted += result["files_compacted"]
+        files_delete_failed += result["files_delete_failed"]
+        days_compacted += 1
+
+        watermark = target
+        write_watermark(s3_client, bucket, watermark)
+        target += timedelta(days=1)
+
+    return {
+        "files_compacted": files_compacted,
+        "files_delete_failed": files_delete_failed,
+        "days_compacted": days_compacted,
+        "last_compacted_date": watermark,
+        "mismatch_date": mismatch_date,
+        "mismatch_uuids": mismatch_uuids,
+    }
+
+
 # ---------------------------------------------------------------------------
 # MQTT
 # ---------------------------------------------------------------------------
 
 def publish_completion_stats(
     cfg: dict,
-    files_compacted: int,
-    files_delete_failed: int,
+    result: dict,
     status: str,
 ) -> None:
-    """Publish completion statistics to MQTT, one retained topic per stat."""
+    """Publish completion statistics to MQTT, one retained topic per stat.
+
+    `result` is the dict returned by run_compaction() (or the all-zero/None
+    default used when the run failed before compaction even started)."""
     mc = cfg.get("mqtt")
     if not mc:
         logger.info("No MQTT config; skipping stats publish.")
         return
 
     run_at = datetime.now(timezone.utc).isoformat()
+    files_compacted = result.get("files_compacted", 0)
+    files_delete_failed = result.get("files_delete_failed", 0)
+    days_compacted = result.get("days_compacted", 0)
+    last_compacted_date = result.get("last_compacted_date")
+    mismatch_date = result.get("mismatch_date")
+    mismatch_uuids = result.get("mismatch_uuids") or set()
 
     client = build_mqtt_client(mc)
     connected = False
@@ -251,6 +438,22 @@ def publish_completion_stats(
         base = MQTT_ROOT + "/statistic"
         client.publish(f"{base}/files_compacted", str(files_compacted), retain=True)
         client.publish(f"{base}/files_delete_failed", str(files_delete_failed), retain=True)
+        client.publish(f"{base}/days_compacted", str(days_compacted), retain=True)
+        client.publish(
+            f"{base}/last_compacted_date",
+            last_compacted_date.strftime("%Y-%m-%d") if last_compacted_date else "",
+            retain=True,
+        )
+        client.publish(
+            f"{base}/mismatch_date",
+            mismatch_date.strftime("%Y-%m-%d") if mismatch_date else "",
+            retain=True,
+        )
+        client.publish(
+            f"{base}/mismatch_uuids",
+            ",".join(sorted(mismatch_uuids)),
+            retain=True,
+        )
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status, retain=True)
 
@@ -281,6 +484,10 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     stats = [
         ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None),
         ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None),
+        ("days_compacted", "Archive Compaction Days Compacted", "mdi:calendar-check", "measurement", None),
+        ("last_compacted_date", "Archive Compaction Last Compacted Date", "mdi:calendar", None, None),
+        ("mismatch_date", "Archive Compaction Mismatch Date", "mdi:calendar-alert", None, None),
+        ("mismatch_uuids", "Archive Compaction Mismatch Flight UUIDs", "mdi:alert-circle", None, None),
         ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None),
     ]
@@ -325,25 +532,36 @@ def main() -> None:
     configure_logging(cfg.get("log_level"))
 
     status = "failure"
-    files_compacted = 0
-    files_delete_failed = 0
+    result: dict = {
+        "files_compacted": 0,
+        "files_delete_failed": 0,
+        "days_compacted": 0,
+        "last_compacted_date": None,
+        "mismatch_date": None,
+        "mismatch_uuids": set(),
+    }
 
     try:
         s3_cfg = cfg["s3"]
         bucket = s3_cfg["bucket"]
         s3_client = connect_s3(s3_cfg)
 
-        prefix = target_partition_prefix()
-        logger.info("Compacting partition %s", prefix)
-        result = compact_partition(s3_client, bucket, prefix)
-        files_compacted = result["files_compacted"]
-        files_delete_failed = result["files_delete_failed"]
+        result = run_compaction(s3_client, bucket)
 
-        status = "success"
-        logger.info(
-            "Archive compaction completed successfully. Files compacted: %d",
-            files_compacted,
-        )
+        if result["mismatch_uuids"]:
+            status = "mismatch"
+            logger.warning(
+                "Archive compaction stopped early at %s due to a parity "
+                "mismatch (%d day(s) compacted this run before stopping).",
+                result["mismatch_date"], result["days_compacted"],
+            )
+        else:
+            status = "success"
+            logger.info(
+                "Archive compaction completed successfully. Days compacted: "
+                "%d, files compacted: %d",
+                result["days_compacted"], result["files_compacted"],
+            )
 
     except Exception as exc:
         logger.error("Archive compaction failed: %s", exc, exc_info=True)
@@ -351,7 +569,7 @@ def main() -> None:
 
     finally:
         try:
-            publish_completion_stats(cfg, files_compacted, files_delete_failed, status)
+            publish_completion_stats(cfg, result, status)
         except Exception as exc:
             logger.warning("Failed to publish MQTT stats: %s", exc)
 

@@ -380,7 +380,8 @@ channels:
     address: SkyFollower/archive-compaction/statistic/files_compacted
     description: >
       Count of per-flight Parquet index files merged into this run's
-      compacted output. Published once per run, retained.
+      compacted output(s), summed across every date compacted this run.
+      Published once per run, retained.
     messages:
       ArchiveCompactionFilesCompactedMessage:
         $ref: '#/components/messages/ArchiveCompactionFilesCompactedMessage'
@@ -388,12 +389,53 @@ channels:
   archiveCompactionFilesDeleteFailed:
     address: SkyFollower/archive-compaction/statistic/files_delete_failed
     description: >
-      Count of files included in this run's compacted output whose source
-      delete call failed, and therefore still linger as duplicates.
-      Published once per run, retained.
+      Count of files included in a compacted output whose source delete
+      call failed, and therefore still linger as duplicates, summed across
+      every date compacted this run. Published once per run, retained.
     messages:
       ArchiveCompactionFilesDeleteFailedMessage:
         $ref: '#/components/messages/ArchiveCompactionFilesDeleteFailedMessage'
+
+  archiveCompactionDaysCompacted:
+    address: SkyFollower/archive-compaction/statistic/days_compacted
+    description: >
+      Number of date partitions successfully compacted this run -- more
+      than one when catching up after a gap. Published once per run,
+      retained.
+    messages:
+      ArchiveCompactionDaysCompactedMessage:
+        $ref: '#/components/messages/ArchiveCompactionDaysCompactedMessage'
+
+  archiveCompactionLastCompactedDate:
+    address: SkyFollower/archive-compaction/statistic/last_compacted_date
+    description: >
+      The watermark after this run: the most recent UTC date (YYYY-MM-DD)
+      whose partition has been fully compacted. Published once per run,
+      retained.
+    messages:
+      ArchiveCompactionLastCompactedDateMessage:
+        $ref: '#/components/messages/ArchiveCompactionLastCompactedDateMessage'
+
+  archiveCompactionMismatchDate:
+    address: SkyFollower/archive-compaction/statistic/mismatch_date
+    description: >
+      UTC date (YYYY-MM-DD) this run stopped at due to a flight/index
+      parity mismatch. Empty string when the run wasn't stopped by one.
+      Published once per run, retained.
+    messages:
+      ArchiveCompactionMismatchDateMessage:
+        $ref: '#/components/messages/ArchiveCompactionMismatchDateMessage'
+
+  archiveCompactionMismatchUuids:
+    address: SkyFollower/archive-compaction/statistic/mismatch_uuids
+    description: >
+      Comma-separated flight UUIDs missing their Parquet index row on
+      mismatch_date -- a starting point for manual investigation. Empty
+      string when the run wasn't stopped by a mismatch. Published once per
+      run, retained.
+    messages:
+      ArchiveCompactionMismatchUuidsMessage:
+        $ref: '#/components/messages/ArchiveCompactionMismatchUuidsMessage'
 
   archiveCompactionLastRunAt:
     address: SkyFollower/archive-compaction/statistic/last_run_at
@@ -407,8 +449,10 @@ channels:
   archiveCompactionLastRunStatus:
     address: SkyFollower/archive-compaction/statistic/last_run_status
     description: >
-      Outcome of this run (success or failure). Published once per run,
-      retained.
+      Outcome of this run: success, failure (an exception, e.g. an S3
+      error), or mismatch (completed without error but stopped early on a
+      flight/index parity mismatch -- see mismatch_date/mismatch_uuids).
+      Published once per run, retained.
     messages:
       ArchiveCompactionLastRunStatusMessage:
         $ref: '#/components/messages/ArchiveCompactionLastRunStatusMessage'
@@ -664,6 +708,30 @@ operations:
     channel:
       $ref: '#/channels/archiveCompactionFilesDeleteFailed'
     summary: Archive compaction publishes the files-delete-failed count for this run
+
+  publishArchiveCompactionDaysCompacted:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionDaysCompacted'
+    summary: Archive compaction publishes the number of date partitions compacted this run
+
+  publishArchiveCompactionLastCompactedDate:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionLastCompactedDate'
+    summary: Archive compaction publishes its watermark date
+
+  publishArchiveCompactionMismatchDate:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionMismatchDate'
+    summary: Archive compaction publishes the date it stopped at, if a parity mismatch occurred
+
+  publishArchiveCompactionMismatchUuids:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionMismatchUuids'
+    summary: Archive compaction publishes the flight UUIDs missing their index row, if a parity mismatch occurred
 
   publishArchiveCompactionLastRunAt:
     action: send
@@ -941,6 +1009,38 @@ components:
       payload:
         $ref: '#/components/schemas/ArchiveCompactionFilesDeleteFailed'
 
+    ArchiveCompactionDaysCompactedMessage:
+      name: ArchiveCompactionDaysCompactedMessage
+      title: Archive compaction days compacted
+      summary: Number of date partitions successfully compacted this run
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionDaysCompacted'
+
+    ArchiveCompactionLastCompactedDateMessage:
+      name: ArchiveCompactionLastCompactedDateMessage
+      title: Archive compaction last compacted date
+      summary: The watermark after this run
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionLastCompactedDate'
+
+    ArchiveCompactionMismatchDateMessage:
+      name: ArchiveCompactionMismatchDateMessage
+      title: Archive compaction mismatch date
+      summary: Date this run stopped at due to a flight/index parity mismatch
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionMismatchDate'
+
+    ArchiveCompactionMismatchUuidsMessage:
+      name: ArchiveCompactionMismatchUuidsMessage
+      title: Archive compaction mismatch flight UUIDs
+      summary: Flight UUIDs missing their Parquet index row on mismatch_date
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionMismatchUuids'
+
     ArchiveCompactionLastRunAtMessage:
       name: ArchiveCompactionLastRunAtMessage
       title: Archive compaction last run at
@@ -1147,6 +1247,33 @@ components:
         call failed and therefore still linger as duplicates
       example: 0
 
+    ArchiveCompactionDaysCompacted:
+      type: integer
+      description: Number of date partitions successfully compacted this run -- more than one when catching up after a gap
+      example: 1
+
+    ArchiveCompactionLastCompactedDate:
+      type: string
+      format: date
+      description: The watermark after this run -- the most recent UTC date whose partition has been fully compacted
+      example: "2026-07-23"
+
+    ArchiveCompactionMismatchDate:
+      type: string
+      format: date
+      description: >
+        UTC date this run stopped at due to a flight/index parity mismatch.
+        Empty string when the run wasn't stopped by one
+      example: ""
+
+    ArchiveCompactionMismatchUuids:
+      type: string
+      description: >
+        Comma-separated flight UUIDs missing their Parquet index row on
+        mismatch_date. Empty string when the run wasn't stopped by a
+        mismatch
+      example: ""
+
     ArchiveCompactionLastRunAt:
       type: string
       format: date-time
@@ -1155,8 +1282,11 @@ components:
 
     ArchiveCompactionLastRunStatus:
       type: string
-      enum: [success, failure]
-      description: Outcome of this run
+      enum: [success, failure, mismatch]
+      description: >
+        Outcome of this run. mismatch means the run completed without
+        error but stopped early on a flight/index parity mismatch (see
+        mismatch_date/mismatch_uuids); failure means an actual exception
       example: success
 
     RunnerRecordsImported:

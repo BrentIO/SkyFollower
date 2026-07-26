@@ -9,27 +9,47 @@
 ## How it works
 
 The archive processor writes one small Parquet index row per flight to
-`index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet` (see
-`archive-processor/README.md` and `specs/data-dictionary.yaml`'s
-`archive_parquet_index` record). Each run of this job:
+`index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet` alongside the
+flight's own `flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz`
+object (see `archive-processor/README.md` and
+`specs/data-dictionary.yaml`'s `archive_parquet_index` record). Each run of
+this job:
 
-1. Computes the target partition: **the day before yesterday**, in UTC —
-   not yesterday — so `flight_ttl_seconds` archival delay and any lag from
-   the archive processor's local `s3.db` offline-fallback queue draining
-   late don't cause a flight to be missed.
-2. Lists every object under that day's `index/year=/month=/day=/` prefix,
-   filtering out any file already produced by a previous compaction run
-   (identified by a `compacted-` filename prefix — a per-flight file is
-   always a bare UUID, so this can never collide with one).
-3. Reads and merges the remaining per-flight files into a single Arrow
-   table, and writes it as one new `compacted-{uuid}.parquet` file under
-   the same partition.
-4. Deletes only the source files that were actually read into that output
+1. Reads the last successfully compacted date — the **watermark** — from
+   `_compaction_state/watermark.json` in S3 (a sibling prefix to `flights/`
+   and `index/`, never nested inside either, so Glue's partition projection
+   template never mistakes it for a partition file). A missing watermark
+   (first run ever) is treated as "nothing compacted yet."
+2. Walks forward one date at a time, from the day after the watermark up to
+   **the day before yesterday** (UTC, not yesterday — this absorbs
+   `flight_ttl_seconds` archival delay and any lag from the archive
+   processor's local `s3.db` offline-fallback queue draining late). A
+   single run can therefore clear a multi-day backlog once whatever stalled
+   it is fixed, rather than crawling forward one day per scheduled run.
+3. Before compacting each date, verifies parity: every flight object under
+   that date's `flights/` prefix must have a matching Parquet index row
+   under its `index/` prefix, matched by the UUID embedded in each key. A
+   mismatch — a flight archived with no index row ever landing for it —
+   **stops the loop at that date**; nothing later is attempted either, and
+   the watermark stays exactly where it was. This is deliberately different
+   from the late-straggler case below: a late straggler is a file this run
+   simply hasn't seen yet and will pick up on its own once seen; a parity
+   mismatch means a date was actually checked and is still missing a row,
+   which won't fix itself by moving on to the next date.
+4. For a date that passes the parity check: lists every object under that
+   day's `index/year=/month=/day=/` prefix, filtering out any file already
+   produced by a previous compaction run (identified by a `compacted-`
+   filename prefix — a per-flight file is always a bare UUID, so this can
+   never collide with one), reads and merges the remaining per-flight files
+   into a single Arrow table, and writes it as one new
+   `compacted-{uuid}.parquet` file under the same partition.
+5. Deletes only the source files that were actually read into that output
    — never a file that failed to read, and never a file that arrived under
    the prefix after the initial listing (a late straggler). Both cases are
    left in place: an extra small file in the partition, still queryable on
    its own via Glue's partition projection (which reads every file under a
-   partition as one table), with no duplication risk.
+   partition as one table), with no duplication risk. The watermark only
+   advances past a date once its compaction step actually completes.
 
 A file that's left behind — whether a late straggler or one whose delete
 call failed after being included in a compacted output — is not retried by
@@ -64,14 +84,18 @@ Published once, at the end of a run, to
 
 | Topic suffix | Value | Format |
 |---|---|---|
-| `files_compacted` | e.g. `142` | Integer as string — per-flight files merged into this run's compacted output |
-| `files_delete_failed` | e.g. `0` | Integer as string — files that were included in the compacted output but whose delete call failed, and therefore still linger as duplicates |
+| `files_compacted` | e.g. `142` | Integer as string — per-flight files merged into this run's compacted output(s), summed across every date compacted this run |
+| `files_delete_failed` | e.g. `0` | Integer as string — files that were included in a compacted output but whose delete call failed, and therefore still linger as duplicates, summed across every date compacted this run |
+| `days_compacted` | e.g. `1` | Integer as string — number of date partitions successfully compacted this run (more than one during catch-up after a gap) |
+| `last_compacted_date` | e.g. `2026-07-23` | The watermark after this run — the most recent date whose partition has been fully compacted |
+| `mismatch_date` | e.g. `2026-07-24`, or empty | The date this run stopped at due to a flight/index parity mismatch; empty when the run wasn't stopped by one |
+| `mismatch_uuids` | e.g. `0198abcd-...,0198abce-...`, or empty | Comma-separated flight UUIDs missing their index row on `mismatch_date` — a starting point for manual investigation. Check `local_index_queue_depth` on the archive processor's own stats: nonzero means the row is likely still draining locally and will resolve on its own; zero means it's genuinely lost from the archive processor's perspective |
 | `last_run_at` | e.g. `2026-07-25T04:50:03.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `success` or `failure` | String |
+| `last_run_status` | `success`, `failure`, or `mismatch` | String — `mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`); `failure` means an actual exception (S3 error, etc.) |
 
 Home Assistant autodiscovery configs are also published (retained) to
 `homeassistant/sensor/SkyFollower_archive_compaction_{name}/config` for
-each of the four stats above.
+each of the eight stats above.
 
 ## Deployment
 
