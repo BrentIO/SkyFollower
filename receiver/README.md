@@ -148,27 +148,28 @@ All topics use the root `SkyFollower`.
 | Topic | Payload | Retained |
 |-------|---------|----------|
 | `SkyFollower/receiver/{receiver_id}/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/receiver/{receiver_id}/statistics` | JSON (see fields below) | Yes |
+| `SkyFollower/receiver/{receiver_id}/statistic/{name}` | One retained topic per stat (see fields below) | Yes |
 
-**Statistics payload fields:**
+**Statistic topic suffixes (`{name}`):**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `messages_1090_per_second` | float | Average 1090 MHz message rate since last report |
-| `messages_978_per_second` | float | Average 978 MHz UAT message rate since last report; only present if a `978` source is configured |
-| `messages_MLAT_per_second` | float | Average MLAT message rate since last report; only present if an `MLAT` source is configured |
-| `local_queue_depth` | integer | Messages queued in the local SQLite fallback (`queue.db`) |
-| `rabbitmq_connected` | boolean | `true` when an active RabbitMQ connection is held |
-| `started_at` | string | UTC ISO-8601 timestamp of process start |
+| Field | Format | Description |
+|-------|--------|-------------|
+| `messages_1090_per_second` | Float as string | Average 1090 MHz message rate since last report |
+| `messages_978_per_second` | Float as string | Average 978 MHz UAT message rate since last report; only present if a `978` source is configured |
+| `messages_MLAT_per_second` | Float as string | Average MLAT message rate since last report; only present if an `MLAT` source is configured |
+| `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) |
+| `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
+| `started_at` | UTC ISO-8601 timestamp | Process start time |
 
-A `messages_{source}_per_second` field is generated for every source tag present in `sources[]` — the table above lists the currently supported tags, not a fixed schema.
+A `messages_{source}_per_second` topic is published for every source tag present in `sources[]` — the table above lists the currently supported tags, not a fixed schema.
 
-All statistics are published as a single retained JSON payload. Telemetry is published every `telemetry_interval_seconds`.
+Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`.
 
 Home Assistant autodiscovery payloads are published to
 `homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect.
-Each sensor uses `state_topic: SkyFollower/receiver/{receiver_id}/statistics` with a
-`value_template` to extract its field.
+Each sensor's `state_topic` points directly at its own
+`SkyFollower/receiver/{receiver_id}/statistic/{field}` topic — no
+`value_template` needed.
 
 ## Adding or Changing readsb Sources
 

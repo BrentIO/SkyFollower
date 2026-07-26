@@ -1065,31 +1065,37 @@ class Processor:
         self._processing_time.reset()
         rules_hwm = self._rules_time.hwm_ms_and_reset()
 
-        payload = {
-            "started_at": self._started_at,
-            "messages_per_second": round(self._rate.rate(), 2),
-            "processing_time_hwm_ms": processing_hwm,
-            "rules_engine_hwm_ms": rules_hwm,
-            "rabbitmq_input_queue_depth_hwm": self._rmq_queue_depth_hwm.value_and_reset(),
-            "local_archive_queue_depth": self._fallback.depth(),
-            "active_flights": active,
-            "registration_misses_hour": self._redis_counter(
-                metrics_registration_misses_key(pid, "hour")
-            ),
-            "registration_misses_today": self._redis_counter(
-                metrics_registration_misses_key(pid, "today")
-            ),
-            "aircraft_type_misses_hour": self._redis_counter(
-                metrics_aircraft_type_misses_key(pid, "hour")
-            ),
-            "aircraft_type_misses_today": self._redis_counter(
-                metrics_aircraft_type_misses_key(pid, "today")
-            ),
-        }
+        base = f"SkyFollower/processor/{pid}/statistic"
 
+        self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
+        self._mqtt.publish(f"{base}/messages_per_second", str(round(self._rate.rate(), 2)), retain=True)
+        self._mqtt.publish(f"{base}/processing_time_hwm_ms", str(processing_hwm), retain=True)
+        self._mqtt.publish(f"{base}/rules_engine_hwm_ms", str(rules_hwm), retain=True)
         self._mqtt.publish(
-            f"SkyFollower/processor/{pid}/statistics",
-            json.dumps(payload),
+            f"{base}/rabbitmq_input_queue_depth_hwm",
+            str(self._rmq_queue_depth_hwm.value_and_reset()),
+            retain=True,
+        )
+        self._mqtt.publish(f"{base}/local_archive_queue_depth", str(self._fallback.depth()), retain=True)
+        self._mqtt.publish(f"{base}/active_flights", str(active), retain=True)
+        self._mqtt.publish(
+            f"{base}/registration_misses_hour",
+            str(self._redis_counter(metrics_registration_misses_key(pid, "hour"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/registration_misses_today",
+            str(self._redis_counter(metrics_registration_misses_key(pid, "today"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/aircraft_type_misses_hour",
+            str(self._redis_counter(metrics_aircraft_type_misses_key(pid, "hour"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/aircraft_type_misses_today",
+            str(self._redis_counter(metrics_aircraft_type_misses_key(pid, "today"))),
             retain=True,
         )
 
@@ -1183,7 +1189,7 @@ class Processor:
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        stats_topic = f"SkyFollower/processor/{pid}/statistics"
+        base = f"SkyFollower/processor/{pid}/statistic"
         sensors = [
             ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
             ("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms"),
@@ -1199,8 +1205,7 @@ class Processor:
         for field, desc, icon, state_class, unit in sensors:
             payload = {
                 **availability,
-                "state_topic": stats_topic,
-                "value_template": f"{{{{ value_json.{field} }}}}",
+                "state_topic": f"{base}/{field}",
                 "name": desc,
                 "unique_id": f"SkyFollower_processor_{pid}_{field}",
                 "object_id": f"SkyFollower_processor_{pid}_{field}",

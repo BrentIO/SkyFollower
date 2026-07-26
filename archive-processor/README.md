@@ -212,27 +212,28 @@ All topics use the root `SkyFollower`.
 | Topic | Payload | Retained |
 |-------|---------|----------|
 | `SkyFollower/archive/status` | `ONLINE` or `OFFLINE` | Yes |
-| `SkyFollower/archive/statistics` | JSON stats payload (see fields below) | Yes |
+| `SkyFollower/archive/statistic/{name}` | One retained topic per stat (see fields below) | Yes |
 
-**Statistics payload fields:**
+**Statistic topic suffixes (`{name}`):**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `started_at` | string | UTC ISO-8601 timestamp of process start |
-| `flights_archived_hour` | integer | Flights successfully written to S3 this hour |
-| `flights_archived_today` | integer | Flights successfully written to S3 today (UTC) |
-| `flights_skipped_hour` | integer | MLAT-only flights dropped instead of archived this hour |
-| `flights_skipped_today` | integer | MLAT-only flights dropped instead of archived today, UTC |
-| `s3_connected` | boolean | Current S3 connectivity state |
-| `local_queue_depth` | integer | Flights currently queued in `s3.db` fallback |
-| `local_index_queue_depth` | integer | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
-| `rabbitmq_archive_queue_depth_hwm` | integer | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
+| Field | Format | Description |
+|-------|--------|-------------|
+| `started_at` | UTC ISO-8601 timestamp | Process start time |
+| `flights_archived_hour` | Integer as string | Flights successfully written to S3 this hour |
+| `flights_archived_today` | Integer as string | Flights successfully written to S3 today (UTC) |
+| `flights_skipped_hour` | Integer as string | MLAT-only flights dropped instead of archived this hour |
+| `flights_skipped_today` | Integer as string | MLAT-only flights dropped instead of archived today, UTC |
+| `s3_connected` | `True` or `False` | Current S3 connectivity state |
+| `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
+| `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
+| `rabbitmq_archive_queue_depth_hwm` | Integer as string | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 
-All statistics are published as a single retained JSON payload every
-`telemetry_interval_seconds`. Home Assistant autodiscovery payloads are
-published to `homeassistant/sensor/SkyFollower_archive_{field}/config` on
-MQTT connect, each using `value_template` to extract its field from the
-shared statistics topic.
+Each stat is published as its own retained topic (not a combined JSON
+payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
+payloads are published to
+`homeassistant/sensor/SkyFollower_archive_{field}/config` on MQTT connect;
+each sensor's `state_topic` points directly at its own
+`SkyFollower/archive/statistic/{field}` topic — no `value_template` needed.
 
 `rabbitmq_archive_queue_depth_hwm` is sampled by a dedicated background
 loop capped at once every 10 seconds, independent of how low
