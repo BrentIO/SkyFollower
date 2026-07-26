@@ -34,6 +34,7 @@ import pyModeS as pms
 import pyModeS978
 import redis as redis_lib
 
+from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.logging_setup import configure_logging
 from shared.models import (
@@ -533,6 +534,8 @@ class MessageProcessor:
         )
         _lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "merge_aircraft.lua"
         self._merge_sha = self._redis.script_load(_lua_path.read_text())
+        _route_lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "route_airports.lua"
+        self._route_sha = self._redis.script_load(_route_lua_path.read_text())
 
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
@@ -936,6 +939,39 @@ class MessageProcessor:
             logger.debug("Redis enrichment (operator) error: %s", exc)
 
     # ------------------------------------------------------------------
+    # Route leg resolution (origin/destination)
+    # ------------------------------------------------------------------
+
+    def _resolve_route(self, flight: CompletedFlight) -> CompletedFlight:
+        """Fills origin/destination from route:{ident} (resolved to full
+        airport records server-side by route_airports.lua), reconciled
+        against the flight's own observed position/heading/altitude — see
+        message-processor/README.md's "Route Leg Resolution" section and
+        message_processor.route_resolver for the resolution/sanity-check
+        logic itself. All-or-nothing: leaves both fields None on missing
+        route data, an unresolvable leg, or a failed cross-track sanity
+        check, rather than writing a partial or best-guess pair."""
+        if not flight.ident:
+            return flight
+        try:
+            raw = self._redis.evalsha(self._route_sha, 0, flight.ident)
+            airports = json.loads(raw) if raw else []
+        except Exception as exc:
+            logger.debug("Redis route resolution error: %s", exc)
+            return flight
+
+        if len(airports) < 2:
+            return flight
+
+        origin, destination = resolve_origin_destination(
+            airports, flight.positions, flight.velocities
+        )
+        if origin and destination:
+            flight.origin = origin
+            flight.destination = destination
+        return flight
+
+    # ------------------------------------------------------------------
     # Stale flight eviction
     # ------------------------------------------------------------------
 
@@ -968,6 +1004,7 @@ class MessageProcessor:
             self._archive(completed)
 
     def _archive(self, flight: CompletedFlight) -> None:
+        flight = self._resolve_route(flight)
         payload = flight.model_dump_json(by_alias=True)
         if self._rmq_connected and self._rmq_channel:
             try:

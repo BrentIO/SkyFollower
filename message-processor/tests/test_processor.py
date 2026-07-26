@@ -92,6 +92,7 @@ def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMoc
         p = MessageProcessor(cfg, message_processor_id=0)
         p._redis = mock_redis
         p._merge_sha = "abc123sha"
+        p._route_sha = "routesha123"
         p._rules_engine.evaluate.return_value = []
         return p, mock_redis
 
@@ -1037,6 +1038,129 @@ class TestProcessorEnrichment:
         p._enrich_operator(f)
 
         assert f.operator["airline_designator"] == "DAL"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_route / _archive — route:{ident} leg resolution (#498)
+#
+# The heuristics themselves (proximity, heading-vs-bearing, cross-track
+# sanity check) are unit tested in isolation in test_route_resolver.py;
+# these tests only cover the message-processor-side wiring: the EVALSHA
+# call, the all-or-nothing persistence rule, and that _archive() runs
+# resolution before publishing.
+# ---------------------------------------------------------------------------
+
+class TestResolveRoute:
+    def _make_completed_flight(self, ident="", positions=None):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-route-test"
+        f.first_message = 1.0
+        f.last_message = 2.0
+        f.total_messages = 2
+        f.receiver_sources = ["1090"]
+        f.ident = ident
+        f.save()
+        cf = f.to_completed_flight()
+        if positions is not None:
+            cf.positions = positions
+        return cf
+
+    def test_skips_when_no_ident(self):
+        p, mock_redis = _make_processor()
+        flight = self._make_completed_flight(ident="")
+
+        result = p._resolve_route(flight)
+
+        mock_redis.evalsha.assert_not_called()
+        assert result.origin is None
+        assert result.destination is None
+
+    def test_sets_origin_destination_for_direct_two_airport_route(self):
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
+            {"icao_code": "KATL", "latitude": 33.6367, "longitude": -84.4281},
+        ]
+        mock_redis.evalsha.return_value = json.dumps(airports)
+        positions = [{"latitude": 37.0, "longitude": -79.0, "altitude": 35000}]
+
+        flight = self._make_completed_flight(ident="DAL659", positions=positions)
+        result = p._resolve_route(flight)
+
+        mock_redis.evalsha.assert_called_once_with(p._route_sha, 0, "DAL659")
+        assert result.origin == "KJFK"
+        assert result.destination == "KATL"
+
+    def test_leaves_unset_when_no_route_known(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = "[]"
+
+        flight = self._make_completed_flight(ident="DAL659")
+        result = p._resolve_route(flight)
+
+        assert result.origin is None
+        assert result.destination is None
+
+    def test_all_or_nothing_on_sanity_check_rejection(self):
+        """Real-world case from #498: a flight's actual track ran ~800nm
+        from the KMSP-KMKE great-circle line -- the route entry was bogus
+        for this flight, and neither field should be set."""
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "KMSP", "latitude": 44.882, "longitude": -93.222},
+            {"icao_code": "KMKE", "latitude": 42.947, "longitude": -87.897},
+        ]
+        mock_redis.evalsha.return_value = json.dumps(airports)
+        positions = [{"latitude": 25.0, "longitude": -90.0, "altitude": 35000}]
+
+        flight = self._make_completed_flight(ident="BOGUS1", positions=positions)
+        result = p._resolve_route(flight)
+
+        assert result.origin is None
+        assert result.destination is None
+
+    def test_redis_error_leaves_unset(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.side_effect = RuntimeError("boom")
+
+        flight = self._make_completed_flight(ident="DAL659")
+        result = p._resolve_route(flight)
+
+        assert result.origin is None
+        assert result.destination is None
+
+
+class TestArchiveResolvesRoute:
+    def test_archive_sets_origin_destination_before_publish(self):
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
+            {"icao_code": "KATL", "latitude": 33.6367, "longitude": -84.4281},
+        ]
+        mock_redis.evalsha.return_value = json.dumps(airports)
+        mock_channel = MagicMock()
+        p._rmq_channel = mock_channel
+        p._rmq_connected = True
+
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.ident = "DAL659"
+        f.save()
+        cf = f.to_completed_flight()
+        cf.positions = [{"latitude": 37.0, "longitude": -79.0, "altitude": 35000}]
+
+        p._archive(cf)
+
+        payload = json.loads(mock_channel.basic_publish.call_args.kwargs["body"])
+        assert payload["origin"] == "KJFK"
+        assert payload["destination"] == "KATL"
 
 
 # ---------------------------------------------------------------------------

@@ -3379,6 +3379,16 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
+        sources:
+          - source: message-processor
+            description: >
+              Resolved once per flight at archive time from route:{ident}
+              (via EVALSHA route_airports.lua), reconciled against the
+              flight's own observed position/heading/altitude and sanity-
+              checked by cross-track distance from the candidate great-
+              circle line. All-or-nothing with destination: set only when
+              exactly one unambiguous, sanity-checked pair was resolved,
+              otherwise both are omitted rather than a partial guess.
 
       destination:
         type: object
@@ -3400,6 +3410,16 @@ records:
           icao_code:
             type: string
             description: "ICAO 4-character airport code"
+        sources:
+          - source: message-processor
+            description: >
+              Resolved once per flight at archive time from route:{ident}
+              (via EVALSHA route_airports.lua), reconciled against the
+              flight's own observed position/heading/altitude and sanity-
+              checked by cross-track distance from the candidate great-
+              circle line. All-or-nothing with origin: set only when
+              exactly one unambiguous, sanity-checked pair was resolved,
+              otherwise both are omitted rather than a partial guess.
 
       matched_rules:
         type: "array[string]"
