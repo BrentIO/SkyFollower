@@ -1,20 +1,32 @@
 """
-Tests for ui/backend/main.py.
+Tests for management-ui/backend/main.py.
 
 Redis is mocked via unittest.mock, matching the
 patch("message_processor.main.redis_lib.Redis") convention used in
 message-processor/tests/test_processor.py.
+
+main.py is loaded directly by file path rather than via a normal package
+import -- the hyphen in "management-ui" isn't a valid Python identifier, so
+it can't be imported as management_ui.backend.main the way "shared" or "ui"
+(no hyphen) could be.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from ui.backend import main as ui_main
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_spec = importlib.util.spec_from_file_location("management_ui_main", os.path.join(_BACKEND_DIR, "main.py"))
+ui_main = importlib.util.module_from_spec(_spec)
+sys.modules["management_ui_main"] = ui_main
+_spec.loader.exec_module(ui_main)
 
 
 @pytest.fixture

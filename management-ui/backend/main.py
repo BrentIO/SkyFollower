@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-SkyFollower UI Backend
+SkyFollower Management UI Backend
 
 FastAPI service that is the sole write path for the rules and areas
 configuration read by every message processor (config:rules / config:areas
 in Redis, polled every 5 seconds). No authentication — home lab deployment.
+
+Named "management" to leave room for a future, separate UI for viewing live
+aircraft movement, distinct from this configuration-focused one.
 
 Runs standalone on port 8000 for now. Once the React frontend (#15, #16)
 exists, the Dockerfile will grow a node build stage and nginx will proxy
@@ -67,7 +70,7 @@ except ModuleNotFoundError:
 
     from message_processor.rules_engine import RulesEngine  # noqa: E402
 
-logger = logging.getLogger("ui-backend")
+logger = logging.getLogger("management-ui-backend")
 
 _redis: Optional[redis_lib.Redis] = None
 _engine: Optional[RulesEngine] = None
@@ -94,13 +97,13 @@ async def lifespan(app: FastAPI):
     _engine = RulesEngine(_redis)
     _engine.reload_if_changed()
 
-    logger.info("UI backend started.")
+    logger.info("Management UI backend started.")
     yield
-    logger.info("UI backend shutting down.")
+    logger.info("Management UI backend shutting down.")
 
 
 app = FastAPI(
-    title="SkyFollower UI Backend",
+    title="SkyFollower Management UI Backend",
     description="Rules and areas configuration API. Message processors poll "
     "config:rules/config:areas in Redis every 5 seconds for changes written here.",
     version="9999.99.99",

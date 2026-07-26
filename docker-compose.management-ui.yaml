@@ -1,0 +1,19 @@
+name: skyfollower-management-ui
+
+# Runs on Host B (central server) alongside docker-compose.server.yaml, not on
+# the archive host -- management-ui's only dependency is Redis, which already
+# lives on Host B. Kept as its own compose file (rather than folded into
+# docker-compose.server.yaml) so it can move to a different host later
+# without disturbing the rabbitmq/redis/data-runner stack.
+
+services:
+
+  management-ui:
+    image: ghcr.io/brentio/skyfollower-management-ui:latest
+    restart: unless-stopped
+    # Backend-only image for now (#14) -- uvicorn serves directly on 8000.
+    # Switches to 8080:80 once nginx + the built React frontend land (#15, #16).
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./config/management-ui/settings.json:/app/settings.json:ro

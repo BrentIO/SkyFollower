@@ -1,9 +1,14 @@
 # Deployment
 
 SkyFollower is a single monorepo, but it deploys as four independent
-hosts — each one clones the repo and brings up exactly one Docker Compose
-file. See [Getting Started](/getting-started/) for the commands to
-actually bring a host up once you know which compose file it runs.
+hosts — each one clones the repo and brings up one or more Docker Compose
+files. Every host but Host B brings up exactly one; Host B brings up two
+(`docker-compose.server.yaml` and `docker-compose.management-ui.yaml`),
+since `management-ui`'s only dependency is Redis and there's no reason to
+entangle its lifecycle with the rabbitmq/redis/data-runner stack's compose
+project. See
+[Getting Started](/getting-started/) for the commands to actually bring a
+host up once you know which compose file(s) it runs.
 
 ## Host Topology
 
@@ -11,22 +16,27 @@ actually bring a host up once you know which compose file it runs.
 |------|------|------------|
 | Host A — Raspberry Pi | ADS-B reception | `receiver` |
 | Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
-| Host B — Central server | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, data runners |
+| Host B — Central server | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, data runners, `management-ui` |
 | Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
-| Host D — Archive host | Long-term storage + UI | `archive-processor`, `ui` |
+| Host D — Archive host | Long-term storage | `archive-processor` |
 
 ## Compose Files
 
-Each host runs exactly one compose file. Clone the repo on each host, populate
-the relevant `config/` settings files, then bring up the appropriate file:
+Every host but Host B runs exactly one compose file; Host B runs two
+(`management-ui` is kept separate from the rest of Host B's stack so it can
+move to a different host later without disturbing rabbitmq/redis/data
+runners — its only dependency is Redis). Clone the repo on each host,
+populate the relevant `config/` settings files, then bring up the
+appropriate file(s):
 
 | File | Host | Services |
 |------|------|---------|
 | `docker-compose.receiver.yaml` | Host A — Raspberry Pi | `receiver` |
 | `docker-compose.receiver-mlat.yaml` | Host A2 — MLAT receiver (optional) | `receiver` |
 | `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all data runners |
+| `docker-compose.management-ui.yaml` | Host B — Central server | `management-ui` |
 | `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
-| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`, `ui` |
+| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor` |
 
 ## Components
 
@@ -39,7 +49,7 @@ the relevant `config/` settings files, then bring up the appropriate file:
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs data runner containers on a schedule | — |
-| `ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
+| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |
 | `ca-transport-canada-registry` runner | Imports Transport Canada detailed registration data into Redis | — |
@@ -59,7 +69,7 @@ on the host. Example files for every component are in `config/`:
 | `config/receiver/mlat-settings.json.example` | `docker-compose.receiver-mlat.yaml` |
 | `config/message-processor/settings.json.example` | `docker-compose.message-processor.yaml` |
 | `config/archive/settings.json.example` | `docker-compose.archive.yaml` |
-| `config/ui/settings.json.example` | `docker-compose.archive.yaml` |
+| `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
 | `config/runners/settings.json.example` | All runners in `docker-compose.server.yaml` |
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
 
@@ -116,3 +126,9 @@ flights to the durable `archive` RabbitMQ queue (or their own local
 fallback if RabbitMQ is also unavailable at the time), which simply grows
 while the archive processor is down. Restart it and it drains normally —
 already fault-tolerant by design, no special handling needed.
+
+**Management UI** — stop it. It's a stateless REST API with no queue and no
+background work; nothing writes to `config:rules`/`config:areas` while it's
+down, and message processors keep running against whatever rules/areas were
+last saved. Restart it and it's immediately usable — nothing to drain or
+resync.

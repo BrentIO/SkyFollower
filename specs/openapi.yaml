@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: SkyFollower UI Backend
+  title: SkyFollower Management UI Backend
   description: Rules and areas configuration API. Message processors poll config:rules/config:areas
     in Redis every 5 seconds for changes written here.
   version: 9999.99.99

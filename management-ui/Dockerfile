@@ -3,13 +3,13 @@ FROM python:3.14-slim AS base
 WORKDIR /app
 
 COPY shared/requirements.txt shared_requirements.txt
-COPY ui/backend/requirements.txt .
+COPY management-ui/backend/requirements.txt .
 RUN pip install --no-cache-dir -r shared_requirements.txt -r requirements.txt
 
 COPY shared/ ./shared/
 COPY message-processor/__init__.py ./message_processor/__init__.py
 COPY message-processor/rules_engine.py ./message_processor/rules_engine.py
-COPY ui/backend/main.py ./main.py
+COPY management-ui/backend/main.py ./main.py
 
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json

@@ -1,4 +1,4 @@
-# ui
+# management-ui
 
 | | |
 |---|---|
@@ -6,13 +6,16 @@
 | **Auth** | None (home lab deployment) |
 | **Reads/writes** | Redis only |
 
+Named "management" to leave room for a future, separate UI focused on
+viewing live aircraft movement rather than editing configuration.
+
 ## Status
 
 Backend-only for now. The frontend (React rules/areas editors) doesn't
 exist yet — see #15 and #16 — so this image currently runs uvicorn directly
 on port 8000 with no nginx in front of it. Once the frontend lands, the
 Dockerfile grows a node build stage and nginx starts proxying `/api/*` to
-uvicorn while serving the built frontend at `/`; `docker-compose.archive.yaml`'s
+uvicorn while serving the built frontend at `/`; `docker-compose.management-ui.yaml`'s
 port mapping moves from `8080:8000` back to `8080:80` at that point.
 
 ## Endpoints
@@ -56,7 +59,7 @@ overridden with the `SETTINGS_PATH` environment variable.
 ## Regenerating `specs/openapi.yaml`
 
 ```bash
-cd ui/backend
+cd management-ui/backend
 python -c "
 import yaml
 import main
