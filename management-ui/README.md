@@ -103,17 +103,22 @@ component library, to keep dependencies minimal for ARM builds.
 - `api/rules.ts` — typed client for `/api/rules/*`, plus the `Rule`/`Condition`
   types and the `OPERATORS_BY_TYPE` map used to filter each condition's
   operator dropdown by its type.
-- `views/RulesView.tsx` — rule list (with inline enable/disable toggle) +
-  selected rule's form; owns save/discard/delete state and the two confirm
-  flows.
+- `views/RulesView.tsx` — rule list (each row showing a red "Not Enabled"
+  pill when disabled, or a hollow gray "Inactive" pill when enabled but a
+  `date` condition isn't currently satisfied) + selected rule's form; owns
+  save/discard/delete state and the two confirm flows. Enabling/disabling
+  a rule is only done by editing its Enabled checkbox and saving -- no
+  inline toggle in the list.
 - `components/RuleForm.tsx` / `components/ConditionForm.tsx` — the rule
   editor and its per-condition, type-aware value input (number, hex,
-  wake-turbulence dropdown, heading min/max pair, `matched_rules`
-  multi-select, area dropdown sourced from `GET /api/areas`, and the `date`
-  condition's datetime input, which converts a local `datetime-local` value
-  to UTC and appends `Z` before saving -- the UI always saves the
-  `YYYY-MM-DDTHH:MMZ` form; the backend's date-only `YYYY-MM-DD` format is
-  still accepted if written some other way, e.g. directly via the API).
+  wake-turbulence dropdown sourced alphabetically and title-cased for
+  display, heading min/max pair, `matched_rules` checkbox list with
+  includes/excludes operator labels, area dropdown sourced from
+  `GET /api/areas`, and the `date` condition's datetime input, which
+  converts a local `datetime-local` value to UTC and appends `Z` before
+  saving -- the UI always saves the `YYYY-MM-DDTHH:MMZ` form; the
+  backend's date-only `YYYY-MM-DD` format is still accepted if written
+  some other way, e.g. directly via the API).
 
 Client-side validation (`validateRule`/`validateCondition` in `RuleForm.tsx`)
 mirrors `message-processor/rules_engine.py`'s per-type checks as a fast-fail

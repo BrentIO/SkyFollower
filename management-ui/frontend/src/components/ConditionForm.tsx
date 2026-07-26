@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   CONDITION_TYPES,
   OPERATOR_LABELS,
@@ -264,6 +263,7 @@ function ConditionValueInput({
         <input
           type="text"
           maxLength={3}
+          placeholder="DAL"
           className="input uppercase"
           value={value as string}
           onChange={(e) =>
@@ -342,8 +342,18 @@ function ConditionValueInput({
       );
     }
 
-    case "ident":
     case "aircraft_registration":
+      return (
+        <input
+          type="text"
+          placeholder="N659DL"
+          className="input"
+          value={value as string}
+          onChange={(e) => onValueChange(e.target.value)}
+        />
+      );
+
+    case "ident":
     default:
       return (
         <input
@@ -394,55 +404,29 @@ function HeadingInput({
   );
 }
 
-// A native <input type="datetime-local"> renders in whatever numeric
-// mm/dd vs. dd/mm order the browser's own locale prefers, and has no way
-// to force a specific display format -- so the display format below
-// (dd-MMM-yyyy HH:mm, e.g. "24-Dec-2026 22:00") is a plain text input with
-// manual parse/format instead, always in the browser's local timezone and
-// converted to `YYYY-MM-DDTHH:MMZ` on save, per the spec's "UI converts
-// local time to UTC (Z) before saving."
-const MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-const DATE_DISPLAY_PATTERN = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})[ T](\d{1,2}):(\d{2})$/;
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function localToUtcZ(local: Date): string {
+// Converts a `datetime-local` input value (always in the browser's local
+// timezone, no offset of its own) to `YYYY-MM-DDTHH:MMZ`, per the spec's
+// "UI converts local time to UTC (Z) before saving."
+function localToUtcZ(local: string): string {
+  const asDate = new Date(local);
+  const pad = (n: number) => String(n).padStart(2, "0");
   return (
-    `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}` +
-    `T${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}Z`
+    `${asDate.getUTCFullYear()}-${pad(asDate.getUTCMonth() + 1)}-${pad(asDate.getUTCDate())}` +
+    `T${pad(asDate.getUTCHours())}:${pad(asDate.getUTCMinutes())}Z`
   );
 }
 
-// Reverse direction, for populating the display input when editing an
-// existing condition (any ISO 8601 offset parses fine via the Date
-// constructor, not just Z, and so does a bare date-only value).
-function isoToDisplay(iso: string): string {
+// Reverse of localToUtcZ, for populating the datetime-local input when
+// editing an existing datetime condition (any ISO 8601 offset parses fine
+// via the Date constructor, not just Z, and so does a bare date-only value).
+function isoToLocalInput(iso: string): string {
   const asDate = new Date(iso);
   if (Number.isNaN(asDate.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
   return (
-    `${pad2(asDate.getDate())}-${MONTHS[asDate.getMonth()]}-${asDate.getFullYear()} ` +
-    `${pad2(asDate.getHours())}:${pad2(asDate.getMinutes())}`
+    `${asDate.getFullYear()}-${pad(asDate.getMonth() + 1)}-${pad(asDate.getDate())}` +
+    `T${pad(asDate.getHours())}:${pad(asDate.getMinutes())}`
   );
-}
-
-// Parses "dd-MMM-yyyy HH:mm" as a local-timezone Date, or null if the text
-// doesn't match or names an out-of-range day (e.g. "31-Feb-2026" -- the
-// Date constructor would otherwise silently roll that over into March).
-function parseDisplay(text: string): Date | null {
-  const match = DATE_DISPLAY_PATTERN.exec(text.trim());
-  if (!match) return null;
-  const [, day, monthName, year, hour, minute] = match;
-  const monthIndex = MONTHS.findIndex((m) => m.toLowerCase() === monthName.toLowerCase());
-  if (monthIndex === -1) return null;
-
-  const parsed = new Date(Number(year), monthIndex, Number(day), Number(hour), Number(minute));
-  if (parsed.getMonth() !== monthIndex || parsed.getDate() !== Number(day)) return null;
-  return parsed;
 }
 
 const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -454,34 +438,16 @@ function DateConditionInput({
   value: string;
   onValueChange: (value: string) => void;
 }) {
-  const [text, setText] = useState(() => isoToDisplay(value));
-  const [invalid, setInvalid] = useState(false);
-
-  // Re-sync the visible text when switching to a different condition
-  // (e.g. selecting a different row), not on every keystroke of our own.
-  useEffect(() => {
-    setText(isoToDisplay(value));
-    setInvalid(false);
-  }, [value]);
-
-  function handleChange(next: string) {
-    setText(next);
-    const parsed = parseDisplay(next);
-    setInvalid(parsed === null);
-    if (parsed) onValueChange(localToUtcZ(parsed));
-  }
-
   return (
     <div className="flex flex-col gap-1">
       <input
-        type="text"
-        placeholder="dd-MMM-yyyy HH:mm"
-        className={`input ${invalid ? "border-red-500 dark:border-red-500" : ""}`}
-        value={text}
-        onChange={(e) => handleChange(e.target.value)}
+        type="datetime-local"
+        className="input"
+        value={isoToLocalInput(value)}
+        onChange={(e) => onValueChange(localToUtcZ(e.target.value))}
       />
       <p className="text-xs text-slate-400">
-        Format: dd-MMM-yyyy HH:mm, in your local timezone ({browserTimeZone}); stored as UTC.
+        Entered in your local timezone ({browserTimeZone}), stored as UTC.
       </p>
     </div>
   );
