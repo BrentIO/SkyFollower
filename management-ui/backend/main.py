@@ -92,6 +92,102 @@ logger = logging.getLogger("management-ui-backend")
 
 _IDENTIFIER_PATTERN = r"^\S+$"  # non-empty, no whitespace anywhere
 
+# Named example payloads, keyed for Swagger UI's example picker (the
+# dropdown legacy's swagger.yml used via components/examples). Reused below
+# both as each model's JSON-Schema-level `examples` (schema.examples --
+# Swagger UI doesn't turn this into a picker on its own, it's just visible
+# in the schema/model view) and, in _custom_openapi(), as real OpenAPI
+# Example Objects at the request/response content level (content.
+# application/json.examples -- this is what actually drives the picker).
+#
+# First three rule examples adapted from SkyFollower-legacy's
+# rules.example.json (the third example's "callsign" condition type is
+# renamed "ident", matching this repo's Conditions table -- legacy predates
+# that rename). Fourth demonstrates force_archive and a datetime-range date
+# condition (YYYY-MM-DDTHH:MMZ, not just YYYY-MM-DD). The area example is
+# the "LI" polygon from legacy's areas.example.geojson, referenced by the
+# "Grandma's Flight Home" rule example.
+_RULE_EXAMPLES: dict[str, dict] = {
+    "All aircraft below 10,000": {
+        "name": "All aircraft below 10,000",
+        "description": "Any aircraft with an altitude at or below 10,000ft",
+        "identifier": "acft_10k_and_below",
+        "enabled": True,
+        "conditions": [
+            {"type": "altitude", "operator": "maximum", "value": "10000"},
+        ],
+    },
+    "UAL B757-200": {
+        "name": "UAL B757-200",
+        "description": "United Airlines Boeing 757-200's between 12,000 and "
+        "15,000ft heading north after takeoff",
+        "identifier": "Northbound_United_B75s_12k-15k",
+        "enabled": True,
+        "conditions": [
+            {"type": "altitude", "operator": "maximum", "value": "15000"},
+            {"type": "altitude", "operator": "minimum", "value": "12000"},
+            {"type": "operator_airline_designator", "operator": "equals", "value": "UAL"},
+            {"type": "aircraft_type_designator", "operator": "equals", "value": "B752"},
+            {"type": "heading", "operator": "equals", "value": "340,020"},
+            {"type": "vertical_speed", "operator": "minimum", "value": "500"},
+        ],
+    },
+    "Grandma's Flight Home": {
+        "name": "Grandma's Flight Home",
+        "description": "Grandma's Flight Home Arriving on Christmas Eve",
+        "identifier": "grandma",
+        "enabled": True,
+        "conditions": [
+            {"type": "ident", "operator": "equals", "value": "DAL2"},
+            {"type": "date", "operator": "minimum", "value": "2022-12-24"},
+            {"type": "date", "operator": "maximum", "value": "2022-12-24"},
+            {"type": "area", "operator": "equals", "value": "LI"},
+        ],
+    },
+    "B-52 Force Persist Window": {
+        "name": "B-52 Force Persist Window",
+        "description": "Any B-52 (aircraft_type_designator B52) seen between "
+        "2026-01-16 04:31 UTC and 2027-06-27 18:50 UTC, force-archived even "
+        "if the flight would otherwise be skipped for being MLAT-only",
+        "identifier": "b52_force_persist_2026_2027",
+        "enabled": True,
+        "force_archive": True,
+        "conditions": [
+            {"type": "aircraft_type_designator", "operator": "equals", "value": "B52"},
+            {"type": "date", "operator": "minimum", "value": "2026-01-16T04:31Z"},
+            {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
+        ],
+    },
+}
+
+_AREA_EXAMPLES: dict[str, dict] = {
+    "Long Island (LI)": {
+        "identifier": "LI",
+        "name": "Long Island",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [-73.8006591796875, 40.82835864973048],
+                [-73.97369384765625, 40.734770989672406],
+                [-74.03961181640625, 40.54720023441049],
+                [-73.7677001953125, 40.538851525354666],
+                [-73.245849609375, 40.58684239087908],
+                [-72.70751953125, 40.73685214795608],
+                [-71.8560791015625, 40.97160353279909],
+                [-71.80938720703125, 41.044145364313174],
+                [-71.89727783203125, 41.14970617453726],
+                [-72.11700439453125, 41.21998578493921],
+                [-72.36145019531249, 41.17038447781618],
+                [-72.70477294921874, 41.03585891144301],
+                [-72.83935546875, 41.04621681452063],
+                [-73.1964111328125, 40.994410999439516],
+                [-73.553466796875, 40.94671366508002],
+                [-73.8006591796875, 40.82835864973048],
+            ]],
+        },
+    },
+}
+
 
 class Condition(BaseModel):
     """
@@ -124,67 +220,7 @@ class Rule(BaseModel):
     validating it; that leniency is a narrow exception, not reflected here.
     """
 
-    model_config = {
-        # First three adapted from SkyFollower-legacy's rules.example.json
-        # (the third example's "callsign" condition type is renamed "ident",
-        # matching this repo's Conditions table -- legacy predates that
-        # rename). Fourth demonstrates force_archive and a datetime-range
-        # date condition (YYYY-MM-DDTHH:MMZ, not just YYYY-MM-DD).
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "name": "All aircraft below 10,000",
-                    "description": "Any aircraft with an altitude at or below 10,000ft",
-                    "identifier": "acft_10k_and_below",
-                    "enabled": True,
-                    "conditions": [
-                        {"type": "altitude", "operator": "maximum", "value": "10000"},
-                    ],
-                },
-                {
-                    "name": "UAL B757-200",
-                    "description": "United Airlines Boeing 757-200's between 12,000 and "
-                    "15,000ft heading north after takeoff",
-                    "identifier": "Northbound_United_B75s_12k-15k",
-                    "enabled": True,
-                    "conditions": [
-                        {"type": "altitude", "operator": "maximum", "value": "15000"},
-                        {"type": "altitude", "operator": "minimum", "value": "12000"},
-                        {"type": "operator_airline_designator", "operator": "equals", "value": "UAL"},
-                        {"type": "aircraft_type_designator", "operator": "equals", "value": "B752"},
-                        {"type": "heading", "operator": "equals", "value": "340,020"},
-                        {"type": "vertical_speed", "operator": "minimum", "value": "500"},
-                    ],
-                },
-                {
-                    "name": "Grandma's Flight Home",
-                    "description": "Grandma's Flight Home Arriving on Christmas Eve",
-                    "identifier": "grandma",
-                    "enabled": True,
-                    "conditions": [
-                        {"type": "ident", "operator": "equals", "value": "DAL2"},
-                        {"type": "date", "operator": "minimum", "value": "2022-12-24"},
-                        {"type": "date", "operator": "maximum", "value": "2022-12-24"},
-                        {"type": "area", "operator": "equals", "value": "LI"},
-                    ],
-                },
-                {
-                    "name": "B-52 Force Persist Window",
-                    "description": "Any B-52 (aircraft_type_designator B52) seen between "
-                    "2026-01-16 04:31 UTC and 2027-06-27 18:50 UTC, force-archived even "
-                    "if the flight would otherwise be skipped for being MLAT-only",
-                    "identifier": "b52_force_persist_2026_2027",
-                    "enabled": True,
-                    "force_archive": True,
-                    "conditions": [
-                        {"type": "aircraft_type_designator", "operator": "equals", "value": "B52"},
-                        {"type": "date", "operator": "minimum", "value": "2026-01-16T04:31Z"},
-                        {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
-                    ],
-                },
-            ]
-        }
-    }
+    model_config = {"json_schema_extra": {"examples": list(_RULE_EXAMPLES.values())}}
 
     name: str = ""
     description: str = ""
@@ -207,39 +243,7 @@ class Area(BaseModel):
     is a free-text display label and may.
     """
 
-    model_config = {
-        # The "LI" area from SkyFollower-legacy's areas.example.geojson --
-        # referenced by the "Grandma's Flight Home" example rule above.
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "identifier": "LI",
-                    "name": "Long Island",
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": [[
-                            [-73.8006591796875, 40.82835864973048],
-                            [-73.97369384765625, 40.734770989672406],
-                            [-74.03961181640625, 40.54720023441049],
-                            [-73.7677001953125, 40.538851525354666],
-                            [-73.245849609375, 40.58684239087908],
-                            [-72.70751953125, 40.73685214795608],
-                            [-71.8560791015625, 40.97160353279909],
-                            [-71.80938720703125, 41.044145364313174],
-                            [-71.89727783203125, 41.14970617453726],
-                            [-72.11700439453125, 41.21998578493921],
-                            [-72.36145019531249, 41.17038447781618],
-                            [-72.70477294921874, 41.03585891144301],
-                            [-72.83935546875, 41.04621681452063],
-                            [-73.1964111328125, 40.994410999439516],
-                            [-73.553466796875, 40.94671366508002],
-                            [-73.8006591796875, 40.82835864973048],
-                        ]],
-                    },
-                }
-            ]
-        }
-    }
+    model_config = {"json_schema_extra": {"examples": list(_AREA_EXAMPLES.values())}}
 
     identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     name: str = ""
@@ -289,10 +293,37 @@ _RULE_BODY_PATHS = [("/api/rules", "post"), ("/api/rules/{identifier}", "put")]
 _AREA_BODY_PATHS = [("/api/areas", "post"), ("/api/areas/{identifier}", "put")]
 
 
+def _named_examples(examples: dict[str, dict]) -> dict[str, dict]:
+    """Convert {name: value} into OpenAPI Example Objects: {name: {"value": value}}."""
+    return {name: {"value": value} for name, value in examples.items()}
+
+
+# (path, method, response status code) for every route whose single-item
+# response body is a Rule/Area -- these get the same named example picker
+# as the matching request body, so "try it out" and the response preview
+# both offer the same choices.
+_RULE_RESPONSE_LOCATIONS = [
+    ("/api/rules/{identifier}", "get", "200"),
+    ("/api/rules", "post", "201"),
+    ("/api/rules/{identifier}", "put", "200"),
+]
+_AREA_RESPONSE_LOCATIONS = [
+    ("/api/areas/{identifier}", "get", "200"),
+    ("/api/areas", "post", "201"),
+    ("/api/areas/{identifier}", "put", "200"),
+]
+
+
 def _custom_openapi() -> dict:
     """
-    Replace the auto-generated request body schema on every POST/PUT route
-    with a clean $ref to Rule/Area.
+    Replace the auto-generated request/response body schema on every
+    POST/PUT/single-item-GET route with a clean $ref to Rule/Area, and add
+    named OpenAPI Example Objects so Swagger UI shows a picker (its "try it
+    out" panel only offers a picker from content.application/json.examples
+    -- an Example Object map at the request/response body level -- not from
+    a schema's own JSON-Schema-level `examples` array, which Rule/Area also
+    carry for other tooling but which Swagger UI doesn't turn into a
+    selector on its own).
 
     FastAPI infers a request body schema from the route's actual parameter
     type (plain dict here, kept that way so RulesEngine -- not Pydantic --
@@ -314,13 +345,23 @@ def _custom_openapi() -> dict:
         routes=app.routes,
     )
     for path, method in _RULE_BODY_PATHS:
-        schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"] = {
-            "$ref": "#/components/schemas/Rule"
-        }
+        schema["paths"][path][method]["requestBody"]["content"]["application/json"].update(
+            schema={"$ref": "#/components/schemas/Rule"},
+            examples=_named_examples(_RULE_EXAMPLES),
+        )
     for path, method in _AREA_BODY_PATHS:
-        schema["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"] = {
-            "$ref": "#/components/schemas/Area"
-        }
+        schema["paths"][path][method]["requestBody"]["content"]["application/json"].update(
+            schema={"$ref": "#/components/schemas/Area"},
+            examples=_named_examples(_AREA_EXAMPLES),
+        )
+    for path, method, status in _RULE_RESPONSE_LOCATIONS:
+        schema["paths"][path][method]["responses"][status]["content"]["application/json"]["examples"] = (
+            _named_examples(_RULE_EXAMPLES)
+        )
+    for path, method, status in _AREA_RESPONSE_LOCATIONS:
+        schema["paths"][path][method]["responses"][status]["content"]["application/json"]["examples"] = (
+            _named_examples(_AREA_EXAMPLES)
+        )
     app.openapi_schema = schema
     return app.openapi_schema
 

@@ -33,6 +33,81 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Rule'
+            examples:
+              All aircraft below 10,000:
+                value: &id001
+                  name: All aircraft below 10,000
+                  description: Any aircraft with an altitude at or below 10,000ft
+                  identifier: acft_10k_and_below
+                  enabled: true
+                  conditions:
+                  - type: altitude
+                    operator: maximum
+                    value: '10000'
+              UAL B757-200:
+                value: &id002
+                  name: UAL B757-200
+                  description: United Airlines Boeing 757-200's between 12,000 and
+                    15,000ft heading north after takeoff
+                  identifier: Northbound_United_B75s_12k-15k
+                  enabled: true
+                  conditions:
+                  - type: altitude
+                    operator: maximum
+                    value: '15000'
+                  - type: altitude
+                    operator: minimum
+                    value: '12000'
+                  - type: operator_airline_designator
+                    operator: equals
+                    value: UAL
+                  - type: aircraft_type_designator
+                    operator: equals
+                    value: B752
+                  - type: heading
+                    operator: equals
+                    value: 340,020
+                  - type: vertical_speed
+                    operator: minimum
+                    value: '500'
+              Grandma's Flight Home:
+                value: &id003
+                  name: Grandma's Flight Home
+                  description: Grandma's Flight Home Arriving on Christmas Eve
+                  identifier: grandma
+                  enabled: true
+                  conditions:
+                  - type: ident
+                    operator: equals
+                    value: DAL2
+                  - type: date
+                    operator: minimum
+                    value: '2022-12-24'
+                  - type: date
+                    operator: maximum
+                    value: '2022-12-24'
+                  - type: area
+                    operator: equals
+                    value: LI
+              B-52 Force Persist Window:
+                value: &id004
+                  name: B-52 Force Persist Window
+                  description: Any B-52 (aircraft_type_designator B52) seen between
+                    2026-01-16 04:31 UTC and 2027-06-27 18:50 UTC, force-archived
+                    even if the flight would otherwise be skipped for being MLAT-only
+                  identifier: b52_force_persist_2026_2027
+                  enabled: true
+                  force_archive: true
+                  conditions:
+                  - type: aircraft_type_designator
+                    operator: equals
+                    value: B52
+                  - type: date
+                    operator: minimum
+                    value: 2026-01-16T04:31Z
+                  - type: date
+                    operator: maximum
+                    value: 2027-06-27T18:50Z
         required: true
       responses:
         '201':
@@ -41,6 +116,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rule'
+              examples:
+                All aircraft below 10,000:
+                  value: *id001
+                UAL B757-200:
+                  value: *id002
+                Grandma's Flight Home:
+                  value: *id003
+                B-52 Force Persist Window:
+                  value: *id004
         '409':
           description: Identifier already exists
         '400':
@@ -73,6 +157,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rule'
+              examples:
+                All aircraft below 10,000:
+                  value: *id001
+                UAL B757-200:
+                  value: *id002
+                Grandma's Flight Home:
+                  value: *id003
+                B-52 Force Persist Window:
+                  value: *id004
         '404':
           description: Not found
         '500':
@@ -101,6 +194,15 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Rule'
+            examples:
+              All aircraft below 10,000:
+                value: *id001
+              UAL B757-200:
+                value: *id002
+              Grandma's Flight Home:
+                value: *id003
+              B-52 Force Persist Window:
+                value: *id004
       responses:
         '200':
           description: Successful Response
@@ -108,6 +210,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rule'
+              examples:
+                All aircraft below 10,000:
+                  value: *id001
+                UAL B757-200:
+                  value: *id002
+                Grandma's Flight Home:
+                  value: *id003
+                B-52 Force Persist Window:
+                  value: *id004
         '404':
           description: Not found
         '400':
@@ -175,6 +286,46 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Area'
+            examples:
+              Long Island (LI):
+                value: &id005
+                  identifier: LI
+                  name: Long Island
+                  geometry:
+                    type: Polygon
+                    coordinates:
+                    - - - -73.8006591796875
+                        - 40.82835864973048
+                      - - -73.97369384765625
+                        - 40.734770989672406
+                      - - -74.03961181640625
+                        - 40.54720023441049
+                      - - -73.7677001953125
+                        - 40.538851525354666
+                      - - -73.245849609375
+                        - 40.58684239087908
+                      - - -72.70751953125
+                        - 40.73685214795608
+                      - - -71.8560791015625
+                        - 40.97160353279909
+                      - - -71.80938720703125
+                        - 41.044145364313174
+                      - - -71.89727783203125
+                        - 41.14970617453726
+                      - - -72.11700439453125
+                        - 41.21998578493921
+                      - - -72.36145019531249
+                        - 41.17038447781618
+                      - - -72.70477294921874
+                        - 41.03585891144301
+                      - - -72.83935546875
+                        - 41.04621681452063
+                      - - -73.1964111328125
+                        - 40.994410999439516
+                      - - -73.553466796875
+                        - 40.94671366508002
+                      - - -73.8006591796875
+                        - 40.82835864973048
         required: true
       responses:
         '201':
@@ -183,6 +334,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Area'
+              examples:
+                Long Island (LI):
+                  value: *id005
         '409':
           description: Identifier already exists
         '400':
@@ -215,6 +369,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Area'
+              examples:
+                Long Island (LI):
+                  value: *id005
         '404':
           description: Not found
         '500':
@@ -243,6 +400,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Area'
+            examples:
+              Long Island (LI):
+                value: *id005
       responses:
         '200':
           description: Successful Response
@@ -250,6 +410,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Area'
+              examples:
+                Long Island (LI):
+                  value: *id005
         '404':
           description: Not found
         '400':
