@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Purpose** | REST API for rules and areas configuration, backing the React rules/areas editors (#15, #16). The sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
+| **Purpose** | REST API and React frontend for rules and areas configuration. The backend is the sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
 | **Auth** | None (home lab deployment) |
 | **Reads/writes** | Redis only |
 
@@ -11,12 +11,13 @@ viewing live aircraft movement rather than editing configuration.
 
 ## Status
 
-Backend-only for now. The frontend (React rules/areas editors) doesn't
-exist yet — see #15 and #16 — so this image currently runs uvicorn directly
-on port 8000 with no nginx in front of it. Once the frontend lands, the
-Dockerfile grows a node build stage and nginx starts proxying `/api/*` to
-uvicorn while serving the built frontend at `/`; `docker-compose.management-ui.yaml`'s
-port mapping moves from `8080:8000` back to `8080:80` at that point.
+The React rules editor (`frontend/`) is built; the areas editor is not yet.
+The Dockerfile is a multi-stage build — a `node` stage produces the static
+frontend bundle, and the final stage runs both uvicorn (bound to
+`127.0.0.1:8000`, not exposed outside the container) and nginx, started by
+`entrypoint.sh`. nginx serves the built frontend at `/` (with a `try_files`
+fallback to `index.html` for client-side routing) and proxies `/api/*` to
+uvicorn. `docker-compose.management-ui.yaml` maps `8080:80`.
 
 ## Endpoints
 
@@ -47,10 +48,11 @@ backend turns into an explicit `400` by checking the identifier actually
 survived the reload). `name` is a separate, optional free-text display
 label that *can* contain spaces.
 
-Aircraft lookup (`GET /api/aircraft/{icao_hex}`, `GET /api/aircraft?registration={reg}`)
-and missing-operator reporting (`GET /api/operators/missing`) aren't built yet —
-removed for now rather than kept as `501` stubs; see CLAUDE.md's Open Items
-("UI expansion").
+Reference-data lookup (aircraft, operator, airport, route — reading current
+Redis enrichment state, not the S3/Parquet flight archive) isn't built yet;
+see CLAUDE.md's Open Items ("UI expansion"). A previously-considered
+missing-operator reporting endpoint (`GET /api/operators/missing`) was
+dropped as a legacy carryover rather than planned.
 
 Every successful write recomputes the full array/collection, computes a
 SHA-256 hash of it, and writes both to Redis (`config:rules` /
@@ -84,6 +86,44 @@ altitude `"10000"`) — they aren't the actual route parameter types (those
 stay plain `dict`), so they document the schema without becoming a second
 validation layer that could fight `RulesEngine`'s own (more permissive)
 rules.
+
+## Frontend (`frontend/`)
+
+React (TypeScript) + Vite + Tailwind CSS + React Router. No other UI
+component library, to keep dependencies minimal for ARM builds.
+
+- `Layout.tsx` / `components/SideNav.tsx` — app shell: side nav + routed
+  content area. Rules is the only section for now; a future areas editor
+  adds an entry to `SideNav.tsx`'s section list without touching `Layout.tsx`.
+- `hooks/useToast.ts` + `components/ToastContainer.tsx` — shared success/error
+  toast notifications.
+- `components/ConfirmModal.tsx` — generic confirm dialog (discard unsaved
+  changes, delete confirmation).
+- `api/client.ts` — thin `fetch` wrapper: JSON parsing and `{"detail": "..."}`
+  error surfacing from any 4xx/5xx response.
+- `api/rules.ts` — typed client for `/api/rules/*`, plus the `Rule`/`Condition`
+  types and the `OPERATORS_BY_TYPE` map used to filter each condition's
+  operator dropdown by its type.
+- `views/RulesView.tsx` — rule list (with inline enable/disable toggle) +
+  selected rule's form; owns save/discard/delete state and the two confirm
+  flows.
+- `components/RuleForm.tsx` / `components/ConditionForm.tsx` — the rule
+  editor and its per-condition, type-aware value input (number, hex,
+  wake-turbulence dropdown, heading min/max pair, `matched_rules`
+  multi-select, area dropdown sourced from `GET /api/areas`, and the `date`
+  condition's Date vs. Date-and-time format selector, which converts a
+  local `datetime-local` input to UTC and appends `Z` before saving).
+
+Client-side validation (`validateRule`/`validateCondition` in `RuleForm.tsx`)
+mirrors `message-processor/rules_engine.py`'s per-type checks as a fast-fail
+UX nicety — the backend's `400` response is still the source of truth.
+
+```bash
+cd management-ui/frontend
+npm install
+npm run dev    # Vite dev server on :5173, proxying /api to localhost:8000
+npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
+```
 
 ## Configuration (`settings.json`)
 
