@@ -57,25 +57,39 @@ end
 
 == Draining queue.db (reconnect-triggered) ==
 
-loop For each row in database
-    Receiver -> ReceiverDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
-    ReceiverDB --> Receiver-- : Record
-    Receiver -\ AdsbQ : **Publish**
-    break basic_publish raises error
-        Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-        Receiver -> Receiver : **Stop draining**
+Receiver -> Receiver : **Attempt to claim the drain guard**\n""_drain_lock.acquire(blocking=False)""
+alt guard acquired
+    Receiver -\ Receiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
+    loop For each row in database
+        Receiver -> ReceiverDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        ReceiverDB --> Receiver-- : Record
+        Receiver -\ AdsbQ : **Publish**
+        break basic_publish raises error
+            Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+            Receiver -> Receiver : **Stop draining**
+        end
+        Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+        ReceiverDB --> Receiver-- : OK
     end
-    Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
-    ReceiverDB --> Receiver-- : OK
+    Receiver -> Receiver : **Release the drain guard**\n""_drain_lock.release()""
+else guard already held
+    Receiver -> Receiver : **Skip — a drain is already in progress**
 end
 
 == Independently, every telemetry_interval_seconds (catches failures that never dropped the connection) ==
 
 Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
 alt connected
-    note right of Receiver
-        Refer to //Draining queue.db (reconnect-triggered)//
-    end note
+    Receiver -> Receiver : **Attempt to claim the drain guard**\n""_drain_lock.acquire(blocking=False)""
+    alt guard acquired
+        note right of Receiver
+            Refer to //Draining queue.db (reconnect-triggered)// for the
+            drain loop itself
+        end note
+        Receiver -> Receiver : **Release the drain guard**\n""_drain_lock.release()""
+    else guard already held (reconnect-triggered drain still running)
+        Receiver -> Receiver : **Skip — a drain is already in progress**
+    end
 else not connected
     Receiver -> Receiver : **Skip — nothing to do this tick**
 end

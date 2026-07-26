@@ -319,6 +319,40 @@ class TestFallbackQueue:
         assert q.depth() == 0
         assert len(drained) == 5
 
+    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
+        """Simulates the reconnect-triggered and periodic telemetry-tick
+        triggers firing close together (#534): if a drain is already
+        holding the single-flight guard, a second call must not spawn
+        another drain -- overlapping drains could otherwise both SELECT
+        the same oldest row before either DELETEs it and duplicate-publish
+        it."""
+        q = self._make_queue()
+        q.put("adsb-0", "payload")
+        q._drain_lock.acquire()  # simulate an in-progress drain
+        try:
+            calls = []
+            q.drain_in_background(lambda qn, p: calls.append((qn, p)))
+            time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
+            assert calls == []
+            assert q.depth() == 1
+        finally:
+            q._drain_lock.release()
+
+    def test_drain_in_background_runs_and_releases_the_guard(self):
+        q = self._make_queue()
+        q.put("adsb-0", "payload")
+        calls = []
+
+        q.drain_in_background(lambda qn, p: calls.append((qn, p)))
+
+        deadline = time.monotonic() + 2
+        while q.depth() != 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert calls == [("adsb-0", "payload")]
+        assert q.depth() == 0
+        assert not q._drain_lock.locked()
+
     def test_wal_mode_enabled(self):
         """Confirm WAL journal mode is applied."""
         import sqlite3
@@ -346,6 +380,22 @@ class TestFallbackQueue:
 # _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger
 # ---------------------------------------------------------------------------
 
+def _synchronous_drain_thread():
+    """Patch threading.Thread so drain_in_background's spawned thread runs
+    synchronously in the caller's thread instead of racing the test's own
+    assertions against a real background thread. Production code still
+    spawns a genuine thread; this only affects the test."""
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    return patch("receiver.main.threading.Thread", _ImmediateThread)
+
+
 class TestDrainFallback:
     def _make_receiver(self, receiver_id: int = 0):
         from receiver.main import Receiver
@@ -363,7 +413,8 @@ class TestDrainFallback:
         mock_channel = MagicMock()
         r._rmq_channel = mock_channel
 
-        r._drain_fallback()
+        with _synchronous_drain_thread():
+            r._drain_fallback()
 
         assert r._fallback.depth() == 0
         mock_channel.basic_publish.assert_called_once()
@@ -374,7 +425,8 @@ class TestDrainFallback:
         r._fallback.put("adsb-0", '{"raw": "AA"}')
         r._rmq_channel = None
 
-        r._drain_fallback()
+        with _synchronous_drain_thread():
+            r._drain_fallback()
 
         assert r._fallback.depth() == 1
 
@@ -389,7 +441,8 @@ class TestDrainFallback:
         r._rmq_channel = mock_channel
         r._rmq_connected = True
 
-        r._drain_fallback()
+        with _synchronous_drain_thread():
+            r._drain_fallback()
 
         assert r._rmq_connected is False
         assert r._fallback.depth() == 1
@@ -415,7 +468,8 @@ class TestDrainFallback:
         r._rmq_channel = MagicMock()
         r._rmq_connected = True
 
-        self._run_one_telemetry_tick(r)
+        with _synchronous_drain_thread():
+            self._run_one_telemetry_tick(r)
 
         assert r._fallback.depth() == 0
 

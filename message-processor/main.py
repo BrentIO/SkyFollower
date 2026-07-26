@@ -417,6 +417,14 @@ class _ArchiveFallbackQueue:
         )
         self._conn.commit()
         self._lock = threading.Lock()
+        # Single-flight guard: drain() only locks around each individual
+        # SELECT/DELETE, not the whole fetch-publish-delete cycle for a
+        # row, so two overlapping drain() calls (reconnect-triggered and
+        # periodic telemetry-tick both firing close together) could each
+        # SELECT the same oldest row before either DELETEs it and
+        # duplicate-publish it. This lock ensures at most one drain runs
+        # at a time regardless of which trigger started it.
+        self._drain_lock = threading.Lock()
 
     def put(self, payload: str) -> None:
         with self._lock:
@@ -444,6 +452,24 @@ class _ArchiveFallbackQueue:
                     self._conn.commit()
             except Exception:
                 break  # RabbitMQ went away again; stop draining
+
+    def drain_in_background(self, publish_fn) -> None:
+        """Spawn a background thread to drain(), unless a drain is already
+        in progress for this queue -- in which case this is a cheap no-op
+        rather than a second overlapping drain. Never blocks the caller
+        (the telemetry loop calling this can publish its own stats
+        immediately regardless of how long the actual drain takes)."""
+        if not self._drain_lock.acquire(blocking=False):
+            logger.debug("Drain already in progress; skipping this trigger.")
+            return
+
+        def _run() -> None:
+            try:
+                self.drain(publish_fn)
+            finally:
+                self._drain_lock.release()
+
+        threading.Thread(target=_run, daemon=True, name="fallback-drain").start()
 
     def depth(self) -> int:
         with self._lock:
@@ -592,10 +618,9 @@ class MessageProcessor:
                 self._rmq_connected = True
                 logger.info("RabbitMQ connected, consuming from %s.", self._queue_name)
 
-                # Drain fallback queue now that we're connected
-                threading.Thread(
-                    target=self._drain_fallback, daemon=True, name="drain-fallback"
-                ).start()
+                # _drain_fallback() spawns its own background thread (or
+                # skips if one is already running) -- see drain_in_background.
+                self._drain_fallback()
 
                 self._rmq_channel.start_consuming()
 
@@ -969,7 +994,7 @@ class MessageProcessor:
             except Exception:
                 self._rmq_connected = False
                 raise
-        self._fallback.drain(publish)
+        self._fallback.drain_in_background(publish)
 
     # ------------------------------------------------------------------
     # MQTT
@@ -1045,7 +1070,11 @@ class MessageProcessor:
             # never re-enters its reconnect branch and _drain_fallback
             # never runs again on its own. This periodic sweep is a cheap
             # no-op when the queue is empty and doesn't depend on that
-            # edge-triggered detection ever firing.
+            # edge-triggered detection ever firing. _drain_fallback()
+            # itself spawns the actual drain in the background (or skips
+            # if one's already running from the reconnect path), so this
+            # call returns immediately and never delays the telemetry
+            # publish below it.
             if self._rmq_connected:
                 self._drain_fallback()
             self._publish_telemetry()

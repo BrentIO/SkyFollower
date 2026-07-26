@@ -45,29 +45,45 @@ end
 
 == Retry: S3 reconnects, or every telemetry_interval_seconds ==
 
-Archiver -> FallbackDB : **Drain** oldest-first\n(""queue"" table)
-loop for each queued full flight
-    Archiver -> S3++ : **Re-archive**\n(flight write + index write, as above)
-    S3 --> Archiver-- : success
-    Archiver -> FallbackDB : **Delete** drained row
-end
-
-Archiver -> FallbackDB : **Drain** oldest-first\n(""index_queue"" table)
-loop for each queued index-only retry
-    Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-    alt succeeds
+Archiver -> Archiver : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
+alt guard acquired
+    Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
+    Archiver -> FallbackDB : **Drain** oldest-first\n(""queue"" table)
+    loop for each queued full flight
+        Archiver -> S3++ : **Re-archive**\n(flight write + index write, as above)
         S3 --> Archiver-- : success
         Archiver -> FallbackDB : **Delete** drained row
-    else fails again
-        S3 --> Archiver-- : error
-        Archiver -> Archiver : **Stop draining** — retry next cycle
     end
+    Archiver -> Archiver : **Release the flight-queue drain guard**
+else guard already held
+    Archiver -> Archiver : **Skip — a flight-queue drain is already in progress**
+end
+
+Archiver -> Archiver : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
+alt guard acquired
+    Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
+    Archiver -> FallbackDB : **Drain** oldest-first\n(""index_queue"" table)
+    loop for each queued index-only retry
+        Archiver -> S3++ : **Write the Parquet index row**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+        alt succeeds
+            S3 --> Archiver-- : success
+            Archiver -> FallbackDB : **Delete** drained row
+        else fails again
+            S3 --> Archiver-- : error
+            Archiver -> Archiver : **Stop draining** — retry next cycle
+        end
+    end
+    Archiver -> Archiver : **Release the index-queue drain guard**
+else guard already held
+    Archiver -> Archiver : **Skip — an index-queue drain is already in progress**
 end
 
 note over FallbackDB
-    Both queues live in the same s3.db file
-    (separate tables) and are drained independently —
-    an index-only retry never re-archives the flight object.
+    Both queues live in the same s3.db file (separate tables)
+    and are drained independently, each with its own
+    single-flight guard — an index-only retry never re-archives
+    the flight object, and draining one queue never blocks a
+    concurrent drain of the other.
 end note
 
 @enduml

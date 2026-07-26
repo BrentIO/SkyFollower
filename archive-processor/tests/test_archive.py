@@ -10,6 +10,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, call, patch
 
@@ -478,6 +480,75 @@ class TestS3FallbackQueue:
             index_q.put("an index retry")
             assert flights_q.depth() == 1
             assert index_q.depth() == 1
+
+    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
+        """Simulates the S3-reconnect-triggered and periodic telemetry-tick
+        triggers firing close together (#534): if a drain is already
+        holding the single-flight guard, a second call must not spawn
+        another drain -- overlapping drains could otherwise both SELECT
+        the same oldest row before either DELETEs it and duplicate-process
+        it."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            q.put("payload")
+            q._drain_lock.acquire()  # simulate an in-progress drain
+            try:
+                calls = []
+                q.drain_in_background(calls.append)
+                time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
+                assert calls == []
+                assert q.depth() == 1
+            finally:
+                q._drain_lock.release()
+
+    def test_drain_in_background_runs_and_releases_the_guard(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            q.put("payload")
+            calls = []
+
+            q.drain_in_background(calls.append)
+
+            deadline = time.monotonic() + 2
+            while q.depth() != 0 and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+            assert calls == ["payload"]
+            assert q.depth() == 0
+            assert not q._drain_lock.locked()
+
+    def test_drain_in_background_calls_on_done_after_completion(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            q.put("payload")
+            done = threading.Event()
+
+            q.drain_in_background(lambda p: None, on_done=done.set)
+
+            assert done.wait(timeout=2)
+
+    def test_two_queues_sharing_one_file_have_independent_drain_guards(self):
+        """table_name isolates the data (see test_table_name_isolates_queues_
+        sharing_one_file above); the single-flight guard must be similarly
+        isolated per instance, so draining one queue (e.g. the flight
+        queue) never blocks a concurrent drain of the other (e.g. the
+        index queue) -- see _drain_all_fallbacks."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            flights_q = _S3FallbackQueue(tmp.name)
+            index_q = _S3FallbackQueue(tmp.name, table_name="index_queue")
+            index_q.put("an index retry")
+
+            flights_q._drain_lock.acquire()  # simulate flights_q mid-drain
+            try:
+                calls = []
+                index_q.drain_in_background(calls.append)
+                deadline = time.monotonic() + 2
+                while index_q.depth() != 0 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert calls == ["an index retry"]
+                assert index_q.depth() == 0
+            finally:
+                flights_q._drain_lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -969,6 +1040,22 @@ class TestArchiveWritesIndexToS3:
             assert processor._fallback.depth() == 0  # not queued as a full re-archive
 
 
+def _synchronous_drain_thread():
+    """Patch threading.Thread so drain_in_background's spawned thread runs
+    synchronously in the caller's thread instead of racing the test's own
+    assertions against a real background thread. Production code still
+    spawns a genuine thread; this only affects the test."""
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None, name=None):
+            self._target = target
+
+        def start(self):
+            if self._target:
+                self._target()
+
+    return patch("archive_processor.main.threading.Thread", _ImmediateThread)
+
+
 class TestIndexWriteRetryQueue:
     def test_failed_index_write_is_queued_for_retry(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1000,7 +1087,8 @@ class TestIndexWriteRetryQueue:
                 processor._archive_flight_to_s3(flight)
             assert processor._index_fallback.depth() == 1
 
-            processor._drain_index_fallback()
+            with _synchronous_drain_thread():
+                processor._drain_index_fallback()
 
             assert processor._index_fallback.depth() == 0
             index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
@@ -1022,7 +1110,7 @@ class TestIndexWriteRetryQueue:
 
             with patch.object(
                 processor, "_write_index_to_s3", side_effect=RuntimeError("still down")
-            ):
+            ), _synchronous_drain_thread():
                 processor._drain_index_fallback()
 
             assert processor._index_fallback.depth() == 1
@@ -1050,7 +1138,8 @@ class TestIndexWriteRetryQueue:
             assert processor._fallback.depth() == 1
             assert processor._index_fallback.depth() == 1
 
-            processor._drain_all_fallbacks()
+            with _synchronous_drain_thread():
+                processor._drain_all_fallbacks()
 
             assert processor._fallback.depth() == 0
             assert processor._index_fallback.depth() == 0
