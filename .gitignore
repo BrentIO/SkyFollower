@@ -10,5 +10,6 @@ node_modules/
 dist/
 build/
 .pytest_cache/
+*.svg
 CLAUDE.md
 *.local.json
