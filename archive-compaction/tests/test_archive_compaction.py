@@ -29,7 +29,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Module import helper (archive-compaction/ contains a hyphen, so it can't
 # be imported as a normal package -- same workaround used by every other
-# hyphenated component's tests, e.g. data-runners/us-faa-registry).
+# hyphenated component's tests, e.g. runners/us-faa-registry).
 # ---------------------------------------------------------------------------
 
 _HERE = os.path.dirname(os.path.abspath(__file__))

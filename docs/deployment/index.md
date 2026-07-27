@@ -5,7 +5,7 @@ hosts — each one clones the repo and brings up one or more Docker Compose
 files. Every host but Host B brings up exactly one; Host B brings up two
 (`docker-compose.server.yaml` and `docker-compose.management-ui.yaml`),
 since `management-ui`'s only dependency is Redis and there's no reason to
-entangle its lifecycle with the rabbitmq/redis/data-runner stack's compose
+entangle its lifecycle with the rabbitmq/redis/runner stack's compose
 project. See
 [Getting Started](/getting-started/) for the commands to actually bring a
 host up once you know which compose file(s) it runs.
@@ -16,7 +16,7 @@ host up once you know which compose file(s) it runs.
 |------|------|------------|
 | Host A — Raspberry Pi | ADS-B reception | `receiver` |
 | Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
-| Host B — Central server | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, data runners, `management-ui` |
+| Host B — Central server | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
 | Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
 | Host D — Archive host | Long-term storage | `archive-processor` |
 
@@ -24,8 +24,8 @@ host up once you know which compose file(s) it runs.
 
 Every host but Host B runs exactly one compose file; Host B runs two
 (`management-ui` is kept separate from the rest of Host B's stack so it can
-move to a different host later without disturbing rabbitmq/redis/data
-runners — its only dependency is Redis). Clone the repo on each host,
+move to a different host later without disturbing rabbitmq/redis/runners
+— its only dependency is Redis). Clone the repo on each host,
 populate the relevant `config/` settings files, then bring up the
 appropriate file(s):
 
@@ -33,7 +33,7 @@ appropriate file(s):
 |------|------|---------|
 | `docker-compose.receiver.yaml` | Host A — Raspberry Pi | `receiver` |
 | `docker-compose.receiver-mlat.yaml` | Host A2 — MLAT receiver (optional) | `receiver` |
-| `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all data runners |
+| `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Host B — Central server | `management-ui` |
 | `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
 | `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor` |
@@ -48,14 +48,14 @@ appropriate file(s):
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
-| `ofelia` | Cron scheduler that runs data runner containers on a schedule | — |
+| `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
 | `management-ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |
 | `ca-transport-canada-registry` runner | Imports Transport Canada detailed registration data into Redis | — |
 | `ourairports` runner | Imports airport metadata into Redis | — |
 
-...and 36 more country-specific registration runners — see [Data Runners](/data-runners/) for the full list.
+...and 36 more country-specific registration runners — see [Data Runners](/runners/) for the full list.
 
 ## Configuration
 
@@ -76,7 +76,7 @@ on the host. Example files for every component are in `config/`:
 See the component pages for the full list of settings fields:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
 [Archive Processor](/components/archive-processor), and
-[Data Runners](/data-runners/) (logging convention, plus one page per
+[Data Runners](/runners/) (logging convention, plus one page per
 runner).
 
 ## Maintenance
@@ -93,7 +93,7 @@ receiver instance (Host A2, `docker-compose.receiver-mlat.yaml`) is the
 same container image on its own host with its own `RECEIVER_ID` — maintain
 it identically and independently of Host A's SDR-hosting instance.
 
-**Central server** (`rabbitmq`, `redis`, `ofelia`, data runners) — stop
+**Central server** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
 let any currently-running runner finish (or stop it). Stopping message
 processors before taking RabbitMQ/Redis down isn't strictly required —

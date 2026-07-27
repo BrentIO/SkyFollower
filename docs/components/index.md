@@ -9,6 +9,6 @@ these map onto hosts and Docker Compose files.
 - [Archive Processor](/components/archive-processor) — writes completed flights to S3 with a local Parquet index
 
 Data runners (registration, operator, and airport data sources) have their
-own section — see [Data Runners](/data-runners/). The [Shared Data
+own section — see [Data Runners](/runners/). The [Shared Data
 Models](/components/shared) library used by every component above is listed
 under Reference in the sidebar.

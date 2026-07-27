@@ -17,7 +17,7 @@ notifications over MQTT (with Home Assistant autodiscovery).
 - [Deployment](https://brentio.github.io/SkyFollower/deployment/) — host topology, compose files, components, and configuration reference
 - [Architecture](https://brentio.github.io/SkyFollower/architecture/) — pipeline diagram plus scaling message processors horizontally
 - [Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) — condition types, example `rules.json`/`areas.json`
-- [Data Runners](https://brentio.github.io/SkyFollower/data-runners/) — settings fields for every registration/airport data source
+- [Data Runners](https://brentio.github.io/SkyFollower/runners/) — settings fields for every registration/airport data source
 - [MQTT Reference](https://brentio.github.io/SkyFollower/specs/asyncapi) — every topic published, including Home Assistant autodiscovery behavior
 
 ## Development

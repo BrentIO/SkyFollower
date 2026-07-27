@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates docs/components/*.md and docs/data-runners/*.md from the source
+// Generates docs/components/*.md and docs/runners/*.md from the source
 // READMEs discovered by discover.mjs (see #434). Regenerated on every
 // `docs:dev`/`docs:build` — output is gitignored so the source READMEs stay
 // the single source of truth and the docs site can't drift from them.
@@ -40,12 +40,12 @@ const runners = discoverRunners();
 // that actually renders it.
 const ROUTE_BY_DIR = new Map([
   ...components.map((c) => [c.name, `/components/${c.name}`]),
-  ...runners.map((r) => [r.name, `/data-runners/${r.name}`]),
+  ...runners.map((r) => [r.name, `/runners/${r.name}`]),
 ]);
 
 // Matches a markdown link target that is a relative path ending in
 // `<dirname>/README.md`, e.g. "../message-processor/README.md" or
-// "data-runners/ourairports/README.md".
+// "runners/ourairports/README.md".
 const README_LINK_RE = /\]\((?:\.\.\/|[\w.-]+\/)*([\w.-]+)\/README\.md\)/g;
 
 function rewriteReadmeLinks(content) {
@@ -66,12 +66,12 @@ for (const component of components) {
   writePage(`components/${component.name}.md`, component.readmePath);
 }
 
-rmSync(join(DOCS_ROOT, "data-runners"), { recursive: true, force: true });
+rmSync(join(DOCS_ROOT, "runners"), { recursive: true, force: true });
 for (const runner of runners) {
-  writePage(`data-runners/${runner.name}.md`, runner.readmePath);
+  writePage(`runners/${runner.name}.md`, runner.readmePath);
 }
-writePage("data-runners/index.md", join(REPO_ROOT, "data-runners", "README.md"));
+writePage("runners/index.md", join(REPO_ROOT, "runners", "README.md"));
 
 console.log(
-  `docs: generated ${components.length} component page(s) and ${runners.length} data runner page(s)`,
+  `docs: generated ${components.length} component page(s) and ${runners.length} runner page(s)`,
 );

@@ -64,4 +64,4 @@ done
 ## Next steps
 
 - [Deployment](/deployment/) — host topology, compose-file mapping, and full component list
-- Component READMEs for settings fields: [receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md), [message processor](https://github.com/BrentIO/SkyFollower/blob/main/message-processor/README.md), [data runners](https://github.com/BrentIO/SkyFollower/blob/main/data-runners/README.md)
+- Component READMEs for settings fields: [receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md), [message processor](https://github.com/BrentIO/SkyFollower/blob/main/message-processor/README.md), [runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md)

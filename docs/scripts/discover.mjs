@@ -4,7 +4,7 @@
 // receiver/message-processor/archive-processor/ui cases in
 // .github/workflows/build-images.yaml's discover-images job (shared has no
 // Dockerfile/image but still gets a docs page). Data runners are discovered
-// dynamically from the filesystem, mirroring that same job's `data-runners/*`
+// dynamically from the filesystem, mirroring that same job's `runners/*`
 // wildcard case, so a new runner directory picks up a docs page with no
 // changes here.
 
@@ -39,7 +39,7 @@ export function discoverComponents() {
 }
 
 export function discoverRunners() {
-  const runnersDir = join(REPO_ROOT, "data-runners");
+  const runnersDir = join(REPO_ROOT, "runners");
   return readdirSync(runnersDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)

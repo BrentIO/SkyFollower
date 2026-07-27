@@ -32,7 +32,7 @@ export default defineConfig({
       { text: "Architecture", link: "/architecture/" },
       { text: "Rules & Areas", link: "/rules-and-areas/" },
       { text: "Components", link: "/components/" },
-      { text: "Data Runners", link: "/data-runners/" },
+      { text: "Data Runners", link: "/runners/" },
     ],
 
     sidebar: [
@@ -59,10 +59,10 @@ export default defineConfig({
         text: "Data Runners",
         collapsed: true,
         items: [
-          { text: "Overview", link: "/data-runners/" },
+          { text: "Overview", link: "/runners/" },
           ...runners.map((runner) => ({
             text: runner.title,
-            link: `/data-runners/${runner.name}`,
+            link: `/runners/${runner.name}`,
           })),
         ],
       },
