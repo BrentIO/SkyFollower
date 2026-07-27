@@ -25,7 +25,12 @@ maplibregl.setWorkerUrl("/assets/maplibre-gl-worker.mjs");
 // Free, no-API-key MapLibre style -- see AreasEditor spec's "Map
 // Configuration" note. Verify this URL is still live if the map ever shows
 // a blank/broken basemap.
-const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+// "positron" (CARTO's well-known light/grayscale basemap design, served
+// here by the same OpenFreeMap provider as the rest of this file -- no
+// new third-party domain) instead of "liberty"'s full-color style, per
+// request. Verify this URL is still live if the map ever shows a
+// blank/broken basemap.
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
 // mapbox-gl-draw's own event payloads aren't part of maplibregl's typed
 // event map (it fires custom event names on the map's event bus), so `.on`
@@ -179,8 +184,22 @@ export function AreasView() {
       style: MAP_STYLE,
       center: [0, 0],
       zoom: 1,
+      // Locked to a flat, north-up 2D view -- areas are drawn/edited as
+      // plain lat/lng polygons, so neither a 3D tilt (pitch) nor a
+      // rotated (non-north-up) compass bearing makes drawing easier, only
+      // more disorienting. maxPitch: 0 is the hard guarantee against
+      // pitch (no gesture path can exceed it); the rest, here and via the
+      // two disableRotation() calls below, block every gesture path that
+      // could change pitch or bearing (mouse drag, touch, keyboard) at
+      // the source, rather than just the primary (mouse drag) one.
+      maxPitch: 0,
+      pitchWithRotate: false,
+      dragRotate: false,
+      touchPitch: false,
     });
     mapRef.current = map;
+    map.touchZoomRotate.disableRotation(); // keep pinch-zoom, drop two-finger twist-to-rotate
+    map.keyboard.disableRotation(); // keep pan/zoom shortcuts, drop Shift+Left/Right rotate
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     const draw = new MapboxDraw({ displayControlsDefault: false });
