@@ -56,9 +56,7 @@ def fake_redis():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, fake_redis):
-    settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps({"redis": {"host": "localhost", "port": 6379}}))
-    monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
+    _configure_env(tmp_path, monkeypatch)
 
     with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
         with TestClient(ui_main.app) as c:
@@ -88,6 +86,17 @@ def _area(identifier="LI", **overrides) -> dict:
     }
     area.update(overrides)
     return area
+
+
+def _configure_env(tmp_path, monkeypatch, data_dir=None) -> None:
+    """SETTINGS_PATH/DATA_DIR setup shared by the `client` fixture and the
+    TestConfigBackup tests below, which need to control DATA_DIR's content
+    *before* the TestClient context manager triggers lifespan()'s restore
+    check -- too early for the `client` fixture's own fixed setup order."""
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"redis": {"host": "localhost", "port": 6379}}))
+    monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
+    monkeypatch.setenv("DATA_DIR", str(data_dir if data_dir is not None else tmp_path / "data"))
 
 
 class TestListRules:
@@ -363,3 +372,115 @@ class TestConditionOperatorEnforcement:
         client.post("/api/areas", json=_area("LI"))  # only needed by the 'area' case
         resp = client.post("/api/rules", json=_rule("ok", conditions=[condition]))
         assert resp.status_code == 201
+
+
+class TestConfigBackup:
+    """
+    config:rules/config:areas are the only two Redis keys representing
+    user-authored state with no automatic regeneration path (see CLAUDE.md's
+    Redis Key Schema) -- these cover the file-backup-on-write and restore-
+    on-missing-key behavior that backs them up to DATA_DIR independently of
+    Redis's own AOF.
+    """
+
+    def test_rule_save_writes_backup_file(self, client, tmp_path):
+        client.post("/api/rules", json=_rule("r1"))
+        backup_path = tmp_path / "data" / "rules-backup.json"
+        assert backup_path.exists()
+        assert json.loads(backup_path.read_text()) == [ui_main.Rule(**_rule("r1")).model_dump()]
+
+    def test_area_save_writes_backup_file(self, client, tmp_path):
+        client.post("/api/areas", json=_area("LI"))
+        backup_path = tmp_path / "data" / "areas-backup.json"
+        assert backup_path.exists()
+        collection = json.loads(backup_path.read_text())
+        assert collection["type"] == "FeatureCollection"
+        assert collection["features"][0]["properties"]["identifier"] == "LI"
+
+    def test_restores_rules_from_backup_when_redis_key_missing(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        rules = [ui_main.Rule(**_rule("r1")).model_dump()]
+        (data_dir / "rules-backup.json").write_text(json.dumps(rules))
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app) as c:
+                resp = c.get("/api/rules")
+                assert resp.status_code == 200
+                assert [r["identifier"] for r in resp.json()] == ["r1"]
+
+        assert ui_main.config_rules_key() in fake_redis.store
+        assert ui_main.config_rules_version_key() in fake_redis.store
+
+    def test_restores_areas_from_backup_when_redis_key_missing(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        collection = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"identifier": "LI", "name": "Long Island"},
+                "geometry": _area("LI")["geometry"],
+            }],
+        }
+        (data_dir / "areas-backup.json").write_text(json.dumps(collection))
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app) as c:
+                resp = c.get("/api/areas")
+                assert resp.status_code == 200
+                assert [a["identifier"] for a in resp.json()] == ["LI"]
+
+        assert ui_main.config_areas_key() in fake_redis.store
+        assert ui_main.config_areas_version_key() in fake_redis.store
+
+    def test_does_not_restore_when_redis_key_already_present(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # Backup file deliberately names a different rule than what's
+        # already in Redis -- if restore ran anyway despite the key already
+        # existing, that rule would show up in the response below.
+        stale_rules = [ui_main.Rule(**_rule("stale-from-backup")).model_dump()]
+        (data_dir / "rules-backup.json").write_text(json.dumps(stale_rules))
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        existing_rules = [ui_main.Rule(**_rule("already-in-redis")).model_dump()]
+        existing_body = json.dumps(existing_rules)
+        fake_redis.store[ui_main.config_rules_key()] = existing_body
+        fake_redis.store[ui_main.config_rules_version_key()] = (
+            ui_main.hashlib.sha256(existing_body.encode()).hexdigest()
+        )
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app) as c:
+                resp = c.get("/api/rules")
+                assert [r["identifier"] for r in resp.json()] == ["already-in-redis"]
+
+    def test_corrupt_backup_file_does_not_crash_startup(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "rules-backup.json").write_text("{not valid json")
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app) as c:
+                resp = c.get("/api/rules")
+                assert resp.status_code == 200
+                assert resp.json() == []
+
+    def test_missing_backup_file_does_not_crash_startup(self, tmp_path, monkeypatch):
+        # DATA_DIR itself doesn't even exist yet -- a fresh install.
+        _configure_env(tmp_path, monkeypatch)
+
+        fake_redis = FakeRedis()
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app) as c:
+                resp = c.get("/api/rules")
+                assert resp.status_code == 200
+                assert resp.json() == []

@@ -152,6 +152,39 @@ npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
 The settings file path defaults to `/app/settings.json` and can be
 overridden with the `SETTINGS_PATH` environment variable.
 
+## Backing up `config:rules`/`config:areas`
+
+`config:rules` and `config:areas` are the only two Redis keys in the whole
+schema holding user-authored/curated state with no automatic regeneration
+path (every other key is either repopulated by a data-runner on its next
+scheduled run, or transient operational state that naturally rebuilds from
+live traffic). Redis's own AOF (`docker-compose.server.yaml`'s
+`redis-data` volume) is the only persistence for them otherwise, so this
+backend keeps a second, independent copy:
+
+- **On every successful save** (`_save_rules_array`/`_save_areas_array` in
+  `main.py`), the same JSON body just written to Redis is also written
+  atomically (temp file + `os.replace`, so a crash mid-write can't leave a
+  truncated file) to `$DATA_DIR/rules-backup.json` /
+  `$DATA_DIR/areas-backup.json`.
+- **At startup**, before loading rules/areas into `RulesEngine`, if a
+  Redis key is missing but its backup file exists and parses as valid
+  JSON, the file's content is restored into Redis (both the key and its
+  `:version` hash) and the restore is logged. If the key already has data
+  in Redis, the backup file is never consulted — Redis is always the
+  source of truth when it has data. A missing or corrupt backup file at
+  startup is logged and skipped, not a crash (same empty-array behavior as
+  today if nothing can be restored).
+- `message-processor/rules_engine.py` needs no changes for this — once a
+  restore writes the key back into Redis, the existing 30-second
+  `config:*:version` poll picks it up the same way it picks up any other
+  change.
+
+`$DATA_DIR` defaults to `/app/data`, matching `docker-compose.management-ui.yaml`'s
+`management-ui-data:/app/data` volume mount (same convention as
+`message-processor-0-archive`'s and `archive-data`'s `/app/data` mounts),
+and can be overridden with the `DATA_DIR` environment variable.
+
 ## Regenerating `specs/openapi.yaml`
 
 ```bash
