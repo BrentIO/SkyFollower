@@ -233,7 +233,7 @@ function ConditionValueInput({
 
     case "heading":
       return (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <HeadingInput value={value as string} onValueChange={onValueChange} />
           <UnitSuffix type={condition.type} />
         </div>
@@ -411,7 +411,7 @@ function HeadingInput({
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3">
       <div className="flex items-center gap-2">
         <input
           type="number"

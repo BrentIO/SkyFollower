@@ -6,7 +6,13 @@ import { NavLink } from "react-router-dom";
 // JSX, so adding a section is a one-line change.
 const SECTIONS = [{ path: "/rules", label: "Rules", icon: FileCheck }];
 
-export function SideNav() {
+interface SideNavProps {
+  // Layout.tsx passes this on the mobile drawer copy so picking a section
+  // also closes the drawer; the persistent desktop copy omits it.
+  onNavigate?: () => void;
+}
+
+export function SideNav({ onNavigate }: SideNavProps) {
   return (
     <nav className="flex h-full w-48 shrink-0 flex-col border-r border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
       <div className="mb-6 px-2 text-sm font-semibold leading-snug text-slate-500 dark:text-slate-400">
@@ -17,6 +23,7 @@ export function SideNav() {
           <li key={section.path}>
             <NavLink
               to={section.path}
+              onClick={onNavigate}
               className={({ isActive }) =>
                 `flex items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium ${
                   isActive

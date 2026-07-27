@@ -156,7 +156,7 @@ export function RuleForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">
           {isNew ? "New Rule" : rule.name || rule.identifier}
         </h1>
@@ -195,7 +195,7 @@ export function RuleForm({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm font-medium text-slate-600 dark:text-slate-300">
           Name
           <input
@@ -219,7 +219,7 @@ export function RuleForm({
           />
         </label>
 
-        <label className="col-span-2 flex flex-col gap-1 text-sm font-medium text-slate-600 dark:text-slate-300">
+        <label className="col-span-1 flex flex-col gap-1 text-sm font-medium text-slate-600 dark:text-slate-300 sm:col-span-2">
           Description
           <textarea
             className="input"

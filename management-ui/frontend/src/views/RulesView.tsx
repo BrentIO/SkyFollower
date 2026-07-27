@@ -186,8 +186,8 @@ export function RulesView() {
   }
 
   return (
-    <div className="flex h-full gap-6">
-      <div className="flex w-72 shrink-0 flex-col gap-2">
+    <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
+      <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
         <button
           type="button"
           onClick={startNewRule}
@@ -196,7 +196,7 @@ export function RulesView() {
           Add Rule
         </button>
 
-        <ul className="flex flex-col gap-1 overflow-y-auto">
+        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto md:max-h-none">
           {rules.map((rule) => {
             const dateActive = isRuleDateActive(rule);
             const isSelected = draft?.identifier === rule.identifier && !isNew;
