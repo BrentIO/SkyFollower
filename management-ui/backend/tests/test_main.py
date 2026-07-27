@@ -545,3 +545,91 @@ class TestConfigBackup:
                 resp = c.get("/api/rules")
                 assert resp.status_code == 200
                 assert resp.json() == []
+
+
+class TestConditionValueConstraints:
+    """
+    Numeric bounds and charset patterns on Condition.value, moved from
+    UI-only client-side checks (RuleForm.tsx's validateCondition) into the
+    same per-type models #567 introduced, so the backend is the actual
+    source of truth per management-ui/README.md's own framing.
+    """
+
+    _VALID = [
+        {"type": "altitude", "operator": "minimum", "value": "0"},
+        {"type": "altitude", "operator": "maximum", "value": "65000"},
+        {"type": "velocity", "operator": "minimum", "value": "0"},
+        {"type": "velocity", "operator": "maximum", "value": "1334"},
+        {"type": "vertical_speed", "operator": "minimum", "value": "-10000"},
+        {"type": "vertical_speed", "operator": "maximum", "value": "10000"},
+        {"type": "aircraft_powerplant_count", "operator": "minimum", "value": "0"},
+        {"type": "aircraft_powerplant_count", "operator": "maximum", "value": "99"},
+        {"type": "squawk", "operator": "equals", "value": "1200"},
+        {"type": "aircraft_icao_hex", "operator": "equals", "value": "A8AE7F"},
+        {"type": "aircraft_icao_hex", "operator": "equals", "value": "a8ae7f"},
+        {"type": "aircraft_registration", "operator": "equals", "value": "N659DL"},
+        {"type": "aircraft_registration", "operator": "equals", "value": "RA-12345"},
+    ]
+
+    @pytest.mark.parametrize("condition", _VALID, ids=lambda c: f"{c['type']}-{c['value']}")
+    def test_valid_value_returns_201(self, client, condition):
+        resp = client.post("/api/rules", json=_rule("ok", conditions=[condition]))
+        assert resp.status_code == 201
+
+    _INVALID = [
+        {"type": "altitude", "operator": "minimum", "value": "-1"},
+        {"type": "altitude", "operator": "maximum", "value": "65001"},
+        {"type": "altitude", "operator": "minimum", "value": "not-a-number"},
+        {"type": "velocity", "operator": "maximum", "value": "1335"},
+        {"type": "vertical_speed", "operator": "minimum", "value": "-10001"},
+        {"type": "vertical_speed", "operator": "maximum", "value": "10001"},
+        {"type": "aircraft_powerplant_count", "operator": "minimum", "value": "-1"},
+        {"type": "aircraft_powerplant_count", "operator": "maximum", "value": "100"},
+        {"type": "squawk", "operator": "equals", "value": "0589"},  # 8 isn't octal
+        {"type": "squawk", "operator": "equals", "value": "120"},  # too short
+        {"type": "squawk", "operator": "equals", "value": "12000"},  # too long
+        {"type": "aircraft_icao_hex", "operator": "equals", "value": "GGGGGG"},
+        {"type": "aircraft_icao_hex", "operator": "equals", "value": "A8AE7"},  # too short
+        {"type": "aircraft_registration", "operator": "equals", "value": "-N659DL"},
+        {"type": "aircraft_registration", "operator": "equals", "value": "N659DL-"},
+        {"type": "aircraft_registration", "operator": "equals", "value": "N"},  # too short
+    ]
+
+    @pytest.mark.parametrize("condition", _INVALID, ids=lambda c: f"{c['type']}-{c['value']}")
+    def test_invalid_value_returns_422(self, client, condition):
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[condition]))
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"][:2] == ["body", "conditions"] for err in errors)
+
+
+class TestRuleFieldLengths:
+    def test_name_at_max_length_returns_201(self, client):
+        resp = client.post("/api/rules", json=_rule("ok", name="x" * 64))
+        assert resp.status_code == 201
+
+    def test_name_over_max_length_returns_422(self, client):
+        resp = client.post("/api/rules", json=_rule("bad", name="x" * 65))
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"] == ["body", "name"] for err in errors)
+
+    def test_identifier_at_max_length_returns_201(self, client):
+        resp = client.post("/api/rules", json=_rule("i" * 64))
+        assert resp.status_code == 201
+
+    def test_identifier_over_max_length_returns_422(self, client):
+        resp = client.post("/api/rules", json=_rule("i" * 65))
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"] == ["body", "identifier"] for err in errors)
+
+    def test_description_at_max_length_returns_201(self, client):
+        resp = client.post("/api/rules", json=_rule("ok", description="x" * 2000))
+        assert resp.status_code == 201
+
+    def test_description_over_max_length_returns_422(self, client):
+        resp = client.post("/api/rules", json=_rule("bad", description="x" * 2001))
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"] == ["body", "description"] for err in errors)

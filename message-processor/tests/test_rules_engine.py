@@ -249,6 +249,67 @@ class TestConditionValidation:
             _rule("r", [_cond("velocity", "equals", "300")])
         ])) is False
 
+    def test_altitude_accepts_boundary_values(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r1", [_cond("altitude", "minimum", "0")]),
+        ])) is True
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r2", [_cond("altitude", "maximum", "65000")]),
+        ])) is True
+
+    def test_altitude_rejects_out_of_range(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("altitude", "minimum", "-1")])
+        ])) is False
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("altitude", "maximum", "65001")])
+        ])) is False
+
+    def test_velocity_accepts_boundary_values(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r1", [_cond("velocity", "minimum", "0")]),
+        ])) is True
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r2", [_cond("velocity", "maximum", "1334")]),
+        ])) is True
+
+    def test_velocity_rejects_out_of_range(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("velocity", "maximum", "1335")])
+        ])) is False
+
+    def test_vertical_speed_accepts_boundary_values(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r1", [_cond("vertical_speed", "minimum", "-10000")]),
+        ])) is True
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r2", [_cond("vertical_speed", "maximum", "10000")]),
+        ])) is True
+
+    def test_vertical_speed_rejects_out_of_range(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("vertical_speed", "minimum", "-10001")])
+        ])) is False
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("vertical_speed", "maximum", "10001")])
+        ])) is False
+
+    def test_aircraft_powerplant_count_accepts_boundary_values(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r1", [_cond("aircraft_powerplant_count", "equals", "0")]),
+        ])) is True
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r2", [_cond("aircraft_powerplant_count", "maximum", "99")]),
+        ])) is True
+
+    def test_aircraft_powerplant_count_rejects_out_of_range(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_powerplant_count", "minimum", "-1")])
+        ])) is False
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_powerplant_count", "maximum", "100")])
+        ])) is False
+
     def test_heading_rejects_non_equals(self):
         assert _bare_engine().load_rules_json(json.dumps([
             _rule("r", [_cond("heading", "minimum", "090,180")])

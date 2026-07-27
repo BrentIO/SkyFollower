@@ -325,22 +325,19 @@ class RulesEngine:
     def _validate_altitude(self, c: dict) -> dict:
         if c["operator"] == "equals":
             raise _ConditionError("altitude does not support 'equals'")
-        c["value"] = self._require_non_negative_int(c["value"], "altitude")
+        c["value"] = self._require_int_in_range(c["value"], "altitude", 0, 65000)
         return c
 
     def _validate_velocity(self, c: dict) -> dict:
         if c["operator"] == "equals":
             raise _ConditionError("velocity does not support 'equals'")
-        c["value"] = self._require_non_negative_int(c["value"], "velocity")
+        c["value"] = self._require_int_in_range(c["value"], "velocity", 0, 1334)
         return c
 
     def _validate_vertical_speed(self, c: dict) -> dict:
         if c["operator"] == "equals":
             raise _ConditionError("vertical_speed does not support 'equals'")
-        try:
-            c["value"] = int(float(c["value"]))
-        except (TypeError, ValueError):
-            raise _ConditionError("vertical_speed value must be a number")
+        c["value"] = self._require_int_in_range(c["value"], "vertical_speed", -10000, 10000)
         return c
 
     def _validate_heading(self, c: dict) -> dict:
@@ -463,7 +460,7 @@ class RulesEngine:
         return c
 
     def _validate_aircraft_powerplant_count(self, c: dict) -> dict:
-        c["value"] = self._require_non_negative_int(c["value"], "aircraft_powerplant_count")
+        c["value"] = self._require_int_in_range(c["value"], "aircraft_powerplant_count", 0, 99)
         return c
 
     def _validate_wake_turbulence_category(self, c: dict) -> dict:
@@ -653,11 +650,11 @@ class RulesEngine:
         return False
 
     @staticmethod
-    def _require_non_negative_int(value: Any, field: str) -> int:
+    def _require_int_in_range(value: Any, field: str, minimum: int, maximum: int) -> int:
         try:
             v = int(float(value))
         except (TypeError, ValueError):
             raise _ConditionError(f"{field} value must be a number")
-        if v < 0:
-            raise _ConditionError(f"{field} value must be non-negative")
+        if not (minimum <= v <= maximum):
+            raise _ConditionError(f"{field} value must be between {minimum} and {maximum}")
         return v

@@ -585,6 +585,7 @@ components:
           title: Operator
         value:
           type: string
+          pattern: ^[0-9A-Fa-f]{6}$
           title: Value
       additionalProperties: false
       type: object
@@ -609,6 +610,7 @@ components:
         value:
           type: string
           title: Value
+          description: Number of engines, as a string. Must be an integer 0-99.
       additionalProperties: false
       type: object
       required:
@@ -628,6 +630,7 @@ components:
           title: Operator
         value:
           type: string
+          pattern: ^[0-9A-Za-z][0-9A-Za-z-]*[0-9A-Za-z]$
           title: Value
       additionalProperties: false
       type: object
@@ -671,6 +674,7 @@ components:
         value:
           type: string
           title: Value
+          description: Altitude in feet, as a string. Must be an integer 0-65000.
       additionalProperties: false
       type: object
       required:
@@ -931,14 +935,17 @@ components:
       properties:
         name:
           type: string
+          maxLength: 64
           title: Name
           default: ''
         description:
           type: string
+          maxLength: 2000
           title: Description
           default: ''
         identifier:
           type: string
+          maxLength: 64
           pattern: ^\S+$
           title: Identifier
         enabled:
@@ -1094,6 +1101,7 @@ components:
           title: Operator
         value:
           type: string
+          pattern: ^[0-7]{4}$
           title: Value
       additionalProperties: false
       type: object
@@ -1149,6 +1157,7 @@ components:
         value:
           type: string
           title: Value
+          description: Velocity in knots, as a string. Must be an integer 0-1334.
       additionalProperties: false
       type: object
       required:
@@ -1171,6 +1180,8 @@ components:
         value:
           type: string
           title: Value
+          description: Vertical speed in ft/min, as a string (negative = descending).
+            Must be an integer -10000-10000.
       additionalProperties: false
       type: object
       required:

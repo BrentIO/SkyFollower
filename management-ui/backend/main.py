@@ -29,7 +29,7 @@ import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Add the repo root to sys.path so shared/ is importable when this module is
 # run outside Docker (e.g. tests, local `uvicorn main:app`, OpenAPI export).
@@ -207,6 +207,20 @@ _AREA_EXAMPLES: dict[str, dict] = {
 }
 
 
+def _validate_int_range(value: str, minimum: int, maximum: int, label: str) -> str:
+    """Shared by the numeric-range condition types below -- `value` stays a
+    plain `str` on the wire (matching SkyFollower-legacy's convention), so
+    the bound check parses it rather than using a `Field(ge=..., le=...)`
+    constraint, which only applies to actual numeric field types."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} value must be an integer") from None
+    if not (minimum <= parsed <= maximum):
+        raise ValueError(f"{label} value must be between {minimum} and {maximum}")
+    return value
+
+
 class _ConditionBase(BaseModel):
     """
     Shared base for the per-type condition models below. Each subclass
@@ -215,14 +229,19 @@ class _ConditionBase(BaseModel):
     message-processor/rules_engine.py's per-type `_validate_*` methods,
     which every subclass's `operator` here must keep matching.
 
-    `value` is intentionally left a plain, unconstrained `str` (or
-    `list[str]` for `matched_rules`) on every subclass -- matching
-    SkyFollower-legacy's convention of a string even for numeric fields
-    (altitude "10000", heading "340,020" for min,max wrap-around, military
-    "true"/"false"). Per-type value constraints (numeric bounds, charset
-    patterns, lengths) are a separate, later pass -- see the project's
-    issue tracker for the follow-on that tightens these same subclasses'
-    `value` fields once this one lands.
+    `value` is a plain `str` on every subclass (or `list[str]` for
+    `matched_rules`) -- matching SkyFollower-legacy's convention of a
+    string even for numeric fields (altitude "10000", heading "340,020"
+    for min,max wrap-around, military "true"/"false"). Where RulesEngine
+    enforces a bound or charset on `value`, the matching subclass below
+    mirrors it (numeric range via a `field_validator`, charset via
+    `Field(pattern=...)`) so Swagger documents the same constraint and a
+    bad request gets a `422` at ingress instead of only a `400` from
+    RulesEngine two calls deep. Every other type's `value` stays
+    unconstrained beyond `str`/`list[str]` -- this project doesn't
+    duplicate every RulesEngine check here, only the ones the frontend
+    also fast-fails on (see `management-ui/frontend/src/components/
+    RuleForm.tsx`'s `validateCondition`).
     """
 
     model_config = {"extra": "forbid"}
@@ -231,19 +250,40 @@ class _ConditionBase(BaseModel):
 class AltitudeCondition(_ConditionBase):
     type: Literal["altitude"]
     operator: Literal["minimum", "maximum"]
-    value: str
+    # Numeric range on a string field can't be a JSON Schema minimum/maximum
+    # keyword (those only apply to type: integer/number) -- documented here
+    # in prose instead, enforced below by the field_validator.
+    value: str = Field(description="Altitude in feet, as a string. Must be an integer 0-65000.")
+
+    @field_validator("value")
+    @classmethod
+    def _check_range(cls, v: str) -> str:
+        return _validate_int_range(v, 0, 65000, "altitude")
 
 
 class VelocityCondition(_ConditionBase):
     type: Literal["velocity"]
     operator: Literal["minimum", "maximum"]
-    value: str
+    value: str = Field(description="Velocity in knots, as a string. Must be an integer 0-1334.")
+
+    @field_validator("value")
+    @classmethod
+    def _check_range(cls, v: str) -> str:
+        return _validate_int_range(v, 0, 1334, "velocity")
 
 
 class VerticalSpeedCondition(_ConditionBase):
     type: Literal["vertical_speed"]
     operator: Literal["minimum", "maximum"]
-    value: str
+    value: str = Field(
+        description="Vertical speed in ft/min, as a string (negative = descending). "
+        "Must be an integer -10000-10000."
+    )
+
+    @field_validator("value")
+    @classmethod
+    def _check_range(cls, v: str) -> str:
+        return _validate_int_range(v, -10000, 10000, "vertical_speed")
 
 
 class HeadingCondition(_ConditionBase):
@@ -267,7 +307,9 @@ class IdentCondition(_ConditionBase):
 class SquawkCondition(_ConditionBase):
     type: Literal["squawk"]
     operator: Literal["equals"]
-    value: str
+    # 4-digit octal -- a real transponder never sends 8/9 in any position,
+    # matching rules_engine.py's _validate_squawk.
+    value: str = Field(pattern=r"^[0-7]{4}$")
 
 
 class MilitaryCondition(_ConditionBase):
@@ -291,19 +333,32 @@ class AircraftTypeDesignatorCondition(_ConditionBase):
 class AircraftRegistrationCondition(_ConditionBase):
     type: Literal["aircraft_registration"]
     operator: Literal["equals"]
-    value: str
+    # Letters/numbers/hyphens only, no leading/trailing hyphen -- first/last
+    # char anchored to [0-9A-Za-z] inherently requires 2+ characters and
+    # rules out a leading/trailing hyphen (interior hyphens like "RA-12345"
+    # are fine). Case-insensitive since rules_engine.py's
+    # _validate_aircraft_registration uppercases before matching, so
+    # lowercase input is equally valid there.
+    value: str = Field(pattern=r"^[0-9A-Za-z][0-9A-Za-z-]*[0-9A-Za-z]$")
 
 
 class AircraftIcaoHexCondition(_ConditionBase):
     type: Literal["aircraft_icao_hex"]
     operator: Literal["equals"]
-    value: str
+    # Exactly 6 hex characters, case-insensitive (rules_engine.py's
+    # _validate_aircraft_icao_hex uppercases before matching).
+    value: str = Field(pattern=r"^[0-9A-Fa-f]{6}$")
 
 
 class AircraftPowerplantCountCondition(_ConditionBase):
     type: Literal["aircraft_powerplant_count"]
     operator: Literal["equals", "minimum", "maximum"]
-    value: str
+    value: str = Field(description="Number of engines, as a string. Must be an integer 0-99.")
+
+    @field_validator("value")
+    @classmethod
+    def _check_range(cls, v: str) -> str:
+        return _validate_int_range(v, 0, 99, "aircraft_powerplant_count")
 
 
 class WakeTurbulenceCategoryCondition(_ConditionBase):
@@ -357,9 +412,9 @@ class Rule(BaseModel):
 
     model_config = {"json_schema_extra": {"examples": list(_RULE_EXAMPLES.values())}}
 
-    name: str = ""
-    description: str = ""
-    identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
+    name: str = Field(default="", max_length=64)
+    description: str = Field(default="", max_length=2000)
+    identifier: str = Field(pattern=_IDENTIFIER_PATTERN, max_length=64)
     enabled: bool
     force_archive: bool = False
     conditions: list[Condition] = Field(min_length=1)
