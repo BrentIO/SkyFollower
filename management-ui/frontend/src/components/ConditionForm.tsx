@@ -14,12 +14,18 @@ interface AreaOption {
   name: string;
 }
 
+interface RuleOption {
+  identifier: string;
+  name: string;
+}
+
 interface ConditionFormProps {
   condition: Condition;
   onChange: (next: Condition) => void;
   onRemove: () => void;
-  otherRuleIdentifiers: string[];
+  otherRuleOptions: RuleOption[];
   areaOptions: AreaOption[];
+  autoFocusType?: boolean;
 }
 
 const TYPE_LABELS: Record<ConditionType, string> = {
@@ -32,7 +38,7 @@ const TYPE_LABELS: Record<ConditionType, string> = {
   ident: "Ident",
   squawk: "Squawk",
   military: "Military",
-  operator_airline_designator: "Operator Airline Designator",
+  operator_airline_designator: "Airline Designator",
   aircraft_type_designator: "Aircraft Type Designator",
   aircraft_registration: "Aircraft Registration",
   aircraft_icao_hex: "Aircraft ICAO Hex",
@@ -78,14 +84,27 @@ if (WAKE_TURBULENCE_ORDER.length !== WAKE_TURBULENCE_CATEGORIES.length) {
   throw new Error("WAKE_TURBULENCE_ORDER is out of sync with WAKE_TURBULENCE_CATEGORIES");
 }
 
-// Units shown alongside the "Value" label for the condition types where a
-// bare number would otherwise be ambiguous. Types not listed here (text,
-// dropdown, or otherwise self-explanatory values) get no suffix.
+// Units shown alongside the value input itself for the condition types
+// where a bare number would otherwise be ambiguous. Types not listed here
+// (text, dropdown, or otherwise self-explanatory values) get no suffix.
 const UNIT_LABELS: Partial<Record<ConditionType, string>> = {
   altitude: "Feet",
   heading: "Degrees",
   velocity: "Knots",
   vertical_speed: "Feet/min",
+};
+
+// Client-side min/max, mirroring real-world limits (not just "non-negative
+// integer") -- altitude/velocity/vertical_speed bound flight envelopes no
+// aircraft SkyFollower tracks can exceed, aircraft_powerplant_count bounds
+// at a generous upper limit for any fixed-wing/rotorcraft. The backend's
+// own validators (message-processor/rules_engine.py) don't enforce an
+// upper bound at all -- this is purely a UI fast-fail nicety.
+const NUMERIC_BOUNDS: Partial<Record<ConditionType, { min: number; max: number }>> = {
+  altitude: { min: 0, max: 65000 },
+  velocity: { min: 0, max: 1334 },
+  aircraft_powerplant_count: { min: 0, max: 99 },
+  vertical_speed: { min: -10000, max: 10000 },
 };
 
 // Small text appended to the right of the value input itself (not the
@@ -118,10 +137,14 @@ export function ConditionForm({
   condition,
   onChange,
   onRemove,
-  otherRuleIdentifiers,
+  otherRuleOptions,
   areaOptions,
+  autoFocusType,
 }: ConditionFormProps) {
-  const validOperators = OPERATORS_BY_TYPE[condition.type];
+  // condition.type is "" for a freshly-added row that hasn't had a type
+  // chosen yet (see RuleForm.tsx's newCondition()) -- deliberately not
+  // defaulted to a real type, so there's nothing to fall back to here.
+  const validOperators = condition.type ? OPERATORS_BY_TYPE[condition.type] : [];
 
   function setValue(value: string | string[]) {
     onChange({ ...condition, value });
@@ -138,8 +161,12 @@ export function ConditionForm({
         <select
           className="input"
           value={condition.type}
+          autoFocus={autoFocusType}
           onChange={(e) => onChange(retypeCondition(e.target.value as ConditionType))}
         >
+          <option value="" disabled>
+            Select a type...
+          </option>
           {SORTED_CONDITION_TYPES.map((type) => (
             <option key={type} value={type}>
               {TYPE_LABELS[type]}
@@ -153,6 +180,7 @@ export function ConditionForm({
         <select
           className="input"
           value={condition.operator}
+          disabled={validOperators.length <= 1}
           onChange={(e) => setOperator(e.target.value as Operator)}
         >
           {validOperators.map((op) => (
@@ -163,12 +191,12 @@ export function ConditionForm({
         </select>
       </label>
 
-      <div className="flex min-w-64 flex-1 flex-col gap-1 text-xs font-medium text-slate-500">
+      <div className="flex min-w-80 flex-1 flex-col gap-1 text-xs font-medium text-slate-500">
         Value
         <ConditionValueInput
           condition={condition}
           onValueChange={setValue}
-          otherRuleIdentifiers={otherRuleIdentifiers}
+          otherRuleOptions={otherRuleOptions}
           areaOptions={areaOptions}
         />
       </div>
@@ -188,25 +216,30 @@ export function ConditionForm({
 function ConditionValueInput({
   condition,
   onValueChange,
-  otherRuleIdentifiers,
+  otherRuleOptions,
   areaOptions,
 }: {
   condition: Condition;
   onValueChange: (value: string | string[]) => void;
-  otherRuleIdentifiers: string[];
+  otherRuleOptions: RuleOption[];
   areaOptions: AreaOption[];
 }) {
   const value = condition.value;
 
   switch (condition.type) {
+    case "":
+      return <span className="input flex items-center text-slate-400">Select a type first</span>;
+
     case "altitude":
     case "velocity":
-    case "aircraft_powerplant_count":
+    case "aircraft_powerplant_count": {
+      const bounds = NUMERIC_BOUNDS[condition.type];
       return (
         <div className="flex items-center gap-2">
           <input
             type="number"
-            min={0}
+            min={bounds?.min}
+            max={bounds?.max}
             step={1}
             placeholder={condition.type === "aircraft_powerplant_count" ? "1" : undefined}
             className="input"
@@ -216,12 +249,16 @@ function ConditionValueInput({
           <UnitSuffix type={condition.type} />
         </div>
       );
+    }
 
-    case "vertical_speed":
+    case "vertical_speed": {
+      const bounds = NUMERIC_BOUNDS.vertical_speed;
       return (
         <div className="flex items-center gap-2">
           <input
             type="number"
+            min={bounds?.min}
+            max={bounds?.max}
             step={1}
             className="input"
             value={value as string}
@@ -230,12 +267,14 @@ function ConditionValueInput({
           <UnitSuffix type={condition.type} />
         </div>
       );
+    }
 
     case "heading":
       return (
         <div className="flex flex-wrap items-center gap-2">
           <HeadingInput value={value as string} onValueChange={onValueChange} />
           <UnitSuffix type={condition.type} />
+          <HeadingCompass value={value as string} />
         </div>
       );
 
@@ -248,7 +287,7 @@ function ConditionValueInput({
           type="text"
           inputMode="numeric"
           maxLength={4}
-          placeholder="0000"
+          placeholder="1200"
           className="input"
           value={value as string}
           onChange={(e) => onValueChange(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
@@ -346,17 +385,17 @@ function ConditionValueInput({
 
       return (
         <div className="input flex max-h-32 flex-col gap-1 overflow-y-auto">
-          {otherRuleIdentifiers.length === 0 && (
+          {otherRuleOptions.length === 0 && (
             <span className="text-sm text-slate-400">No other rules to match against yet.</span>
           )}
-          {otherRuleIdentifiers.map((identifier) => (
-            <label key={identifier} className="flex items-center gap-2 text-sm">
+          {otherRuleOptions.map((option) => (
+            <label key={option.identifier} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={selected.includes(identifier)}
-                onChange={() => toggle(identifier)}
+                checked={selected.includes(option.identifier)}
+                onChange={() => toggle(option.identifier)}
               />
-              {identifier}
+              {option.name || option.identifier}
             </label>
           ))}
         </div>
@@ -411,29 +450,26 @@ function HeadingInput({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <div className="flex items-center gap-2">
-        <input
-          type="number"
-          min={0}
-          max={359}
-          placeholder="min"
-          className="input w-24"
-          value={min}
-          onChange={(e) => update(e.target.value, max)}
-        />
-        <span className="text-slate-400">to</span>
-        <input
-          type="number"
-          min={0}
-          max={359}
-          placeholder="max"
-          className="input w-24"
-          value={max}
-          onChange={(e) => update(min, e.target.value)}
-        />
-      </div>
-      <HeadingCompass min={min} max={max} />
+    <div className="flex items-center gap-2">
+      <input
+        type="number"
+        min={0}
+        max={359}
+        placeholder="min"
+        className="input w-24"
+        value={min}
+        onChange={(e) => update(e.target.value, max)}
+      />
+      <span className="text-slate-400">to</span>
+      <input
+        type="number"
+        min={0}
+        max={359}
+        placeholder="max"
+        className="input w-24"
+        value={max}
+        onChange={(e) => update(min, e.target.value)}
+      />
     </div>
   );
 }
@@ -443,12 +479,19 @@ function HeadingInput({
 // rules_engine.py's _eval_heading: `lo > hi` means the arc wraps through
 // 0/360, e.g. 340-020 is northbound). Entering the pair backwards silently
 // selects the *other* (usually much larger) arc instead, so this shades
-// the arc that will actually be matched -- min in reversed relative to
-// max is exactly why this exists: 340-013 (through north) looks, as bare
-// numbers, like it could be backwards for 013-340 (the wide southern arc).
-function HeadingCompass({ min, max }: { min: string; max: string }) {
-  const size = 64;
-  const radius = 26;
+// the arc that will actually be matched -- min reversed relative to max is
+// exactly why this exists: 340-013 (through north) looks, as bare numbers,
+// like it could be backwards for 013-340 (the wide southern arc).
+//
+// Sized to match a standard input row height (~36px, `.input`'s
+// border+padding+text-sm) rather than towering over the Type/Operator
+// selects next to it -- at this size the N/E/S/W letter labels a larger
+// version had aren't legible, so they're dropped rather than rendered as
+// illegible clutter.
+function HeadingCompass({ value }: { value: string }) {
+  const [min = "", max = ""] = value.split(",");
+  const size = 32;
+  const radius = 13;
   const center = size / 2;
 
   function pointAt(degrees: number) {
@@ -488,21 +531,6 @@ function HeadingCompass({ min, max }: { min: string; max: string }) {
           strokeWidth={1}
         />
       )}
-      {(["N", "E", "S", "W"] as const).map((label, i) => {
-        const p = pointAt(i * 90);
-        return (
-          <text
-            key={label}
-            x={p.x}
-            y={p.y}
-            dy="0.3em"
-            textAnchor="middle"
-            className="fill-slate-400 text-[7px] dark:fill-slate-500"
-          >
-            {label}
-          </text>
-        );
-      })}
     </svg>
   );
 }

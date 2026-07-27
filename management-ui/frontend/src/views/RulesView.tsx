@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { RuleForm } from "../components/RuleForm";
@@ -72,6 +73,23 @@ function StatusPill({ label, tone }: { label: string; tone: "danger" | "neutral"
   );
 }
 
+// Renders the identifier in monospace so it reads unambiguously as "the
+// literal value", distinct from the free-text display Name beside it.
+function DeleteRuleMessage({ rule }: { rule: Rule }) {
+  const idCode = (
+    <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-slate-800">
+      {rule.identifier}
+    </code>
+  );
+  return rule.name ? (
+    <>
+      This will permanently delete '{rule.name}' ({idCode}).
+    </>
+  ) : (
+    <>This will permanently delete {idCode}.</>
+  );
+}
+
 export function RulesView() {
   const { showToast } = useToast();
   const [rules, setRules] = useState<Rule[]>([]);
@@ -83,8 +101,13 @@ export function RulesView() {
   const [draft, setDraft] = useState<Rule | null>(null);
   const [isNew, setIsNew] = useState(false);
 
+  // Mobile-only accordion state for the rule list -- ignored at the md+
+  // breakpoint, where the list is always visible regardless (see the
+  // className on the <ul> below).
+  const [mobileListOpen, setMobileListOpen] = useState(true);
+
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +147,7 @@ export function RulesView() {
       setDraft(clone(rule));
       setOriginal(clone(rule));
       setIsNew(false);
+      setMobileListOpen(false);
     });
   }
 
@@ -133,6 +157,7 @@ export function RulesView() {
       setDraft(clone(fresh));
       setOriginal(clone(fresh));
       setIsNew(true);
+      setMobileListOpen(false);
     });
   }
 
@@ -167,13 +192,13 @@ export function RulesView() {
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
     try {
-      await deleteRule(deleteTarget);
-      setRules((current) => current.filter((r) => r.identifier !== deleteTarget));
-      if (draft?.identifier === deleteTarget) {
+      await deleteRule(deleteTarget.identifier);
+      setRules((current) => current.filter((r) => r.identifier !== deleteTarget.identifier));
+      if (draft?.identifier === deleteTarget.identifier) {
         setDraft(null);
         setOriginal(null);
       }
-      showToast("success", `Rule '${deleteTarget}' deleted.`);
+      showToast("success", `Rule '${deleteTarget.identifier}' deleted.`);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to delete rule.");
     } finally {
@@ -185,18 +210,31 @@ export function RulesView() {
     return <p className="text-slate-400">Loading rules...</p>;
   }
 
+  const selectedLabel = draft ? (isNew ? "New Rule" : draft.name || draft.identifier) : "Select a rule";
+
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
         <button
           type="button"
           onClick={startNewRule}
-          className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700"
+          className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
         >
           Add Rule
         </button>
 
-        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto md:max-h-none">
+        <button
+          type="button"
+          onClick={() => setMobileListOpen((open) => !open)}
+          className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
+        >
+          <span className="truncate">{selectedLabel}</span>
+          <ChevronDown size={16} className={mobileListOpen ? "rotate-180" : ""} />
+        </button>
+
+        <ul
+          className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
+        >
           {rules.map((rule) => {
             const dateActive = isRuleDateActive(rule);
             const isSelected = draft?.identifier === rule.identifier && !isNew;
@@ -233,9 +271,12 @@ export function RulesView() {
         </ul>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <hr className="border-slate-200 dark:border-slate-700 md:hidden" />
+
+      <div className="flex-1 overflow-y-auto md:min-h-0 md:overflow-hidden">
         {draft ? (
           <RuleForm
+            key={isNew ? "__new__" : original?.identifier ?? "__new__"}
             rule={draft}
             isNew={isNew}
             otherRules={rules.filter((r) => r.identifier !== original?.identifier || isNew)}
@@ -243,7 +284,7 @@ export function RulesView() {
             onChange={setDraft}
             onSave={handleSave}
             onDiscard={handleDiscard}
-            onDelete={() => setDeleteTarget(draft.identifier)}
+            onDelete={() => setDeleteTarget(draft)}
             saving={saving}
             dirty={dirty}
           />
@@ -267,7 +308,7 @@ export function RulesView() {
       <ConfirmModal
         open={deleteTarget !== null}
         title="Delete rule?"
-        message={`This will permanently delete '${deleteTarget}'.`}
+        message={deleteTarget ? <DeleteRuleMessage rule={deleteTarget} /> : ""}
         confirmLabel="Delete"
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}

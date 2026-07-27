@@ -81,7 +81,12 @@ export const WAKE_TURBULENCE_CATEGORIES = [
 export type WakeTurbulenceCategory = (typeof WAKE_TURBULENCE_CATEGORIES)[number];
 
 export interface Condition {
-  type: ConditionType;
+  // "" only ever appears transiently client-side, for a newly-added
+  // condition row that hasn't had a type chosen yet (see RuleForm.tsx's
+  // newCondition()) -- validateRule() rejects it before a save can reach
+  // the API, so a Condition actually sent over the wire always has a real
+  // ConditionType.
+  type: ConditionType | "";
   operator: Operator;
   value: string | string[];
 }
