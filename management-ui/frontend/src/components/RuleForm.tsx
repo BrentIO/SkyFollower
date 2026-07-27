@@ -104,7 +104,7 @@ function validateCondition(condition: Condition): string | null {
       return null;
 
     case "aircraft_icao_hex":
-      if (String(value).length !== 6) return "must be exactly 6 characters";
+      if (!/^[0-9A-Fa-f]{6}$/.test(String(value))) return "must be exactly 6 hexadecimal characters";
       return null;
 
     case "aircraft_type_designator":
@@ -116,7 +116,9 @@ function validateCondition(condition: Condition): string | null {
       return null;
 
     case "aircraft_registration":
-      if (String(value).length < 2) return "must be at least 2 characters";
+      if (!/^[0-9A-Z][0-9A-Z-]*[0-9A-Z]$/.test(String(value))) {
+        return "must be at least 2 characters, contain only letters, numbers, and hyphens, and not start or end with a hyphen";
+      }
       return null;
 
     case "ident":
@@ -170,6 +172,14 @@ export function RuleForm({
 }: RuleFormProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [focusNewConditionAt, setFocusNewConditionAt] = useState<number | null>(null);
+  // Tracks whether the user has typed into Identifier directly (as opposed
+  // to it merely holding a value auto-derived from Name) -- gates
+  // handleNameChange below. Checking `rule.identifier === ""` instead of
+  // this flag was the original approach, but that only holds true for the
+  // very first character typed into Name: deriving a non-empty identifier
+  // on keystroke 1 made keystroke 2 see a non-empty identifier and stop
+  // deriving, even though the user never touched Identifier themselves.
+  const [identifierManuallyEdited, setIdentifierManuallyEdited] = useState(false);
 
   // The autoFocus attribute only matters at mount time, so this flag only
   // needs to survive one render past addCondition() -- reset immediately
@@ -202,12 +212,17 @@ export function RuleForm({
 
   function handleNameChange(rawName: string) {
     const name = rawName.slice(0, NAME_MAX_LENGTH);
-    // Only auto-derives the identifier while it's genuinely unset -- once
-    // the user has typed anything directly into Identifier, this stops
-    // overwriting it (existing rules never hit this path at all, since
-    // their Identifier field is disabled and never empty to begin with).
-    const identifier = rule.identifier === "" ? sanitizeIdentifier(name) : rule.identifier;
+    // Keeps deriving Identifier from every keystroke of Name for a new
+    // rule, until the user edits Identifier directly (see
+    // handleIdentifierChange) -- existing rules never hit this, since
+    // their Identifier field is disabled.
+    const identifier = isNew && !identifierManuallyEdited ? sanitizeIdentifier(name) : rule.identifier;
     onChange({ ...rule, name, identifier });
+  }
+
+  function handleIdentifierChange(rawIdentifier: string) {
+    setIdentifierManuallyEdited(true);
+    onChange({ ...rule, identifier: sanitizeIdentifier(rawIdentifier) });
   }
 
   const otherRuleOptions = otherRules
@@ -278,7 +293,7 @@ export function RuleForm({
               className="input"
               value={rule.identifier}
               disabled={!isNew}
-              onChange={(e) => onChange({ ...rule, identifier: sanitizeIdentifier(e.target.value) })}
+              onChange={(e) => handleIdentifierChange(e.target.value)}
             />
           </label>
 

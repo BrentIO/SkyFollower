@@ -306,7 +306,9 @@ function ConditionValueInput({
           placeholder="A8AE7F"
           className="input uppercase"
           value={value as string}
-          onChange={(e) => onValueChange(e.target.value.toUpperCase().slice(0, 6))}
+          onChange={(e) =>
+            onValueChange(e.target.value.replace(/[^0-9A-Fa-f]/g, "").toUpperCase().slice(0, 6))
+          }
         />
       );
 
@@ -411,9 +413,11 @@ function ConditionValueInput({
         <input
           type="text"
           placeholder="N659DL"
-          className="input"
+          className="input uppercase"
           value={value as string}
-          onChange={(e) => onValueChange(e.target.value)}
+          onChange={(e) =>
+            onValueChange(e.target.value.replace(/[^0-9A-Za-z-]/g, "").toUpperCase())
+          }
         />
       );
 
@@ -487,22 +491,23 @@ function HeadingInput({
 // exactly why this exists: 340-013 (through north) looks, as bare numbers,
 // like it could be backwards for 013-340 (the wide southern arc).
 //
-// Sized to match a standard input row height (~36px, `.input`'s
+// Sized close to a standard input row height (~36px, `.input`'s
 // border+padding+text-sm) rather than towering over the Type/Operator
-// selects next to it -- at this size the N/E/S/W letter labels a larger
-// version had aren't legible, so they're dropped rather than rendered as
-// illegible clutter.
+// selects next to it, while still leaving room for legible N/E/S/W labels
+// just outside the circle -- a few px taller than the inputs beside it,
+// but nowhere near the original 64px version that visibly threw off the
+// row's alignment.
 function HeadingCompass({ value }: { value: string }) {
   const [min = "", max = ""] = value.split(",");
-  const size = 32;
+  const size = 40;
   const radius = 13;
   const center = size / 2;
 
-  function pointAt(degrees: number) {
+  function pointAt(degrees: number, atRadius: number = radius) {
     const rad = (degrees * Math.PI) / 180;
     return {
-      x: center + radius * Math.sin(rad),
-      y: center - radius * Math.cos(rad),
+      x: center + atRadius * Math.sin(rad),
+      y: center - atRadius * Math.cos(rad),
     };
   }
 
@@ -535,6 +540,21 @@ function HeadingCompass({ value }: { value: string }) {
           strokeWidth={1}
         />
       )}
+      {(["N", "E", "S", "W"] as const).map((label, i) => {
+        const p = pointAt(i * 90, radius + 5);
+        return (
+          <text
+            key={label}
+            x={p.x}
+            y={p.y}
+            dy="0.3em"
+            textAnchor="middle"
+            className="fill-slate-400 text-[6px] dark:fill-slate-500"
+          >
+            {label}
+          </text>
+        );
+      })}
     </svg>
   );
 }

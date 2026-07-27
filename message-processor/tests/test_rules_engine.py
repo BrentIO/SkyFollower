@@ -281,9 +281,32 @@ class TestConditionValidation:
             _rule("r", [_cond("aircraft_icao_hex", "equals", "ABC")])
         ])) is False
 
+    def test_aircraft_icao_hex_must_be_hexadecimal(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_icao_hex", "equals", "GGGGGG")])
+        ])) is False
+
     def test_aircraft_type_must_be_4_chars(self):
         assert _bare_engine().load_rules_json(json.dumps([
             _rule("r", [_cond("aircraft_type_designator", "equals", "B7")])
+        ])) is False
+
+    def test_aircraft_registration_must_be_at_least_2_chars(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_registration", "equals", "N")])
+        ])) is False
+
+    def test_aircraft_registration_rejects_invalid_characters(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_registration", "equals", "N659DL!")])
+        ])) is False
+
+    def test_aircraft_registration_rejects_leading_or_trailing_hyphen(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_registration", "equals", "-N659DL")])
+        ])) is False
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("aircraft_registration", "equals", "N659DL-")])
         ])) is False
 
     def test_operator_designator_must_be_3_chars(self):
