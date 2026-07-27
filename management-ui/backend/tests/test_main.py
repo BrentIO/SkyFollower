@@ -461,6 +461,67 @@ class TestConfigBackup:
                 resp = c.get("/api/rules")
                 assert [r["identifier"] for r in resp.json()] == ["already-in-redis"]
 
+    def test_seeds_rules_backup_file_from_redis_when_file_missing(self, tmp_path, monkeypatch):
+        # data_dir deliberately not created -- an existing deployment
+        # upgrading to this feature has real data in Redis but has never
+        # written a backup file (only a save does that).
+        data_dir = tmp_path / "data"
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        existing_rules = [ui_main.Rule(**_rule("already-in-redis")).model_dump()]
+        fake_redis.store[ui_main.config_rules_key()] = json.dumps(existing_rules)
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        backup_path = data_dir / "rules-backup.json"
+        assert backup_path.exists()
+        assert json.loads(backup_path.read_text()) == existing_rules
+
+    def test_seeds_areas_backup_file_from_redis_when_file_missing(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        collection = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"identifier": "LI", "name": "Long Island"},
+                "geometry": _area("LI")["geometry"],
+            }],
+        }
+        fake_redis.store[ui_main.config_areas_key()] = json.dumps(collection)
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        backup_path = data_dir / "areas-backup.json"
+        assert backup_path.exists()
+        assert json.loads(backup_path.read_text()) == collection
+
+    def test_does_not_overwrite_existing_backup_file_when_redis_has_data(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        stale_backup = [ui_main.Rule(**_rule("stale-backup")).model_dump()]
+        (data_dir / "rules-backup.json").write_text(json.dumps(stale_backup))
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        existing_rules = [ui_main.Rule(**_rule("already-in-redis")).model_dump()]
+        fake_redis.store[ui_main.config_rules_key()] = json.dumps(existing_rules)
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        # The pre-existing file is untouched -- seeding only fires when the
+        # file is missing, never as an overwrite.
+        assert json.loads((data_dir / "rules-backup.json").read_text()) == stale_backup
+
     def test_corrupt_backup_file_does_not_crash_startup(self, tmp_path, monkeypatch):
         data_dir = tmp_path / "data"
         data_dir.mkdir()

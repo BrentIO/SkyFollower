@@ -1,0 +1,59 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title management-ui Startup — config:rules/config:areas Backup Reconciliation
+
+box "management-ui" $OnPrem
+    participant "Backend" as Backend
+end box
+
+box "Redis" $OnPrem
+    database "config:rules /\nconfig:areas" as Redis
+end box
+
+box "Host Volume" $OnPrem
+    database "rules-backup.json /\nareas-backup.json" as File
+end box
+
+note over Backend
+    Runs once per key (config:rules, config:areas)
+    in lifespan(), before RulesEngine.reload_if_changed()
+end note
+
+Backend -> Redis++ : **Look up the key**\n""GET config:rules""
+Redis --> Backend-- : value, or none
+
+alt Redis has the key
+    Backend -> File++ : **Check for a backup file**\n""os.path.exists(rules-backup.json)""
+    File --> Backend-- : exists or not
+
+    alt backup file already exists
+        Backend -> Backend : **Nothing to do**\nRedis already has data, and it's already backed up
+    else backup file missing (upgrading an existing deployment)
+        Backend -> File++ : **Seed the backup file from Redis**\ntemp file write + ""os.replace""
+        File --> Backend-- : OK
+        Backend -> Backend : **Log the seed**\n""logger.info: seeded rules backup file""
+    end
+
+else Redis is missing the key
+    Backend -> File++ : **Check for a backup file**\n""os.path.exists(rules-backup.json)""
+    File --> Backend-- : exists or not
+
+    alt backup file missing too
+        Backend -> Backend : **Nothing to do**\nsame empty-array behavior as today
+    else backup file exists
+        Backend -> File++ : **Read and parse it**\n""json.loads(f.read())""
+        alt parses cleanly
+            File --> Backend-- : body
+            Backend -> Backend : **Compute the version hash**\n""version = sha256(body).hexdigest()""
+            Backend -> Redis++ : **Restore both keys**\n""SET config:rules {body}""\n""SET config:rules:version {version}""
+            Redis --> Backend-- : OK
+            Backend -> Backend : **Log the restore**\n""logger.info: restored rules from backup file""
+        else corrupt or truncated
+            File --> Backend-- : ""JSONDecodeError""
+            Backend -> Backend : **Log and skip**\na corrupt backup file doesn't crash startup
+        end
+    end
+end
+
+@enduml

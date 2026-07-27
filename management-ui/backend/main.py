@@ -467,12 +467,30 @@ def _write_backup_file(path: str, body: str) -> None:
         logger.error("Failed to write backup file %s: %s", path, exc)
 
 
-def _restore_backup_if_missing(key: str, version_key: str, backup_path: str, label: str) -> None:
-    """If `key` is already in Redis, the backup file is never consulted --
-    Redis is always the source of truth when it has data; the file only
-    fills a genuine gap (e.g. a fresh/restored Redis volume)."""
-    if _redis.get(key) is not None:
+def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, label: str) -> None:
+    """Reconciles config:rules/config:areas between Redis and its on-disk
+    backup file at startup, in whichever single direction fills a gap.
+    Redis is always authoritative when it has data:
+
+    - Redis has `key`, backup file exists: nothing to do.
+    - Redis has `key`, backup file is missing -- an existing deployment
+      upgrading to this feature has real data in Redis but has never
+      written a backup file (only _save_rules_array/_save_areas_array do
+      that, on save): seed the file from Redis's current value so it
+      doesn't stay empty until the next edit. Never overwrites a backup
+      file that already exists.
+    - Redis is missing `key`, backup file exists: restore Redis from the
+      file (and its `:version` hash, so RulesEngine's poll-based reload
+      picks it up) -- a lost/corrupted Redis volume, or a fresh one.
+    - Both missing: nothing to do -- same empty-array behavior as today.
+    """
+    existing = _redis.get(key)
+    if existing is not None:
+        if not os.path.exists(backup_path):
+            _write_backup_file(backup_path, existing)
+            logger.info("Seeded %s backup file %s from existing Redis data.", label, backup_path)
         return
+
     if not os.path.exists(backup_path):
         return
 
@@ -504,8 +522,8 @@ async def lifespan(app: FastAPI):
     )
     _engine = RulesEngine(_redis)
 
-    _restore_backup_if_missing(config_rules_key(), config_rules_version_key(), _rules_backup_path(), "rules")
-    _restore_backup_if_missing(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
+    _reconcile_backup_with_redis(config_rules_key(), config_rules_version_key(), _rules_backup_path(), "rules")
+    _reconcile_backup_with_redis(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
     _engine.reload_if_changed()
 
     logger.info("Management UI backend started.")

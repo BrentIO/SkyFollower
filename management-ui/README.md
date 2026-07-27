@@ -154,6 +154,8 @@ overridden with the `SETTINGS_PATH` environment variable.
 
 ## Backing up `config:rules`/`config:areas`
 
+![Startup backup reconciliation](./config-backup-reconcile-sequence.svg)
+
 `config:rules` and `config:areas` are the only two Redis keys in the whole
 schema holding user-authored/curated state with no automatic regeneration
 path (every other key is either repopulated by a data-runner on its next
