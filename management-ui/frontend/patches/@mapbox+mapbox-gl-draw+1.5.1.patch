@@ -1,0 +1,15 @@
+diff --git a/node_modules/@mapbox/mapbox-gl-draw/src/lib/theme.js b/node_modules/@mapbox/mapbox-gl-draw/src/lib/theme.js
+index 0f45b7d..637d7de 100644
+--- a/node_modules/@mapbox/mapbox-gl-draw/src/lib/theme.js
++++ b/node_modules/@mapbox/mapbox-gl-draw/src/lib/theme.js
+@@ -48,8 +48,8 @@ export default [
+       ],
+       'line-dasharray': [
+         'case',
+-        ['==', ['get', 'active'], 'true'], [0.2, 2],
+-        [2, 0],
++        ['==', ['get', 'active'], 'true'], ['literal', [0.2, 2]],
++        ['literal', [2, 0]],
+       ],
+       'line-width': 2,
+     },
