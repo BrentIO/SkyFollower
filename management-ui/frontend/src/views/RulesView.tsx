@@ -210,8 +210,6 @@ export function RulesView() {
     return <p className="text-slate-400">Loading rules...</p>;
   }
 
-  const selectedLabel = draft ? (isNew ? "New Rule" : draft.name || draft.identifier) : "Select a rule";
-
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
@@ -228,7 +226,7 @@ export function RulesView() {
           onClick={() => setMobileListOpen((open) => !open)}
           className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
         >
-          <span className="truncate">{selectedLabel}</span>
+          <span className="truncate">Rules</span>
           <ChevronDown size={16} className={mobileListOpen ? "rotate-180" : ""} />
         </button>
 
