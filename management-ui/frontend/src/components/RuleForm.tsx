@@ -325,7 +325,9 @@ export function RuleForm({
             <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
               Conditions{rule.conditions.length > 0 ? ` (${rule.conditions.length})` : ""}
             </h2>
-            <p className="text-xs text-slate-400">All conditions must be met to trigger this rule.</p>
+            {rule.conditions.length > 0 && (
+              <p className="text-xs text-slate-400">All conditions must be met to trigger this rule.</p>
+            )}
           </div>
           <button
             type="button"
