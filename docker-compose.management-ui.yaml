@@ -11,9 +11,9 @@ services:
   management-ui:
     image: ghcr.io/brentio/skyfollower-management-ui:latest
     restart: unless-stopped
-    # Backend-only image for now (#14) -- uvicorn serves directly on 8000.
-    # Switches to 8080:80 once nginx + the built React frontend land (#15, #16).
+    # nginx serves the built React frontend at / and proxies /api/* to
+    # uvicorn, which listens on 127.0.0.1:8000 inside the container only.
     ports:
-      - "8080:8000"
+      - "8080:80"
     volumes:
       - ./config/management-ui/settings.json:/app/settings.json:ro

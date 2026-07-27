@@ -9,6 +9,7 @@ venv/
 node_modules/
 dist/
 build/
+*.tsbuildinfo
 .pytest_cache/
 *.svg
 CLAUDE.md

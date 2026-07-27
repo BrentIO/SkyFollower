@@ -403,8 +403,12 @@ class RulesEngine:
         if c["operator"] != "equals":
             raise _ConditionError("squawk only supports 'equals'")
         val = str(c["value"]).strip()
-        if not val.isnumeric() or len(val) != 4:
-            raise _ConditionError("squawk must be a 4-digit numeric string")
+        # Squawk codes are 4-digit octal (each digit 0-7) -- an actual
+        # transponder can never send 8 or 9 in any position, so isnumeric()
+        # alone (which accepts 0-9) was letting invalid codes like "0589"
+        # through.
+        if len(val) != 4 or any(ch not in "01234567" for ch in val):
+            raise _ConditionError("squawk must be a 4-digit octal string (each digit 0-7)")
         c["value"] = val
         return c
 
@@ -436,8 +440,14 @@ class RulesEngine:
         if c["operator"] != "equals":
             raise _ConditionError("aircraft_registration only supports 'equals'")
         val = str(c["value"]).strip().upper()
-        if len(val) < 2:
-            raise _ConditionError("aircraft_registration must be at least 2 characters")
+        # First/last char anchored to [0-9A-Z] (not "-") inherently requires
+        # at least 2 characters and rules out a leading/trailing hyphen --
+        # interior hyphens (e.g. "RA-12345") are still fine.
+        if not re.fullmatch(r"[0-9A-Z][0-9A-Z-]*[0-9A-Z]", val):
+            raise _ConditionError(
+                "aircraft_registration must be at least 2 characters, contain only "
+                "letters, numbers, and hyphens, and not start or end with a hyphen"
+            )
         c["value"] = val
         return c
 
@@ -445,8 +455,8 @@ class RulesEngine:
         if c["operator"] != "equals":
             raise _ConditionError("aircraft_icao_hex only supports 'equals'")
         val = str(c["value"]).strip().upper()
-        if len(val) != 6:
-            raise _ConditionError("aircraft_icao_hex must be exactly 6 characters")
+        if len(val) != 6 or not re.fullmatch(r"[0-9A-F]{6}", val):
+            raise _ConditionError("aircraft_icao_hex must be exactly 6 hexadecimal characters")
         c["value"] = val
         return c
 
