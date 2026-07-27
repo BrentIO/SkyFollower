@@ -68,6 +68,36 @@ function computeCentroid(geometry: Area["geometry"]): [number, number] {
   return [sumLng / ring.length, sumLat / ring.length];
 }
 
+// Floor offset for degenerate (near-zero-extent) shapes, in degrees --
+// keeps a duplicate visibly distinct even for a tiny polygon, without
+// this dominating the offset of a large one.
+const MIN_OFFSET_DEGREES = 0.0008;
+
+// Offsets every coordinate by a fixed fraction of the shape's own
+// bounding-box size (floored so it's still visible for a small polygon),
+// so a duplicate lands overlapping-but-distinguishable from its source
+// and is immediately grabbable rather than sitting exactly on top of it.
+function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  for (const ring of geometry.coordinates) {
+    for (const [lng, lat] of ring) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  const dLng = Math.max((maxLng - minLng) * 0.15, MIN_OFFSET_DEGREES);
+  const dLat = Math.max((maxLat - minLat) * 0.15, MIN_OFFSET_DEGREES);
+  return {
+    ...geometry,
+    coordinates: geometry.coordinates.map((ring) => ring.map(([lng, lat]) => [lng + dLng, lat + dLat])),
+  };
+}
+
 function labelsFeatureCollection(areas: Area[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
@@ -111,6 +141,10 @@ export function AreasView() {
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
   const [pendingDrawFeatureId, setPendingDrawFeatureId] = useState<string | null>(null);
+  // Only set by duplicateArea(), to suggest "<name> copy" in the naming
+  // modal -- a freshly drawn shape leaves this null and the modal starts
+  // blank as before.
+  const [pendingNameSuggestion, setPendingNameSuggestion] = useState<string | null>(null);
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
 
@@ -129,9 +163,11 @@ export function AreasView() {
   // listener always calls through `<name>Ref.current(...)`, so it always
   // sees the current render's state without needing to be re-registered.
   const handleDrawFinishRef = useRef((featureId: string) => {
+    setPendingNameSuggestion(null);
     setPendingDrawFeatureId(featureId);
   });
   handleDrawFinishRef.current = (featureId: string) => {
+    setPendingNameSuggestion(null);
     setPendingDrawFeatureId(featureId);
   };
 
@@ -335,10 +371,39 @@ export function AreasView() {
     });
   }
 
+  // Duplicates the currently selected (and possibly in-progress-edited)
+  // shape: clones its on-map geometry with a visible offset, then reuses
+  // the exact same naming-modal -> create-area flow as a freshly drawn
+  // polygon (handleNameConfirm doesn't care how the pending feature got
+  // onto the map).
+  function duplicateArea() {
+    if (!draft) return;
+    const sourceGeometry = draft.geometry;
+    const sourceName = draft.name;
+    requestSwitch(() => {
+      const draw = drawRef.current;
+      if (!draw) return;
+      const tempId = crypto.randomUUID();
+      draw.addFeatures([
+        {
+          id: tempId,
+          type: "Feature",
+          properties: { mode: "polygon", name: sourceName },
+          geometry: offsetGeometry(sourceGeometry),
+        },
+      ]);
+      setDraft(null);
+      setOriginal(null);
+      setPendingNameSuggestion(sourceName ? `${sourceName} copy` : "");
+      setPendingDrawFeatureId(tempId);
+    });
+  }
+
   async function handleNameConfirm(identifier: string, name: string) {
     const draw = drawRef.current;
     const tempId = pendingDrawFeatureId;
     setPendingDrawFeatureId(null);
+    setPendingNameSuggestion(null);
     if (!draw || !tempId) return;
 
     const feature = draw.getSnapshotFeature(tempId);
@@ -378,6 +443,7 @@ export function AreasView() {
       draw?.removeFeatures([pendingDrawFeatureId]);
     }
     setPendingDrawFeatureId(null);
+    setPendingNameSuggestion(null);
     draw?.setMode("select");
   }
 
@@ -475,6 +541,13 @@ export function AreasView() {
                         </button>
                         <button
                           type="button"
+                          onClick={duplicateArea}
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setDeleteTarget(area)}
                           className="ml-auto rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
                         >
@@ -552,6 +625,7 @@ export function AreasView() {
       <AreaNameModal
         open={pendingDrawFeatureId !== null}
         existingIdentifiers={areas.map((a) => a.identifier)}
+        initialName={pendingNameSuggestion ?? undefined}
         onConfirm={handleNameConfirm}
         onCancel={handleNameCancel}
       />
