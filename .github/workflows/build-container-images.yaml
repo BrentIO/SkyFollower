@@ -35,7 +35,7 @@ jobs:
     needs: validate-version
     # Every component with a Dockerfile is built and published — the matrix
     # below is generated from the repo tree, not hardcoded. A new data
-    # runner needs no workflow change (data-runners/* is wildcard-matched
+    # runner needs no workflow change (runners/* is wildcard-matched
     # below); any other new top-level component (e.g. management-ui) needs
     # one new line in the case statement mapping its directory to an image
     # name.
@@ -58,7 +58,7 @@ jobs:
               message-processor) name="message-processor" ;;
               archive-processor) name="archive" ;;
               management-ui) name="management-ui" ;;
-              data-runners/*) name="runner-$(basename "$dir")" ;;
+              runners/*) name="runner-$(basename "$dir")" ;;
               *) echo "Skipping unrecognized Dockerfile: $dockerfile" >&2; continue ;;
             esac
             image="ghcr.io/brentio/skyfollower-${name}"

@@ -425,7 +425,7 @@ def _load_config() -> dict:
 # ---------------------------------------------------------------------------
 # config:rules/config:areas are the only two Redis keys in the whole schema
 # holding user-authored state with no automatic regeneration path (every
-# other key is either repopulated by a data-runner or transient operational
+# other key is either repopulated by a runner or transient operational
 # state -- see CLAUDE.md's Redis Key Schema). Redis's own AOF is the only
 # persistence for them today; these two functions add a second, independent
 # copy on a host-mounted volume, so a lost/corrupted Redis volume doesn't

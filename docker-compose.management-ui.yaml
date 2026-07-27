@@ -4,7 +4,7 @@ name: skyfollower-management-ui
 # the archive host -- management-ui's only dependency is Redis, which already
 # lives on Host B. Kept as its own compose file (rather than folded into
 # docker-compose.server.yaml) so it can move to a different host later
-# without disturbing the rabbitmq/redis/data-runner stack.
+# without disturbing the rabbitmq/redis/runner stack.
 
 services:
 

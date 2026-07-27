@@ -2,7 +2,7 @@
 Shared MQTT client construction for SkyFollower.
 
 Every component that publishes to MQTT (receiver, message processor,
-archive-processor, and all data-runners) builds its mqtt.Client through
+archive-processor, and all runners) builds its mqtt.Client through
 build_mqtt_client() so optional username/password authentication is applied
 consistently, instead of being reimplemented -- or missed -- at each of the
 ~40 independent call sites.
@@ -31,7 +31,7 @@ def build_mqtt_client(
     Applies username_pw_set() when `username`/`password` are present in the
     config. The caller still owns connect()/connect_async() and
     loop_start()/loop_stop(), since long-lived services (receiver,
-    processor, archive-processor) and one-shot data-runners use different
+    processor, archive-processor) and one-shot runners use different
     connection lifecycles.
     """
     if not mqtt_config:

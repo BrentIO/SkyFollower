@@ -158,7 +158,7 @@ overridden with the `SETTINGS_PATH` environment variable.
 
 `config:rules` and `config:areas` are the only two Redis keys in the whole
 schema holding user-authored/curated state with no automatic regeneration
-path (every other key is either repopulated by a data-runner on its next
+path (every other key is either repopulated by a runner on its next
 scheduled run, or transient operational state that naturally rebuilds from
 live traffic). Redis's own AOF (`docker-compose.server.yaml`'s
 `redis-data` volume) is the only persistence for them otherwise, so this
