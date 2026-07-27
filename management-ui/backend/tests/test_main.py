@@ -14,9 +14,11 @@ it can't be imported as management_ui.backend.main the way "shared" or "ui"
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 from unittest.mock import patch
 
@@ -30,13 +32,86 @@ sys.modules["management_ui_main"] = ui_main
 _spec.loader.exec_module(ui_main)
 
 
+def _deep_merge(base: dict, update: dict) -> None:
+    for k, v in update.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+
+
+# Redis key prefix each RediSearch index covers -- lets the fake's search()
+# just scan FakeRedis.store for matching JSON docs instead of needing a
+# separate, parallel index data structure kept in sync by hand.
+_FAKE_INDEX_PREFIXES = {
+    "idx:aircraft:mictronics": "aircraft:mictronics:",
+    "idx:aircraft:registry": "aircraft:registry:",
+    "idx:airport": "airport:",
+}
+
+
+class _FakeDoc:
+    def __init__(self, id: str):
+        self.id = id
+
+
+class _FakeSearchResult:
+    def __init__(self, docs: list[_FakeDoc]):
+        self.docs = docs
+
+
+class _FakeFt:
+    """Minimal stand-in for redis.Redis.ft(index) -- only supports the
+    single-tag exact-match `@field:{value}` queries main.py's _search_one()
+    actually issues, resolved by scanning FakeRedis.store."""
+
+    def __init__(self, redis: "FakeRedis", index: str):
+        self._redis = redis
+        self._index = index
+
+    def search(self, query):
+        match = re.match(r"@(\w+):\{(.+)\}$", query.query_string())
+        field, raw_value = match.group(1), match.group(2)
+        value = re.sub(r"\\(.)", r"\1", raw_value)  # undo _escape_tag's backslash-escaping
+        prefix = _FAKE_INDEX_PREFIXES[self._index]
+        matches = [
+            _FakeDoc(key)
+            for key, raw in self._redis.store.items()
+            if key.startswith(prefix) and json.loads(raw).get(field) == value
+        ]
+        return _FakeSearchResult(matches[:1])
+
+
+class _FakeJson:
+    """Minimal stand-in for redis.Redis.json() -- operator:/airport: keys are
+    real RedisJSON documents (a plain GET raises WRONGTYPE against them,
+    verified against a live Redis Stack instance), so main.py reads them via
+    .json().get() instead. Real redis-py returns the decoded dict directly,
+    which this matches by json.loads()-ing whatever FakeRedis.store holds."""
+
+    def __init__(self, redis: "FakeRedis"):
+        self._redis = redis
+
+    def get(self, key: str) -> dict | None:
+        raw = self._redis.store.get(key)
+        return json.loads(raw) if raw else None
+
+
 class FakeRedis:
-    """Minimal in-memory stand-in for redis.Redis's get/set."""
+    """
+    Minimal in-memory stand-in for redis.Redis's get/set/script_load/evalsha/
+    ft().search. evalsha is special-cased per script body (there are only
+    ever two: merge_aircraft.lua and route_airports.lua, distinguished by a
+    substring unique to each) rather than a real Lua interpreter --
+    replicating just enough of each script's documented behavior for the
+    reference-data lookup endpoints' own tests.
+    """
 
     def __init__(self):
         self.store: dict[str, str] = {}
         self.get_error: Exception | None = None
         self.set_error: Exception | None = None
+        self._scripts: dict[str, str] = {}
 
     def get(self, key):
         if self.get_error:
@@ -47,6 +122,60 @@ class FakeRedis:
         if self.set_error:
             raise self.set_error
         self.store[key] = value
+
+    def json(self):
+        return _FakeJson(self)
+
+    def script_load(self, script: str) -> str:
+        sha = hashlib.sha1(script.encode()).hexdigest()
+        self._scripts[sha] = script
+        return sha
+
+    def evalsha(self, sha: str, numkeys: int, *args):
+        script = self._scripts[sha]
+        if "aircraft:mictronics:" in script:
+            return self._eval_merge_aircraft(args[0])
+        if "route:" in script:
+            return self._eval_route_airports(args[0])
+        raise NotImplementedError("FakeRedis.evalsha: unrecognised script")
+
+    def _eval_merge_aircraft(self, icao_hex: str) -> str | None:
+        icao_hex = icao_hex.upper()
+        raws = [
+            self.store.get(f"aircraft:mictronics:{icao_hex}"),
+            self.store.get(f"aircraft:registry:{icao_hex}"),
+            self.store.get(f"aircraft:livery:{icao_hex}"),
+        ]
+        if not any(raws):
+            return None
+        result: dict = {}
+        sources = []
+        for raw in raws:
+            if not raw:
+                continue
+            doc = json.loads(raw)
+            source = doc.pop("source", None)
+            if source:
+                sources.append(source)
+            _deep_merge(result, doc)
+        if sources:
+            result["data_sources"] = sources
+        return json.dumps(result)
+
+    def _eval_route_airports(self, ident: str) -> str:
+        route_raw = self.store.get(f"route:{ident.upper()}")
+        if not route_raw:
+            return "[]"
+        airports = []
+        for code in route_raw.split("-"):
+            raw = self.store.get(f"airport:{code.upper()}")
+            if not raw:
+                return "[]"
+            airports.append(json.loads(raw))
+        return json.dumps(airports)
+
+    def ft(self, index: str) -> _FakeFt:
+        return _FakeFt(self, index)
 
 
 @pytest.fixture
@@ -633,3 +762,130 @@ class TestRuleFieldLengths:
         assert resp.status_code == 422
         errors = resp.json()["detail"]
         assert any(err["loc"] == ["body", "description"] for err in errors)
+
+
+# ---------------------------------------------------------------------------
+# Reference-data lookup (aircraft/operator/airport/route)
+# ---------------------------------------------------------------------------
+
+class TestAircraftLookup:
+    def test_hex_hit_returns_merged_flattened_record(self, client, fake_redis):
+        fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F",
+            "registration": "N659DL",
+            "military": False,
+            "source": "mictronics",
+            "aircraft": {
+                "type_designator": "B752",
+                "manufacturer": "Boeing",
+                "wake_turbulence_category": "heavy",
+            },
+        })
+        resp = client.get("/api/aircraft/A8AE7F")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["icao_hex"] == "A8AE7F"
+        assert body["registration"] == "N659DL"
+        assert body["type_designator"] == "B752"
+        assert body["wake_turbulence_category"] == "heavy"
+        assert body["data_sources"] == ["mictronics"]
+
+    def test_hex_merges_registry_over_mictronics(self, client, fake_redis):
+        fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F", "registration": "N659DL", "military": False, "source": "mictronics",
+        })
+        fake_redis.store["aircraft:registry:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F", "registration": "N659DL", "military": False,
+            "source": "us-faa-registry", "aircraft": {"serial_number": "12345"},
+        })
+        resp = client.get("/api/aircraft/A8AE7F")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["serial_number"] == "12345"
+        assert body["data_sources"] == ["mictronics", "us-faa-registry"]
+
+    def test_hex_miss_returns_404(self, client):
+        resp = client.get("/api/aircraft/FFFFFF")
+        assert resp.status_code == 404
+
+    def test_registration_hit_via_mictronics(self, client, fake_redis):
+        fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F", "registration": "N659DL", "military": False, "source": "mictronics",
+        })
+        resp = client.get("/api/aircraft", params={"registration": "N659DL"})
+        assert resp.status_code == 200
+        assert resp.json()["icao_hex"] == "A8AE7F"
+
+    def test_registration_hit_via_registry_when_not_in_mictronics(self, client, fake_redis):
+        fake_redis.store["aircraft:registry:ABC123"] = json.dumps({
+            "icao_hex": "ABC123", "registration": "N12345", "military": False, "source": "us-faa-registry",
+        })
+        resp = client.get("/api/aircraft", params={"registration": "N12345"})
+        assert resp.status_code == 200
+        assert resp.json()["icao_hex"] == "ABC123"
+
+    def test_registration_miss_returns_404(self, client):
+        resp = client.get("/api/aircraft", params={"registration": "UNKNOWN"})
+        assert resp.status_code == 404
+
+
+class TestOperatorLookup:
+    def test_hit(self, client, fake_redis):
+        fake_redis.store["operator:DAL"] = json.dumps({"airline_designator": "DAL", "name": "Delta Air Lines"})
+        resp = client.get("/api/operators/DAL")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "Delta Air Lines"
+
+    def test_miss_returns_404(self, client):
+        resp = client.get("/api/operators/ZZZ")
+        assert resp.status_code == 404
+
+
+class TestAirportLookup:
+    def test_icao_hit(self, client, fake_redis):
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "John F Kennedy Intl"})
+        resp = client.get("/api/airports/KJFK")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "John F Kennedy Intl"
+
+    def test_iata_hit(self, client, fake_redis):
+        fake_redis.store["airport:KJFK"] = json.dumps({
+            "icao_code": "KJFK", "iata_code": "JFK", "name": "John F Kennedy Intl",
+        })
+        resp = client.get("/api/airports/JFK")
+        assert resp.status_code == 200
+        assert resp.json()["icao_code"] == "KJFK"
+
+    def test_miss_returns_404(self, client):
+        resp = client.get("/api/airports/ZZZZ")
+        assert resp.status_code == 404
+
+    def test_invalid_length_returns_404_not_400(self, client):
+        # Neither a 3-char IATA nor a 4-char ICAO code can ever match --
+        # treated the same as any other miss (see main.py's get_airport).
+        resp = client.get("/api/airports/ZZ")
+        assert resp.status_code == 404
+
+
+class TestRouteLookup:
+    def test_hit_returns_origin_destination_and_stops(self, client, fake_redis):
+        fake_redis.store["route:AAL15"] = "KMIA-KJFK-KMIA"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        resp = client.get("/api/routes/AAL15")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["origin"]["icao_code"] == "KMIA"
+        assert body["destination"]["icao_code"] == "KMIA"
+        assert len(body["stops"]) == 3
+        assert body["stops"][1]["icao_code"] == "KJFK"
+
+    def test_no_route_returns_404(self, client):
+        resp = client.get("/api/routes/UNKNOWN1")
+        assert resp.status_code == 404
+
+    def test_partial_route_missing_airport_returns_404(self, client, fake_redis):
+        fake_redis.store["route:AAL16"] = "KMIA-UNKNOWN"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        resp = client.get("/api/routes/AAL16")
+        assert resp.status_code == 404
