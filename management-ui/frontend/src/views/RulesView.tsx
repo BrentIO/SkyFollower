@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { RuleForm } from "../components/RuleForm";
@@ -224,10 +224,12 @@ export function RulesView() {
         <button
           type="button"
           onClick={() => setMobileListOpen((open) => !open)}
-          className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300 md:hidden"
+          aria-expanded={mobileListOpen}
+          className="flex items-center justify-center gap-2 rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:hidden"
         >
-          <span className="truncate">Rules</span>
-          <ChevronDown size={16} className={mobileListOpen ? "rotate-180" : ""} />
+          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          <span>Rules</span>
+          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </button>
 
         <ul
