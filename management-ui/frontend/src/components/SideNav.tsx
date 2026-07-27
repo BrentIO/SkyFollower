@@ -1,10 +1,12 @@
-import { FileCheck } from "lucide-react";
+import { FileCheck, MapPin } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
-// Section list -- Rules is the only entry for now; a future areas editor
-// adds an "Areas" entry here. Deliberately a plain array, not hardcoded
-// JSX, so adding a section is a one-line change.
-const SECTIONS = [{ path: "/rules", label: "Rules", icon: FileCheck }];
+// Section list -- deliberately a plain array, not hardcoded JSX, so adding
+// a section is a one-line change.
+const SECTIONS = [
+  { path: "/rules", label: "Rules", icon: FileCheck },
+  { path: "/areas", label: "Areas", icon: MapPin },
+];
 
 interface SideNavProps {
   // Layout.tsx passes this on the mobile drawer copy so picking a section
