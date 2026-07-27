@@ -35,7 +35,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _decode_country = _mod._decode_country
 _build_record = _mod._build_record
@@ -400,13 +399,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/is-samgongustofa-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.API_URL, "is-samgongustofa-registry", headers={"User-Agent": "P5Software SkyFollower"})

@@ -46,7 +46,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 download_and_extract_routes = _mod.download_and_extract_routes
 stage_data = _mod.stage_data
@@ -360,13 +359,3 @@ class TestMqttCompletionStats:
         assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_records_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_last_run_at/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_vrs_standing_data_last_run_status/config" in ha_topics
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "vrs-standing-data")

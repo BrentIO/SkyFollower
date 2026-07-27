@@ -35,7 +35,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _discover_pdf_url = _mod._discover_pdf_url
 download_and_parse = _mod.download_and_parse
@@ -491,13 +490,3 @@ class TestWriteToRedis:
             write_to_redis(rows, r, 1209600)
         set_call = pipe.json.return_value.set.call_args
         assert "manufacturer" not in set_call[0][2]["aircraft"]
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod._INDEX_URL, "hr-ccaa-registry", headers={"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"})

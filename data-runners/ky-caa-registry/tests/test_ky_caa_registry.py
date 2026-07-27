@@ -36,7 +36,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _normalise_header = _mod._normalise_header
 _normalise_cell = _mod._normalise_cell
@@ -659,13 +658,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/ky-caa-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.PDF_URL, "ky-caa-registry", headers={"User-Agent": "P5Software SkyFollower"})

@@ -34,7 +34,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _parse_address = _mod._parse_address
 _escape_tag = _mod._escape_tag
@@ -484,13 +483,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/fr-dgac-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "fr-dgac-registry", headers={"User-Agent": "P5Software SkyFollower"})

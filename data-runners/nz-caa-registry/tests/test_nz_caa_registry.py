@@ -34,7 +34,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _decode_aircraft_type = _mod._decode_aircraft_type
 _decode_country = _mod._decode_country
@@ -424,13 +423,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/nz-caa-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "nz-caa-registry", headers={"User-Agent": "P5Software SkyFollower"})

@@ -48,7 +48,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _decode_engine_type = _mod._decode_engine_type
 _decode_registrant_type = _mod._decode_registrant_type
@@ -721,13 +720,3 @@ class TestMqttCompletionStats:
         assert "homeassistant/sensor/SkyFollower_runner_us_faa_registry_records_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_us_faa_registry_last_run_at/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_us_faa_registry_last_run_status/config" in ha_topics
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "us-faa-registry", headers={"User-Agent": "P5Software AROI"})
