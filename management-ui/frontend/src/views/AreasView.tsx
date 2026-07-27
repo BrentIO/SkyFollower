@@ -1,7 +1,7 @@
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import MapboxDraw from "@mapbox/mapbox-gl-draw";
-import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
+import { TerraDraw, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
+import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
@@ -22,23 +22,12 @@ import { useToast } from "../hooks/useToast";
 // everything gated on that (area list, name labels) hangs forever.
 maplibregl.setWorkerUrl("/assets/maplibre-gl-worker.mjs");
 
-// Free, no-API-key MapLibre style -- see AreasEditor spec's "Map
-// Configuration" note. Verify this URL is still live if the map ever shows
-// a blank/broken basemap.
 // "positron" (CARTO's well-known light/grayscale basemap design, served
 // here by the same OpenFreeMap provider as the rest of this file -- no
 // new third-party domain) instead of "liberty"'s full-color style, per
 // request. Verify this URL is still live if the map ever shows a
 // blank/broken basemap.
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
-
-// mapbox-gl-draw's own event payloads aren't part of maplibregl's typed
-// event map (it fires custom event names on the map's event bus), so `.on`
-// calls below go through this narrow, honest escape hatch rather than
-// pretending the shape is fully known.
-type DrawEventMap = {
-  on(type: string, listener: (e: { features: GeoJSON.Feature[] }) => void): void;
-};
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -109,7 +98,7 @@ export function AreasView() {
   const { showToast } = useToast();
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const drawRef = useRef<MapboxDraw | null>(null);
+  const drawRef = useRef<TerraDraw | null>(null);
 
   const [areas, setAreas] = useState<Area[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,26 +122,30 @@ export function AreasView() {
     }
   }
 
-  // Draw's map event listeners are registered exactly once, on mount (see
-  // the map-init effect below), so they'd otherwise close over that first
-  // render's state forever. Each handler here is redefined every render
-  // and stashed in a ref; the one-time listener always calls through
-  // `<name>Ref.current(...)`, so it always sees the current render's state
-  // without needing to be re-registered.
-  const handleDrawCreateRef = useRef((featureId: string) => {
+  // Terra Draw's event listeners are registered exactly once, when the
+  // map's 'load' event fires (see the mount effect below), so they'd
+  // otherwise close over that first render's state forever. Each handler
+  // here is redefined every render and stashed in a ref; the one-time
+  // listener always calls through `<name>Ref.current(...)`, so it always
+  // sees the current render's state without needing to be re-registered.
+  const handleDrawFinishRef = useRef((featureId: string) => {
     setPendingDrawFeatureId(featureId);
   });
-  handleDrawCreateRef.current = (featureId: string) => {
+  handleDrawFinishRef.current = (featureId: string) => {
     setPendingDrawFeatureId(featureId);
   };
 
-  const handleDrawUpdateRef = useRef((featureId: string, geometry: Area["geometry"]) => {
-    if (!draft || draft.identifier !== featureId) return;
-    setDraft({ ...draft, geometry });
+  const handleDrawChangeRef = useRef((ids: string[]) => {
+    if (!draft || !ids.includes(draft.identifier)) return;
+    const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
+    if (!feature || feature.geometry.type !== "Polygon") return;
+    setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
   });
-  handleDrawUpdateRef.current = (featureId: string, geometry: Area["geometry"]) => {
-    if (!draft || draft.identifier !== featureId) return;
-    setDraft({ ...draft, geometry });
+  handleDrawChangeRef.current = (ids: string[]) => {
+    if (!draft || !ids.includes(draft.identifier)) return;
+    const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
+    if (!feature || feature.geometry.type !== "Polygon") return;
+    setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
   };
 
   const handleDrawSelectRef = useRef((featureId: string) => {
@@ -200,30 +193,10 @@ export function AreasView() {
     mapRef.current = map;
     map.touchZoomRotate.disableRotation(); // keep pinch-zoom, drop two-finger twist-to-rotate
     map.keyboard.disableRotation(); // keep pan/zoom shortcuts, drop Shift+Left/Right rotate
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-    const draw = new MapboxDraw({ displayControlsDefault: false });
-    drawRef.current = draw;
-    // MapboxDraw's published types target mapboxgl.Map; maplibregl.Map
-    // implements a compatible-enough IControl contract for how Draw
-    // actually uses it at runtime (onAdd/onRemove + the map's event bus).
-    map.addControl(draw as unknown as maplibregl.IControl);
-
-    const drawEvents = map as unknown as DrawEventMap;
-    drawEvents.on("draw.create", (e) => {
-      const feature = e.features[0];
-      if (feature) handleDrawCreateRef.current(String(feature.id));
-    });
-    drawEvents.on("draw.update", (e) => {
-      const feature = e.features[0];
-      if (feature && feature.geometry.type === "Polygon") {
-        handleDrawUpdateRef.current(String(feature.id), feature.geometry as Area["geometry"]);
-      }
-    });
-    drawEvents.on("draw.selectionchange", (e) => {
-      const feature = e.features[0];
-      if (feature) handleDrawSelectRef.current(String(feature.id));
-    });
+    // showCompass: false -- rotation is locked (see the constructor
+    // options above and the two disableRotation() calls), so a
+    // reset-bearing compass button has nothing to do.
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
     map.on("load", () => {
       map.addSource("area-labels", {
@@ -237,10 +210,57 @@ export function AreasView() {
         layout: { "text-field": ["get", "name"], "text-size": 12, "text-anchor": "center" },
         paint: { "text-color": "#0f172a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
+
+      // Terra Draw's MapLibre adapter must be created after the map's
+      // style has loaded (per its own adapter guide), so the whole
+      // instance is built here rather than immediately after the Map
+      // itself.
+      const draw = new TerraDraw({
+        adapter: new TerraDrawMapLibreGLAdapter({ map }),
+        // Terra Draw's default id strategy only accepts 36-character
+        // (UUID-shaped) ids, which area identifiers like "LI" aren't --
+        // this lets an area's identifier double as its Terra Draw
+        // feature id directly, the same 1:1 mapping used before
+        // switching drawing libraries, rather than maintaining a
+        // separate id-translation table.
+        idStrategy: {
+          isValidId: (id): id is string => typeof id === "string" && id.length > 0,
+          getId: () => crypto.randomUUID(),
+        },
+        modes: [
+          new TerraDrawSelectMode({
+            flags: {
+              polygon: {
+                feature: {
+                  draggable: true,
+                  coordinates: { midpoints: true, draggable: true, deletable: true },
+                },
+              },
+            },
+          }),
+          new TerraDrawPolygonMode(),
+        ],
+      });
+      drawRef.current = draw;
+      draw.start();
+      draw.setMode("select");
+
+      draw.on("finish", (id, context) => {
+        // "finish" also fires for completed drags in select mode
+        // (dragFeature/dragCoordinate/dragCoordinateResize) -- only a
+        // brand new polygon (action "draw") should prompt for a name.
+        if (context.action === "draw") handleDrawFinishRef.current(String(id));
+      });
+      draw.on("change", (ids, type) => {
+        if (type === "update") handleDrawChangeRef.current(ids.map(String));
+      });
+      draw.on("select", (id) => handleDrawSelectRef.current(String(id)));
+
       setMapReady(true);
     });
 
     return () => {
+      drawRef.current?.stop();
       map.remove();
       mapRef.current = null;
       drawRef.current = null;
@@ -256,15 +276,15 @@ export function AreasView() {
         if (cancelled) return;
         setAreas(loaded);
         const draw = drawRef.current;
-        if (draw) {
-          for (const area of loaded) {
-            draw.add({
-              type: "Feature",
+        if (draw && loaded.length > 0) {
+          draw.addFeatures(
+            loaded.map((area) => ({
               id: area.identifier,
-              properties: { name: area.name },
+              type: "Feature" as const,
+              properties: { mode: "polygon", name: area.name },
               geometry: area.geometry,
-            });
-          }
+            })),
+          );
         }
         const bounds = computeBounds(loaded);
         if (bounds) mapRef.current?.fitBounds(bounds, { padding: 40, animate: false });
@@ -293,7 +313,7 @@ export function AreasView() {
     requestSwitch(() => {
       setDraft(clone(area));
       setOriginal(clone(area));
-      drawRef.current?.changeMode("direct_select", { featureId: area.identifier });
+      drawRef.current?.selectFeature(area.identifier);
     });
   }
 
@@ -301,7 +321,7 @@ export function AreasView() {
     requestSwitch(() => {
       setDraft(null);
       setOriginal(null);
-      drawRef.current?.changeMode("draw_polygon");
+      drawRef.current?.setMode("polygon");
     });
   }
 
@@ -311,28 +331,31 @@ export function AreasView() {
     setPendingDrawFeatureId(null);
     if (!draw || !tempId) return;
 
-    const feature = draw.getAll().features.find((f) => String(f.id) === tempId);
+    const feature = draw.getSnapshotFeature(tempId);
     if (!feature || feature.geometry.type !== "Polygon") {
-      draw.delete(tempId);
+      draw.removeFeatures([tempId]);
       return;
     }
 
     setSaving(true);
     try {
       const saved = await createArea({ identifier, name, geometry: feature.geometry as Area["geometry"] });
-      draw.delete(tempId);
-      draw.add({
-        type: "Feature",
-        id: saved.identifier,
-        properties: { name: saved.name },
-        geometry: saved.geometry,
-      });
+      draw.removeFeatures([tempId]);
+      draw.addFeatures([
+        {
+          id: saved.identifier,
+          type: "Feature",
+          properties: { mode: "polygon", name: saved.name },
+          geometry: saved.geometry,
+        },
+      ]);
+      draw.setMode("select");
       setAreas((current) => [...current, saved]);
       setDraft(clone(saved));
       setOriginal(clone(saved));
       showToast("success", `Area '${saved.identifier}' created.`);
     } catch (err) {
-      draw.delete(tempId);
+      draw.removeFeatures([tempId]);
       showToast("error", err instanceof ApiError ? err.message : "Failed to create area.");
     } finally {
       setSaving(false);
@@ -340,10 +363,12 @@ export function AreasView() {
   }
 
   function handleNameCancel() {
+    const draw = drawRef.current;
     if (pendingDrawFeatureId) {
-      drawRef.current?.delete(pendingDrawFeatureId);
+      draw?.removeFeatures([pendingDrawFeatureId]);
     }
     setPendingDrawFeatureId(null);
+    draw?.setMode("select");
   }
 
   async function handleSave() {
@@ -365,23 +390,14 @@ export function AreasView() {
   function handleDiscard() {
     if (!original) return;
     setDraft(clone(original));
-    const draw = drawRef.current;
-    if (draw) {
-      draw.delete(original.identifier);
-      draw.add({
-        type: "Feature",
-        id: original.identifier,
-        properties: { name: original.name },
-        geometry: original.geometry,
-      });
-    }
+    drawRef.current?.updateFeatureGeometry(original.identifier, original.geometry);
   }
 
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
     try {
       await deleteArea(deleteTarget.identifier);
-      drawRef.current?.delete(deleteTarget.identifier);
+      drawRef.current?.removeFeatures([deleteTarget.identifier]);
       setAreas((current) => current.filter((a) => a.identifier !== deleteTarget.identifier));
       if (draft?.identifier === deleteTarget.identifier) {
         setDraft(null);
