@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Literal, Optional, Union
+from typing import Annotated, Literal, Optional, Union
 
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Response
@@ -76,18 +76,33 @@ logger = logging.getLogger("management-ui-backend")
 
 
 # ---------------------------------------------------------------------------
-# Schema models -- documentation only, matching SkyFollower-legacy's
-# rules.example.json / areas.example.geojson shape (condition values are
-# strings even for numeric fields, e.g. altitude "10000", military "true";
-# only matched_rules is a real array). Not used as the actual route
-# parameter types: the routes below keep plain dict/list[dict] so
-# RulesEngine (message-processor/rules_engine.py) stays the single source
-# of truth for validation -- these models exist so /docs and
-# specs/openapi.yaml describe the real shape instead of an empty
-# "additionalProperties: true" object, without a second, stricter
-# validation layer fighting the engine's own (more permissive) rules, e.g.
-# a disabled placeholder rule like {"enabled": false} with no identifier or
-# conditions at all is valid and simply skipped, not rejected.
+# Schema models -- matching SkyFollower-legacy's rules.example.json /
+# areas.example.geojson shape (condition values are strings even for
+# numeric fields, e.g. altitude "10000", military "true"; only
+# matched_rules is a real array). These ARE the actual route parameter
+# types for create/update (see create_rule/update_rule/create_area/
+# update_area below) -- FastAPI/Pydantic validates a request body against
+# them at the ingress boundary, returning a structured 422 for a bad shape
+# (missing field, wrong type, an operator not valid for a condition's
+# type, etc.) before the route function ever runs.
+#
+# RulesEngine (message-processor/rules_engine.py) remains a second,
+# independent enforcement layer underneath this one -- not made redundant
+# by it. It's the only validation applied to config:rules/config:areas
+# written some other way than through this API (a hand-edited Redis
+# value, a restored backup, a future integration writing directly to
+# Redis), and it enforces things a single condition's fields can't express
+# on their own (e.g. an `area` condition's value must name an area that
+# actually exists in config:areas).
+#
+# One known, deliberate gap versus RulesEngine's own leniency: RulesEngine
+# tolerates a disabled placeholder rule with only {"enabled": false} and
+# nothing else (no identifier, no conditions), silently skipping it rather
+# than validating it. Rule below requires identifier/conditions
+# unconditionally, so that placeholder shape can no longer be created or
+# updated through this API -- only by writing directly to Redis. No
+# current caller (UI or tests) relies on submitting that shape through the
+# API, so this is treated as an acceptable narrowing, not a regression.
 # ---------------------------------------------------------------------------
 
 _IDENTIFIER_PATTERN = r"^\S+$"  # non-empty, no whitespace anywhere
@@ -191,27 +206,138 @@ _AREA_EXAMPLES: dict[str, dict] = {
 }
 
 
-class Condition(BaseModel):
+class _ConditionBase(BaseModel):
     """
-    One rule condition; every condition in a rule is AND'd together.
-    `value`'s shape depends on `type` -- see CLAUDE.md's Conditions table.
-    Matching SkyFollower-legacy's convention, this is a string even for
-    numeric fields (altitude "10000", heading "340,020" for min,max
-    wrap-around, military "true"/"false") -- matched_rules is the one
-    exception, taking a real list of rule identifiers. A `date` value with
-    a `T` is a datetime and must carry a timezone designator -- `Z` (UTC)
-    or any ISO 8601 offset, e.g. `2026-01-15T23:31:00-05:00` -- stored and
-    echoed back exactly as submitted, not normalised to `Z`.
+    Shared base for the per-type condition models below. Each subclass
+    fixes its own `type` literal and restricts `operator` to the set that
+    type actually supports -- see CLAUDE.md's Conditions table and
+    message-processor/rules_engine.py's per-type `_validate_*` methods,
+    which every subclass's `operator` here must keep matching.
+
+    `value` is intentionally left a plain, unconstrained `str` (or
+    `list[str]` for `matched_rules`) on every subclass -- matching
+    SkyFollower-legacy's convention of a string even for numeric fields
+    (altitude "10000", heading "340,020" for min,max wrap-around, military
+    "true"/"false"). Per-type value constraints (numeric bounds, charset
+    patterns, lengths) are a separate, later pass -- see the project's
+    issue tracker for the follow-on that tightens these same subclasses'
+    `value` fields once this one lands.
     """
 
-    type: Literal[
-        "altitude", "heading", "velocity", "vertical_speed", "area", "date",
-        "ident", "squawk", "military", "operator_airline_designator",
-        "aircraft_type_designator", "aircraft_registration", "aircraft_icao_hex",
-        "aircraft_powerplant_count", "wake_turbulence_category", "matched_rules",
-    ]
-    operator: Literal["equals", "minimum", "maximum", "in_list", "not_in_list"]
-    value: Union[str, list[str]]
+    model_config = {"extra": "forbid"}
+
+
+class AltitudeCondition(_ConditionBase):
+    type: Literal["altitude"]
+    operator: Literal["minimum", "maximum"]
+    value: str
+
+
+class VelocityCondition(_ConditionBase):
+    type: Literal["velocity"]
+    operator: Literal["minimum", "maximum"]
+    value: str
+
+
+class VerticalSpeedCondition(_ConditionBase):
+    type: Literal["vertical_speed"]
+    operator: Literal["minimum", "maximum"]
+    value: str
+
+
+class HeadingCondition(_ConditionBase):
+    type: Literal["heading"]
+    operator: Literal["equals"]
+    value: str
+
+
+class DateCondition(_ConditionBase):
+    type: Literal["date"]
+    operator: Literal["minimum", "maximum"]
+    value: str
+
+
+class IdentCondition(_ConditionBase):
+    type: Literal["ident"]
+    operator: Literal["equals"]
+    value: str
+
+
+class SquawkCondition(_ConditionBase):
+    type: Literal["squawk"]
+    operator: Literal["equals"]
+    value: str
+
+
+class MilitaryCondition(_ConditionBase):
+    type: Literal["military"]
+    operator: Literal["equals"]
+    value: str
+
+
+class OperatorAirlineDesignatorCondition(_ConditionBase):
+    type: Literal["operator_airline_designator"]
+    operator: Literal["equals"]
+    value: str
+
+
+class AircraftTypeDesignatorCondition(_ConditionBase):
+    type: Literal["aircraft_type_designator"]
+    operator: Literal["equals"]
+    value: str
+
+
+class AircraftRegistrationCondition(_ConditionBase):
+    type: Literal["aircraft_registration"]
+    operator: Literal["equals"]
+    value: str
+
+
+class AircraftIcaoHexCondition(_ConditionBase):
+    type: Literal["aircraft_icao_hex"]
+    operator: Literal["equals"]
+    value: str
+
+
+class AircraftPowerplantCountCondition(_ConditionBase):
+    type: Literal["aircraft_powerplant_count"]
+    operator: Literal["equals", "minimum", "maximum"]
+    value: str
+
+
+class WakeTurbulenceCategoryCondition(_ConditionBase):
+    type: Literal["wake_turbulence_category"]
+    operator: Literal["equals"]
+    value: str
+
+
+class MatchedRulesCondition(_ConditionBase):
+    type: Literal["matched_rules"]
+    operator: Literal["in_list", "not_in_list"]
+    value: list[str] = Field(min_length=1)
+
+
+class AreaCondition(_ConditionBase):
+    type: Literal["area"]
+    operator: Literal["equals"]
+    value: str
+
+
+# Discriminated union keyed by `type` -- Swagger renders this as a `oneOf`
+# with each variant's own accurate `operator` enum, instead of the single
+# flat model this replaces, which allowed all 5 operators on every type
+# regardless of whether RulesEngine would ever actually accept them.
+Condition = Annotated[
+    Union[
+        AltitudeCondition, VelocityCondition, VerticalSpeedCondition, HeadingCondition,
+        DateCondition, IdentCondition, SquawkCondition, MilitaryCondition,
+        OperatorAirlineDesignatorCondition, AircraftTypeDesignatorCondition,
+        AircraftRegistrationCondition, AircraftIcaoHexCondition,
+        AircraftPowerplantCountCondition, WakeTurbulenceCategoryCondition,
+        MatchedRulesCondition, AreaCondition,
+    ],
+    Field(discriminator="type"),
+]
 
 
 class Rule(BaseModel):
@@ -219,10 +345,13 @@ class Rule(BaseModel):
     A notification rule. Fires at most once per flight per `identifier`.
     `identifier` is the routing key used in /api/rules/{identifier} and must
     not contain spaces; `name` is a free-text display label and may.
-    Documents the shape of a normal (enabled) rule -- the rules engine
+    Documents the shape of a normal (enabled) rule -- RulesEngine
     additionally tolerates a disabled placeholder rule with only
     `enabled: false` and nothing else, silently skipping it rather than
-    validating it; that leniency is a narrow exception, not reflected here.
+    validating it; that leniency is a narrow exception this model doesn't
+    allow, so that shape can no longer be created/updated through this API
+    (only by writing directly to Redis) -- see the "Schema models" comment
+    above.
     """
 
     model_config = {"json_schema_extra": {"examples": list(_RULE_EXAMPLES.values())}}
@@ -361,15 +490,14 @@ def _custom_openapi() -> dict:
     built-in ValidationError model (used for every route's 422), which
     ships with no descriptions of its own.
 
-    FastAPI infers a request body schema from the route's actual parameter
-    type (plain dict here, kept that way so RulesEngine -- not Pydantic --
-    stays the one place validation happens; see the Schema models comment
-    above). route(openapi_extra=...) can't clean this up: FastAPI merges it
-    into the auto-generated operation via a recursive dict merge
-    (fastapi.openapi.utils.deep_dict_update), not a replace, which leaves
-    stale "additionalProperties: true" sitting alongside the injected $ref.
-    Overwriting the generated schema's dict keys directly, after the fact,
-    is a plain assignment instead, so it actually replaces.
+    FastAPI already infers the correct $ref for each request body from the
+    route's actual parameter type (Rule/Area -- see the Schema models
+    comment above), so the `schema=` overwrite below is a no-op replace
+    with the same value FastAPI would already generate; it's kept so this
+    loop's other job -- injecting the named `examples` Swagger UI's "try it
+    out" picker actually reads from (content.application/json.examples,
+    not a schema's own JSON-Schema-level `examples`) -- has a single place
+    to overwrite both at once via a plain dict assignment.
     """
     if app.openapi_schema:
         return app.openapi_schema
@@ -497,15 +625,16 @@ def get_rule(identifier: str):
     response_model=Rule,
     responses={**_CONFLICT, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def create_rule(rule: dict):
+def create_rule(rule: Rule):
     rules = _load_rules_array()
-    identifier = rule.get("identifier")
+    identifier = rule.identifier
     if any(r.get("identifier") == identifier for r in rules):
         raise HTTPException(status_code=409, detail=f"Rule '{identifier}' already exists")
 
-    rules.append(rule)
+    rule_dict = rule.model_dump()
+    rules.append(rule_dict)
     _save_rules_array(rules)
-    return JSONResponse(status_code=201, content=rule)
+    return JSONResponse(status_code=201, content=rule_dict)
 
 
 @app.put(
@@ -514,20 +643,19 @@ def create_rule(rule: dict):
     response_model=Rule,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def update_rule(identifier: str, rule: dict):
+def update_rule(identifier: str, rule: Rule):
     rules = _load_rules_array()
     idx = next((i for i, r in enumerate(rules) if r.get("identifier") == identifier), None)
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
 
-    body_identifier = rule.get("identifier", identifier)
-    if body_identifier != identifier:
+    if rule.identifier != identifier:
         raise HTTPException(
             status_code=400,
-            detail=f"Body identifier '{body_identifier}' does not match path identifier '{identifier}'",
+            detail=f"Body identifier '{rule.identifier}' does not match path identifier '{identifier}'",
         )
 
-    rules[idx] = {**rule, "identifier": identifier}
+    rules[idx] = rule.model_dump()
     _save_rules_array(rules)
     return JSONResponse(content=rules[idx])
 
@@ -634,15 +762,16 @@ def get_area(identifier: str):
     response_model=Area,
     responses={**_CONFLICT, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def create_area(area: dict):
+def create_area(area: Area):
     areas = _load_areas_array()
-    identifier = area.get("identifier")
+    identifier = area.identifier
     if any(a.get("identifier") == identifier for a in areas):
         raise HTTPException(status_code=409, detail=f"Area '{identifier}' already exists")
 
-    areas.append(area)
+    area_dict = area.model_dump()
+    areas.append(area_dict)
     _save_areas_array(areas, expect_identifier=identifier)
-    return JSONResponse(status_code=201, content=area)
+    return JSONResponse(status_code=201, content=area_dict)
 
 
 @app.put(
@@ -651,20 +780,19 @@ def create_area(area: dict):
     response_model=Area,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def update_area(identifier: str, area: dict):
+def update_area(identifier: str, area: Area):
     areas = _load_areas_array()
     idx = next((i for i, a in enumerate(areas) if a.get("identifier") == identifier), None)
     if idx is None:
         raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
 
-    body_identifier = area.get("identifier", identifier)
-    if body_identifier != identifier:
+    if area.identifier != identifier:
         raise HTTPException(
             status_code=400,
-            detail=f"Body identifier '{body_identifier}' does not match path identifier '{identifier}'",
+            detail=f"Body identifier '{area.identifier}' does not match path identifier '{identifier}'",
         )
 
-    areas[idx] = {**area, "identifier": identifier}
+    areas[idx] = area.model_dump()
     _save_areas_array(areas, expect_identifier=identifier)
     return JSONResponse(content=areas[idx])
 

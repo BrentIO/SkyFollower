@@ -78,13 +78,23 @@ instance, so save the area before a rule that references it.
 
 The full request/response schema is in `specs/openapi.yaml`, exported from
 this app's own OpenAPI document (see below). `Rule`/`Condition`/`Area`
-shapes there are documentation-only Pydantic models roughly matching
-SkyFollower-legacy's `rules.example.json` / `areas.example.geojson`
-conventions (condition values are strings even for numeric fields, e.g.
-altitude `"10000"`) — they aren't the actual route parameter types (those
-stay plain `dict`), so they document the schema without becoming a second
-validation layer that could fight `RulesEngine`'s own (more permissive)
-rules.
+shapes there roughly match SkyFollower-legacy's `rules.example.json` /
+`areas.example.geojson` conventions (condition values are strings even
+for numeric fields, e.g. altitude `"10000"`), and ARE the actual route
+parameter types for create/update — a request body that doesn't match
+(wrong type, an operator not valid for a condition's `type`, a missing
+field) gets a `422` from FastAPI/Pydantic before the route function ever
+runs. `Condition` is a `type`-discriminated union of one model per
+condition type, so each one's `operator` is restricted to only the values
+that type actually supports (e.g. `date` only accepts `minimum`/
+`maximum`), rather than a single flat model allowing all 5 operators
+everywhere. `RulesEngine` remains a second, independent validation layer
+underneath this one — not made redundant by it, since it's the only
+validation applied to `config:rules`/`config:areas` written some other way
+than through this API (a hand-edited Redis value, a restored backup, a
+future integration), and it enforces things a single condition's fields
+can't express on their own (e.g. an `area` condition's value must name an
+area that actually exists in `config:areas`).
 
 ## Frontend (`frontend/`)
 
