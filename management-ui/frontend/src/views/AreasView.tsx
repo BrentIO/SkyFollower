@@ -468,7 +468,19 @@ export function AreasView() {
       </div>
 
       <div className="relative min-h-[400px] flex-1 overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
-        <div ref={mapContainerRef} className="absolute inset-0" />
+        {/*
+          h-full/w-full, not absolute + inset-0: MapLibre attaches its own
+          `maplibregl-map` class directly to this div (it's the `container`
+          passed to `new maplibregl.Map()`), and that class sets
+          `position: relative`. Since maplibregl-map's rule happens to land
+          later in the built CSS than Tailwind's `.absolute`, it wins the
+          cascade (equal specificity, later source order) and silently
+          overrides `position: absolute` -- without which `inset-0` no
+          longer stretches this div to fill its parent, so it collapses to
+          near-zero height instead. height/width: 100% has no such
+          conflict with maplibregl-map's own position: relative.
+        */}
+        <div ref={mapContainerRef} className="h-full w-full" />
       </div>
 
       <ConfirmModal
