@@ -38,6 +38,7 @@ const TYPE_LABELS: Record<ConditionType, string> = {
   ident: "Ident",
   squawk: "Squawk",
   military: "Military",
+  receiver_source: "Receiver Source",
   operator_airline_designator: "Airline Designator",
   aircraft_type_designator: "Aircraft Type Designator",
   aircraft_registration: "Aircraft Registration",
@@ -48,8 +49,16 @@ const TYPE_LABELS: Record<ConditionType, string> = {
 };
 
 function defaultValueFor(type: ConditionType): string | string[] {
-  return type === "matched_rules" ? [] : "";
+  return type === "matched_rules" || type === "receiver_source" ? [] : "";
 }
+
+// Fixed 3-row list for receiver_source, unlike matched_rules' dynamic list
+// of other rule identifiers -- these are the only 3 valid wire values.
+const RECEIVER_SOURCE_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: "1090", label: "1090MHz ADS-B" },
+  { value: "978", label: "978 UAT" },
+  { value: "MLAT", label: "MLAT" },
+];
 
 // WAKE_TURBULENCE_CATEGORIES stores the exact lowercase strings
 // message-processor/rules_engine.py validates against (e.g. "medium 1",
@@ -349,6 +358,43 @@ function ConditionValueInput({
           <option value="false">False</option>
         </select>
       );
+
+    case "receiver_source": {
+      const selected = Array.isArray(value) ? value : [];
+
+      function toggle(source: string) {
+        onValueChange(
+          selected.includes(source) ? selected.filter((s) => s !== source) : [...selected, source],
+        );
+      }
+
+      return (
+        <div className="input flex max-h-32 flex-col gap-1 overflow-y-auto">
+          {RECEIVER_SOURCE_OPTIONS.map((option) => {
+            const checked = selected.includes(option.value);
+            // Capped at 2: all 3 sources selected is equivalent to no
+            // filter at all, so the backend rejects it -- disable the
+            // remaining unchecked box once 2 are already selected rather
+            // than let the user hit that rejection on save.
+            const disabled = !checked && selected.length >= 2;
+            return (
+              <label
+                key={option.value}
+                className={`flex items-center gap-2 text-sm ${disabled ? "opacity-40" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => toggle(option.value)}
+                />
+                {option.label}
+              </label>
+            );
+          })}
+        </div>
+      );
+    }
 
     case "wake_turbulence_category":
       return (

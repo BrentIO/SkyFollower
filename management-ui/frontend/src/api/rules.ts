@@ -2,9 +2,10 @@ import { apiClient } from "./client";
 
 // Mirrors management-ui/backend/main.py's Condition/Rule Pydantic models
 // (see also CLAUDE.md's Conditions table). `value` is a string for every
-// type except `matched_rules`, which takes a real list of rule identifiers
-// -- matching SkyFollower-legacy's convention (altitude "10000", military
-// "true", heading "340,020" for min,max wrap-around).
+// type except `matched_rules` (a list of rule identifiers) and
+// `receiver_source` (a list of 1-2 of "1090"/"978"/"MLAT") -- matching
+// SkyFollower-legacy's convention (altitude "10000", military "true",
+// heading "340,020" for min,max wrap-around).
 export const CONDITION_TYPES = [
   "altitude",
   "heading",
@@ -15,6 +16,7 @@ export const CONDITION_TYPES = [
   "ident",
   "squawk",
   "military",
+  "receiver_source",
   "operator_airline_designator",
   "aircraft_type_designator",
   "aircraft_registration",
@@ -57,6 +59,7 @@ export const OPERATORS_BY_TYPE: Record<ConditionType, readonly Operator[]> = {
   ident: ["equals"],
   squawk: ["equals"],
   military: ["equals"],
+  receiver_source: ["equals"],
   operator_airline_designator: ["equals"],
   aircraft_type_designator: ["equals"],
   aircraft_registration: ["equals"],

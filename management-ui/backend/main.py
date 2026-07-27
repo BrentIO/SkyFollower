@@ -176,6 +176,17 @@ _RULE_EXAMPLES: dict[str, dict] = {
             {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
         ],
     },
+    "Seen via ADS-B, never MLAT-only": {
+        "name": "Seen via ADS-B, never MLAT-only",
+        "description": "Ident DAL2 seen via 1090MHz ADS-B or 978 UAT -- excludes flights "
+        "only ever seen via MLAT",
+        "identifier": "dal2_adsb_seen",
+        "enabled": True,
+        "conditions": [
+            {"type": "ident", "operator": "equals", "value": "DAL2"},
+            {"type": "receiver_source", "operator": "equals", "value": ["1090", "978"]},
+        ],
+    },
 }
 
 _AREA_EXAMPLES: dict[str, dict] = {
@@ -332,6 +343,22 @@ class MilitaryCondition(_ConditionBase):
     value: str
 
 
+class ReceiverSourceCondition(_ConditionBase):
+    type: Literal["receiver_source"]
+    operator: Literal["equals"]
+    # 1-2 of "1090"/"978"/"MLAT", no duplicates -- all 3 would be equivalent
+    # to no filter at all (every flight has at least one), so RulesEngine
+    # rejects that as dead weight rather than a real filter.
+    value: list[Literal["1090", "978", "MLAT"]] = Field(min_length=1, max_length=2)
+
+    @field_validator("value")
+    @classmethod
+    def _check_no_duplicates(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("receiver_source list must not contain duplicates")
+        return v
+
+
 class OperatorAirlineDesignatorCondition(_ConditionBase):
     type: Literal["operator_airline_designator"]
     operator: Literal["equals"]
@@ -405,6 +432,7 @@ Condition = Annotated[
     Union[
         AltitudeCondition, VelocityCondition, VerticalSpeedCondition, HeadingCondition,
         DateCondition, IdentCondition, SquawkCondition, MilitaryCondition,
+        ReceiverSourceCondition,
         OperatorAirlineDesignatorCondition, AircraftTypeDesignatorCondition,
         AircraftRegistrationCondition, AircraftIcaoHexCondition,
         AircraftPowerplantCountCondition, WakeTurbulenceCategoryCondition,

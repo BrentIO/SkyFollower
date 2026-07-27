@@ -114,6 +114,22 @@ paths:
                   - type: date
                     operator: maximum
                     value: 2027-06-27T18:50Z
+              Seen via ADS-B, never MLAT-only:
+                value: &id005
+                  name: Seen via ADS-B, never MLAT-only
+                  description: Ident DAL2 seen via 1090MHz ADS-B or 978 UAT -- excludes
+                    flights only ever seen via MLAT
+                  identifier: dal2_adsb_seen
+                  enabled: true
+                  conditions:
+                  - type: ident
+                    operator: equals
+                    value: DAL2
+                  - type: receiver_source
+                    operator: equals
+                    value:
+                    - '1090'
+                    - '978'
         required: true
       responses:
         '201':
@@ -131,6 +147,8 @@ paths:
                   value: *id003
                 B-52 Force Persist Window:
                   value: *id004
+                Seen via ADS-B, never MLAT-only:
+                  value: *id005
         '409':
           description: Identifier already exists
           content:
@@ -145,10 +163,10 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Rule has no conditions:
-                  value: &id005
+                  value: &id006
                     detail: 'Rule #0 invalid: rule ''bad-rule'' has no conditions'
                 Identifier contains spaces:
-                  value: &id006
+                  value: &id007
                     detail: 'Rule #0 invalid: identifier ''my rule'' must be non-empty
                       and contain no spaces'
         '500':
@@ -192,6 +210,8 @@ paths:
                   value: *id003
                 B-52 Force Persist Window:
                   value: *id004
+                Seen via ADS-B, never MLAT-only:
+                  value: *id005
         '404':
           description: Not found
           content:
@@ -237,6 +257,8 @@ paths:
                 value: *id003
               B-52 Force Persist Window:
                 value: *id004
+              Seen via ADS-B, never MLAT-only:
+                value: *id005
       responses:
         '200':
           description: Successful Response
@@ -253,6 +275,8 @@ paths:
                   value: *id003
                 B-52 Force Persist Window:
                   value: *id004
+                Seen via ADS-B, never MLAT-only:
+                  value: *id005
         '404':
           description: Not found
           content:
@@ -267,9 +291,9 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Rule has no conditions:
-                  value: *id005
-                Identifier contains spaces:
                   value: *id006
+                Identifier contains spaces:
+                  value: *id007
         '500':
           description: Redis error
           content:
@@ -355,7 +379,7 @@ paths:
               $ref: '#/components/schemas/Area'
             examples:
               Long Island (LI):
-                value: &id007
+                value: &id008
                   identifier: LI
                   name: Long Island
                   geometry:
@@ -403,7 +427,7 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id007
+                  value: *id008
         '409':
           description: Identifier already exists
           content:
@@ -418,7 +442,7 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Identifier contains spaces or invalid geometry:
-                  value: &id008
+                  value: &id009
                     detail: Area 'Long Island' failed validation (check identifier
                       has no spaces and geometry is a valid Polygon)
         '500':
@@ -455,7 +479,7 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id007
+                  value: *id008
         '404':
           description: Not found
           content:
@@ -494,7 +518,7 @@ paths:
               $ref: '#/components/schemas/Area'
             examples:
               Long Island (LI):
-                value: *id007
+                value: *id008
       responses:
         '200':
           description: Successful Response
@@ -504,7 +528,7 @@ paths:
                 $ref: '#/components/schemas/Area'
               examples:
                 Long Island (LI):
-                  value: *id007
+                  value: *id008
         '404':
           description: Not found
           content:
@@ -519,7 +543,7 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Identifier contains spaces or invalid geometry:
-                  value: *id008
+                  value: *id009
         '500':
           description: Redis error
           content:
@@ -933,6 +957,34 @@ components:
       - operator
       - value
       title: OperatorAirlineDesignatorCondition
+    ReceiverSourceCondition:
+      properties:
+        type:
+          type: string
+          const: receiver_source
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          items:
+            type: string
+            enum:
+            - '1090'
+            - '978'
+            - MLAT
+          type: array
+          maxItems: 2
+          minItems: 1
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: ReceiverSourceCondition
     Rule:
       properties:
         name:
@@ -968,6 +1020,7 @@ components:
             - $ref: '#/components/schemas/IdentCondition'
             - $ref: '#/components/schemas/SquawkCondition'
             - $ref: '#/components/schemas/MilitaryCondition'
+            - $ref: '#/components/schemas/ReceiverSourceCondition'
             - $ref: '#/components/schemas/OperatorAirlineDesignatorCondition'
             - $ref: '#/components/schemas/AircraftTypeDesignatorCondition'
             - $ref: '#/components/schemas/AircraftRegistrationCondition'
@@ -991,6 +1044,7 @@ components:
                 matched_rules: '#/components/schemas/MatchedRulesCondition'
                 military: '#/components/schemas/MilitaryCondition'
                 operator_airline_designator: '#/components/schemas/OperatorAirlineDesignatorCondition'
+                receiver_source: '#/components/schemas/ReceiverSourceCondition'
                 squawk: '#/components/schemas/SquawkCondition'
                 velocity: '#/components/schemas/VelocityCondition'
                 vertical_speed: '#/components/schemas/VerticalSpeedCondition'
@@ -1091,6 +1145,20 @@ components:
         force_archive: true
         identifier: b52_force_persist_2026_2027
         name: B-52 Force Persist Window
+      - conditions:
+        - operator: equals
+          type: ident
+          value: DAL2
+        - operator: equals
+          type: receiver_source
+          value:
+          - '1090'
+          - '978'
+        description: Ident DAL2 seen via 1090MHz ADS-B or 978 UAT -- excludes flights
+          only ever seen via MLAT
+        enabled: true
+        identifier: dal2_adsb_seen
+        name: Seen via ADS-B, never MLAT-only
     SquawkCondition:
       properties:
         type:
