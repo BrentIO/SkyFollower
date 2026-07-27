@@ -59,6 +59,6 @@ jobs:
           files: dist/specs/*
 
       - name: Build and publish images
-        run: gh workflow run build-images.yaml --ref ${{ inputs.version }}
+        run: gh workflow run build-container-images.yaml --ref ${{ inputs.version }}
         env:
           GH_TOKEN: ${{ github.token }}

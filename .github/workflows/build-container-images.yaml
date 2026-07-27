@@ -1,11 +1,11 @@
-name: 🛠️ Build Images
-run-name: "Build images ${{ github.ref_name }}"
+name: 🛠️ Build Container Images
+run-name: "Build container images ${{ github.ref_name }}"
 
 # Two ways in:
 #   1. workflow_dispatch, --ref <tag> — how release.yaml triggers this. A tag
 #      pushed with GITHUB_TOKEN does not itself fire the `push: tags:` trigger
 #      below (GitHub suppresses that to avoid workflow recursion), so
-#      release.yaml calls `gh workflow run build-images.yaml --ref <version>`
+#      release.yaml calls `gh workflow run build-container-images.yaml --ref <version>`
 #      explicitly once the tag exists.
 #   2. push: tags — fallback for a tag pushed some other way (e.g. a human
 #      pushing with their own credentials).
