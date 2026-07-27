@@ -331,7 +331,7 @@ class TestConditionValidation:
 
     def test_date_yyyy_mm_dd_valid(self):
         assert _bare_engine().load_rules_json(json.dumps([
-            _rule("r", [_cond("date", "equals", "2026-12-24")])
+            _rule("r", [_cond("date", "minimum", "2026-12-24")])
         ])) is True
 
     def test_date_datetime_z_valid(self):
@@ -346,7 +346,22 @@ class TestConditionValidation:
 
     def test_date_invalid_format_rejected(self):
         assert _bare_engine().load_rules_json(json.dumps([
-            _rule("r", [_cond("date", "equals", "24/12/2026")])
+            _rule("r", [_cond("date", "minimum", "24/12/2026")])
+        ])) is False
+
+    def test_date_rejects_equals(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("date", "equals", "2026-12-24")])
+        ])) is False
+
+    def test_date_rejects_in_list(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("date", "in_list", ["2026-12-24"])])
+        ])) is False
+
+    def test_date_rejects_not_in_list(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("date", "not_in_list", ["2026-12-24"])])
         ])) is False
 
 

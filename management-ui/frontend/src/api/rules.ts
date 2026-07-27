@@ -53,7 +53,7 @@ export const OPERATORS_BY_TYPE: Record<ConditionType, readonly Operator[]> = {
   vertical_speed: ["minimum", "maximum"],
   aircraft_powerplant_count: ["equals", "minimum", "maximum"],
   heading: ["equals"],
-  date: ["equals", "minimum", "maximum"],
+  date: ["minimum", "maximum"],
   ident: ["equals"],
   squawk: ["equals"],
   military: ["equals"],

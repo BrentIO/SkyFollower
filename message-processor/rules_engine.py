@@ -359,6 +359,8 @@ class RulesEngine:
         return c
 
     def _validate_date(self, c: dict) -> dict:
+        if c["operator"] not in ("minimum", "maximum"):
+            raise _ConditionError("date only supports 'minimum' or 'maximum'")
         raw = str(c["value"]).strip()
         if "T" in raw:
             # YYYY-MM-DDTHH:MMZ, or any ISO 8601 offset (e.g.
