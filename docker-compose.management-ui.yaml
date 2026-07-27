@@ -17,3 +17,11 @@ services:
       - "8080:80"
     volumes:
       - ./config/management-ui/settings.json:/app/settings.json:ro
+      # config:rules/config:areas are the only Redis keys holding
+      # user-authored state with no automatic regeneration path -- this
+      # backend backs them up here on every write and restores from here
+      # at startup if the Redis key is missing (see management-ui/README.md).
+      - management-ui-data:/app/data
+
+volumes:
+  management-ui-data:

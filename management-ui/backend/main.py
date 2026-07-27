@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal, Optional, Union
 
@@ -421,6 +422,92 @@ def _load_config() -> dict:
         return json.load(f)
 
 
+# ---------------------------------------------------------------------------
+# config:rules/config:areas are the only two Redis keys in the whole schema
+# holding user-authored state with no automatic regeneration path (every
+# other key is either repopulated by a data-runner or transient operational
+# state -- see CLAUDE.md's Redis Key Schema). Redis's own AOF is the only
+# persistence for them today; these two functions add a second, independent
+# copy on a host-mounted volume, so a lost/corrupted Redis volume doesn't
+# mean losing every rule and area a user has authored. Read at call time
+# (not cached at import time) so DATA_DIR can be overridden per-test the
+# same way SETTINGS_PATH already is above.
+# ---------------------------------------------------------------------------
+
+def _data_dir() -> str:
+    return os.environ.get("DATA_DIR", "/app/data")
+
+
+def _rules_backup_path() -> str:
+    return os.path.join(_data_dir(), "rules-backup.json")
+
+
+def _areas_backup_path() -> str:
+    return os.path.join(_data_dir(), "areas-backup.json")
+
+
+def _write_backup_file(path: str, body: str) -> None:
+    """Atomically write `body` to `path` (temp file + os.replace) so a crash
+    mid-write can't leave a truncated backup behind. Best-effort: a failure
+    here is logged, not raised -- the Redis write this follows already
+    succeeded, so a backup problem shouldn't turn a successful save into a
+    user-facing error."""
+    directory = os.path.dirname(path)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(body)
+            os.replace(tmp_path, path)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
+    except OSError as exc:
+        logger.error("Failed to write backup file %s: %s", path, exc)
+
+
+def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, label: str) -> None:
+    """Reconciles config:rules/config:areas between Redis and its on-disk
+    backup file at startup, in whichever single direction fills a gap.
+    Redis is always authoritative when it has data:
+
+    - Redis has `key`, backup file exists: nothing to do.
+    - Redis has `key`, backup file is missing -- an existing deployment
+      upgrading to this feature has real data in Redis but has never
+      written a backup file (only _save_rules_array/_save_areas_array do
+      that, on save): seed the file from Redis's current value so it
+      doesn't stay empty until the next edit. Never overwrites a backup
+      file that already exists.
+    - Redis is missing `key`, backup file exists: restore Redis from the
+      file (and its `:version` hash, so RulesEngine's poll-based reload
+      picks it up) -- a lost/corrupted Redis volume, or a fresh one.
+    - Both missing: nothing to do -- same empty-array behavior as today.
+    """
+    existing = _redis.get(key)
+    if existing is not None:
+        if not os.path.exists(backup_path):
+            _write_backup_file(backup_path, existing)
+            logger.info("Seeded %s backup file %s from existing Redis data.", label, backup_path)
+        return
+
+    if not os.path.exists(backup_path):
+        return
+
+    try:
+        with open(backup_path) as f:
+            body = f.read()
+        json.loads(body)  # corrupt/truncated backup shouldn't crash startup
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.error("%s backup file %s is unreadable or corrupt: %s", label, backup_path, exc)
+        return
+
+    version = hashlib.sha256(body.encode()).hexdigest()
+    _redis.set(key, body)
+    _redis.set(version_key, version)
+    logger.info("Restored %s from backup file %s (Redis key was missing).", label, backup_path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _redis, _engine
@@ -434,6 +521,9 @@ async def lifespan(app: FastAPI):
         decode_responses=True,
     )
     _engine = RulesEngine(_redis)
+
+    _reconcile_backup_with_redis(config_rules_key(), config_rules_version_key(), _rules_backup_path(), "rules")
+    _reconcile_backup_with_redis(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
     _engine.reload_if_changed()
 
     logger.info("Management UI backend started.")
@@ -598,6 +688,7 @@ def _save_rules_array(rules: list[dict]) -> None:
     version = hashlib.sha256(body.encode()).hexdigest()
     _redis_set(config_rules_key(), body)
     _redis_set(config_rules_version_key(), version)
+    _write_backup_file(_rules_backup_path(), body)
 
 
 @app.get("/api/rules", tags=["rules"], response_model=list[Rule], responses={**_REDIS_ERROR})
@@ -735,6 +826,7 @@ def _save_areas_array(areas: list[dict], expect_identifier: Optional[str] = None
     version = hashlib.sha256(body.encode()).hexdigest()
     _redis_set(config_areas_key(), body)
     _redis_set(config_areas_version_key(), version)
+    _write_backup_file(_areas_backup_path(), body)
 
 
 @app.get("/api/areas", tags=["areas"], response_model=list[Area], responses={**_REDIS_ERROR})
