@@ -11,7 +11,7 @@ viewing live aircraft movement rather than editing configuration.
 
 ## Status
 
-The React rules editor (`frontend/`) is built; the areas editor is not yet.
+The React rules editor and areas editor (`frontend/`) are both built.
 The Dockerfile is a multi-stage build — a `node` stage produces the static
 frontend bundle, and the final stage runs both uvicorn (bound to
 `127.0.0.1:8000`, not exposed outside the container) and nginx, started by
@@ -102,8 +102,9 @@ React (TypeScript) + Vite + Tailwind CSS + React Router. No other UI
 component library, to keep dependencies minimal for ARM builds.
 
 - `Layout.tsx` / `components/SideNav.tsx` — app shell: side nav + routed
-  content area. Rules is the only section for now; a future areas editor
-  adds an entry to `SideNav.tsx`'s section list without touching `Layout.tsx`.
+  content area. Rules and Areas are both entries in `SideNav.tsx`'s section
+  list; a future section adds another entry there without touching
+  `Layout.tsx`.
 - `hooks/useToast.ts` + `components/ToastContainer.tsx` — shared success/error
   toast notifications.
 - `components/ConfirmModal.tsx` — generic confirm dialog (discard unsaved
@@ -129,6 +130,20 @@ component library, to keep dependencies minimal for ARM builds.
   saving -- the UI always saves the `YYYY-MM-DDTHH:MMZ` form; the
   backend's date-only `YYYY-MM-DD` format is still accepted if written
   some other way, e.g. directly via the API).
+- `api/areas.ts` — typed client for `/api/areas/*`.
+- `views/AreasView.tsx` — MapLibre GL JS + `@mapbox/mapbox-gl-draw` (works
+  against `maplibre-gl`'s Mapbox-GL-compatible API; there is no scoped
+  `@maplibre/maplibre-gl-draw` package). Existing areas load as Draw
+  features on mount, map bounds auto-fit to them, and each polygon gets a
+  centroid label showing its `name`. Drawing a new polygon opens
+  `components/AreaNameModal.tsx` to collect `identifier`/`name`, then saves
+  immediately via `POST /api/areas` (no separate "Save All" step -- the
+  backend is per-item CRUD, not a bulk replace, so each area is created/
+  updated/deleted independently, the same as `RulesView.tsx`). Selecting an
+  existing area (from the side list or by clicking its polygon) enters
+  Draw's `direct_select` mode for vertex editing and shows an inline Name
+  field + Save/Discard/Delete in the side list; geometry edits on the map
+  and name edits in the list share the same dirty/save/discard state.
 
 Client-side validation (`validateRule`/`validateCondition` in `RuleForm.tsx`)
 mirrors `message-processor/rules_engine.py`'s per-type checks as a fast-fail
