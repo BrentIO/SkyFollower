@@ -1,14 +1,5 @@
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-// maplibre-gl ships its worker as a separate file that a bundler can't
-// discover on its own (it's constructed at runtime, not a static
-// `new URL(...)` Vite/Rollup can analyze) -- Vite's `?url` suffix forces
-// the worker file itself to be emitted as a built asset and gives us its
-// real, hashed URL, which we then have to hand to the library explicitly.
-// Without this, the map silently never fires its `load` event (the worker
-// 404s) and everything gated on that (area list, name labels) hangs
-// forever waiting for it.
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import { Trash2 } from "lucide-react";
@@ -19,7 +10,17 @@ import { createArea, deleteArea, listAreas, updateArea, type Area } from "../api
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 
-maplibregl.setWorkerUrl(maplibreWorkerUrl);
+// maplibre-gl ships its worker as a separate file (maplibre-gl-worker.mjs)
+// with a hardcoded relative import of a second file
+// (maplibre-gl-shared.mjs) -- neither is something Vite/Rollup can
+// discover and bundle on its own (the worker is only ever loaded at
+// runtime via a URL, and its own internal import is resolved by the
+// browser, not by our build). vite.config.ts's maplibreWorkerAssets
+// plugin copies both files, verbatim and under these exact names, to
+// /assets/ in both dev and build, which is what this path points at.
+// Without this, the map silently never fires its `load` event and
+// everything gated on that (area list, name labels) hangs forever.
+maplibregl.setWorkerUrl("/assets/maplibre-gl-worker.mjs");
 
 // Free, no-API-key MapLibre style -- see AreasEditor spec's "Map
 // Configuration" note. Verify this URL is still live if the map ever shows
