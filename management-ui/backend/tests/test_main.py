@@ -126,9 +126,13 @@ class TestCreateRule:
         assert resp.status_code == 201
         assert resp.json()["identifier"] == "r1"
 
-        body = json.dumps([_rule("r1")])
+        # Stored/hashed body now comes from Rule.model_dump(), which fills
+        # in defaults (e.g. force_archive) the raw _rule() dict omits --
+        # compare against the same round-trip rather than the literal input.
+        expected_rules = [ui_main.Rule(**_rule("r1")).model_dump()]
+        body = json.dumps(expected_rules)
         expected_version = ui_main.hashlib.sha256(body.encode()).hexdigest()
-        assert fake_redis.store[ui_main.config_rules_key()] == body
+        assert json.loads(fake_redis.store[ui_main.config_rules_key()]) == expected_rules
         assert fake_redis.store[ui_main.config_rules_version_key()] == expected_version
 
     def test_duplicate_identifier_returns_409(self, client):
@@ -136,15 +140,17 @@ class TestCreateRule:
         resp = client.post("/api/rules", json=_rule("dup"))
         assert resp.status_code == 409
 
-    def test_invalid_rule_returns_400(self, client):
+    def test_empty_conditions_returns_422(self, client):
         resp = client.post("/api/rules", json=_rule("bad", conditions=[]))
-        assert resp.status_code == 400
-        assert "no conditions" in resp.json()["detail"]
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"] == ["body", "conditions"] for err in errors)
 
-    def test_identifier_with_space_returns_400(self, client):
+    def test_identifier_with_space_returns_422(self, client):
         resp = client.post("/api/rules", json=_rule("my rule"))
-        assert resp.status_code == 400
-        assert "space" in resp.json()["detail"]
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"] == ["body", "identifier"] for err in errors)
 
     def test_rejected_rule_does_not_persist(self, client):
         client.post("/api/rules", json=_rule("bad", conditions=[]))
@@ -171,10 +177,10 @@ class TestUpdateRule:
         resp = client.put("/api/rules/r1", json=_rule("different"))
         assert resp.status_code == 400
 
-    def test_invalid_update_returns_400_and_keeps_original(self, client):
+    def test_invalid_update_returns_422_and_keeps_original(self, client):
         client.post("/api/rules", json=_rule("r1", name="Original"))
         resp = client.put("/api/rules/r1", json=_rule("r1", conditions=[]))
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
         get_resp = client.get("/api/rules/r1")
         assert get_resp.json()["name"] == "Original"
@@ -229,15 +235,15 @@ class TestCreateArea:
         resp = client.post("/api/areas", json=_area("LI"))
         assert resp.status_code == 409
 
-    def test_identifier_with_space_returns_400(self, client):
+    def test_identifier_with_space_returns_422(self, client):
         resp = client.post("/api/areas", json=_area("Long Island"))
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
-    def test_non_polygon_geometry_returns_400(self, client):
+    def test_non_polygon_geometry_returns_422(self, client):
         resp = client.post("/api/areas", json=_area(
             "LI", geometry={"type": "Point", "coordinates": [0, 0]},
         ))
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     def test_rejected_area_does_not_persist(self, client):
         client.post("/api/areas", json=_area("Long Island"))  # space in identifier
@@ -296,3 +302,64 @@ class TestAreaConditionCrossValidation:
         ])
         resp = client.post("/api/rules", json=rule)
         assert resp.status_code == 400
+
+
+class TestConditionOperatorEnforcement:
+    """
+    Condition is now a type-discriminated union (see main.py) -- every
+    per-type model's `operator` Literal should be enforced by FastAPI/
+    Pydantic at ingress, before RulesEngine ever sees the request.
+    """
+
+    # One operator invalid for that type, per CLAUDE.md's Conditions table.
+    _INVALID_COMBINATIONS = [
+        {"type": "altitude", "operator": "equals", "value": "1000"},
+        {"type": "velocity", "operator": "equals", "value": "100"},
+        {"type": "vertical_speed", "operator": "equals", "value": "100"},
+        {"type": "date", "operator": "equals", "value": "2026-01-01"},
+        {"type": "date", "operator": "in_list", "value": ["2026-01-01"]},
+        {"type": "heading", "operator": "minimum", "value": "340,020"},
+        {"type": "ident", "operator": "minimum", "value": "DAL2"},
+        {"type": "squawk", "operator": "minimum", "value": "1200"},
+        {"type": "military", "operator": "minimum", "value": "true"},
+        {"type": "operator_airline_designator", "operator": "minimum", "value": "UAL"},
+        {"type": "aircraft_type_designator", "operator": "minimum", "value": "B752"},
+        {"type": "aircraft_registration", "operator": "minimum", "value": "N659DL"},
+        {"type": "aircraft_icao_hex", "operator": "minimum", "value": "A8AE7F"},
+        {"type": "wake_turbulence_category", "operator": "minimum", "value": "heavy"},
+        {"type": "matched_rules", "operator": "equals", "value": ["r1"]},
+        {"type": "area", "operator": "minimum", "value": "LI"},
+    ]
+
+    @pytest.mark.parametrize("condition", _INVALID_COMBINATIONS, ids=lambda c: f"{c['type']}-{c['operator']}")
+    def test_invalid_operator_for_type_returns_422(self, client, condition):
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[condition]))
+        assert resp.status_code == 422
+        errors = resp.json()["detail"]
+        assert any(err["loc"][:2] == ["body", "conditions"] for err in errors)
+
+    # The cheapest valid operator for each type, per the same table.
+    _VALID_COMBINATIONS = [
+        {"type": "altitude", "operator": "minimum", "value": "1000"},
+        {"type": "velocity", "operator": "maximum", "value": "100"},
+        {"type": "vertical_speed", "operator": "minimum", "value": "-100"},
+        {"type": "date", "operator": "minimum", "value": "2026-01-01"},
+        {"type": "heading", "operator": "equals", "value": "340,020"},
+        {"type": "ident", "operator": "equals", "value": "DAL2"},
+        {"type": "squawk", "operator": "equals", "value": "1200"},
+        {"type": "military", "operator": "equals", "value": "true"},
+        {"type": "operator_airline_designator", "operator": "equals", "value": "UAL"},
+        {"type": "aircraft_type_designator", "operator": "equals", "value": "B752"},
+        {"type": "aircraft_registration", "operator": "equals", "value": "N659DL"},
+        {"type": "aircraft_icao_hex", "operator": "equals", "value": "A8AE7F"},
+        {"type": "aircraft_powerplant_count", "operator": "equals", "value": "2"},
+        {"type": "wake_turbulence_category", "operator": "equals", "value": "heavy"},
+        {"type": "matched_rules", "operator": "in_list", "value": ["other-rule"]},
+        {"type": "area", "operator": "equals", "value": "LI"},
+    ]
+
+    @pytest.mark.parametrize("condition", _VALID_COMBINATIONS, ids=lambda c: f"{c['type']}-{c['operator']}")
+    def test_valid_operator_for_type_returns_201(self, client, condition):
+        client.post("/api/areas", json=_area("LI"))  # only needed by the 'area' case
+        resp = client.post("/api/rules", json=_rule("ok", conditions=[condition]))
+        assert resp.status_code == 201

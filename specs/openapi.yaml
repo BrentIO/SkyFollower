@@ -573,6 +573,111 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AircraftIcaoHexCondition:
+      properties:
+        type:
+          type: string
+          const: aircraft_icao_hex
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AircraftIcaoHexCondition
+    AircraftPowerplantCountCondition:
+      properties:
+        type:
+          type: string
+          const: aircraft_powerplant_count
+          title: Type
+        operator:
+          type: string
+          enum:
+          - equals
+          - minimum
+          - maximum
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AircraftPowerplantCountCondition
+    AircraftRegistrationCondition:
+      properties:
+        type:
+          type: string
+          const: aircraft_registration
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AircraftRegistrationCondition
+    AircraftTypeDesignatorCondition:
+      properties:
+        type:
+          type: string
+          const: aircraft_type_designator
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AircraftTypeDesignatorCondition
+    AltitudeCondition:
+      properties:
+        type:
+          type: string
+          const: altitude
+          title: Type
+        operator:
+          type: string
+          enum:
+          - minimum
+          - maximum
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AltitudeCondition
     Area:
       properties:
         identifier:
@@ -635,6 +740,26 @@ components:
           type: Polygon
         identifier: LI
         name: Long Island
+    AreaCondition:
+      properties:
+        type:
+          type: string
+          const: area
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: AreaCondition
     AreaGeometry:
       properties:
         type:
@@ -655,67 +780,28 @@ components:
       - type
       - coordinates
       title: AreaGeometry
-    Condition:
+    DateCondition:
       properties:
         type:
           type: string
-          enum:
-          - altitude
-          - heading
-          - velocity
-          - vertical_speed
-          - area
-          - date
-          - ident
-          - squawk
-          - military
-          - operator_airline_designator
-          - aircraft_type_designator
-          - aircraft_registration
-          - aircraft_icao_hex
-          - aircraft_powerplant_count
-          - wake_turbulence_category
-          - matched_rules
+          const: date
           title: Type
         operator:
           type: string
           enum:
-          - equals
           - minimum
           - maximum
-          - in_list
-          - not_in_list
           title: Operator
         value:
-          anyOf:
-          - type: string
-          - items:
-              type: string
-            type: array
+          type: string
           title: Value
+      additionalProperties: false
       type: object
       required:
       - type
       - operator
       - value
-      title: Condition
-      description: 'One rule condition; every condition in a rule is AND''d together.
-
-        `value`''s shape depends on `type` -- see CLAUDE.md''s Conditions table.
-
-        Matching SkyFollower-legacy''s convention, this is a string even for
-
-        numeric fields (altitude "10000", heading "340,020" for min,max
-
-        wrap-around, military "true"/"false") -- matched_rules is the one
-
-        exception, taking a real list of rule identifiers. A `date` value with
-
-        a `T` is a datetime and must carry a timezone designator -- `Z` (UTC)
-
-        or any ISO 8601 offset, e.g. `2026-01-15T23:31:00-05:00` -- stored and
-
-        echoed back exactly as submitted, not normalised to `Z`.'
+      title: DateCondition
     ErrorDetail:
       properties:
         detail:
@@ -736,6 +822,111 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    HeadingCondition:
+      properties:
+        type:
+          type: string
+          const: heading
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: HeadingCondition
+    IdentCondition:
+      properties:
+        type:
+          type: string
+          const: ident
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: IdentCondition
+    MatchedRulesCondition:
+      properties:
+        type:
+          type: string
+          const: matched_rules
+          title: Type
+        operator:
+          type: string
+          enum:
+          - in_list
+          - not_in_list
+          title: Operator
+        value:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: MatchedRulesCondition
+    MilitaryCondition:
+      properties:
+        type:
+          type: string
+          const: military
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: MilitaryCondition
+    OperatorAirlineDesignatorCondition:
+      properties:
+        type:
+          type: string
+          const: operator_airline_designator
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: OperatorAirlineDesignatorCondition
     Rule:
       properties:
         name:
@@ -759,7 +950,42 @@ components:
           default: false
         conditions:
           items:
-            $ref: '#/components/schemas/Condition'
+            oneOf:
+            - $ref: '#/components/schemas/AltitudeCondition'
+            - $ref: '#/components/schemas/VelocityCondition'
+            - $ref: '#/components/schemas/VerticalSpeedCondition'
+            - $ref: '#/components/schemas/HeadingCondition'
+            - $ref: '#/components/schemas/DateCondition'
+            - $ref: '#/components/schemas/IdentCondition'
+            - $ref: '#/components/schemas/SquawkCondition'
+            - $ref: '#/components/schemas/MilitaryCondition'
+            - $ref: '#/components/schemas/OperatorAirlineDesignatorCondition'
+            - $ref: '#/components/schemas/AircraftTypeDesignatorCondition'
+            - $ref: '#/components/schemas/AircraftRegistrationCondition'
+            - $ref: '#/components/schemas/AircraftIcaoHexCondition'
+            - $ref: '#/components/schemas/AircraftPowerplantCountCondition'
+            - $ref: '#/components/schemas/WakeTurbulenceCategoryCondition'
+            - $ref: '#/components/schemas/MatchedRulesCondition'
+            - $ref: '#/components/schemas/AreaCondition'
+            discriminator:
+              propertyName: type
+              mapping:
+                aircraft_icao_hex: '#/components/schemas/AircraftIcaoHexCondition'
+                aircraft_powerplant_count: '#/components/schemas/AircraftPowerplantCountCondition'
+                aircraft_registration: '#/components/schemas/AircraftRegistrationCondition'
+                aircraft_type_designator: '#/components/schemas/AircraftTypeDesignatorCondition'
+                altitude: '#/components/schemas/AltitudeCondition'
+                area: '#/components/schemas/AreaCondition'
+                date: '#/components/schemas/DateCondition'
+                heading: '#/components/schemas/HeadingCondition'
+                ident: '#/components/schemas/IdentCondition'
+                matched_rules: '#/components/schemas/MatchedRulesCondition'
+                military: '#/components/schemas/MilitaryCondition'
+                operator_airline_designator: '#/components/schemas/OperatorAirlineDesignatorCondition'
+                squawk: '#/components/schemas/SquawkCondition'
+                velocity: '#/components/schemas/VelocityCondition'
+                vertical_speed: '#/components/schemas/VerticalSpeedCondition'
+                wake_turbulence_category: '#/components/schemas/WakeTurbulenceCategoryCondition'
           type: array
           minItems: 1
           title: Conditions
@@ -775,13 +1001,19 @@ components:
 
         not contain spaces; `name` is a free-text display label and may.
 
-        Documents the shape of a normal (enabled) rule -- the rules engine
+        Documents the shape of a normal (enabled) rule -- RulesEngine
 
         additionally tolerates a disabled placeholder rule with only
 
         `enabled: false` and nothing else, silently skipping it rather than
 
-        validating it; that leniency is a narrow exception, not reflected here.'
+        validating it; that leniency is a narrow exception this model doesn''t
+
+        allow, so that shape can no longer be created/updated through this API
+
+        (only by writing directly to Redis) -- see the "Schema models" comment
+
+        above.'
       examples:
       - conditions:
         - operator: maximum
@@ -850,6 +1082,26 @@ components:
         force_archive: true
         identifier: b52_force_persist_2026_2027
         name: B-52 Force Persist Window
+    SquawkCondition:
+      properties:
+        type:
+          type: string
+          const: squawk
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: SquawkCondition
     ValidationError:
       properties:
         loc:
@@ -882,4 +1134,68 @@ components:
       - msg
       - type
       title: ValidationError
+    VelocityCondition:
+      properties:
+        type:
+          type: string
+          const: velocity
+          title: Type
+        operator:
+          type: string
+          enum:
+          - minimum
+          - maximum
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: VelocityCondition
+    VerticalSpeedCondition:
+      properties:
+        type:
+          type: string
+          const: vertical_speed
+          title: Type
+        operator:
+          type: string
+          enum:
+          - minimum
+          - maximum
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: VerticalSpeedCondition
+    WakeTurbulenceCategoryCondition:
+      properties:
+        type:
+          type: string
+          const: wake_turbulence_category
+          title: Type
+        operator:
+          type: string
+          const: equals
+          title: Operator
+        value:
+          type: string
+          title: Value
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - operator
+      - value
+      title: WakeTurbulenceCategoryCondition
 
