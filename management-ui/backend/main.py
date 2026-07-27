@@ -251,9 +251,15 @@ class AltitudeCondition(_ConditionBase):
     type: Literal["altitude"]
     operator: Literal["minimum", "maximum"]
     # Numeric range on a string field can't be a JSON Schema minimum/maximum
-    # keyword (those only apply to type: integer/number) -- documented here
-    # in prose instead, enforced below by the field_validator.
-    value: str = Field(description="Altitude in feet, as a string. Must be an integer 0-65000.")
+    # keyword (those only apply to type: integer/number), so the 0-65000
+    # bound is expressed as a regex instead: single digit, 2-4 digits with
+    # no leading zero (10-9999), 10000-59999, 60000-64999, or exactly 65000.
+    # field_validator below is a redundant safety net against a regex bug,
+    # not the primary enforcement.
+    value: str = Field(
+        pattern=r"^([0-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65000)$",
+        description="Altitude in feet, as a string. Must be an integer 0-65000.",
+    )
 
     @field_validator("value")
     @classmethod
@@ -264,7 +270,12 @@ class AltitudeCondition(_ConditionBase):
 class VelocityCondition(_ConditionBase):
     type: Literal["velocity"]
     operator: Literal["minimum", "maximum"]
-    value: str = Field(description="Velocity in knots, as a string. Must be an integer 0-1334.")
+    # 0-1334: single digit, 2-3 digits with no leading zero (10-999),
+    # 1000-1299, 1300-1329, or 1330-1334.
+    value: str = Field(
+        pattern=r"^([0-9]|[1-9][0-9]|[1-9][0-9]{2}|1[0-2][0-9]{2}|13[0-2][0-9]|133[0-4])$",
+        description="Velocity in knots, as a string. Must be an integer 0-1334.",
+    )
 
     @field_validator("value")
     @classmethod
@@ -275,9 +286,12 @@ class VelocityCondition(_ConditionBase):
 class VerticalSpeedCondition(_ConditionBase):
     type: Literal["vertical_speed"]
     operator: Literal["minimum", "maximum"]
+    # -10000-10000: optional leading '-', then single digit, 2-4 digits
+    # with no leading zero (10-9999), or exactly 10000.
     value: str = Field(
+        pattern=r"^-?([0-9]|[1-9][0-9]{1,3}|10000)$",
         description="Vertical speed in ft/min, as a string (negative = descending). "
-        "Must be an integer -10000-10000."
+        "Must be an integer -10000-10000.",
     )
 
     @field_validator("value")
@@ -353,7 +367,11 @@ class AircraftIcaoHexCondition(_ConditionBase):
 class AircraftPowerplantCountCondition(_ConditionBase):
     type: Literal["aircraft_powerplant_count"]
     operator: Literal["equals", "minimum", "maximum"]
-    value: str = Field(description="Number of engines, as a string. Must be an integer 0-99.")
+    # 0-99: single digit, or two digits with no leading zero (10-99).
+    value: str = Field(
+        pattern=r"^([0-9]|[1-9][0-9])$",
+        description="Number of engines, as a string. Must be an integer 0-99.",
+    )
 
     @field_validator("value")
     @classmethod
