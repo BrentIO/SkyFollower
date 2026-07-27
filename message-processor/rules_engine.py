@@ -403,8 +403,12 @@ class RulesEngine:
         if c["operator"] != "equals":
             raise _ConditionError("squawk only supports 'equals'")
         val = str(c["value"]).strip()
-        if not val.isnumeric() or len(val) != 4:
-            raise _ConditionError("squawk must be a 4-digit numeric string")
+        # Squawk codes are 4-digit octal (each digit 0-7) -- an actual
+        # transponder can never send 8 or 9 in any position, so isnumeric()
+        # alone (which accepts 0-9) was letting invalid codes like "0589"
+        # through.
+        if len(val) != 4 or any(ch not in "01234567" for ch in val):
+            raise _ConditionError("squawk must be a 4-digit octal string (each digit 0-7)")
         c["value"] = val
         return c
 

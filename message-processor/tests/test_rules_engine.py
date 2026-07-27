@@ -269,6 +269,13 @@ class TestConditionValidation:
             _rule("r", [_cond("squawk", "equals", "123")])
         ])) is False
 
+    def test_squawk_must_be_octal(self):
+        # Squawk codes are 4-digit octal -- a transponder can never send 8
+        # or 9 in any position.
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("squawk", "equals", "0589")])
+        ])) is False
+
     def test_aircraft_icao_hex_must_be_6_chars(self):
         assert _bare_engine().load_rules_json(json.dumps([
             _rule("r", [_cond("aircraft_icao_hex", "equals", "ABC")])

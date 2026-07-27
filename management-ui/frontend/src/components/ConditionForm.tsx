@@ -282,6 +282,10 @@ function ConditionValueInput({
       return <DateConditionInput value={value as string} onValueChange={onValueChange} />;
 
     case "squawk":
+      // Squawk codes are 4-digit octal -- a transponder can never send 8
+      // or 9 in any position, so those are stripped along with anything
+      // non-numeric (matching message-processor/rules_engine.py's
+      // _validate_squawk).
       return (
         <input
           type="text"
@@ -290,7 +294,7 @@ function ConditionValueInput({
           placeholder="1200"
           className="input"
           value={value as string}
-          onChange={(e) => onValueChange(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+          onChange={(e) => onValueChange(e.target.value.replace(/[^0-7]/g, "").slice(0, 4))}
         />
       );
 

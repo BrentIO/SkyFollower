@@ -97,7 +97,10 @@ function validateCondition(condition: Condition): string | null {
     }
 
     case "squawk":
-      if (!/^\d{4}$/.test(String(value))) return "must be exactly 4 digits";
+      // Octal, not decimal -- a real transponder never sends 8 or 9 in
+      // any position (mirrors message-processor/rules_engine.py's
+      // _validate_squawk).
+      if (!/^[0-7]{4}$/.test(String(value))) return "must be exactly 4 digits, each 0-7";
       return null;
 
     case "aircraft_icao_hex":
