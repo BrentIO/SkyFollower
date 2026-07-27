@@ -33,6 +33,16 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
+// Terra Draw's addFeatures() silently drops (doesn't throw for) any
+// feature that fails its mode's validation -- e.g. excessive coordinate
+// precision, self-intersection -- so a "temporary" feature id we just
+// added isn't guaranteed to actually be in the store. removeFeatures()
+// throws for an unknown id, so every cleanup call needs this check first
+// rather than assuming the add succeeded.
+function removeFeatureIfPresent(draw: TerraDraw, id: string): void {
+  if (draw.getSnapshotFeature(id)) draw.removeFeatures([id]);
+}
+
 function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
   let minLng = Infinity;
   let minLat = Infinity;
@@ -66,6 +76,60 @@ function computeCentroid(geometry: Area["geometry"]): [number, number] {
     sumLat += lat;
   }
   return [sumLng / ring.length, sumLat / ring.length];
+}
+
+// Floor offset for degenerate (near-zero-extent) shapes, in degrees --
+// keeps a duplicate visibly distinct even for a tiny polygon, without
+// this dominating the offset of a large one.
+const MIN_OFFSET_DEGREES = 0.0008;
+
+// Terra Draw's default coordinatePrecision is 9 decimal places; it
+// silently rejects (not throws -- see offsetGeometry below) any feature
+// with a coordinate needing more than that many digits to round-trip
+// exactly. Round well under that ceiling so this never collides with it.
+const OFFSET_COORDINATE_PRECISION = 7;
+
+function roundCoordinate(value: number): number {
+  const factor = 10 ** OFFSET_COORDINATE_PRECISION;
+  return Math.round(value * factor) / factor;
+}
+
+// Offsets every coordinate by a fixed fraction of the shape's own
+// bounding-box size (floored so it's still visible for a small polygon),
+// so a duplicate lands overlapping-but-distinguishable from its source
+// and is immediately grabbable rather than sitting exactly on top of it.
+//
+// Coordinates are rounded after offsetting -- floating-point addition
+// routinely produces a result needing 14+ decimal digits (e.g.
+// -81.28992976386266 + 0.003 === -81.28692976386266, a 14-digit tail)
+// even though both inputs individually satisfy Terra Draw's precision
+// limit. Terra Draw's addFeatures() validates each feature against its
+// mode's rules (including this precision check) and, on failure, simply
+// drops it from the store without throwing -- so an un-rounded offset
+// here doesn't error, it just silently produces a duplicate that was
+// never actually added, which then crashes the *next* step (removing
+// the "temporary" feature that was never really there).
+function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  for (const ring of geometry.coordinates) {
+    for (const [lng, lat] of ring) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  const dLng = Math.max((maxLng - minLng) * 0.15, MIN_OFFSET_DEGREES);
+  const dLat = Math.max((maxLat - minLat) * 0.15, MIN_OFFSET_DEGREES);
+  return {
+    ...geometry,
+    coordinates: geometry.coordinates.map((ring) =>
+      ring.map(([lng, lat]) => [roundCoordinate(lng + dLng), roundCoordinate(lat + dLat)]),
+    ),
+  };
 }
 
 function labelsFeatureCollection(areas: Area[]): GeoJSON.FeatureCollection {
@@ -111,6 +175,10 @@ export function AreasView() {
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
   const [pendingDrawFeatureId, setPendingDrawFeatureId] = useState<string | null>(null);
+  // Only set by duplicateArea(), to suggest "<name> copy" in the naming
+  // modal -- a freshly drawn shape leaves this null and the modal starts
+  // blank as before.
+  const [pendingNameSuggestion, setPendingNameSuggestion] = useState<string | null>(null);
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
 
@@ -129,9 +197,11 @@ export function AreasView() {
   // listener always calls through `<name>Ref.current(...)`, so it always
   // sees the current render's state without needing to be re-registered.
   const handleDrawFinishRef = useRef((featureId: string) => {
+    setPendingNameSuggestion(null);
     setPendingDrawFeatureId(featureId);
   });
   handleDrawFinishRef.current = (featureId: string) => {
+    setPendingNameSuggestion(null);
     setPendingDrawFeatureId(featureId);
   };
 
@@ -335,22 +405,58 @@ export function AreasView() {
     });
   }
 
+  // Duplicates the currently selected (and possibly in-progress-edited)
+  // shape: clones its on-map geometry with a visible offset, then reuses
+  // the exact same naming-modal -> create-area flow as a freshly drawn
+  // polygon (handleNameConfirm doesn't care how the pending feature got
+  // onto the map).
+  function duplicateArea() {
+    if (!draft) return;
+    const sourceGeometry = draft.geometry;
+    const sourceName = draft.name;
+    requestSwitch(() => {
+      const draw = drawRef.current;
+      if (!draw) return;
+      const tempId = crypto.randomUUID();
+      draw.addFeatures([
+        {
+          id: tempId,
+          type: "Feature",
+          properties: { mode: "polygon", name: sourceName },
+          geometry: offsetGeometry(sourceGeometry),
+        },
+      ]);
+      setDraft(null);
+      setOriginal(null);
+      setPendingNameSuggestion(sourceName ? `${sourceName} copy` : "");
+      setPendingDrawFeatureId(tempId);
+    });
+  }
+
   async function handleNameConfirm(identifier: string, name: string) {
     const draw = drawRef.current;
     const tempId = pendingDrawFeatureId;
     setPendingDrawFeatureId(null);
+    setPendingNameSuggestion(null);
     if (!draw || !tempId) return;
 
     const feature = draw.getSnapshotFeature(tempId);
-    if (!feature || feature.geometry.type !== "Polygon") {
-      draw.removeFeatures([tempId]);
+    if (!feature) {
+      // Never actually made it into the store -- addFeatures() rejected
+      // it during validation (see offsetGeometry/removeFeatureIfPresent).
+      // Nothing to clean up, and nothing to save.
+      showToast("error", "That shape could not be created -- its geometry was rejected.");
+      return;
+    }
+    if (feature.geometry.type !== "Polygon") {
+      removeFeatureIfPresent(draw, tempId);
       return;
     }
 
     setSaving(true);
     try {
       const saved = await createArea({ identifier, name, geometry: feature.geometry as Area["geometry"] });
-      draw.removeFeatures([tempId]);
+      removeFeatureIfPresent(draw, tempId);
       draw.addFeatures([
         {
           id: saved.identifier,
@@ -365,7 +471,7 @@ export function AreasView() {
       setOriginal(clone(saved));
       showToast("success", `Area '${saved.identifier}' created.`);
     } catch (err) {
-      draw.removeFeatures([tempId]);
+      removeFeatureIfPresent(draw, tempId);
       showToast("error", err instanceof ApiError ? err.message : "Failed to create area.");
     } finally {
       setSaving(false);
@@ -374,10 +480,11 @@ export function AreasView() {
 
   function handleNameCancel() {
     const draw = drawRef.current;
-    if (pendingDrawFeatureId) {
-      draw?.removeFeatures([pendingDrawFeatureId]);
+    if (pendingDrawFeatureId && draw) {
+      removeFeatureIfPresent(draw, pendingDrawFeatureId);
     }
     setPendingDrawFeatureId(null);
+    setPendingNameSuggestion(null);
     draw?.setMode("select");
   }
 
@@ -475,6 +582,13 @@ export function AreasView() {
                         </button>
                         <button
                           type="button"
+                          onClick={duplicateArea}
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setDeleteTarget(area)}
                           className="ml-auto rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
                         >
@@ -552,6 +666,7 @@ export function AreasView() {
       <AreaNameModal
         open={pendingDrawFeatureId !== null}
         existingIdentifiers={areas.map((a) => a.identifier)}
+        initialName={pendingNameSuggestion ?? undefined}
         onConfirm={handleNameConfirm}
         onCancel={handleNameCancel}
       />

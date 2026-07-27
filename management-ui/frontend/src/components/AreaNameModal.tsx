@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface AreaNameModalProps {
   open: boolean;
   existingIdentifiers: string[];
+  // Pre-fills Name (and, via the usual auto-fill, Identifier) when the
+  // modal opens -- used by the "Duplicate" action to suggest "<original
+  // name> copy" instead of starting blank like a freshly drawn shape.
+  initialName?: string;
   onConfirm: (identifier: string, name: string) => void;
   onCancel: () => void;
 }
@@ -20,10 +24,21 @@ function sanitizeIdentifier(raw: string): string {
 // draw.create handler) -- collects the two fields Area requires beyond
 // geometry: `identifier` (routing key, no spaces, immutable after creation)
 // and `name` (free-text display label, editable later in the side panel).
-export function AreaNameModal({ open, existingIdentifiers, onConfirm, onCancel }: AreaNameModalProps) {
+export function AreaNameModal({ open, existingIdentifiers, initialName, onConfirm, onCancel }: AreaNameModalProps) {
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [identifierManuallyEdited, setIdentifierManuallyEdited] = useState(false);
+
+  // Seeds Name/Identifier fresh each time the modal opens (open toggles
+  // false between uses, since it's tied to a single pending-feature id) --
+  // blank for a freshly drawn shape, "<name> copy" for a duplicate.
+  useEffect(() => {
+    if (open) {
+      setName(initialName ?? "");
+      setIdentifier(initialName ? sanitizeIdentifier(initialName) : "");
+      setIdentifierManuallyEdited(false);
+    }
+  }, [open, initialName]);
 
   if (!open) return null;
 
