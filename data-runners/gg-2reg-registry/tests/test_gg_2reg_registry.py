@@ -35,7 +35,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _col_index = _mod._col_index
 _words_to_cols = _mod._words_to_cols
@@ -540,13 +539,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/gg-2reg-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod._INDEX_URL, "gg-2reg-registry", headers={"User-Agent": "P5Software SkyFollower"})

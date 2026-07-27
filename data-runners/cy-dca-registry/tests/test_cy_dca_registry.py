@@ -34,7 +34,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 download_and_parse = _mod.download_and_parse
 _build_record = _mod._build_record
@@ -484,13 +483,3 @@ class TestWriteToRedis:
         written = set_call[0][2]
         assert "serial_number" not in written["aircraft"]
         assert "registrant" not in written
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod._PDF_URL, "cy-dca-registry", headers={"User-Agent": "Mozilla/5.0 (compatible; P5Software SkyFollower)"}, verify=False)

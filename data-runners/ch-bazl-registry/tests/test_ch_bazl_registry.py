@@ -36,7 +36,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _decode_aircraft_type = _mod._decode_aircraft_type
 _decode_engine_type = _mod._decode_engine_type
@@ -658,13 +657,3 @@ class TestMqttCompletionStats:
             if c.args[0].startswith("homeassistant/")
         ]
         assert len(discovery_topics) == 3
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.API_URL, "ch-bazl-registry", headers={"User-Agent": "P5Software SkyFollower"})

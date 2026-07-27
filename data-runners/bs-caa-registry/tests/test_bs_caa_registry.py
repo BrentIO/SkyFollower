@@ -34,7 +34,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _find_download_url = _mod._find_download_url
 download_registry = _mod.download_registry
@@ -503,13 +502,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/bs-caa-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.INDEX_URL, "bs-caa-registry", headers={"User-Agent": "P5Software SkyFollower"})

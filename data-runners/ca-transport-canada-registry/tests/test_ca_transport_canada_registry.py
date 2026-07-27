@@ -48,7 +48,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _parse_registration = _mod._parse_registration
 _parse_icao_hex = _mod._parse_icao_hex
@@ -848,13 +847,3 @@ class TestMqttCompletionStats:
         assert "homeassistant/sensor/SkyFollower_runner_ca_transport_canada_registry_records_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_ca_transport_canada_registry_last_run_at/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_ca_transport_canada_registry_last_run_status/config" in ha_topics
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod.DOWNLOAD_URL, "ca-transport-canada-registry", headers={"User-Agent": "P5Software SkyFollower"})

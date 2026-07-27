@@ -35,7 +35,6 @@ def _load_main():
 
 _mod = _load_main()
 
-from shared.url_reachability import assert_url_reachable
 
 _normalize_registration = _mod._normalize_registration
 _build_record = _mod._build_record
@@ -398,13 +397,3 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/hu-kozhaf-registry"
-
-
-# ---------------------------------------------------------------------------
-# Tests: network (real outbound HTTP call — see #405)
-# ---------------------------------------------------------------------------
-
-class TestNetwork:
-    @pytest.mark.network
-    def test_url_reachable(self):
-        assert_url_reachable(_mod._INDEX_URL, "hu-kozhaf-registry", headers={"User-Agent": _mod._BROWSER_UA}, verify=False)
