@@ -27,10 +27,10 @@ export function SideNav({ onNavigate }: SideNavProps) {
               to={section.path}
               onClick={onNavigate}
               className={({ isActive }) =>
-                `flex items-center gap-2 border-l-2 px-3 py-2 text-sm font-medium ${
+                `flex items-center gap-2 px-3 py-2 text-sm ${
                   isActive
-                    ? "border-sky-600 text-sky-600 dark:text-sky-400"
-                    : "border-transparent text-slate-600 hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400"
+                    ? "font-bold text-sky-600 dark:text-sky-400"
+                    : "font-medium text-slate-600 hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400"
                 }`
               }
             >
