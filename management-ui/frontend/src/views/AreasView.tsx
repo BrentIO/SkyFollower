@@ -512,7 +512,7 @@ export function AreasView() {
         )}
       </div>
 
-      <div className="relative min-h-[400px] flex-1 overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+      <div className="relative h-[400px] overflow-hidden rounded-md border border-slate-200 md:h-auto md:flex-1 dark:border-slate-700">
         {/*
           h-full/w-full, not absolute + inset-0: MapLibre attaches its own
           `maplibregl-map` class directly to this div (it's the `container`
