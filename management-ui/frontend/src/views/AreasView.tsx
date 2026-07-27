@@ -207,7 +207,17 @@ export function AreasView() {
         id: "area-labels",
         type: "symbol",
         source: "area-labels",
-        layout: { "text-field": ["get", "name"], "text-size": 12, "text-anchor": "center" },
+        layout: {
+          "text-field": ["get", "name"],
+          // Without an explicit text-font, MapLibre falls back to the
+          // style-spec default ("Open Sans Regular, Arial Unicode MS
+          // Regular"), which OpenFreeMap's glyph server doesn't serve for
+          // this style (only the Noto Sans family) -- causing a 404 per
+          // glyph range for every rendered character.
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 12,
+          "text-anchor": "center",
+        },
         paint: { "text-color": "#0f172a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
 
