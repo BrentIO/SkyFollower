@@ -212,6 +212,7 @@ def _area(identifier="LI", **overrides) -> dict:
             "type": "Polygon",
             "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
         },
+        "locked": False,
     }
     area.update(overrides)
     return area
@@ -377,11 +378,36 @@ class TestCreateArea:
         resp = client.post("/api/areas", json=_area("Long Island"))
         assert resp.status_code == 422
 
-    def test_non_polygon_geometry_returns_422(self, client):
+    def test_point_geometry_creates_201(self, client):
+        # Point/LineString areas are valid (#578) -- only usable as an
+        # `area` rule condition's value is restricted to Polygon.
         resp = client.post("/api/areas", json=_area(
-            "LI", geometry={"type": "Point", "coordinates": [0, 0]},
+            "SHREK2", geometry={"type": "Point", "coordinates": [0, 0]},
+        ))
+        assert resp.status_code == 201
+
+    def test_linestring_geometry_creates_201(self, client):
+        resp = client.post("/api/areas", json=_area(
+            "ILS17L", geometry={"type": "LineString", "coordinates": [[0, 0], [1, 1]]},
+        ))
+        assert resp.status_code == 201
+
+    def test_unknown_geometry_type_returns_422(self, client):
+        resp = client.post("/api/areas", json=_area(
+            "LI", geometry={"type": "MultiPolygon", "coordinates": []},
         ))
         assert resp.status_code == 422
+
+    def test_self_intersecting_polygon_returns_400(self, client):
+        # A bowtie ring: valid per Pydantic (floats in the right shape) but
+        # rejected by shapely's is_valid check in RulesEngine._load_areas --
+        # exercises _save_areas_array's "did it actually survive" safety
+        # net, which (per #578) now only applies to Polygon areas.
+        resp = client.post("/api/areas", json=_area("LI", geometry={
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]],
+        }))
+        assert resp.status_code == 400
 
     def test_rejected_area_does_not_persist(self, client):
         client.post("/api/areas", json=_area("Long Island"))  # space in identifier
@@ -404,6 +430,29 @@ class TestUpdateArea:
         client.post("/api/areas", json=_area("LI"))
         resp = client.put("/api/areas/LI", json=_area("different"))
         assert resp.status_code == 400
+
+
+class TestAreaLocked:
+    def test_defaults_to_false_when_omitted(self, client):
+        area = _area("LI")
+        del area["locked"]
+        resp = client.post("/api/areas", json=area)
+        assert resp.status_code == 201
+        assert resp.json()["locked"] is False
+
+    def test_create_with_locked_true(self, client):
+        resp = client.post("/api/areas", json=_area("LI", locked=True))
+        assert resp.status_code == 201
+        assert resp.json()["locked"] is True
+
+    def test_update_toggles_locked(self, client):
+        client.post("/api/areas", json=_area("LI", locked=False))
+        resp = client.put("/api/areas/LI", json=_area("LI", locked=True))
+        assert resp.status_code == 200
+        assert resp.json()["locked"] is True
+
+        get_resp = client.get("/api/areas/LI")
+        assert get_resp.json()["locked"] is True
 
 
 class TestDeleteArea:

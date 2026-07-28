@@ -839,6 +839,31 @@ class TestLoadAreas:
         assert ok is True
         assert engine._areas[0]["identifier"] == "LI"
 
+    def test_linestring_area_skipped(self):
+        # Point/LineString areas are valid in the areas editor (#578) but
+        # are not usable in an `area` rule condition -- only Polygon areas
+        # are. Confirms that behavior is unchanged by #578.
+        engine = _bare_engine()
+        feature = _area_feature(identifier="ILS17L")
+        feature["geometry"] = {"type": "LineString", "coordinates": [[0, 0], [1, 1]]}
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [feature],
+        }))
+        assert ok is True
+        assert engine._areas == []
+
+    def test_point_area_skipped(self):
+        engine = _bare_engine()
+        feature = _area_feature(identifier="WAYPOINT")
+        feature["geometry"] = {"type": "Point", "coordinates": [0, 0]}
+        ok = engine.load_areas_json(json.dumps({
+            "type": "FeatureCollection",
+            "features": [feature],
+        }))
+        assert ok is True
+        assert engine._areas == []
+
 
 # ---------------------------------------------------------------------------
 # Area evaluation
