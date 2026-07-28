@@ -72,20 +72,29 @@ types at all. A squawk value is trusted once decoded; there's nothing
 further to verify it against outside of multi-message/pipe-mode decoding,
 which this message processor doesn't use.
 
-`wake_turbulence_category` is sourced directly from pyModeS's own computed
-`wake_vortex` field, which is aware of which identification sub-type
-(typecode) a category code came from — TC=4 aircraft categories, TC=3
-gliders/UAVs, and TC=2 surface vehicles are all encoded on the same numeric
-scale but mean different things, and pyModeS's mapping accounts for that.
+`wake_turbulence_category` is receiver-decode-only — registry/Mictronics
+enrichment is never allowed to seed it (`_enrich_aircraft` strips the key
+from the Redis-merged aircraft document before it reaches flight state),
+and each new live reading simply replaces the last one (no first-wins
+protection; there's only one writer). A single shared mapping table
+(`_WAKE_TURBULENCE_MAP`) collapses both decode paths' possible source
+values down to three canonical strings — `light`, `medium`, `heavy`:
 
-UAT (`source: "978"`) frames are decoded the same way, via
-[`pyModeS978`](https://github.com/BrentIO/pyModeS978)'s own `decode()`
-call — same pure field-presence extraction, no message-type dispatch.
-`wake_turbulence_category` is sourced from pyModeS978's `category` field,
-title-cased (e.g. `"Medium Large High Vortex"`); unlike pyModeS's raw 1090
-`category` int, pyModeS978's `category` is already typecode-independent and
-fully resolved by the library, so no further interpretation is needed on
-the message processor side.
+- 1090 (`_decode_1090`): pyModeS's `wake_vortex` field (TC=4 aircraft
+  category only — pyModeS is aware of which identification sub-type a
+  category code came from, so TC=3 gliders/UAVs and TC=2 surface vehicles
+  never produce a `wake_vortex` value in the first place).
+- 978 (`_decode_978`): [`pyModeS978`](https://github.com/BrentIO/pyModeS978)'s
+  `category` field (an `EmitterCategory` enum member), via the same table.
+
+Both libraries expose the same 7 DO-260B wake/emitter categories (Light,
+Medium 1, Medium 2, High Vortex Aircraft, Heavy, High Performance,
+Rotorcraft). `Super` has no code point in this data at all — an A380 and a
+767 broadcast the identical `Heavy` value — so it's not a reachable output.
+`Rotorcraft`/`High Performance` describe emitter type, not wake-turbulence
+weight class, so they're intentionally left unset rather than mapped to
+anything; the remaining 5 collapse to `light`/`medium`/`heavy` by weight
+band.
 
 ## Redis Key Dependencies
 
