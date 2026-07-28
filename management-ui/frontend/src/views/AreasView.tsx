@@ -2,6 +2,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { TerraDraw, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
+import { Lock, Unlock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -225,6 +226,7 @@ export function AreasView() {
     requestSwitch(() => {
       setDraft(clone(match));
       setOriginal(clone(match));
+      setSelectDraggable(match.locked);
     });
   });
   handleDrawSelectRef.current = (featureId: string) => {
@@ -235,8 +237,29 @@ export function AreasView() {
     requestSwitch(() => {
       setDraft(clone(match));
       setOriginal(clone(match));
+      setSelectDraggable(match.locked);
     });
   };
+
+  // Terra Draw's select-mode drag/vertex-edit flags are configured per
+  // drawing-mode name ("polygon"), not per feature -- there's no built-in
+  // way to lock one shape while leaving others draggable. Since only one
+  // area is ever selected/editable at a time in this UI, updateModeOptions()
+  // is called every time selection changes (see call sites below) to
+  // dynamically re-target those global flags at whichever area just became
+  // selected, which has the same effect as a true per-feature lock.
+  function setSelectDraggable(locked: boolean) {
+    drawRef.current?.updateModeOptions("select", {
+      flags: {
+        polygon: {
+          feature: {
+            draggable: !locked,
+            coordinates: { midpoints: !locked, draggable: !locked, deletable: !locked },
+          },
+        },
+      },
+    });
+  }
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -316,6 +339,16 @@ export function AreasView() {
                 },
               },
             },
+            // Terra Draw's own Delete/Escape key handling bypasses this
+            // app's state entirely -- Delete would remove the feature from
+            // the map without calling the delete API or going through the
+            // confirm modal (leaving the map out of sync with the saved
+            // area list), and it doesn't consult the draggable/deletable
+            // flags used below to enforce locking. Disabled so every
+            // deletion goes through handleDeleteConfirmed. rotate/scale are
+            // no-ops already (rotateable/scaleable are never set below) but
+            // disabled too for clarity.
+            keyEvents: { deselect: null, delete: null, rotate: null, scale: null },
           }),
           new TerraDrawPolygonMode(),
         ],
@@ -392,6 +425,7 @@ export function AreasView() {
     requestSwitch(() => {
       setDraft(clone(area));
       setOriginal(clone(area));
+      setSelectDraggable(area.locked);
       drawRef.current?.selectFeature(area.identifier);
     });
   }
@@ -454,7 +488,16 @@ export function AreasView() {
 
     setSaving(true);
     try {
-      const saved = await createArea({ identifier, name, geometry: feature.geometry as Area["geometry"] });
+      // New areas (including duplicates -- see duplicateArea's own
+      // comment) always start unlocked, regardless of the source shape's
+      // lock state: the offset+duplicate flow exists specifically so the
+      // copy can be immediately dragged into place.
+      const saved = await createArea({
+        identifier,
+        name,
+        geometry: feature.geometry as Area["geometry"],
+        locked: false,
+      });
       removeFeatureIfPresent(draw, tempId);
       draw.addFeatures([
         {
@@ -468,6 +511,7 @@ export function AreasView() {
       setAreas((current) => [...current, saved]);
       setDraft(clone(saved));
       setOriginal(clone(saved));
+      setSelectDraggable(false);
       showToast("success", `Area '${saved.identifier}' created.`);
     } catch (err) {
       removeFeatureIfPresent(draw, tempId);
@@ -498,6 +542,26 @@ export function AreasView() {
       showToast("success", `Area '${saved.identifier}' saved.`);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to save area.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Saves immediately rather than going through the dirty/Save flow -- a
+  // direct state flip like delete, not an in-progress geometry/name edit
+  // the user might want to discard.
+  async function toggleLock() {
+    if (!draft) return;
+    setSaving(true);
+    try {
+      const saved = await updateArea(draft.identifier, { ...draft, locked: !draft.locked });
+      setAreas((current) => current.map((a) => (a.identifier === saved.identifier ? saved : a)));
+      setDraft(clone(saved));
+      setOriginal(clone(saved));
+      setSelectDraggable(saved.locked);
+      showToast("success", saved.locked ? `Area '${saved.identifier}' locked.` : `Area '${saved.identifier}' unlocked.`);
+    } catch (err) {
+      showToast("error", err instanceof ApiError ? err.message : "Failed to update area.");
     } finally {
       setSaving(false);
     }
@@ -585,6 +649,15 @@ export function AreasView() {
                           className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
                           Duplicate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleLock}
+                          disabled={saving}
+                          className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          {draft.locked ? <Unlock size={12} /> : <Lock size={12} />}
+                          {draft.locked ? "Unlock" : "Lock"}
                         </button>
                         <button
                           type="button"

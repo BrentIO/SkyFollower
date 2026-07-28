@@ -456,6 +456,12 @@ class Area(BaseModel):
     identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     name: str = ""
     geometry: AreaGeometry
+    # Prevents the shape from being dragged/vertex-edited on the map while
+    # true; does not restrict name edits or deletion. Toggling this saves
+    # immediately (see AreasView.tsx's toggleLock) rather than going
+    # through the dirty/Save flow, since it's a direct state flip like
+    # delete, not an in-progress geometry edit.
+    locked: bool = False
 
 
 class ErrorDetail(BaseModel):
@@ -853,6 +859,7 @@ def _feature_to_area(feature: dict) -> dict:
         "identifier": props.get("identifier", ""),
         "name": props.get("name", ""),
         "geometry": feature.get("geometry", {}),
+        "locked": bool(props.get("locked", False)),
     }
 
 
@@ -862,6 +869,7 @@ def _area_to_feature(area: dict) -> dict:
         "properties": {
             "identifier": area.get("identifier", ""),
             "name": area.get("name", ""),
+            "locked": area.get("locked", False),
         },
         "geometry": area.get("geometry", {}),
     }

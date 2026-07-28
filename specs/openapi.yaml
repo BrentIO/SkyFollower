@@ -696,6 +696,10 @@ components:
           default: ''
         geometry:
           $ref: '#/components/schemas/AreaGeometry'
+        locked:
+          type: boolean
+          title: Locked
+          default: false
       type: object
       required:
       - identifier

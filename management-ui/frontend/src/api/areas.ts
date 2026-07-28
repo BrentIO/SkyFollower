@@ -13,6 +13,10 @@ export interface Area {
   identifier: string;
   name: string;
   geometry: AreaGeometry;
+  // Prevents drag/vertex editing on the map while true; does not restrict
+  // name edits or deletion. Toggling this saves immediately rather than
+  // going through the dirty/Save flow -- see AreasView.tsx's toggleLock.
+  locked: boolean;
 }
 
 export function listAreas(): Promise<Area[]> {

@@ -83,6 +83,7 @@ def _area(identifier="LI", **overrides) -> dict:
             "type": "Polygon",
             "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
         },
+        "locked": False,
     }
     area.update(overrides)
     return area
@@ -275,6 +276,29 @@ class TestUpdateArea:
         client.post("/api/areas", json=_area("LI"))
         resp = client.put("/api/areas/LI", json=_area("different"))
         assert resp.status_code == 400
+
+
+class TestAreaLocked:
+    def test_defaults_to_false_when_omitted(self, client):
+        area = _area("LI")
+        del area["locked"]
+        resp = client.post("/api/areas", json=area)
+        assert resp.status_code == 201
+        assert resp.json()["locked"] is False
+
+    def test_create_with_locked_true(self, client):
+        resp = client.post("/api/areas", json=_area("LI", locked=True))
+        assert resp.status_code == 201
+        assert resp.json()["locked"] is True
+
+    def test_update_toggles_locked(self, client):
+        client.post("/api/areas", json=_area("LI", locked=False))
+        resp = client.put("/api/areas/LI", json=_area("LI", locked=True))
+        assert resp.status_code == 200
+        assert resp.json()["locked"] is True
+
+        get_resp = client.get("/api/areas/LI")
+        assert get_resp.json()["locked"] is True
 
 
 class TestDeleteArea:
