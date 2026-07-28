@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mdi/js": "^7.4.47",
     "lucide-react": "^1.27.0",
     "maplibre-gl": "^6.0.0",
     "react": "^19.1.0",
