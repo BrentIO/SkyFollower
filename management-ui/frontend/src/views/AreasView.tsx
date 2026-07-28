@@ -589,7 +589,7 @@ export function AreasView() {
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(area)}
-                          className="ml-auto rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                          className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
                         >
                           Delete
                         </button>
