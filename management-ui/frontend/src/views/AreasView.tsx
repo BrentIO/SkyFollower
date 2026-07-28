@@ -652,19 +652,23 @@ export function AreasView() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setDeleteTarget(area)}
+                          className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      {/* Separate row -- more shape-level toggles (beyond
+                          lock) will land here alongside it. */}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
                           onClick={toggleLock}
                           disabled={saving}
                           className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
                           {draft.locked ? <Unlock size={12} /> : <Lock size={12} />}
                           {draft.locked ? "Unlock" : "Lock"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(area)}
-                          className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
-                        >
-                          Delete
                         </button>
                       </div>
                     </div>
