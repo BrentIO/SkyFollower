@@ -8,10 +8,12 @@ import {
   TerraDrawSelectMode,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { Lock, Unlock } from "lucide-react";
+import { Lock, MapPinPlusInside, Unlock } from "lucide-react";
+import { mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
@@ -734,23 +736,29 @@ export function AreasView() {
             <button
               type="button"
               onClick={() => startDrawing("polygon")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+              aria-label="Draw polygon"
+              title="Draw polygon"
+              className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
             >
-              Polygon
+              <MdiIcon path={mdiShapePolygonPlus} size={18} />
             </button>
             <button
               type="button"
               onClick={() => startDrawing("linestring")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+              aria-label="Draw line"
+              title="Draw line"
+              className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
             >
-              Line
+              <MdiIcon path={mdiVectorPolylinePlus} size={18} />
             </button>
             <button
               type="button"
               onClick={() => startDrawing("point")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+              aria-label="Draw point"
+              title="Draw point"
+              className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
             >
-              Point
+              <MapPinPlusInside size={18} />
             </button>
           </div>
         </div>
