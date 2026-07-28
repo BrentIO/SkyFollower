@@ -573,6 +573,33 @@ export function AreasView() {
     });
   }
 
+  // Client-side only -- areas is already the full in-memory area list
+  // (populated by listAreas() on load, kept in sync on create/update/delete),
+  // so there's no server round trip needed to build the export file.
+  function exportAllAreas() {
+    const featureCollection = {
+      type: "FeatureCollection" as const,
+      features: areas.map((area) => ({
+        type: "Feature" as const,
+        geometry: area.geometry,
+        properties: {
+          identifier: area.identifier,
+          name: area.name,
+          locked: area.locked,
+        },
+      })),
+    };
+    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+      type: "application/geo+json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "areas.geojson";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleNameConfirm(identifier: string, name: string) {
     const draw = drawRef.current;
     const tempId = pendingDrawFeatureId;
@@ -727,6 +754,15 @@ export function AreasView() {
             </button>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={exportAllAreas}
+          disabled={areas.length === 0}
+          className="rounded-md border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+        >
+          Export GeoJSON
+        </button>
 
         {loading ? (
           <p className="text-slate-400">Loading areas...</p>
