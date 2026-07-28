@@ -57,6 +57,11 @@ appropriate file(s):
 
 ...and 36 more country-specific registration runners — see [Data Runners](/runners/) for the full list.
 
+`redis` in `docker-compose.server.yaml` sets explicit, non-default tuning
+(`--save ""`, `--no-appendfsync-on-rewrite yes`, a raised RediSearch fork-GC
+interval) — these are deliberate choices for a constrained host (Raspberry
+Pi CM4008032, 8GB RAM/32GB eMMC), not an oversight.
+
 ## Configuration
 
 Each component reads its settings from `/app/settings.json` inside the

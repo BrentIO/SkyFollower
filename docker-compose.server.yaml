@@ -25,7 +25,17 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis-stack-server --appendonly yes
+    # Tuned for a constrained host (Raspberry Pi CM4, 8GB RAM/32GB eMMC):
+    # AOF is the sole durability mechanism (--save "" disables the default
+    # periodic RDB snapshot, redundant with AOF's own rdb-preamble rewrite);
+    # fsync pauses during AOF rewrite to avoid contending with the rewrite's
+    # own disk I/O; RediSearch's fork-based GC interval is raised from its
+    # 30s default to 5 minutes, since a bigger process forking that often
+    # costs proportionally more on a smaller host. Re-measure once real
+    # traffic is flowing — these are starting points, not measured values.
+    environment:
+      REDISEARCH_ARGS: "MAXSEARCHRESULTS 10000 MAXAGGREGATERESULTS 10000 FORK_GC_RUN_INTERVAL 300"
+    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes
 
   # ---------------------------------------------------------------------------
   # Scheduler
