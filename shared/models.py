@@ -89,7 +89,6 @@ class AircraftRecord(BaseModel):
     type_designator: Optional[str] = None   # ICAO type code, e.g. "B763"
     manufacturer: Optional[str] = None
     model: Optional[str] = None
-    wake_turbulence_category: Optional[str] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None
     operator: Optional[str] = None          # operator/owner name from registry

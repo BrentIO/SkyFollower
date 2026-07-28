@@ -74,8 +74,7 @@ CREATE TABLE types (
     type_designator        TEXT PRIMARY KEY,
     manufacturer_model     TEXT,
     powerplant             TEXT,
-    category               TEXT,
-    wake_turbulence_category TEXT
+    category               TEXT
 );
 """
 
@@ -104,18 +103,6 @@ def download_and_extract(url: str) -> dict[str, bytes]:
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
-
-def _decode_wtc(wtc: str) -> Optional[str]:
-    mapping = {
-        "J": "Super",
-        "H": "Heavy",
-        "M": "Medium",
-        "L": "Light",
-        "M/L": "Medium/Light",
-        "-": "Unknown/None",
-    }
-    return mapping.get(wtc, "Unknown" if wtc else None)
-
 
 def _split_manufacturer_model(manufacturer_model: str) -> tuple[Optional[str], Optional[str]]:
     """
@@ -187,16 +174,15 @@ def stage_data(
         logger.info("Staging %d types.", len(types_data))
         cur = conn.cursor()
         for designator, values in types_data.items():
-            # values: [manufacturer_model, description, wtc]
+            # values: [manufacturer_model, description, wtc] -- wtc (values[2])
+            # is receiver-decode-only and no longer staged here.
             manufacturer_model = str(values[0]).strip() if values[0] else None
-            wtc = _decode_wtc(str(values[2]).strip()) if len(values) > 2 and values[2] else None
             cur.execute(
                 "INSERT OR REPLACE INTO types "
-                "(type_designator, manufacturer_model, wake_turbulence_category) VALUES (?,?,?)",
+                "(type_designator, manufacturer_model) VALUES (?,?)",
                 (
                     str(designator).strip(),
                     manufacturer_model,
-                    wtc,
                 ),
             )
         conn.commit()
@@ -252,18 +238,14 @@ def build_aircraft_record(row: sqlite3.Row, types_row: Optional[sqlite3.Row]) ->
 
     manufacturer: Optional[str] = None
     manufacturer_model: Optional[str] = None
-    wake_turbulence_category: Optional[str] = None
     if types_row and types_row["manufacturer_model"]:
         manufacturer, _ = _split_manufacturer_model(types_row["manufacturer_model"])
         manufacturer_model = types_row["manufacturer_model"]
-    if types_row:
-        wake_turbulence_category = types_row["wake_turbulence_category"] or None
 
     aircraft_fields = {k: v for k, v in {
         "type_designator": type_designator,
         "manufacturer": manufacturer,
         "manufacturer_model": manufacturer_model,
-        "wake_turbulence_category": wake_turbulence_category,
     }.items() if v is not None}
 
     record: dict = {
@@ -291,13 +273,10 @@ def build_operator_record(row: sqlite3.Row) -> dict:
 
 def build_type_record(row: sqlite3.Row) -> dict:
     """Build the aircraft:type:{designator} JSON record from a staged types row."""
-    record: dict = {
+    return {
         "type_designator": row["type_designator"],
         "manufacturer_model": row["manufacturer_model"],
     }
-    if row["wake_turbulence_category"]:
-        record["wake_turbulence_category"] = row["wake_turbulence_category"]
-    return record
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +308,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     cur.execute(
         """
         SELECT a.icao_hex, a.registration, a.type_designator, a.military, a.interesting,
-               t.manufacturer_model, t.wake_turbulence_category
+               t.manufacturer_model
         FROM aircraft a
         LEFT JOIN types t ON a.type_designator = t.type_designator
         """
@@ -399,7 +378,7 @@ def write_types_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int)
     """Write all staged type-designator reference records to Redis. Returns count written."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT type_designator, manufacturer_model, wake_turbulence_category FROM types "
+        "SELECT type_designator, manufacturer_model FROM types "
         "WHERE manufacturer_model IS NOT NULL AND manufacturer_model != ''"
     )
     rows = cur.fetchall()

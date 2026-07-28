@@ -59,8 +59,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "DE HAVILLAND DHC-6 Twin Otter",
         "model": "Viking Air Limited DHC-6 Series 400",
         "serial_number": "967",
-        "type_designator": "DHC6",
-        "wake_turbulence_category": "Light"
+        "type_designator": "DHC6"
     },
     "icao_hex": "4247DF",
     "military": false,
@@ -94,8 +93,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 737-700",
         "model": "The Boeing Company 737-7JB",
         "serial_number": "36714",
-        "type_designator": "B737",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "B737"
     },
     "icao_hex": "4247A6",
     "military": false,

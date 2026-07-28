@@ -68,8 +68,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "SOCATA Rallye",
         "model": "MS 892 A 150",
         "serial_number": "10557",
-        "type_designator": "RALL",
-        "wake_turbulence_category": "Light"
+        "type_designator": "RALL"
     },
     "icao_hex": "383433",
     "military": false,
@@ -100,8 +99,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 787-9 Dreamliner",
         "model": "787-9",
         "serial_number": "42497",
-        "type_designator": "B789",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "B789"
     },
     "icao_hex": "39C429",
     "military": false,

@@ -144,9 +144,8 @@ def _make_row(
 def _make_redis():
     r = MagicMock()
     # No aircraft:type match by default, so existing assertions on the
-    # written record aren't polluted by a MagicMock manufacturer_model /
-    # wake_turbulence_category value; tests exercising the lookup override
-    # this explicitly.
+    # written record aren't polluted by a MagicMock manufacturer_model
+    # value; tests exercising the lookup override this explicitly.
     r.json.return_value.get.return_value = None
     return r
 
@@ -435,15 +434,6 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert record["aircraft"]["manufacturer_model"] == "AEROSPOOL WT-9 Dynamic"
 
-    def test_designator_resolves_sets_wake_turbulence_category(self):
-        record = {"aircraft": {"type_designator": "EC35"}}
-        r = self._make_redis_with_type({
-            "manufacturer_model": "AIRBUS HELICOPTERS EC-135/635",
-            "wake_turbulence_category": "Light",
-        })
-        _apply_type_lookup(record, r)
-        assert record["aircraft"]["wake_turbulence_category"] == "Light"
-
     def test_lookup_key_uses_type_designator(self):
         record = {"aircraft": {"type_designator": "C152"}}
         r = self._make_redis_with_type({"manufacturer_model": "CESSNA 152"})
@@ -461,7 +451,6 @@ class TestApplyTypeLookup:
         r = self._make_redis_with_type(None)
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
-        assert "wake_turbulence_category" not in record["aircraft"]
 
     def test_no_type_designator_skips_lookup_entirely(self):
         record = {"aircraft": {"model": "Some Model"}}
@@ -483,13 +472,6 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
 
-    def test_manufacturer_model_and_wake_turbulence_category_independent(self):
-        record = {"aircraft": {"type_designator": "XXXX"}}
-        r = self._make_redis_with_type({"wake_turbulence_category": "Light"})
-        _apply_type_lookup(record, r)
-        assert "manufacturer_model" not in record["aircraft"]
-        assert record["aircraft"]["wake_turbulence_category"] == "Light"
-
 
 # ---------------------------------------------------------------------------
 # Tests: write_to_redis
@@ -507,13 +489,11 @@ class TestWriteToRedis:
         r = _make_redis()
         r.json.return_value.get.return_value = {
             "manufacturer_model": "CESSNA 172 Skyhawk",
-            "wake_turbulence_category": "Light",
         }
         write_to_redis(rows, r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         written = set_call[0][2]
         assert written["aircraft"]["manufacturer_model"] == "CESSNA 172 Skyhawk"
-        assert written["aircraft"]["wake_turbulence_category"] == "Light"
 
     def test_invalid_icao_hex_skipped(self):
         rows = [_make_row(icao_hex="NOTHEX")]

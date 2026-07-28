@@ -43,8 +43,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "CESSNA 402 Businessliner",
         "model": "402C",
         "serial_number": "402C-0074",
-        "type_designator": "C402",
-        "wake_turbulence_category": "Light"
+        "type_designator": "C402"
     },
     "icao_hex": "40038D",
     "military": false,
@@ -69,8 +68,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "ATR-72-202",
         "model": "ATR 72-212A",
         "serial_number": "702",
-        "type_designator": "AT72",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "AT72"
     },
     "icao_hex": "40039F",
     "military": false,

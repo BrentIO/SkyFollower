@@ -40,8 +40,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "CESSNA 208 Caravan",
         "model": "Cessna Aircraft Co.,C208B",
         "serial_number": "208B5144",
-        "type_designator": "C208",
-        "wake_turbulence_category": "Light"
+        "type_designator": "C208"
     },
     "icao_hex": "0AB014",
     "military": false,
@@ -70,8 +69,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BELL 407",
         "model": "Bell Helicopter Textron,Bell 407",
         "serial_number": "53048",
-        "type_designator": "B407",
-        "wake_turbulence_category": "Light"
+        "type_designator": "B407"
     },
     "icao_hex": "0AB036",
     "military": false,

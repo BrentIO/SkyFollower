@@ -66,8 +66,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "CESSNA 152",
         "model": "Textron Aviation Inc., 152",
         "serial_number": "152-80719",
-        "type_designator": "C152",
-        "wake_turbulence_category": "Light"
+        "type_designator": "C152"
     },
     "icao_hex": "05A097",
     "military": false,
@@ -98,8 +97,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "AIRBUS A-330-200",
         "model": "Airbus, Airbus A330-203",
         "serial_number": "1161",
-        "type_designator": "A332",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "A332"
     },
     "icao_hex": "05A0AF",
     "military": false,

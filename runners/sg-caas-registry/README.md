@@ -48,8 +48,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "model": "Lycoming IO-360-M1A"
         },
         "serial_number": "40.1089",
-        "type_designator": "DA40",
-        "wake_turbulence_category": "Light"
+        "type_designator": "DA40"
     },
     "icao_hex": "76E4C7",
     "military": false,
@@ -78,8 +77,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "model": "RB211-TRENT 970"
         },
         "serial_number": "247",
-        "type_designator": "A388",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "A388"
     },
     "icao_hex": "76CD76",
     "military": false,

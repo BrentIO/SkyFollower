@@ -13,8 +13,8 @@
 
 This is the foundational data source for the whole enrichment pipeline: every
 other runner's example output in this repo includes fields that Mictronics
-itself contributed (`manufacturer`, `manufacturer_model`, `type_designator`,
-`wake_turbulence_category`) before country-specific data is merged on top, and
+itself contributed (`manufacturer`, `manufacturer_model`, `type_designator`)
+before country-specific data is merged on top, and
 country runners resolve `icao_hex` by looking up their own registrations
 against the RediSearch index this runner maintains
 (`idx:aircraft:mictronics`).
@@ -36,8 +36,8 @@ each new record is deep-merged into whatever already exists at that key
 written by an earlier one.
 
 `types.json` is also published standalone as `aircraft:type:{designator}` —
-one JSON key per type designator, holding `type_designator`,
-`manufacturer_model`, and (when decodable) `wake_turbulence_category`.
+one JSON key per type designator, holding `type_designator` and
+`manufacturer_model`.
 This is a plain lookup table, not merged into any per-hex record: it exists
 so a country registry runner that only knows a `type_designator` (not a full
 `manufacturer_model`) can resolve one directly via `JSON.GET
@@ -68,7 +68,7 @@ The ZIP archive contains four data files that are inspected independently below 
 | key (type_designator) | ✅ | Join key into `aircrafts.json`; also the Redis key suffix for the standalone `aircraft:type:{designator}` record |
 | values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer` (per-hex record); full string kept as `aircraft.manufacturer_model` (per-hex) and `manufacturer_model` (standalone `aircraft:type:{designator}` record) |
 | values[1] (ICAO aircraft description code, e.g. `L2J`, `H2T`, `L1P`) | ❌ | Never read by this runner — the `powerplant`/`category` columns declared in the local SQLite schema are never populated from it |
-| values[2] (wtc code) | ✅ | Decoded (`J`/`H`/`M`/`L`/`M/L`/`-` → full name) → `aircraft.wake_turbulence_category` (per-hex) and `wake_turbulence_category` (standalone `aircraft:type:{designator}` record) |
+| values[2] (wtc code) | ❌ | `wake_turbulence_category` is receiver-decode-only (live ADS-B/UAT category data), never sourced from registry/Mictronics data — never read by this runner |
 
 Every `types.json` entry with a non-empty `manufacturer_model` is written to its own `aircraft:type:{designator}` key, independent of whether that designator appears anywhere in `aircrafts.json`.
 
@@ -94,8 +94,8 @@ See `specs/data-dictionary.yaml` (`mictronics` entry) for full column semantics 
 `aircraft:mictronics:{icao_hex}` records are never looked up directly by a
 user — their data is only ever seen merged underneath a country runner's own
 fields. The example below (from `gg-2reg-registry`'s `43EC60`) illustrates this:
-`manufacturer`, `manufacturer_model`, `type_designator`, and
-`wake_turbulence_category` are Mictronics's own contributions from
+`manufacturer`, `manufacturer_model`, and `type_designator` are Mictronics's
+own contributions from
 `aircraft:mictronics:43EC60` (written by this runner), present before or
 independent of any country-specific enrichment; `model` and `serial_number`
 are `gg-2reg-registry`'s own additions from a separate `aircraft:registry:43EC60` key,
@@ -112,8 +112,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "PIPER PA-28-201T/235/236",
         "model": "PA-28-235",
         "serial_number": "28-7210009",
-        "type_designator": "P28B",
-        "wake_turbulence_category": "Light"
+        "type_designator": "P28B"
     },
     "icao_hex": "43EC60",
     "military": false,
@@ -131,8 +130,7 @@ docker run --rm --network host redis:latest redis-cli JSON.GET aircraft:type:B76
 ```json
 {
     "manufacturer_model": "BOEING 767-300",
-    "type_designator": "B763",
-    "wake_turbulence_category": "Heavy"
+    "type_designator": "B763"
 }
 ```
 

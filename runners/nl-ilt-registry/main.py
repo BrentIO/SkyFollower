@@ -254,7 +254,7 @@ def _build_record(row: dict) -> Optional[dict]:
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
     """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model / aircraft.wake_turbulence_category when found.
+    and set aircraft.manufacturer_model when found.
 
     Unconditional: this runner's own type_designator is sourced directly from the
     ILT register and is authoritative, so the lookup happens regardless of whether
@@ -279,9 +279,6 @@ def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
     manufacturer_model = (type_doc.get("manufacturer_model") or "").strip()
     if manufacturer_model:
         aircraft["manufacturer_model"] = manufacturer_model
-    wake_turbulence_category = (type_doc.get("wake_turbulence_category") or "").strip()
-    if wake_turbulence_category:
-        aircraft["wake_turbulence_category"] = wake_turbulence_category
 
 
 # ---------------------------------------------------------------------------

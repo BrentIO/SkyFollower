@@ -26,7 +26,7 @@ explicitly sets `military: false` — this register is exclusively civil, and
 the explicit value ensures a stale `military: true` flag (from Mictronics or
 a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `wake_turbulence_category` are each set directly on this record (independently — a type entry with only one of the two still sets that one) — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the ILT register and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the ILT register and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -48,7 +48,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | Configuration | ❌ | Present in source; not read by this runner |
 | MTOM | ❌ | Present in source; not read by this runner |
 | MLM | ❌ | Present in source; not read by this runner |
-| ICAO-code | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.wake_turbulence_category` when found |
+| ICAO-code | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
 | AOC | ❌ | Present in source; not read by this runner |
 | 83Bis | ❌ | Present in source; not read by this runner |
 | Representative | ❌ | Present in source; not read by this runner |
@@ -121,8 +121,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         },
         "serial_number": "2843664",
         "type": "Airplane",
-        "type_designator": "P28A",
-        "wake_turbulence_category": "Light"
+        "type_designator": "P28A"
     },
     "icao_hex": "484674",
     "military": false,
@@ -150,8 +149,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         },
         "serial_number": "1300",
         "type": "Airplane",
-        "type_designator": "A333",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "A333"
     },
     "icao_hex": "484F73",
     "military": false,

@@ -41,8 +41,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "PIPER PA-28RT-201T Turbo",
         "model": "PA-28RT-201T (Turbo Arrow IV)",
         "serial_number": "28R-8031166",
-        "type_designator": "P28U",
-        "wake_turbulence_category": "Light"
+        "type_designator": "P28U"
     },
     "icao_hex": "505C72",
     "military": false,
@@ -67,8 +66,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 737-800",
         "model": "Boeing 737-8Q8",
         "serial_number": "35275",
-        "type_designator": "B738",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "B738"
     },
     "icao_hex": "505A88",
     "military": false,

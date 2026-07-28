@@ -886,11 +886,6 @@ components:
           - type: string
           - type: 'null'
           title: Model
-        wake_turbulence_category:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Wake Turbulence Category
         powerplant:
           anyOf:
           - $ref: '#/components/schemas/PowerplantInfo'

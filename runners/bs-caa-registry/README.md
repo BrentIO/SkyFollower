@@ -39,8 +39,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "PIPER PA-23-250 Aztec",
         "model": "PA23-250",
         "serial_number": "27-7405407",
-        "type_designator": "PA27",
-        "wake_turbulence_category": "Light"
+        "type_designator": "PA27"
     },
     "icao_hex": "0A80AD",
     "military": false,
@@ -65,8 +64,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 737-700",
         "model": "B737-752",
         "serial_number": "30038",
-        "type_designator": "B737",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "B737"
     },
     "icao_hex": "0A80C2",
     "military": false,

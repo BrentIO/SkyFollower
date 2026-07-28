@@ -13,7 +13,7 @@
 
 A single `POST` request to the fixed FOCA/BAZL backend endpoint (`page_result_limit: 10000`, `current_page_number: 1`, filtered to `aircraftStatus: ["Registered"]`) returns the entire register as one UTF-16 encoded, semicolon-delimited CSV — no authentication or page discovery needed. Rows are additionally filtered to `Status == "Registered"` and to those with a valid 6-hex-digit `Aircraft Address HEX`. Note that the CSV column headers all carry a leading space (e.g. `" Registration"`, `" Aircraft Type"`) — this is preserved verbatim in the source and must be matched exactly when reading `row.get(...)`. The `Main Owner` field is a single unstructured address string (`Name[, Canton]?, Street, PostalCode City, Switzerland`) that is best-effort parsed by popping known trailing/canton tokens off a comma-split list, since there's no per-field structure to rely on. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `wake_turbulence_category` are each set directly on this record (independently — a type entry with only one of the two still sets that one) — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from FOCA/BAZL and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from FOCA/BAZL and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -26,7 +26,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | Date of Deregistration | ❌ | Present in source; not read by this runner |
 | Manufacturer | ✅ | → `aircraft.manufacturer` |
 | Aicraft Model (sic, source typo) | ✅ | → `aircraft.model` |
-| ICAO Aircraft Type | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.wake_turbulence_category` when found |
+| ICAO Aircraft Type | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
 | Marketing Designation | ❌ | Present in source; not read by this runner |
 | Aircraft Type | ✅ | Decoded via a type map (e.g. `Homebuilt Airplane` → `Airplane`) → `aircraft.type` |
 | Certification Basis | ❌ | Present in source; not read by this runner |
@@ -84,8 +84,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "seats": 2,
         "serial_number": "12026",
         "type": "Airplane",
-        "type_designator": "J3",
-        "wake_turbulence_category": "Light"
+        "type_designator": "J3"
     },
     "icao_hex": "4B012D",
     "military": false,
@@ -124,8 +123,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "seats": 197,
         "serial_number": "10186",
         "type": "Airplane",
-        "type_designator": "A20N",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "A20N"
     },
     "icao_hex": "4B0280",
     "military": false,

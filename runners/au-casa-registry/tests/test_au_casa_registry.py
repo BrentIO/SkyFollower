@@ -359,12 +359,6 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert record["aircraft"]["manufacturer_model"] == "AIRBUS HELICOPTERS EC-225/725"
 
-    def test_designator_resolves_sets_wake_turbulence_category(self):
-        record = {"aircraft": {"type_designator": "R44"}}
-        r = self._make_redis({"manufacturer_model": "ROBINSON R-44 Raven", "wake_turbulence_category": "Light"})
-        _apply_type_lookup(record, r)
-        assert record["aircraft"]["wake_turbulence_category"] == "Light"
-
     def test_lookup_key_uses_type_designator(self):
         record = {"aircraft": {"type_designator": "R44"}}
         r = self._make_redis({"manufacturer_model": "ROBINSON R-44 Raven"})
@@ -382,7 +376,6 @@ class TestApplyTypeLookup:
         r = self._make_redis(None)
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
-        assert "wake_turbulence_category" not in record["aircraft"]
 
     def test_no_type_designator_skips_lookup_entirely(self):
         record = {"aircraft": {"model": "Some Model"}}
@@ -403,13 +396,6 @@ class TestApplyTypeLookup:
         r.json.return_value.get.side_effect = Exception("connection refused")
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
-
-    def test_manufacturer_model_and_wake_turbulence_category_independent(self):
-        record = {"aircraft": {"type_designator": "XXXX"}}
-        r = self._make_redis({"wake_turbulence_category": "Light"})
-        _apply_type_lookup(record, r)
-        assert "manufacturer_model" not in record["aircraft"]
-        assert record["aircraft"]["wake_turbulence_category"] == "Light"
 
 
 # ---------------------------------------------------------------------------
@@ -452,13 +438,12 @@ class TestWriteToRedis:
 
     def test_manufacturer_model_set_from_type_lookup_end_to_end(self):
         rows = [_make_row(icao_type_desig="C172")]
-        type_doc = {"manufacturer_model": "CESSNA 172 Skyhawk", "wake_turbulence_category": "Light"}
+        type_doc = {"manufacturer_model": "CESSNA 172 Skyhawk"}
         r = _make_redis_with_search(icao_hex="7C1234", registration="VH-ABC", type_doc=type_doc)
         write_to_redis(rows, r, REDIS_TTL)
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         written = set_call[0][2]
         assert written["aircraft"]["manufacturer_model"] == "CESSNA 172 Skyhawk"
-        assert written["aircraft"]["wake_turbulence_category"] == "Light"
 
     def test_no_redis_match_not_written(self):
         rows = [_make_row()]
