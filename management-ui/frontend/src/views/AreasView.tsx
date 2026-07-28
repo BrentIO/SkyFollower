@@ -12,7 +12,7 @@ import { Lock, Unlock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { createArea, deleteArea, listAreas, updateArea, type Area } from "../api/areas";
+import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 
@@ -185,6 +185,16 @@ function isAreaGeometryType(type: string): type is Area["geometry"]["type"] {
   return type === "Polygon" || type === "LineString" || type === "Point";
 }
 
+// Reads a just-finished draw's actual geometry type off Terra Draw's own
+// snapshot -- falls back to "Polygon" if the feature vanished (rejected by
+// mode validation) or reports an unsupported type; the naming modal never
+// opens for those cases anyway (see handleNameConfirm's own check), so this
+// is only ever seen transiently before pendingDrawFeatureId is cleared.
+function snapshotGeometryType(draw: TerraDraw | null, featureId: string): Area["geometry"]["type"] {
+  const type = draw?.getSnapshotFeature(featureId)?.geometry.type;
+  return type && isAreaGeometryType(type) ? type : "Polygon";
+}
+
 // Terra Draw's select-mode drag/vertex-edit flags per drawing-mode name --
 // shared by the initial TerraDrawSelectMode construction and every later
 // setSelectDraggable() call so the two can never drift apart. A Point
@@ -299,6 +309,9 @@ export function AreasView() {
   // modal -- a freshly drawn shape leaves this null and the modal starts
   // blank as before.
   const [pendingNameSuggestion, setPendingNameSuggestion] = useState<string | null>(null);
+  // Drives the naming modal's "Name this area/line/point" title -- set
+  // alongside pendingDrawFeatureId at both call sites that open it.
+  const [pendingGeometryType, setPendingGeometryType] = useState<Area["geometry"]["type"]>("Polygon");
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
 
@@ -318,10 +331,12 @@ export function AreasView() {
   // sees the current render's state without needing to be re-registered.
   const handleDrawFinishRef = useRef((featureId: string) => {
     setPendingNameSuggestion(null);
+    setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
     setPendingDrawFeatureId(featureId);
   });
   handleDrawFinishRef.current = (featureId: string) => {
     setPendingNameSuggestion(null);
+    setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
     setPendingDrawFeatureId(featureId);
   };
 
@@ -569,6 +584,7 @@ export function AreasView() {
       setDraft(null);
       setOriginal(null);
       setPendingNameSuggestion(sourceName ? `${sourceName} copy` : "");
+      setPendingGeometryType(sourceGeometry.type);
       setPendingDrawFeatureId(tempId);
     });
   }
@@ -646,7 +662,7 @@ export function AreasView() {
       setDraft(clone(saved));
       setOriginal(clone(saved));
       setSelectDraggable(false);
-      showToast("success", `Area '${saved.identifier}' created.`);
+      showToast("success", `${geometryDisplayNoun(saved.geometry.type)} '${saved.identifier}' created.`);
     } catch (err) {
       removeFeatureIfPresent(draw, tempId);
       showToast("error", err instanceof ApiError ? err.message : "Failed to create area.");
@@ -673,7 +689,7 @@ export function AreasView() {
       setAreas((current) => current.map((a) => (a.identifier === saved.identifier ? saved : a)));
       setDraft(clone(saved));
       setOriginal(clone(saved));
-      showToast("success", `Area '${saved.identifier}' saved.`);
+      showToast("success", `${geometryDisplayNoun(saved.geometry.type)} '${saved.identifier}' saved.`);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to save area.");
     } finally {
@@ -693,7 +709,8 @@ export function AreasView() {
       setDraft(clone(saved));
       setOriginal(clone(saved));
       setSelectDraggable(saved.locked);
-      showToast("success", saved.locked ? `Area '${saved.identifier}' locked.` : `Area '${saved.identifier}' unlocked.`);
+      const noun = geometryDisplayNoun(saved.geometry.type);
+      showToast("success", saved.locked ? `${noun} '${saved.identifier}' locked.` : `${noun} '${saved.identifier}' unlocked.`);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to update area.");
     } finally {
@@ -717,7 +734,7 @@ export function AreasView() {
         setDraft(null);
         setOriginal(null);
       }
-      showToast("success", `Area '${deleteTarget.identifier}' deleted.`);
+      showToast("success", `${geometryDisplayNoun(deleteTarget.geometry.type)} '${deleteTarget.identifier}' deleted.`);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to delete area.");
     } finally {
@@ -897,6 +914,7 @@ export function AreasView() {
         open={pendingDrawFeatureId !== null}
         existingIdentifiers={areas.map((a) => a.identifier)}
         initialName={pendingNameSuggestion ?? undefined}
+        geometryType={pendingGeometryType}
         onConfirm={handleNameConfirm}
         onCancel={handleNameCancel}
       />
