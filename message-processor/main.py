@@ -969,9 +969,12 @@ class MessageProcessor:
             return
 
         try:
-            raw = self._redis.get(operator_key(prefix))
+            # operator:{designator} is a RedisJSON document (same write path
+            # as every other enrichment key) -- a plain GET raises WRONGTYPE
+            # against it, silently swallowed by the bare except below.
+            raw = self._redis.json().get(operator_key(prefix))
             if raw:
-                flight.operator = json.loads(raw)
+                flight.operator = raw
             else:
                 self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
                 self._redis.incr(metrics_registration_misses_key(self._id, "today"))
