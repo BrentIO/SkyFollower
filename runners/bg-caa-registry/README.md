@@ -43,8 +43,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "Cirrus SR 22",
         "serial_number": "00488",
         "type": "Airplane",
-        "type_designator": "SR22",
-        "wake_turbulence_category": "Light"
+        "type_designator": "SR22"
     },
     "icao_hex": "451C2B",
     "military": false,
@@ -65,8 +64,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "Airbus A319-112",
         "serial_number": "03188",
         "type": "Airplane",
-        "type_designator": "A319",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "A319"
     },
     "icao_hex": "451E92",
     "military": true,

@@ -48,8 +48,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "A152",
         "serial_number": "A1520919",
         "type": "Airplane",
-        "type_designator": "C152",
-        "wake_turbulence_category": "Light"
+        "type_designator": "C152"
     },
     "icao_hex": "C804C7",
     "military": false,
@@ -82,8 +81,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "A320-232",
         "serial_number": "4926",
         "type": "Airplane",
-        "type_designator": "A320",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "A320"
     },
     "icao_hex": "C81E2C",
     "military": false,

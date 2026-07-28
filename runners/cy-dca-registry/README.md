@@ -41,8 +41,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BEAGLE Pup",
         "model": "BEAGLE B121 SERIES 2",
         "serial_number": "166",
-        "type_designator": "PUP",
-        "wake_turbulence_category": "Light"
+        "type_designator": "PUP"
     },
     "icao_hex": "4C8038",
     "military": false,
@@ -67,8 +66,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "AIRBUS A-320",
         "model": "A320-214",
         "serial_number": "3933 (2009)",
-        "type_designator": "A320",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "A320"
     },
     "icao_hex": "4C8090",
     "military": false,

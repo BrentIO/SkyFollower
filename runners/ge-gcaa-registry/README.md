@@ -56,8 +56,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOMBARDIER Regional Jet CRJ-200",
         "model": "CL-600-2B19 (CRJ)",
         "serial_number": "7442",
-        "type_designator": "CRJ2",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "CRJ2"
     },
     "icao_hex": "51404B",
     "military": false,
@@ -83,8 +82,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 767-300",
         "model": "Boeing 767-300",
         "serial_number": "29390",
-        "type_designator": "B763",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "B763"
     },
     "icao_hex": "514D03",
     "military": false,

@@ -55,8 +55,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "PIPER PA-28R-180/200/201",
         "model": "PIPER PA-28R-201",
         "serial_number": "28R-787120",
-        "type_designator": "P28R",
-        "wake_turbulence_category": "Light"
+        "type_designator": "P28R"
     },
     "icao_hex": "512031",
     "military": false,
@@ -85,8 +84,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "AIR TRACTOR AT-802",
         "model": "AT-802A",
         "serial_number": "802A-0313",
-        "type_designator": "AT8T",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "AT8T"
     },
     "icao_hex": "512029",
     "military": false,

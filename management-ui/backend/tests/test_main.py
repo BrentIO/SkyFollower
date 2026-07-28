@@ -863,7 +863,6 @@ class TestAircraftLookup:
             "aircraft": {
                 "type_designator": "B752",
                 "manufacturer": "Boeing",
-                "wake_turbulence_category": "heavy",
             },
         })
         resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F"})
@@ -872,7 +871,6 @@ class TestAircraftLookup:
         assert body["icao_hex"] == "A8AE7F"
         assert body["registration"] == "N659DL"
         assert body["type_designator"] == "B752"
-        assert body["wake_turbulence_category"] == "heavy"
         assert body["data_sources"] == ["mictronics"]
 
     def test_hex_merges_registry_over_mictronics(self, client, fake_redis):

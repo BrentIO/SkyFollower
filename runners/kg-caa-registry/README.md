@@ -43,8 +43,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "DIAMOND DA-42 Guardian",
         "model": "Diamond DA-42M-NG",
         "serial_number": "42MN003",
-        "type_designator": "DA42",
-        "wake_turbulence_category": "Light"
+        "type_designator": "DA42"
     },
     "icao_hex": "6010AF",
     "military": false,
@@ -72,8 +71,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "BOEING 747-200",
         "model": "Boeing 747-222B",
         "serial_number": "23737",
-        "type_designator": "B742",
-        "wake_turbulence_category": "Heavy"
+        "type_designator": "B742"
     },
     "icao_hex": "6010E2",
     "military": false,

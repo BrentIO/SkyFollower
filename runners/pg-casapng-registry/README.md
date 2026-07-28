@@ -39,8 +39,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer": "CESSNA",
         "manufacturer_model": "CESSNA 208 Caravan",
         "model": "208",
-        "type_designator": "C208",
-        "wake_turbulence_category": "Light"
+        "type_designator": "C208"
     },
     "icao_hex": "898104",
     "military": false,
@@ -66,8 +65,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer": "BOEING",
         "manufacturer_model": "BOEING 737-800",
         "model": "737",
-        "type_designator": "B738",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "B738"
     },
     "icao_hex": "898174",
     "military": false,

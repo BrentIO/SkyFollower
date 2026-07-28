@@ -42,8 +42,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "CESSNA T206 Turbo Stationair",
         "model": "T206H",
         "serial_number": "T20608513",
-        "type_designator": "T206",
-        "wake_turbulence_category": "Light"
+        "type_designator": "T206"
     },
     "icao_hex": "43E76C",
     "military": false,
@@ -73,8 +72,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "AIRBUS A-320",
         "model": "A320-216",
         "serial_number": "5824",
-        "type_designator": "A320",
-        "wake_turbulence_category": "Medium"
+        "type_designator": "A320"
     },
     "icao_hex": "424CB8",
     "military": false,

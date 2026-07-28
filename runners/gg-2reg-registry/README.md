@@ -65,8 +65,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "manufacturer_model": "PIPER PA-28-201T/235/236",
         "model": "PA-28-235",
         "serial_number": "28-7210009",
-        "type_designator": "P28B",
-        "wake_turbulence_category": "Light"
+        "type_designator": "P28B"
     },
     "icao_hex": "43EC60",
     "military": false,

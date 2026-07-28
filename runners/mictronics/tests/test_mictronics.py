@@ -51,7 +51,6 @@ _mod = _load_main()
 
 
 # Convenience aliases
-_decode_wtc = _mod._decode_wtc
 _split_manufacturer_model = _mod._split_manufacturer_model
 build_aircraft_record = _mod.build_aircraft_record
 build_operator_record = _mod.build_operator_record
@@ -100,36 +99,6 @@ def _make_zip_files(aircrafts=None, operators=None, types=None) -> dict[str, byt
     if types is not None:
         files["types.json"] = json.dumps(types).encode()
     return files
-
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_wtc
-# ---------------------------------------------------------------------------
-
-class TestDecodeWtc:
-    def test_heavy(self):
-        assert _decode_wtc("H") == "Heavy"
-
-    def test_light(self):
-        assert _decode_wtc("L") == "Light"
-
-    def test_medium(self):
-        assert _decode_wtc("M") == "Medium"
-
-    def test_super(self):
-        assert _decode_wtc("J") == "Super"
-
-    def test_medium_light(self):
-        assert _decode_wtc("M/L") == "Medium/Light"
-
-    def test_dash_is_unknown_none(self):
-        assert _decode_wtc("-") == "Unknown/None"
-
-    def test_empty_returns_none(self):
-        assert _decode_wtc("") is None
-
-    def test_unknown_code_returns_unknown(self):
-        assert _decode_wtc("X") == "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +242,10 @@ class TestStageData:
             assert cur.fetchone()[0] == len(SAMPLE_OPERATORS)
             conn.close()
 
-    def test_types_staged_with_wtc(self):
+    def test_types_staged(self):
+        # SAMPLE_TYPES' third element (wtc) is present in the raw input,
+        # matching real Mictronics data, but is no longer staged -- this
+        # runner only cares about manufacturer_model now.
         files = _make_zip_files(
             aircrafts=SAMPLE_AIRCRAFTS,
             operators=SAMPLE_OPERATORS,
@@ -283,12 +255,10 @@ class TestStageData:
             conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()
             cur.execute(
-                "SELECT manufacturer_model, wake_turbulence_category "
-                "FROM types WHERE type_designator = 'B763'"
+                "SELECT manufacturer_model FROM types WHERE type_designator = 'B763'"
             )
             row = cur.fetchone()
             assert row[0] == "Boeing 767-332ER"
-            assert row[1] == "Heavy"
             conn.close()
 
     def test_icao_hex_uppercased(self):
@@ -316,7 +286,6 @@ class TestBuildAircraftRecord:
             "military": military,
             "interesting": interesting,
             "manufacturer_model": manufacturer_model,
-            "wake_turbulence_category": None,
         }
 
     def test_full_record_shape(self):
@@ -512,30 +481,19 @@ class TestWriteOperatorsToRedis:
 # ---------------------------------------------------------------------------
 
 class TestBuildTypeRecord:
-    def _row(self, designator, manufacturer_model, wake_turbulence_category=None):
+    def _row(self, designator, manufacturer_model):
         return {
             "type_designator": designator,
             "manufacturer_model": manufacturer_model,
-            "wake_turbulence_category": wake_turbulence_category,
         }
 
     def test_full_record(self):
-        row = self._row("B763", "Boeing 767-332ER", "Heavy")
+        row = self._row("B763", "Boeing 767-332ER")
         record = build_type_record(row)
         assert record == {
             "type_designator": "B763",
             "manufacturer_model": "Boeing 767-332ER",
-            "wake_turbulence_category": "Heavy",
         }
-
-    def test_null_wtc_omitted(self):
-        row = self._row("C172", "Cessna 172 Skyhawk", wake_turbulence_category=None)
-        record = build_type_record(row)
-        assert record == {
-            "type_designator": "C172",
-            "manufacturer_model": "Cessna 172 Skyhawk",
-        }
-        assert "wake_turbulence_category" not in record
 
 
 # ---------------------------------------------------------------------------
@@ -548,12 +506,12 @@ class TestWriteTypesToRedis:
         conn.row_factory = sqlite3.Row
         conn.executescript(_mod._SCHEMA)
         conn.execute(
-            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
-            "VALUES ('B763', 'Boeing 767-332ER', 'Heavy')"
+            "INSERT INTO types (type_designator, manufacturer_model) "
+            "VALUES ('B763', 'Boeing 767-332ER')"
         )
         conn.execute(
-            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
-            "VALUES ('C172', 'Cessna 172 Skyhawk', 'Light')"
+            "INSERT INTO types (type_designator, manufacturer_model) "
+            "VALUES ('C172', 'Cessna 172 Skyhawk')"
         )
         conn.commit()
         return conn
@@ -603,8 +561,8 @@ class TestWriteTypesToRedis:
         conn.row_factory = sqlite3.Row
         conn.executescript(_mod._SCHEMA)
         conn.execute(
-            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
-            "VALUES ('ZZZZ', '', NULL)"
+            "INSERT INTO types (type_designator, manufacturer_model) "
+            "VALUES ('ZZZZ', '')"
         )
         conn.commit()
         r, _, pipe_json = self._mock_redis()
@@ -618,8 +576,8 @@ class TestWriteTypesToRedis:
         conn.row_factory = sqlite3.Row
         conn.executescript(_mod._SCHEMA)
         conn.execute(
-            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
-            "VALUES ('ZZZZ', NULL, NULL)"
+            "INSERT INTO types (type_designator, manufacturer_model) "
+            "VALUES ('ZZZZ', NULL)"
         )
         conn.commit()
         r, _, pipe_json = self._mock_redis()
@@ -673,8 +631,8 @@ class TestWriteToRedis:
             "VALUES ('AA0001', 'N12345', 'C172', 0, 0)"
         )
         conn.execute(
-            "INSERT INTO types (type_designator, manufacturer_model, wake_turbulence_category) "
-            "VALUES ('B763', 'Boeing 767-332ER', 'Heavy')"
+            "INSERT INTO types (type_designator, manufacturer_model) "
+            "VALUES ('B763', 'Boeing 767-332ER')"
         )
         conn.commit()
         return conn

@@ -899,8 +899,8 @@ def _search_one(index: str, field: str, value: str) -> Optional[str]:
 
 
 def _flatten_aircraft_doc(doc: dict) -> dict:
-    """merge_aircraft.lua's output nests type/manufacturer/wake-turbulence/
-    powerplant fields under an `aircraft` sub-object, mirroring how the
+    """merge_aircraft.lua's output nests type/manufacturer/powerplant fields
+    under an `aircraft` sub-object, mirroring how the
     mictronics/country-registry runners store them (see their own
     build_aircraft_record functions) -- AircraftRecord's shape is flat,
     matching the legacy AROI /registration/icao_hex/{hex} response, so
