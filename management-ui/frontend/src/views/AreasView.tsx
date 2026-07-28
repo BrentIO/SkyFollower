@@ -1,6 +1,12 @@
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { TerraDraw, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
+import {
+  TerraDraw,
+  TerraDrawLineStringMode,
+  TerraDrawPointMode,
+  TerraDrawPolygonMode,
+  TerraDrawSelectMode,
+} from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { Lock, Unlock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -43,6 +49,42 @@ function removeFeatureIfPresent(draw: TerraDraw, id: string): void {
   if (draw.getSnapshotFeature(id)) draw.removeFeatures([id]);
 }
 
+// Visits every [lng, lat] coordinate pair in a geometry, regardless of
+// type -- the one thing computeBounds/offsetGeometry actually need, so
+// neither has to duplicate a type switch of its own.
+function forEachCoordinate(geometry: Area["geometry"], fn: (coord: [number, number]) => void): void {
+  switch (geometry.type) {
+    case "Polygon":
+      for (const ring of geometry.coordinates) for (const c of ring) fn(c as [number, number]);
+      break;
+    case "LineString":
+      for (const c of geometry.coordinates) fn(c as [number, number]);
+      break;
+    case "Point":
+      fn(geometry.coordinates as [number, number]);
+      break;
+  }
+}
+
+// Same shape as forEachCoordinate, but transforms instead of just visiting
+// -- offsetGeometry's per-type mapping.
+function mapCoordinates(
+  geometry: Area["geometry"],
+  fn: (coord: [number, number]) => [number, number],
+): Area["geometry"] {
+  switch (geometry.type) {
+    case "Polygon":
+      return {
+        ...geometry,
+        coordinates: geometry.coordinates.map((ring) => ring.map((c) => fn(c as [number, number]))),
+      };
+    case "LineString":
+      return { ...geometry, coordinates: geometry.coordinates.map((c) => fn(c as [number, number])) };
+    case "Point":
+      return { ...geometry, coordinates: fn(geometry.coordinates as [number, number]) };
+  }
+}
+
 function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
   let minLng = Infinity;
   let minLat = Infinity;
@@ -50,32 +92,111 @@ function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
   let maxLat = -Infinity;
   let found = false;
   for (const area of areas) {
-    for (const ring of area.geometry.coordinates) {
-      for (const [lng, lat] of ring) {
-        found = true;
-        if (lng < minLng) minLng = lng;
-        if (lng > maxLng) maxLng = lng;
-        if (lat < minLat) minLat = lat;
-        if (lat > maxLat) maxLat = lat;
-      }
-    }
+    forEachCoordinate(area.geometry, ([lng, lat]) => {
+      found = true;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    });
   }
   return found ? [[minLng, minLat], [maxLng, maxLat]] : null;
 }
 
-// Plain average of the outer ring's points -- good enough for label
-// placement, not a claim of geometric precision (no turf dependency just
-// for this).
-function computeCentroid(geometry: Area["geometry"]): [number, number] {
-  const ring = geometry.coordinates[0] ?? [];
-  if (ring.length === 0) return [0, 0];
-  let sumLng = 0;
-  let sumLat = 0;
-  for (const [lng, lat] of ring) {
-    sumLng += lng;
-    sumLat += lat;
+function segmentLength(a: number[], b: number[]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// Midpoint by cumulative length along the line, not just the middle
+// coordinate index -- a line with an uneven vertex spacing (e.g. one long
+// leg and several short ones near an airport) would otherwise place the
+// label well off-center visually.
+function lineStringMidpoint(coordinates: number[][]): [number, number] {
+  if (coordinates.length === 1) return [coordinates[0][0], coordinates[0][1]];
+  const lengths: number[] = [];
+  let total = 0;
+  for (let i = 0; i < coordinates.length - 1; i++) {
+    const len = segmentLength(coordinates[i], coordinates[i + 1]);
+    lengths.push(len);
+    total += len;
   }
-  return [sumLng / ring.length, sumLat / ring.length];
+  const half = total / 2;
+  let accumulated = 0;
+  for (let i = 0; i < lengths.length; i++) {
+    const next = accumulated + lengths[i];
+    if (next >= half || i === lengths.length - 1) {
+      const t = lengths[i] > 0 ? (half - accumulated) / lengths[i] : 0;
+      const [x1, y1] = coordinates[i];
+      const [x2, y2] = coordinates[i + 1];
+      return [x1 + (x2 - x1) * t, y1 + (y2 - y1) * t];
+    }
+    accumulated = next;
+  }
+  return [coordinates[0][0], coordinates[0][1]];
+}
+
+// Label anchor point per geometry type: Polygon keeps the plain outer-ring
+// average (good enough for placement, not a claim of geometric precision --
+// no turf dependency just for this); LineString uses the by-length
+// midpoint above; Point is trivially itself.
+function labelPosition(geometry: Area["geometry"]): [number, number] {
+  switch (geometry.type) {
+    case "Polygon": {
+      const ring = geometry.coordinates[0] ?? [];
+      if (ring.length === 0) return [0, 0];
+      let sumLng = 0;
+      let sumLat = 0;
+      for (const [lng, lat] of ring) {
+        sumLng += lng;
+        sumLat += lat;
+      }
+      return [sumLng / ring.length, sumLat / ring.length];
+    }
+    case "LineString":
+      return lineStringMidpoint(geometry.coordinates);
+    case "Point":
+      return [geometry.coordinates[0], geometry.coordinates[1]];
+  }
+}
+
+// Terra Draw feature properties.mode must equal the owning mode's own
+// name ("polygon"/"linestring"/"point") -- addFeatures() validates against
+// it (see offsetGeometry's own comment on validation) -- so every place a
+// feature is added to the map needs the mode name matching its actual
+// geometry type, not a hardcoded "polygon".
+function geometryToModeName(type: Area["geometry"]["type"]): "polygon" | "linestring" | "point" {
+  switch (type) {
+    case "Polygon":
+      return "polygon";
+    case "LineString":
+      return "linestring";
+    case "Point":
+      return "point";
+  }
+}
+
+// Narrows an arbitrary GeoJSON geometry (as returned by Terra Draw's own
+// getSnapshotFeature -- typed loosely since it also handles modes/
+// geometries this app never uses) down to the three types Area actually
+// supports.
+function isAreaGeometryType(type: string): type is Area["geometry"]["type"] {
+  return type === "Polygon" || type === "LineString" || type === "Point";
+}
+
+// Terra Draw's select-mode drag/vertex-edit flags per drawing-mode name --
+// shared by the initial TerraDrawSelectMode construction and every later
+// setSelectDraggable() call so the two can never drift apart. A Point
+// feature has no midpoints/vertices distinct from the feature itself, so
+// it only needs the feature-level draggable flag.
+function selectModeFlags(locked: boolean) {
+  const coordinates = { midpoints: !locked, draggable: !locked, deletable: !locked };
+  return {
+    polygon: { feature: { draggable: !locked, coordinates } },
+    linestring: { feature: { draggable: !locked, coordinates } },
+    point: { feature: { draggable: !locked } },
+  };
 }
 
 // Floor offset for degenerate (near-zero-extent) shapes, in degrees --
@@ -114,22 +235,21 @@ function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
   let minLat = Infinity;
   let maxLng = -Infinity;
   let maxLat = -Infinity;
-  for (const ring of geometry.coordinates) {
-    for (const [lng, lat] of ring) {
-      if (lng < minLng) minLng = lng;
-      if (lng > maxLng) maxLng = lng;
-      if (lat < minLat) minLat = lat;
-      if (lat > maxLat) maxLat = lat;
-    }
-  }
+  forEachCoordinate(geometry, ([lng, lat]) => {
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  });
+  // A Point's bbox is zero-sized (min === max on both axes), so the
+  // fraction term is always 0 and only the MIN_OFFSET_DEGREES floor
+  // applies -- still a visible, deliberate offset, not a no-op.
   const dLng = Math.max((maxLng - minLng) * 0.15, MIN_OFFSET_DEGREES);
   const dLat = Math.max((maxLat - minLat) * 0.15, MIN_OFFSET_DEGREES);
-  return {
-    ...geometry,
-    coordinates: geometry.coordinates.map((ring) =>
-      ring.map(([lng, lat]) => [roundCoordinate(lng + dLng), roundCoordinate(lat + dLat)]),
-    ),
-  };
+  return mapCoordinates(geometry, ([lng, lat]) => [
+    roundCoordinate(lng + dLng),
+    roundCoordinate(lat + dLat),
+  ]);
 }
 
 function labelsFeatureCollection(areas: Area[]): GeoJSON.FeatureCollection {
@@ -138,7 +258,7 @@ function labelsFeatureCollection(areas: Area[]): GeoJSON.FeatureCollection {
     features: areas.map((area) => ({
       type: "Feature",
       properties: { name: area.name || area.identifier },
-      geometry: { type: "Point", coordinates: computeCentroid(area.geometry) },
+      geometry: { type: "Point", coordinates: labelPosition(area.geometry) },
     })),
   };
 }
@@ -208,13 +328,13 @@ export function AreasView() {
   const handleDrawChangeRef = useRef((ids: string[]) => {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
-    if (!feature || feature.geometry.type !== "Polygon") return;
+    if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
   });
   handleDrawChangeRef.current = (ids: string[]) => {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
-    if (!feature || feature.geometry.type !== "Polygon") return;
+    if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
   };
 
@@ -249,16 +369,7 @@ export function AreasView() {
   // dynamically re-target those global flags at whichever area just became
   // selected, which has the same effect as a true per-feature lock.
   function setSelectDraggable(locked: boolean) {
-    drawRef.current?.updateModeOptions("select", {
-      flags: {
-        polygon: {
-          feature: {
-            draggable: !locked,
-            coordinates: { midpoints: !locked, draggable: !locked, deletable: !locked },
-          },
-        },
-      },
-    });
+    drawRef.current?.updateModeOptions("select", { flags: selectModeFlags(locked) });
   }
 
   useEffect(() => {
@@ -331,14 +442,7 @@ export function AreasView() {
         },
         modes: [
           new TerraDrawSelectMode({
-            flags: {
-              polygon: {
-                feature: {
-                  draggable: true,
-                  coordinates: { midpoints: true, draggable: true, deletable: true },
-                },
-              },
-            },
+            flags: selectModeFlags(false),
             // Terra Draw's own Delete/Escape key handling bypasses this
             // app's state entirely -- Delete would remove the feature from
             // the map without calling the delete API or going through the
@@ -351,6 +455,8 @@ export function AreasView() {
             keyEvents: { deselect: null, delete: null, rotate: null, scale: null },
           }),
           new TerraDrawPolygonMode(),
+          new TerraDrawLineStringMode(),
+          new TerraDrawPointMode(),
         ],
       });
       drawRef.current = draw;
@@ -393,7 +499,7 @@ export function AreasView() {
             loaded.map((area) => ({
               id: area.identifier,
               type: "Feature" as const,
-              properties: { mode: "polygon", name: area.name },
+              properties: { mode: geometryToModeName(area.geometry.type), name: area.name },
               geometry: area.geometry,
             })),
           );
@@ -430,19 +536,20 @@ export function AreasView() {
     });
   }
 
-  function startDrawing() {
+  function startDrawing(type: "polygon" | "linestring" | "point") {
     requestSwitch(() => {
       setDraft(null);
       setOriginal(null);
-      drawRef.current?.setMode("polygon");
+      drawRef.current?.setMode(type);
     });
   }
 
   // Duplicates the currently selected (and possibly in-progress-edited)
   // shape: clones its on-map geometry with a visible offset, then reuses
   // the exact same naming-modal -> create-area flow as a freshly drawn
-  // polygon (handleNameConfirm doesn't care how the pending feature got
-  // onto the map).
+  // shape (handleNameConfirm doesn't care how the pending feature got onto
+  // the map). Preserves the source's geometry type (a duplicated
+  // LineString stays a LineString, etc.).
   function duplicateArea() {
     if (!draft) return;
     const sourceGeometry = draft.geometry;
@@ -455,7 +562,7 @@ export function AreasView() {
         {
           id: tempId,
           type: "Feature",
-          properties: { mode: "polygon", name: sourceName },
+          properties: { mode: geometryToModeName(sourceGeometry.type), name: sourceName },
           geometry: offsetGeometry(sourceGeometry),
         },
       ]);
@@ -481,7 +588,7 @@ export function AreasView() {
       showToast("error", "That shape could not be created -- its geometry was rejected.");
       return;
     }
-    if (feature.geometry.type !== "Polygon") {
+    if (!isAreaGeometryType(feature.geometry.type)) {
       removeFeatureIfPresent(draw, tempId);
       return;
     }
@@ -503,7 +610,7 @@ export function AreasView() {
         {
           id: saved.identifier,
           type: "Feature",
-          properties: { mode: "polygon", name: saved.name },
+          properties: { mode: geometryToModeName(saved.geometry.type), name: saved.name },
           geometry: saved.geometry,
         },
       ]);
@@ -594,13 +701,32 @@ export function AreasView() {
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
-        <button
-          type="button"
-          onClick={startDrawing}
-          className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-        >
-          Draw New Area
-        </button>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Draw New Area</span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => startDrawing("polygon")}
+              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+            >
+              Polygon
+            </button>
+            <button
+              type="button"
+              onClick={() => startDrawing("linestring")}
+              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+            >
+              Line
+            </button>
+            <button
+              type="button"
+              onClick={() => startDrawing("point")}
+              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+            >
+              Point
+            </button>
+          </div>
+        </div>
 
         {loading ? (
           <p className="text-slate-400">Loading areas...</p>

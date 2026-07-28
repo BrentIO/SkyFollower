@@ -204,6 +204,27 @@ _AREA_EXAMPLES: dict[str, dict] = {
             ]],
         },
     },
+    "ILS 17L approach corridor": {
+        "identifier": "ILS_17L",
+        "name": "ILS 17L",
+        "geometry": {
+            "type": "LineString",
+            "coordinates": [
+                [-81.16, 28.77],
+                [-81.29, 28.7],
+                [-81.2845, 28.628056],
+                [-81.2825847, 28.4436808],
+            ],
+        },
+    },
+    "SHREK2 waypoint": {
+        "identifier": "SHREK2",
+        "name": "SHREK2",
+        "geometry": {
+            "type": "Point",
+            "coordinates": [-81.9198611, 28.9936389],
+        },
+    },
 }
 
 
@@ -438,17 +459,41 @@ class Rule(BaseModel):
     conditions: list[Condition] = Field(min_length=1)
 
 
-class AreaGeometry(BaseModel):
+class PolygonGeometry(BaseModel):
     type: Literal["Polygon"]
     coordinates: list[list[list[float]]]
 
 
+class LineStringGeometry(BaseModel):
+    type: Literal["LineString"]
+    coordinates: list[list[float]]
+
+
+class PointGeometry(BaseModel):
+    type: Literal["Point"]
+    coordinates: list[float]
+
+
+# Discriminated union keyed by `type`, same pattern as Condition above.
+# message-processor/rules_engine.py's `area` condition only ever evaluates
+# Polygon areas (`_load_areas` skips anything else with a debug log) -- that
+# does not change here. LineString/Point areas are valid to draw, name,
+# save, and display in the areas editor, but are simply not selectable as
+# an `area` condition's value.
+AreaGeometry = Annotated[
+    Union[PolygonGeometry, LineStringGeometry, PointGeometry],
+    Field(discriminator="type"),
+]
+
+
 class Area(BaseModel):
     """
-    A named GeoJSON polygon area, referenced by rules' `area` condition
-    (matched against `identifier`, not `name`). `identifier` is the routing
-    key used in /api/areas/{identifier} and must not contain spaces; `name`
-    is a free-text display label and may.
+    A named GeoJSON area (Polygon, LineString, or Point). Only a Polygon
+    area is usable as a rules' `area` condition's value (matched against
+    `identifier`, not `name`) -- message-processor/rules_engine.py skips
+    any other geometry type there. `identifier` is the routing key used in
+    /api/areas/{identifier} and must not contain spaces; `name` is a
+    free-text display label and may.
     """
 
     model_config = {"json_schema_extra": {"examples": list(_AREA_EXAMPLES.values())}}
@@ -895,9 +940,17 @@ def _save_areas_array(areas: list[dict], expect_identifier: Optional[str] = None
     # _load_areas() is deliberately lenient at the per-feature level (a bad
     # individual feature is silently dropped, not a hard failure -- see
     # message-processor/rules_engine.py), so a successful reload doesn't
-    # guarantee the item this call cares about actually survived it.
+    # guarantee the item this call cares about actually survived it. But
+    # RulesEngine only ever stages Polygon areas at all -- a LineString/
+    # Point area is *never* present in _engine._areas by design, not
+    # because anything went wrong, so this safety net only means something
+    # for a Polygon area. Pydantic's own Area/AreaGeometry validation
+    # (already run before this function is ever called) is the only and
+    # authoritative check for LineString/Point areas.
     if expect_identifier is not None:
-        if not any(a["identifier"] == expect_identifier for a in _engine._areas):
+        saved = next((a for a in areas if a.get("identifier") == expect_identifier), None)
+        is_polygon = saved is not None and saved.get("geometry", {}).get("type") == "Polygon"
+        if is_polygon and not any(a["identifier"] == expect_identifier for a in _engine._areas):
             raise HTTPException(
                 status_code=400,
                 detail=f"Area '{expect_identifier}' failed validation "
