@@ -1,8 +1,10 @@
 openapi: 3.1.0
 info:
   title: SkyFollower Management
-  description: Rules and areas configuration API. Message processors poll config:rules/config:areas
-    in Redis every 30 seconds for changes written here.
+  description: Rules/areas configuration API (writes config:rules/config:areas in
+    Redis, read by every message processor) plus read-only reference-data lookups
+    (aircraft/operator/airport/route) over the same enrichment Redis already holds
+    for rule evaluation.
   version: 9999.99.99
 paths:
   /api/rules:
@@ -571,6 +573,178 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/aircraft:
+    get:
+      tags:
+      - reference-data
+      summary: Get Aircraft
+      operationId: get_aircraft_api_aircraft_get
+      parameters:
+      - name: icao_hex
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 6-character ICAO hex, e.g. A8AE7F
+          title: Icao Hex
+        description: 6-character ICAO hex, e.g. A8AE7F
+      - name: registration
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Aircraft registration, e.g. N659DL
+          title: Registration
+        description: Aircraft registration, e.g. N659DL
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AircraftRecord'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/operators/{designator}:
+    get:
+      tags:
+      - reference-data
+      summary: Get Operator
+      operationId: get_operator_api_operators__designator__get
+      parameters:
+      - name: designator
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Designator
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorRecord'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/airports/{code}:
+    get:
+      tags:
+      - reference-data
+      summary: Get Airport
+      operationId: get_airport_api_airports__code__get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Code
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AirportRecord'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/routes/{ident}:
+    get:
+      tags:
+      - reference-data
+      summary: Get Route
+      operationId: get_route_api_routes__ident__get
+      parameters:
+      - name: ident
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ident
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteLookup'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -619,6 +793,102 @@ components:
       - operator
       - value
       title: AircraftPowerplantCountCondition
+    AircraftRecord:
+      properties:
+        icao_hex:
+          type: string
+          title: Icao Hex
+        registration:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration
+        type_designator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type Designator
+        manufacturer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manufacturer
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        wake_turbulence_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Wake Turbulence Category
+        powerplant:
+          anyOf:
+          - $ref: '#/components/schemas/PowerplantInfo'
+          - type: 'null'
+        military:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Military
+        operator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Operator
+        airline_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Airline Code
+        serial_number:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Serial Number
+        year_built:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Year Built
+        is_private_operator:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Private Operator
+        special_livery:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Special Livery
+        data_sources:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Data Sources
+      type: object
+      required:
+      - icao_hex
+      title: AircraftRecord
+      description: 'Aircraft registration and type enrichment.
+
+        Written across three Redis keys — aircraft:mictronics:{icao_hex}
+
+        (Mictronics), aircraft:registry:{icao_hex} (country registry runners),
+
+        and aircraft:livery:{icao_hex} (the airportwebcams-special-liveries runner)
+        —
+
+        and deep-merged at read time by shared/lua/merge_aircraft.lua, with
+
+        later sources in that list winning on any field overlap. This shape is
+
+        the merged result. Field names match the AROI /registration/icao_hex/{hex}
+
+        response.'
     AircraftRegistrationCondition:
       properties:
         type:
@@ -660,6 +930,51 @@ components:
       - operator
       - value
       title: AircraftTypeDesignatorCondition
+    AirportRecord:
+      properties:
+        icao_code:
+          type: string
+          title: Icao Code
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        latitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Latitude
+        longitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Longitude
+        altitude_feet:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Altitude Feet
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        municipality:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Municipality
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+      type: object
+      required:
+      - icao_code
+      title: AirportRecord
+      description: Airport metadata. Stored in Redis at airport:{icao_code}.
     AltitudeCondition:
       properties:
         type:
@@ -933,6 +1248,84 @@ components:
       - operator
       - value
       title: OperatorAirlineDesignatorCondition
+    OperatorRecord:
+      properties:
+        airline_designator:
+          type: string
+          title: Airline Designator
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        callsign:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Callsign
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        iata:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Iata
+        source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source
+      type: object
+      required:
+      - airline_designator
+      title: OperatorRecord
+      description: 'Airline operator enrichment.
+
+        Stored in Redis at operator:{designator}. Shape matches the AROI
+
+        /operator/{designator} response.'
+    PowerplantInfo:
+      properties:
+        count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Count
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+      type: object
+      title: PowerplantInfo
+    RouteLookup:
+      properties:
+        origin:
+          $ref: '#/components/schemas/AirportRecord'
+        destination:
+          $ref: '#/components/schemas/AirportRecord'
+        stops:
+          items:
+            $ref: '#/components/schemas/AirportRecord'
+          type: array
+          title: Stops
+      type: object
+      required:
+      - origin
+      - destination
+      - stops
+      title: RouteLookup
+      description: 'Resolved route for a flight ident. `origin`/`destination` are
+        the
+
+        first/last airport in the resolved sequence (a quick-glance header);
+
+        `stops` is the full sequence in order, duplicates preserved (e.g. a
+
+        round trip returns the same airport at both ends).'
     Rule:
       properties:
         name:
