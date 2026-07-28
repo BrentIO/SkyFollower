@@ -1,8 +1,10 @@
 openapi: 3.1.0
 info:
   title: SkyFollower Management
-  description: Rules and areas configuration API. Message processors poll config:rules/config:areas
-    in Redis every 30 seconds for changes written here.
+  description: Rules/areas configuration API (writes config:rules/config:areas in
+    Redis, read by every message processor) plus read-only reference-data lookups
+    (aircraft/operator/airport/route) over the same enrichment Redis already holds
+    for rule evaluation.
   version: 9999.99.99
 paths:
   /api/rules:
@@ -571,57 +573,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/aircraft/{icao_hex}:
-    get:
-      tags:
-      - reference-data
-      summary: Get Aircraft By Hex
-      operationId: get_aircraft_by_hex_api_aircraft__icao_hex__get
-      parameters:
-      - name: icao_hex
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Icao Hex
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AircraftRecord'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-        '500':
-          description: Redis error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /api/aircraft:
     get:
       tags:
       - reference-data
-      summary: Get Aircraft By Registration
-      operationId: get_aircraft_by_registration_api_aircraft_get
+      summary: Get Aircraft
+      operationId: get_aircraft_api_aircraft_get
       parameters:
+      - name: icao_hex
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 6-character ICAO hex, e.g. A8AE7F
+          title: Icao Hex
+        description: 6-character ICAO hex, e.g. A8AE7F
       - name: registration
         in: query
-        required: true
+        required: false
         schema:
-          type: string
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Aircraft registration, e.g. N659DL
           title: Registration
+        description: Aircraft registration, e.g. N659DL
       responses:
         '200':
           description: Successful Response
@@ -631,6 +609,12 @@ paths:
                 $ref: '#/components/schemas/AircraftRecord'
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Validation error
           content:
             application/json:
               schema:

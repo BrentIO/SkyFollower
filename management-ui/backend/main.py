@@ -28,6 +28,7 @@ from typing import Annotated, Literal, Optional, Union
 
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Response
+from fastapi import Query as FastAPIQuery
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -632,8 +633,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SkyFollower Management",
-    description="Rules and areas configuration API. Message processors poll "
-    "config:rules/config:areas in Redis every 30 seconds for changes written here.",
+    description="Rules/areas configuration API (writes config:rules/"
+    "config:areas in Redis, read by every message processor) plus read-only "
+    "reference-data lookups (aircraft/operator/airport/route) over the same "
+    "enrichment Redis already holds for rule evaluation.",
     version="9999.99.99",
     lifespan=lifespan,
 )
@@ -1089,25 +1092,26 @@ def delete_area(identifier: str):
 # ---------------------------------------------------------------------------
 
 @app.get(
-    "/api/aircraft/{icao_hex}",
-    tags=["reference-data"],
-    response_model=AircraftRecord,
-    responses={**_NOT_FOUND, **_REDIS_ERROR},
-)
-def get_aircraft_by_hex(icao_hex: str):
-    raw = _redis_evalsha(_merge_aircraft_sha, icao_hex.upper())
-    if not raw:
-        raise HTTPException(status_code=404, detail=f"No aircraft data found for '{icao_hex}'")
-    return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
-
-
-@app.get(
     "/api/aircraft",
     tags=["reference-data"],
     response_model=AircraftRecord,
-    responses={**_NOT_FOUND, **_REDIS_ERROR},
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
-def get_aircraft_by_registration(registration: str):
+def get_aircraft(
+    icao_hex: Optional[str] = FastAPIQuery(default=None, description="6-character ICAO hex, e.g. A8AE7F"),
+    registration: Optional[str] = FastAPIQuery(default=None, description="Aircraft registration, e.g. N659DL"),
+):
+    if icao_hex and registration:
+        raise HTTPException(status_code=422, detail="Specify either icao_hex or registration, not both")
+    if not icao_hex and not registration:
+        raise HTTPException(status_code=422, detail="Specify either icao_hex or registration")
+
+    if icao_hex:
+        raw = _redis_evalsha(_merge_aircraft_sha, icao_hex.upper())
+        if not raw:
+            raise HTTPException(status_code=404, detail=f"No aircraft data found for '{icao_hex}'")
+        return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
+
     # Mictronics first (broader coverage), then the country-registry index --
     # a registration can exist in either, or both.
     doc_id = _search_one(AIRCRAFT_MICTRONICS_SEARCH_INDEX, "registration", registration)
@@ -1118,8 +1122,8 @@ def get_aircraft_by_registration(registration: str):
             status_code=404, detail=f"No aircraft data found for registration '{registration}'"
         )
 
-    icao_hex = doc_id.rsplit(":", 1)[-1]
-    raw = _redis_evalsha(_merge_aircraft_sha, icao_hex)
+    resolved_hex = doc_id.rsplit(":", 1)[-1]
+    raw = _redis_evalsha(_merge_aircraft_sha, resolved_hex)
     if not raw:
         raise HTTPException(
             status_code=404, detail=f"No aircraft data found for registration '{registration}'"

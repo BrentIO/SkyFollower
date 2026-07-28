@@ -781,7 +781,7 @@ class TestAircraftLookup:
                 "wake_turbulence_category": "heavy",
             },
         })
-        resp = client.get("/api/aircraft/A8AE7F")
+        resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["icao_hex"] == "A8AE7F"
@@ -798,14 +798,14 @@ class TestAircraftLookup:
             "icao_hex": "A8AE7F", "registration": "N659DL", "military": False,
             "source": "us-faa-registry", "aircraft": {"serial_number": "12345"},
         })
-        resp = client.get("/api/aircraft/A8AE7F")
+        resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["serial_number"] == "12345"
         assert body["data_sources"] == ["mictronics", "us-faa-registry"]
 
     def test_hex_miss_returns_404(self, client):
-        resp = client.get("/api/aircraft/FFFFFF")
+        resp = client.get("/api/aircraft", params={"icao_hex": "FFFFFF"})
         assert resp.status_code == 404
 
     def test_registration_hit_via_mictronics(self, client, fake_redis):
@@ -827,6 +827,14 @@ class TestAircraftLookup:
     def test_registration_miss_returns_404(self, client):
         resp = client.get("/api/aircraft", params={"registration": "UNKNOWN"})
         assert resp.status_code == 404
+
+    def test_both_params_returns_422(self, client):
+        resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F", "registration": "N659DL"})
+        assert resp.status_code == 422
+
+    def test_neither_param_returns_422(self, client):
+        resp = client.get("/api/aircraft")
+        assert resp.status_code == 422
 
 
 class TestOperatorLookup:
