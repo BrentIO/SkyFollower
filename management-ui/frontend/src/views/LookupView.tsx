@@ -24,7 +24,27 @@ const TABS: { key: TabKey; label: string; placeholder: string }[] = [
 // 6 hex digits -> icao_hex; anything else -> registration. Registration
 // formats vary too much by country to validate further client-side (see
 // #558) -- non-hex input is just passed through and a 404 means "not found."
+//
+// This guess is only a starting point, not a guarantee: plenty of real
+// registrations (e.g. "CA7116", "AEE326") happen to use only [0-9A-F]
+// characters too, so a 404 on the first guess doesn't necessarily mean the
+// aircraft isn't in Redis -- it may just mean the guess was wrong. See
+// getAircraftGuessing below.
 const HEX_PATTERN = /^[0-9A-Fa-f]{6}$/;
+
+// Tries the guessed lookup type first; on a 404 (and only a 404 -- any
+// other error propagates immediately), retries as the other type before
+// giving up. Only shows "No data found" once both interpretations of the
+// input have actually missed.
+async function getAircraftGuessing(trimmed: string): Promise<AircraftRecord> {
+  const guessedHex = HEX_PATTERN.test(trimmed);
+  try {
+    return await getAircraft(guessedHex ? { icaoHex: trimmed } : { registration: trimmed });
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 404) throw err;
+    return await getAircraft(guessedHex ? { registration: trimmed } : { icaoHex: trimmed });
+  }
+}
 
 type LookupResult =
   | { tab: "aircraft"; data: AircraftRecord }
@@ -140,9 +160,7 @@ export function LookupView() {
     try {
       switch (tab) {
         case "aircraft": {
-          const data = HEX_PATTERN.test(trimmed)
-            ? await getAircraft({ icaoHex: trimmed })
-            : await getAircraft({ registration: trimmed });
+          const data = await getAircraftGuessing(trimmed);
           setResult({ tab: "aircraft", data });
           break;
         }
