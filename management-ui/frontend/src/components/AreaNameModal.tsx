@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { geometryDisplayNoun, type AreaGeometry } from "../api/areas";
 
 interface AreaNameModalProps {
   open: boolean;
@@ -7,6 +8,10 @@ interface AreaNameModalProps {
   // modal opens -- used by the "Duplicate" action to suggest "<original
   // name> copy" instead of starting blank like a freshly drawn shape.
   initialName?: string;
+  // Drives the modal's title ("Name this area"/"line"/"point") -- the
+  // pending shape's actual geometry type, known by both call sites
+  // (a fresh draw, or Duplicate) before the modal ever opens.
+  geometryType: AreaGeometry["type"];
   onConfirm: (identifier: string, name: string) => void;
   onCancel: () => void;
 }
@@ -24,7 +29,14 @@ function sanitizeIdentifier(raw: string): string {
 // draw.create handler) -- collects the two fields Area requires beyond
 // geometry: `identifier` (routing key, no spaces, immutable after creation)
 // and `name` (free-text display label, editable later in the side panel).
-export function AreaNameModal({ open, existingIdentifiers, initialName, onConfirm, onCancel }: AreaNameModalProps) {
+export function AreaNameModal({
+  open,
+  existingIdentifiers,
+  initialName,
+  geometryType,
+  onConfirm,
+  onCancel,
+}: AreaNameModalProps) {
   const [name, setName] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [identifierManuallyEdited, setIdentifierManuallyEdited] = useState(false);
@@ -67,7 +79,9 @@ export function AreaNameModal({ open, existingIdentifiers, initialName, onConfir
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Name this area</h2>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          Name this {geometryDisplayNoun(geometryType).toLowerCase()}
+        </h2>
 
         <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">
           Name

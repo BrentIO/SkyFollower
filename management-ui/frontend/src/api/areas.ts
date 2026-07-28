@@ -32,6 +32,20 @@ export interface Area {
   locked: boolean;
 }
 
+// Display noun for a geometry type -- shared by the naming modal's title
+// and AreasView.tsx's success toasts, so "Area"/"Line"/"Point" language
+// stays consistent with whichever shape a user actually drew.
+export function geometryDisplayNoun(type: AreaGeometry["type"]): "Area" | "Line" | "Point" {
+  switch (type) {
+    case "Polygon":
+      return "Area";
+    case "LineString":
+      return "Line";
+    case "Point":
+      return "Point";
+  }
+}
+
 export function listAreas(): Promise<Area[]> {
   return apiClient.get<Area[]>("/api/areas");
 }
