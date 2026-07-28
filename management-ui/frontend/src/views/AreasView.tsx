@@ -8,10 +8,12 @@ import {
   TerraDrawSelectMode,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { Lock, Unlock } from "lucide-react";
+import { Lock, MapPinPlusInside, Unlock } from "lucide-react";
+import { mdiExportVariant, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
@@ -37,6 +39,33 @@ const MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
+}
+
+// GeoJSON Feature shape shared by the all-areas and single-area exports --
+// geometry copied as-is, properties carrying the full Area shape minus
+// geometry itself.
+function areaToFeature(area: Area) {
+  return {
+    type: "Feature" as const,
+    geometry: area.geometry,
+    properties: {
+      identifier: area.identifier,
+      name: area.name,
+      locked: area.locked,
+    },
+  };
+}
+
+function downloadGeoJson(featureCollection: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+    type: "application/geo+json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 // Terra Draw's addFeatures() silently drops (doesn't throw for) any
@@ -593,27 +622,21 @@ export function AreasView() {
   // (populated by listAreas() on load, kept in sync on create/update/delete),
   // so there's no server round trip needed to build the export file.
   function exportAllAreas() {
-    const featureCollection = {
-      type: "FeatureCollection" as const,
-      features: areas.map((area) => ({
-        type: "Feature" as const,
-        geometry: area.geometry,
-        properties: {
-          identifier: area.identifier,
-          name: area.name,
-          locked: area.locked,
-        },
-      })),
-    };
-    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
-      type: "application/geo+json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "areas.geojson";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadGeoJson(
+      { type: "FeatureCollection", features: areas.map(areaToFeature) },
+      "areas.geojson",
+    );
+  }
+
+  // Exports just the selected area, from draft rather than the saved areas
+  // list -- same source Duplicate already reads from, so an in-progress,
+  // unsaved edit is reflected rather than stale server data.
+  function exportSelectedArea() {
+    if (!draft) return;
+    downloadGeoJson(
+      { type: "FeatureCollection", features: [areaToFeature(draft)] },
+      `${draft.identifier}.geojson`,
+    );
   }
 
   async function handleNameConfirm(identifier: string, name: string) {
@@ -745,31 +768,34 @@ export function AreasView() {
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Draw New Area</span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => startDrawing("polygon")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-            >
-              Polygon
-            </button>
-            <button
-              type="button"
-              onClick={() => startDrawing("linestring")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-            >
-              Line
-            </button>
-            <button
-              type="button"
-              onClick={() => startDrawing("point")}
-              className="flex-1 rounded-md border border-sky-600 px-2 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-            >
-              Point
-            </button>
-          </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => startDrawing("polygon")}
+            aria-label="Draw polygon"
+            title="Draw polygon"
+            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+          >
+            <MdiIcon path={mdiShapePolygonPlus} size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => startDrawing("linestring")}
+            aria-label="Draw line"
+            title="Draw line"
+            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+          >
+            <MdiIcon path={mdiVectorPolylinePlus} size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => startDrawing("point")}
+            aria-label="Draw point"
+            title="Draw point"
+            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+          >
+            <MapPinPlusInside size={18} />
+          </button>
         </div>
 
         <button
@@ -848,6 +874,14 @@ export function AreasView() {
                         >
                           {draft.locked ? <Unlock size={12} /> : <Lock size={12} />}
                           {draft.locked ? "Unlock" : "Lock"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={exportSelectedArea}
+                          className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          <MdiIcon path={mdiExportVariant} size={12} />
+                          Export
                         </button>
                       </div>
                     </div>
