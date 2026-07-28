@@ -2,7 +2,6 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { TerraDraw, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -590,7 +589,7 @@ export function AreasView() {
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(area)}
-                          className="ml-auto rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                          className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
                         >
                           Delete
                         </button>
@@ -605,14 +604,6 @@ export function AreasView() {
                         className="flex-1 truncate px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200"
                       >
                         {area.name || area.identifier}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(area)}
-                        aria-label={`Delete ${area.name || area.identifier}`}
-                        className="mr-2 shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400"
-                      >
-                        <Trash2 size={14} />
                       </button>
                     </div>
                   )}
