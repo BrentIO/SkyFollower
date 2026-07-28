@@ -393,6 +393,30 @@ paths:
                         - 40.94671366508002
                       - - -73.8006591796875
                         - 40.82835864973048
+              ILS 17L approach corridor:
+                value: &id008
+                  identifier: ILS_17L
+                  name: ILS 17L
+                  geometry:
+                    type: LineString
+                    coordinates:
+                    - - -81.16
+                      - 28.77
+                    - - -81.29
+                      - 28.7
+                    - - -81.2845
+                      - 28.628056
+                    - - -81.2825847
+                      - 28.4436808
+              SHREK2 waypoint:
+                value: &id009
+                  identifier: SHREK2
+                  name: SHREK2
+                  geometry:
+                    type: Point
+                    coordinates:
+                    - -81.9198611
+                    - 28.9936389
         required: true
       responses:
         '201':
@@ -404,6 +428,10 @@ paths:
               examples:
                 Long Island (LI):
                   value: *id007
+                ILS 17L approach corridor:
+                  value: *id008
+                SHREK2 waypoint:
+                  value: *id009
         '409':
           description: Identifier already exists
           content:
@@ -418,7 +446,7 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Identifier contains spaces or invalid geometry:
-                  value: &id008
+                  value: &id010
                     detail: Area 'Long Island' failed validation (check identifier
                       has no spaces and geometry is a valid Polygon)
         '500':
@@ -456,6 +484,10 @@ paths:
               examples:
                 Long Island (LI):
                   value: *id007
+                ILS 17L approach corridor:
+                  value: *id008
+                SHREK2 waypoint:
+                  value: *id009
         '404':
           description: Not found
           content:
@@ -495,6 +527,10 @@ paths:
             examples:
               Long Island (LI):
                 value: *id007
+              ILS 17L approach corridor:
+                value: *id008
+              SHREK2 waypoint:
+                value: *id009
       responses:
         '200':
           description: Successful Response
@@ -505,6 +541,10 @@ paths:
               examples:
                 Long Island (LI):
                   value: *id007
+                ILS 17L approach corridor:
+                  value: *id008
+                SHREK2 waypoint:
+                  value: *id009
         '404':
           description: Not found
           content:
@@ -519,7 +559,7 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Identifier contains spaces or invalid geometry:
-                  value: *id008
+                  value: *id010
         '500':
           description: Redis error
           content:
@@ -695,7 +735,17 @@ components:
           title: Name
           default: ''
         geometry:
-          $ref: '#/components/schemas/AreaGeometry'
+          oneOf:
+          - $ref: '#/components/schemas/PolygonGeometry'
+          - $ref: '#/components/schemas/LineStringGeometry'
+          - $ref: '#/components/schemas/PointGeometry'
+          title: Geometry
+          discriminator:
+            propertyName: type
+            mapping:
+              LineString: '#/components/schemas/LineStringGeometry'
+              Point: '#/components/schemas/PointGeometry'
+              Polygon: '#/components/schemas/PolygonGeometry'
         locked:
           type: boolean
           title: Locked
@@ -705,13 +755,17 @@ components:
       - identifier
       - geometry
       title: Area
-      description: 'A named GeoJSON polygon area, referenced by rules'' `area` condition
+      description: 'A named GeoJSON area (Polygon, LineString, or Point). Only a Polygon
 
-        (matched against `identifier`, not `name`). `identifier` is the routing
+        area is usable as a rules'' `area` condition''s value (matched against
 
-        key used in /api/areas/{identifier} and must not contain spaces; `name`
+        `identifier`, not `name`) -- message-processor/rules_engine.py skips
 
-        is a free-text display label and may.'
+        any other geometry type there. `identifier` is the routing key used in
+
+        /api/areas/{identifier} and must not contain spaces; `name` is a
+
+        free-text display label and may.'
       examples:
       - geometry:
           coordinates:
@@ -750,6 +804,26 @@ components:
           type: Polygon
         identifier: LI
         name: Long Island
+      - geometry:
+          coordinates:
+          - - -81.16
+            - 28.77
+          - - -81.29
+            - 28.7
+          - - -81.2845
+            - 28.628056
+          - - -81.2825847
+            - 28.4436808
+          type: LineString
+        identifier: ILS_17L
+        name: ILS 17L
+      - geometry:
+          coordinates:
+          - -81.9198611
+          - 28.9936389
+          type: Point
+        identifier: SHREK2
+        name: SHREK2
     AreaCondition:
       properties:
         type:
@@ -770,26 +844,6 @@ components:
       - operator
       - value
       title: AreaCondition
-    AreaGeometry:
-      properties:
-        type:
-          type: string
-          const: Polygon
-          title: Type
-        coordinates:
-          items:
-            items:
-              items:
-                type: number
-              type: array
-            type: array
-          type: array
-          title: Coordinates
-      type: object
-      required:
-      - type
-      - coordinates
-      title: AreaGeometry
     DateCondition:
       properties:
         type:
@@ -872,6 +926,24 @@ components:
       - operator
       - value
       title: IdentCondition
+    LineStringGeometry:
+      properties:
+        type:
+          type: string
+          const: LineString
+          title: Type
+        coordinates:
+          items:
+            items:
+              type: number
+            type: array
+          type: array
+          title: Coordinates
+      type: object
+      required:
+      - type
+      - coordinates
+      title: LineStringGeometry
     MatchedRulesCondition:
       properties:
         type:
@@ -937,6 +1009,42 @@ components:
       - operator
       - value
       title: OperatorAirlineDesignatorCondition
+    PointGeometry:
+      properties:
+        type:
+          type: string
+          const: Point
+          title: Type
+        coordinates:
+          items:
+            type: number
+          type: array
+          title: Coordinates
+      type: object
+      required:
+      - type
+      - coordinates
+      title: PointGeometry
+    PolygonGeometry:
+      properties:
+        type:
+          type: string
+          const: Polygon
+          title: Type
+        coordinates:
+          items:
+            items:
+              items:
+                type: number
+              type: array
+            type: array
+          type: array
+          title: Coordinates
+      type: object
+      required:
+      - type
+      - coordinates
+      title: PolygonGeometry
     Rule:
       properties:
         name:
