@@ -39,6 +39,33 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
+// GeoJSON Feature shape shared by the all-areas and single-area exports --
+// geometry copied as-is, properties carrying the full Area shape minus
+// geometry itself.
+function areaToFeature(area: Area) {
+  return {
+    type: "Feature" as const,
+    geometry: area.geometry,
+    properties: {
+      identifier: area.identifier,
+      name: area.name,
+      locked: area.locked,
+    },
+  };
+}
+
+function downloadGeoJson(featureCollection: unknown, filename: string): void {
+  const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
+    type: "application/geo+json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 // Terra Draw's addFeatures() silently drops (doesn't throw for) any
 // feature that fails its mode's validation -- e.g. excessive coordinate
 // precision, self-intersection -- so a "temporary" feature id we just
@@ -577,27 +604,21 @@ export function AreasView() {
   // (populated by listAreas() on load, kept in sync on create/update/delete),
   // so there's no server round trip needed to build the export file.
   function exportAllAreas() {
-    const featureCollection = {
-      type: "FeatureCollection" as const,
-      features: areas.map((area) => ({
-        type: "Feature" as const,
-        geometry: area.geometry,
-        properties: {
-          identifier: area.identifier,
-          name: area.name,
-          locked: area.locked,
-        },
-      })),
-    };
-    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], {
-      type: "application/geo+json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "areas.geojson";
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadGeoJson(
+      { type: "FeatureCollection", features: areas.map(areaToFeature) },
+      "areas.geojson",
+    );
+  }
+
+  // Exports just the selected area, from draft rather than the saved areas
+  // list -- same source Duplicate already reads from, so an in-progress,
+  // unsaved edit is reflected rather than stale server data.
+  function exportSelectedArea() {
+    if (!draft) return;
+    downloadGeoJson(
+      { type: "FeatureCollection", features: [areaToFeature(draft)] },
+      `${draft.identifier}.geojson`,
+    );
   }
 
   async function handleNameConfirm(identifier: string, name: string) {
@@ -831,6 +852,13 @@ export function AreasView() {
                         >
                           {draft.locked ? <Unlock size={12} /> : <Lock size={12} />}
                           {draft.locked ? "Unlock" : "Lock"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={exportSelectedArea}
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          Export GeoJSON
                         </button>
                       </div>
                     </div>
