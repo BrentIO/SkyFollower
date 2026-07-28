@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import pathlib
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -27,9 +28,11 @@ from typing import Annotated, Literal, Optional, Union
 
 import redis as redis_lib
 from fastapi import FastAPI, HTTPException, Response
+from fastapi import Query as FastAPIQuery
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from redis.commands.search.query import Query as RedisSearchQuery
 
 # Add the repo root to sys.path so shared/ is importable when this module is
 # run outside Docker (e.g. tests, local `uvicorn main:app`, OpenAPI export).
@@ -41,11 +44,17 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from shared.logging_setup import configure_logging  # noqa: E402
+from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
+    AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+    AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    AIRPORT_SEARCH_INDEX,
+    airport_key,
     config_areas_key,
     config_areas_version_key,
     config_rules_key,
     config_rules_version_key,
+    operator_key,
 )
 
 try:
@@ -515,6 +524,11 @@ _AREA_ERROR_EXAMPLES: dict[str, dict] = {
 
 _redis: Optional[redis_lib.Redis] = None
 _engine: Optional[RulesEngine] = None
+# SHA-1 digests of shared/lua/merge_aircraft.lua and route_airports.lua,
+# loaded once at startup (see lifespan() below) so every lookup call is a
+# single EVALSHA round trip -- same pattern message-processor/main.py uses.
+_merge_aircraft_sha: Optional[str] = None
+_route_airports_sha: Optional[str] = None
 
 
 def _load_config() -> dict:
@@ -609,9 +623,20 @@ def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, l
     logger.info("Restored %s from backup file %s (Redis key was missing).", label, backup_path)
 
 
+# In the Docker image, shared/ is copied flat alongside this file (WORKDIR
+# /app has both main.py and shared/ directly under it -- see
+# management-ui/Dockerfile), so _HERE/shared/lua is correct there; _REPO_ROOT
+# resolves to "/" in that image (see the comment above _REPO_ROOT) and is
+# only useful outside Docker, where shared/ is two directories up from this
+# file's actual location instead.
+_LUA_DIR = pathlib.Path(_HERE) / "shared" / "lua"
+if not _LUA_DIR.is_dir():
+    _LUA_DIR = pathlib.Path(_REPO_ROOT) / "shared" / "lua"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _redis, _engine
+    global _redis, _engine, _merge_aircraft_sha, _route_airports_sha
     config = _load_config()
     configure_logging(config.get("log_level"))
 
@@ -622,6 +647,8 @@ async def lifespan(app: FastAPI):
         decode_responses=True,
     )
     _engine = RulesEngine(_redis)
+    _merge_aircraft_sha = _redis.script_load((_LUA_DIR / "merge_aircraft.lua").read_text())
+    _route_airports_sha = _redis.script_load((_LUA_DIR / "route_airports.lua").read_text())
 
     _reconcile_backup_with_redis(config_rules_key(), config_rules_version_key(), _rules_backup_path(), "rules")
     _reconcile_backup_with_redis(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
@@ -634,8 +661,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SkyFollower Management",
-    description="Rules and areas configuration API. Message processors poll "
-    "config:rules/config:areas in Redis every 30 seconds for changes written here.",
+    description="Rules/areas configuration API (writes config:rules/"
+    "config:areas in Redis, read by every message processor) plus read-only "
+    "reference-data lookups (aircraft/operator/airport/route) over the same "
+    "enrichment Redis already holds for rule evaluation.",
     version="9999.99.99",
     lifespan=lifespan,
 )
@@ -762,10 +791,86 @@ def _redis_set(key: str, value: str) -> None:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
 
+def _redis_json_get(key: str) -> Optional[dict]:
+    """operator:{designator}/airport:{code} are real RedisJSON documents
+    (written via shared/redis_json.py's set_json(), same as every
+    aircraft:*/{icao_hex} key) -- a plain GET against one raises WRONGTYPE
+    (verified against a live Redis Stack instance), unlike a plain Redis
+    string. JSON.GET is required; redis-py's .json().get() returns the
+    already-decoded dict directly, no json.loads() needed."""
+    try:
+        return _redis.json().get(key)
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+
+
 _NOT_FOUND = {404: {"description": "Not found", "model": ErrorDetail}}
 _CONFLICT = {409: {"description": "Identifier already exists", "model": ErrorDetail}}
 _REDIS_ERROR = {500: {"description": "Redis error", "model": ErrorDetail}}
 _VALIDATION_ERROR = {400: {"description": "Validation error", "model": ErrorDetail}}
+
+
+# ---------------------------------------------------------------------------
+# Reference-data lookup helpers (aircraft/operator/airport/route) -- read-only
+# queries against enrichment Redis already holds; no separate write path.
+# ---------------------------------------------------------------------------
+
+def _redis_evalsha(sha: str, *args: str) -> Optional[str]:
+    try:
+        return _redis.evalsha(sha, 0, *args)
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+
+
+# Same character set every data runner's own _escape_tag applies before a
+# RediSearch TagField query -- there's no shared helper for this today, so
+# this duplicates that logic rather than reaching into a runner module.
+_TAG_SPECIAL_CHARS = ",.<>{}[]\"':;!@#$%^&*()-+=~"
+
+
+def _escape_tag(value: str) -> str:
+    """Escape special characters for use in a RediSearch TagField query."""
+    return "".join(f"\\{ch}" if ch in _TAG_SPECIAL_CHARS else ch for ch in value)
+
+
+def _search_one(index: str, field: str, value: str) -> Optional[str]:
+    """Single-tag exact-match FT.SEARCH against `index`; returns the first
+    matching document's key (e.g. "aircraft:mictronics:A8AE7F"), or None."""
+    try:
+        result = _redis.ft(index).search(RedisSearchQuery(f"@{field}:{{{_escape_tag(value)}}}").paging(0, 1))
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+    return result.docs[0].id if result.docs else None
+
+
+def _flatten_aircraft_doc(doc: dict) -> dict:
+    """merge_aircraft.lua's output nests type/manufacturer/wake-turbulence/
+    powerplant fields under an `aircraft` sub-object, mirroring how the
+    mictronics/country-registry runners store them (see their own
+    build_aircraft_record functions) -- AircraftRecord's shape is flat,
+    matching the legacy AROI /registration/icao_hex/{hex} response, so
+    promote them to the top level before parsing. setdefault() so a field
+    already present at the top level (there aren't any today, but a future
+    runner change shouldn't silently reorder precedence) is never
+    overwritten by the nested copy."""
+    nested = doc.pop("aircraft", None)
+    if isinstance(nested, dict):
+        for key, value in nested.items():
+            doc.setdefault(key, value)
+    return doc
+
+
+class RouteLookup(BaseModel):
+    """
+    Resolved route for a flight ident. `origin`/`destination` are the
+    first/last airport in the resolved sequence (a quick-glance header);
+    `stops` is the full sequence in order, duplicates preserved (e.g. a
+    round trip returns the same airport at both ends).
+    """
+
+    origin: AirportRecord
+    destination: AirportRecord
+    stops: list[AirportRecord]
 
 
 # ---------------------------------------------------------------------------
@@ -1004,3 +1109,106 @@ def delete_area(identifier: str):
 
     _save_areas_array(remaining)
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Reference-data lookup (aircraft/operator/airport/route) -- static enrichment
+# already held in Redis for rule evaluation, exposed read-only for browsing.
+# Distinct from a future live-aircraft-position UI (see this module's
+# docstring) and from #520's Athena archive search (historical flights, not
+# current Redis state).
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/api/aircraft",
+    tags=["reference-data"],
+    response_model=AircraftRecord,
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+)
+def get_aircraft(
+    icao_hex: Optional[str] = FastAPIQuery(default=None, description="6-character ICAO hex, e.g. A8AE7F"),
+    registration: Optional[str] = FastAPIQuery(default=None, description="Aircraft registration, e.g. N659DL"),
+):
+    if icao_hex and registration:
+        raise HTTPException(status_code=422, detail="Specify either icao_hex or registration, not both")
+    if not icao_hex and not registration:
+        raise HTTPException(status_code=422, detail="Specify either icao_hex or registration")
+
+    if icao_hex:
+        raw = _redis_evalsha(_merge_aircraft_sha, icao_hex.upper())
+        if not raw:
+            raise HTTPException(status_code=404, detail=f"No aircraft data found for '{icao_hex}'")
+        return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
+
+    # Mictronics first (broader coverage), then the country-registry index --
+    # a registration can exist in either, or both.
+    doc_id = _search_one(AIRCRAFT_MICTRONICS_SEARCH_INDEX, "registration", registration)
+    if doc_id is None:
+        doc_id = _search_one(AIRCRAFT_REGISTRY_SEARCH_INDEX, "registration", registration)
+    if doc_id is None:
+        raise HTTPException(
+            status_code=404, detail=f"No aircraft data found for registration '{registration}'"
+        )
+
+    resolved_hex = doc_id.rsplit(":", 1)[-1]
+    raw = _redis_evalsha(_merge_aircraft_sha, resolved_hex)
+    if not raw:
+        raise HTTPException(
+            status_code=404, detail=f"No aircraft data found for registration '{registration}'"
+        )
+    return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
+
+
+@app.get(
+    "/api/operators/{designator}",
+    tags=["reference-data"],
+    response_model=OperatorRecord,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def get_operator(designator: str):
+    doc = _redis_json_get(operator_key(designator))
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"No operator data found for '{designator}'")
+    return JSONResponse(content=doc)
+
+
+@app.get(
+    "/api/airports/{code}",
+    tags=["reference-data"],
+    response_model=AirportRecord,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def get_airport(code: str):
+    normalized = code.strip().upper()
+    doc: Optional[dict] = None
+    if len(normalized) == 4:
+        doc = _redis_json_get(airport_key(normalized))
+    elif len(normalized) == 3:
+        doc_id = _search_one(AIRPORT_SEARCH_INDEX, "iata_code", normalized)
+        if doc_id is not None:
+            doc = _redis_json_get(doc_id)
+    # Any other length can't match either key shape -- falls through to the
+    # same 404 a genuine miss gets, rather than a separate 400: Redis can't
+    # distinguish "malformed code" from "well-formed but unknown" any better
+    # than it can the misses described in this issue's Miss semantics.
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"No airport data found for '{code}'")
+    return JSONResponse(content=doc)
+
+
+@app.get(
+    "/api/routes/{ident}",
+    tags=["reference-data"],
+    response_model=RouteLookup,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def get_route(ident: str):
+    raw = _redis_evalsha(_route_airports_sha, ident.upper())
+    airports = json.loads(raw) if raw else []
+    if not airports:
+        raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")
+    return JSONResponse(content={
+        "origin": airports[0],
+        "destination": airports[-1],
+        "stops": airports,
+    })
