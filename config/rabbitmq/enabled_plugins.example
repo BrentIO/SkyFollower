@@ -1,0 +1,7 @@
+% Overrides the rabbitmq:3-management-alpine image's stock
+% [rabbitmq_management,rabbitmq_prometheus]. rabbitmq_management (web UI,
+% useful for ops/debugging queue depth) stays; rabbitmq_prometheus is
+% dropped -- SkyFollower's telemetry is entirely MQTT-based, so nothing
+% ever scrapes its exporter, but it still runs its own HTTP listener and
+% background stats collection for no purpose.
+[rabbitmq_management].

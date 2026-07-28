@@ -14,6 +14,13 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      # Tuned for a constrained host (Raspberry Pi CM4, 8GB RAM/32GB eMMC)
+      # shared with Redis and the rest of Host B -- absolute memory/disk
+      # watermarks instead of the relative-to-host-RAM default, and the
+      # unused rabbitmq_prometheus plugin (SkyFollower's telemetry is
+      # entirely MQTT-based) dropped from the stock enabled-plugins set.
+      - ./config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-skyfollower.conf:ro
+      - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     environment:
       RABBITMQ_DEFAULT_USER: skyfollower
       RABBITMQ_DEFAULT_PASS: change_me
