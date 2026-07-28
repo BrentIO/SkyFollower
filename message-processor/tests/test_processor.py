@@ -54,6 +54,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _SCHEMA,
 )
 from shared.models import InboundMessage, Position, Velocity
+from shared.redis_keys import operator_key
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,12 @@ def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMoc
          patch.object(MessageProcessor, "_claim_message_processor_id"):
         mock_redis = MagicMock()
         mock_redis.script_load.return_value = "abc123sha"
+        # Default RedisJSON reads (e.g. _enrich_operator's .json().get()) to
+        # "no data", matching a real empty Redis -- an unconfigured MagicMock
+        # is truthy and not JSON-serializable, which breaks flight.save() in
+        # any test that incidentally triggers operator enrichment without
+        # caring about it.
+        mock_redis.json.return_value.get.return_value = None
         MockRedis.return_value = mock_redis
         p = MessageProcessor(cfg, message_processor_id=0)
         p._redis = mock_redis
@@ -1035,7 +1042,7 @@ class TestProcessorEnrichment:
         f.ident = "N12345"  # US registration
         f.aircraft = {}
         p._enrich_operator(f)
-        mock_redis.get.assert_not_called()
+        mock_redis.json.return_value.get.assert_not_called()
 
     def test_enrich_operator_skips_military(self):
         p, mock_redis = self._make_processor()
@@ -1044,11 +1051,15 @@ class TestProcessorEnrichment:
         f.ident = "DAL659"
         f.aircraft = {"military": True}
         p._enrich_operator(f)
-        mock_redis.get.assert_not_called()
+        mock_redis.json.return_value.get.assert_not_called()
 
     def test_enrich_operator_extracts_prefix(self):
+        # operator:{designator} is a RedisJSON document -- .json().get()
+        # returns the decoded dict directly, not a JSON string (unlike the
+        # plain GET this replaced, which raised WRONGTYPE against a real
+        # instance; a test mocking plain .get() never caught that).
         p, mock_redis = self._make_processor()
-        mock_redis.get.return_value = json.dumps({"airline_designator": "DAL", "name": "Delta"})
+        mock_redis.json.return_value.get.return_value = {"airline_designator": "DAL", "name": "Delta"}
 
         f = Flight(p._db)
         f.icao_hex = "A8AE7F"
@@ -1058,6 +1069,7 @@ class TestProcessorEnrichment:
         p._enrich_operator(f)
 
         assert f.operator["airline_designator"] == "DAL"
+        mock_redis.json.return_value.get.assert_called_once_with(operator_key("DAL"))
 
 
 # ---------------------------------------------------------------------------
