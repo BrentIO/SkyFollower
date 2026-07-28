@@ -9,7 +9,7 @@ import {
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { Lock, MapPinPlusInside, Unlock } from "lucide-react";
-import { mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
+import { mdiExportVariant, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -861,9 +861,10 @@ export function AreasView() {
                         <button
                           type="button"
                           onClick={exportSelectedArea}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
-                          Export GeoJSON
+                          <MdiIcon path={mdiExportVariant} size={12} />
+                          Export
                         </button>
                       </div>
                     </div>
