@@ -937,7 +937,7 @@ export function AreasView() {
 
       <ConfirmModal
         open={deleteTarget !== null}
-        title="Delete area?"
+        title={deleteTarget ? `Delete ${geometryDisplayNoun(deleteTarget.geometry.type).toLowerCase()}?` : "Delete area?"}
         message={deleteTarget ? <DeleteAreaMessage area={deleteTarget} /> : ""}
         confirmLabel="Delete"
         onConfirm={handleDeleteConfirmed}
