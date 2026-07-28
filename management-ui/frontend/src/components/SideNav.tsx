@@ -1,4 +1,4 @@
-import { FileCheck, MapPin } from "lucide-react";
+import { FileCheck, MapPin, Search } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 // Section list -- deliberately a plain array, not hardcoded JSX, so adding
@@ -6,6 +6,7 @@ import { NavLink } from "react-router-dom";
 const SECTIONS = [
   { path: "/rules", label: "Rules", icon: FileCheck },
   { path: "/areas", label: "Areas", icon: MapPin },
+  { path: "/lookup", label: "Lookup", icon: Search },
 ];
 
 interface SideNavProps {
