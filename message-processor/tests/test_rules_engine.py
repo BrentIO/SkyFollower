@@ -71,6 +71,7 @@ class FlightStub:
     positions: list = field(default_factory=list)
     velocities: list = field(default_factory=list)
     matched_rules: list = field(default_factory=list)
+    receiver_sources: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +381,41 @@ class TestConditionValidation:
             _rule("r", [_cond("wake_turbulence_category", "equals", "jumbo")])
         ])) is False
 
+    def test_receiver_source_rejects_non_equals(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "in_list", ["1090"])])
+        ])) is False
+
+    def test_receiver_source_must_be_list(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", "1090")])
+        ])) is False
+
+    def test_receiver_source_rejects_empty_list(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", [])])
+        ])) is False
+
+    def test_receiver_source_rejects_all_three(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", ["1090", "978", "MLAT"])])
+        ])) is False
+
+    def test_receiver_source_rejects_duplicates(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", ["1090", "1090"])])
+        ])) is False
+
+    def test_receiver_source_rejects_unknown_value(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", ["4096"])])
+        ])) is False
+
+    def test_receiver_source_accepts_two_values(self):
+        assert _bare_engine().load_rules_json(json.dumps([
+            _rule("r", [_cond("receiver_source", "equals", ["1090", "978"])])
+        ])) is True
+
     def test_matched_rules_must_be_list(self):
         assert _bare_engine().load_rules_json(json.dumps([
             _rule("r", [_cond("matched_rules", "in_list", "r1")])
@@ -640,6 +676,54 @@ class TestMilitaryEval:
     def test_missing_military_no_match(self):
         e = _engine_with_rules([_rule("r", [_cond("military", "equals", "true")])])
         assert e.evaluate(FlightStub()) == []
+
+
+class TestReceiverSourceEval:
+    def test_single_value_match(self):
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["MLAT"])])])
+        f = FlightStub(receiver_sources=["MLAT"])
+        assert e.evaluate(f) != []
+
+    def test_single_value_no_match(self):
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["MLAT"])])])
+        f = FlightStub(receiver_sources=["1090"])
+        assert e.evaluate(f) == []
+
+    def test_two_values_matches_either(self):
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["1090", "978"])])])
+        assert e.evaluate(FlightStub(receiver_sources=["978"])) != []
+        assert e.evaluate(FlightStub(receiver_sources=["1090"])) != []
+
+    def test_no_overlap_no_match(self):
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["1090", "978"])])])
+        assert e.evaluate(FlightStub(receiver_sources=["MLAT"])) == []
+
+    def test_empty_receiver_sources_no_match(self):
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["1090"])])])
+        assert e.evaluate(FlightStub(receiver_sources=[])) == []
+
+    def test_evaluated_before_a_later_expensive_condition(self):
+        # receiver_source (priority 50) must run before area (priority
+        # 1000) so a non-matching receiver_source short-circuits the rule
+        # without ever touching the areas' shapely geometry.
+        e = _engine_with_rules(
+            [_rule("r", [
+                _cond("receiver_source", "equals", ["MLAT"]),
+                _cond("area", "equals", "LI"),
+            ])],
+            areas={
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "properties": {"identifier": "LI", "name": "LI"},
+                    "geometry": {"type": "Polygon", "coordinates": [[
+                        [0, 0], [0, 1], [1, 1], [1, 0], [0, 0],
+                    ]]},
+                }],
+            },
+        )
+        f = FlightStub(receiver_sources=["1090"], positions=[PosStub(latitude=0.5, longitude=0.5)])
+        assert e.evaluate(f) == []
 
 
 class TestOperatorEval:
