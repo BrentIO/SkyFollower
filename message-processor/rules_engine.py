@@ -47,10 +47,7 @@ _PRIORITY = {
 _VALID_CONDITION_TYPES = frozenset(_PRIORITY.keys())
 _VALID_OPERATORS = frozenset({"equals", "minimum", "maximum", "in_list", "not_in_list"})
 
-_WAKE_TURBULENCE_CATEGORIES = frozenset({
-    "light", "medium", "medium 1", "medium 2",
-    "high vortex aircraft", "heavy", "super", "rotorcraft", "high performance",
-})
+_WAKE_TURBULENCE_CATEGORIES = frozenset({"light", "medium", "heavy"})
 
 _RECEIVER_SOURCES = frozenset({"1090", "978", "MLAT"})
 

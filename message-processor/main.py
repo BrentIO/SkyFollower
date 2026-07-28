@@ -67,6 +67,29 @@ _US_REG_RE = re.compile(
 )
 
 
+# wake_turbulence_category is receiver-decode-only, sourced exclusively from
+# live 1090/978 emitter-category data — registry/Mictronics enrichment must
+# never seed it. Both decode paths' 7 possible source values
+# collapse to just light/medium/heavy: Super is structurally unreachable from
+# live data (the ADS-B category subfield has no code point for it), and
+# rotorcraft/high-performance are a different axis (emitter type, not wake
+# weight class) rather than a value to remap. Keyed by both pyModeS978's
+# EmitterCategory member names and pyModeS's own TC=4 wake_vortex strings,
+# which describe the same 7 DO-260B categories.
+_WAKE_TURBULENCE_MAP: dict[str, str] = {
+    "LIGHT": "light",
+    "MEDIUM": "medium",
+    "MEDIUM_LARGE": "medium",
+    "MEDIUM_LARGE_HIGH_VORTEX": "medium",
+    "HEAVY": "heavy",
+    "Light": "light",
+    "Medium 1": "medium",
+    "Medium 2": "medium",
+    "High vortex aircraft": "medium",
+    "Heavy": "heavy",
+}
+
+
 def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
     """True when the broadcast ident is just the aircraft's own tail number
     (registration) rather than a route-bearing flight identifier/callsign —
@@ -756,9 +779,9 @@ class MessageProcessor:
             if ident and "#" not in ident:
                 data["ident"] = ident
 
-        wake_vortex = result.get("wake_vortex")
-        if wake_vortex and wake_vortex != "No category information":
-            data["wake_turbulence_category"] = wake_vortex
+        canonical_wtc = _WAKE_TURBULENCE_MAP.get(result.get("wake_vortex"))
+        if canonical_wtc:
+            data["wake_turbulence_category"] = canonical_wtc
 
         if result.get("latitude") is not None:
             data["latitude"] = result["latitude"]
@@ -819,11 +842,10 @@ class MessageProcessor:
                 data["ident"] = ident
 
         category = result.get("category")
-        if category is not None and category.name != "NO_INFORMATION":
-            # Unlike pyModeS's raw 1090 category int, pyModeS978's category
-            # is already typecode-independent and fully resolved by the
-            # library — no processor-side interpretation needed here.
-            data["wake_turbulence_category"] = category.name.replace("_", " ").title()
+        if category is not None:
+            canonical_wtc = _WAKE_TURBULENCE_MAP.get(category.name)
+            if canonical_wtc:
+                data["wake_turbulence_category"] = canonical_wtc
 
         if result.get("latitude") is not None:
             data["latitude"] = result["latitude"]
@@ -901,7 +923,10 @@ class MessageProcessor:
             flight.squawk = str(data["squawk"])
 
         if "wake_turbulence_category" in data:
-            flight.aircraft.setdefault("wake_turbulence_category", data["wake_turbulence_category"])
+            # Live decode is the sole writer (registry enrichment never seeds this
+            # field — see _WAKE_TURBULENCE_MAP), so each new reading just replaces
+            # the last one; no first-wins protection needed.
+            flight.aircraft["wake_turbulence_category"] = data["wake_turbulence_category"]
 
         if "ident" in data and not flight.ident:
             ident = data["ident"]
@@ -936,7 +961,11 @@ class MessageProcessor:
         try:
             raw = self._redis.evalsha(self._merge_sha, 0, flight.icao_hex)
             if raw:
-                flight.aircraft = json.loads(raw)
+                aircraft = json.loads(raw)
+                # Registry/Mictronics data must never seed wake_turbulence_category —
+                # it's receiver-decode-only (see _WAKE_TURBULENCE_MAP above).
+                aircraft.pop("wake_turbulence_category", None)
+                flight.aircraft = aircraft
             else:
                 self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
                 self._redis.incr(metrics_registration_misses_key(self._id, "today"))

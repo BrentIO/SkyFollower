@@ -69,17 +69,7 @@ export const OPERATORS_BY_TYPE: Record<ConditionType, readonly Operator[]> = {
   matched_rules: ["in_list", "not_in_list"],
 };
 
-export const WAKE_TURBULENCE_CATEGORIES = [
-  "light",
-  "medium",
-  "medium 1",
-  "medium 2",
-  "high vortex aircraft",
-  "heavy",
-  "super",
-  "rotorcraft",
-  "high performance",
-] as const;
+export const WAKE_TURBULENCE_CATEGORIES = ["light", "medium", "heavy"] as const;
 
 export type WakeTurbulenceCategory = (typeof WAKE_TURBULENCE_CATEGORIES)[number];
 

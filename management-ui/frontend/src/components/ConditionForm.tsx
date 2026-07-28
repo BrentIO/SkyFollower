@@ -61,30 +61,19 @@ const RECEIVER_SOURCE_OPTIONS: readonly { value: string; label: string }[] = [
 ];
 
 // WAKE_TURBULENCE_CATEGORIES stores the exact lowercase strings
-// message-processor/rules_engine.py validates against (e.g. "medium 1",
-// "high vortex aircraft") -- this only formats the dropdown's visible
-// text; the submitted `value` is always the original lowercase form.
+// message-processor/rules_engine.py validates against -- this only formats
+// the dropdown's visible text; the submitted `value` is always the original
+// lowercase form.
 function titleCase(category: WakeTurbulenceCategory): string {
   return category.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Light-to-heavy by weight, not alphabetical -- Light/Medium/Heavy/Super
-// is the standard ICAO ordering; Medium 1/Medium 2 are subdivisions of
-// Medium, and High Vortex Aircraft sits just below Heavy. Rotorcraft and
-// High Performance aren't part of that weight spectrum at all (wake
-// behavior driven by rotor downwash / flight characteristics rather than
-// mass), so they're placed after Super instead of interleaved into it.
-const WAKE_TURBULENCE_ORDER: readonly WakeTurbulenceCategory[] = [
-  "light",
-  "medium 1",
-  "medium",
-  "medium 2",
-  "high vortex aircraft",
-  "heavy",
-  "super",
-  "rotorcraft",
-  "high performance",
-];
+// Light-to-heavy by weight, not alphabetical. Super, rotorcraft, and high
+// performance were dropped entirely (not remapped): Super has no code point
+// in the live ADS-B/UAT category data this field is now sourced from, and
+// rotorcraft/high-performance are a different axis (emitter type) rather
+// than a wake-turbulence weight class.
+const WAKE_TURBULENCE_ORDER: readonly WakeTurbulenceCategory[] = ["light", "medium", "heavy"];
 
 // Catches drift if WAKE_TURBULENCE_CATEGORIES (the actual validated set,
 // from message-processor/rules_engine.py) ever changes without this

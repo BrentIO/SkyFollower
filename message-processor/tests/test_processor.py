@@ -120,7 +120,7 @@ class TestDecode1090:
         )
         data = p._decode_1090(msg)
         assert data["ident"] == "TESTHVY1"
-        assert data["wake_turbulence_category"] == "Heavy"
+        assert data["wake_turbulence_category"] == "heavy"
 
     def test_gps_velocity(self):
         # TC=19 subtype 1 (GPS): groundspeed=159, track≈182.88, vertical_rate=-832
@@ -260,7 +260,7 @@ class TestDecode978:
         )
         data = p._decode_978(msg)
         assert data["ident"] == "TEST978A"
-        assert data["wake_turbulence_category"] == "Medium Large High Vortex"
+        assert data["wake_turbulence_category"] == "medium"
 
     def test_airborne_position_and_velocity(self):
         # Same frame as above: lat/lon/altitude + airborne groundspeed/track/vertical_rate
@@ -304,7 +304,9 @@ class TestDecode978:
         assert "wake_turbulence_category" not in data
 
     def test_ground_heading(self):
-        # On-ground frame, type code selects heading (not track); category=9 (glider/sailplane)
+        # On-ground frame, type code selects heading (not track); category=9
+        # (glider/sailplane) -- not one of the 7 DO-260B wake-turbulence
+        # categories, so it's left unset rather than mapped to anything.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="-08A3D3E300000000000000008042C000003AD755D6B3890000000200000000000000",
@@ -313,7 +315,7 @@ class TestDecode978:
         data = p._decode_978(msg)
         assert data["velocity"] == 15
         assert data["heading"] == 270.0
-        assert data["wake_turbulence_category"] == "Glider Sailplane"
+        assert "wake_turbulence_category" not in data
 
     def test_ground_track(self):
         # On-ground frame, type code selects track (not heading)
@@ -996,6 +998,24 @@ class TestProcessorEnrichment:
         mock_redis.incr.assert_called()
         assert f.aircraft.get("icao_hex") == "ZZZZZZ"
 
+    def test_enrich_aircraft_strips_registry_wake_turbulence_category(self):
+        # wake_turbulence_category is receiver-decode-only -- a merged Redis
+        # document (still possibly carrying a registry-sourced value, until
+        # the data-runner side stops writing it) must never seed the field.
+        p, mock_redis = self._make_processor()
+        aircraft_data = {
+            "icao_hex": "A8AE7F", "registration": "N659DL",
+            "wake_turbulence_category": "heavy",
+        }
+        mock_redis.evalsha.return_value = json.dumps(aircraft_data)
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._enrich_aircraft(f)
+
+        assert f.aircraft["registration"] == "N659DL"
+        assert "wake_turbulence_category" not in f.aircraft
+
     def test_enrich_aircraft_no_registration_key_written(self):
         p, mock_redis = self._make_processor()
         aircraft_data = {"icao_hex": "A8AE7F", "registration": "N659DL"}
@@ -1327,6 +1347,35 @@ class TestMaybeResolveRouteHeadingStability:
         assert f.origin is None
         assert f.destination is None  # along-track check rejects KMIA->KMCO
         mock_redis.evalsha.assert_called_once()
+
+
+class TestWakeTurbulenceCategoryLiveOverwrite:
+    """wake_turbulence_category has exactly one writer (live decode) --
+    each new reading replaces the last one outright, no first-wins
+    protection (unlike the old setdefault-based merge)."""
+
+    def test_later_message_overwrites_earlier_value(self):
+        p, mock_redis = _make_processor()
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
+
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "wake_turbulence_category": "medium"},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
+            )
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.aircraft["wake_turbulence_category"] == "medium"
+
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "wake_turbulence_category": "heavy"},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 1, source="1090"),
+            )
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.aircraft["wake_turbulence_category"] == "heavy"
 
 
 class TestUpdateFlightTriggersRouteResolution:
