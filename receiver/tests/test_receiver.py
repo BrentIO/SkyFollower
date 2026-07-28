@@ -345,8 +345,13 @@ class TestFallbackQueue:
 
         q.drain_in_background(lambda qn, p: calls.append((qn, p)))
 
+        # Wait on the lock itself, not depth() -- drain() drops depth to 0
+        # on its final DELETE, then still has to loop once more (SELECT
+        # finds nothing, breaks, returns) before its finally block releases
+        # _drain_lock. Polling depth() alone races ahead of that by up to
+        # one iteration, occasionally catching the lock still held.
         deadline = time.monotonic() + 2
-        while q.depth() != 0 and time.monotonic() < deadline:
+        while q._drain_lock.locked() and time.monotonic() < deadline:
             time.sleep(0.01)
 
         assert calls == [("adsb-0", "payload")]
