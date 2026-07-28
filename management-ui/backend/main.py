@@ -185,6 +185,21 @@ _RULE_EXAMPLES: dict[str, dict] = {
             {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
         ],
     },
+    "Air Force One overhead, verified via 1090": {
+        "name": "Air Force One overhead, verified via 1090",
+        "description": "ADFDF8 (Air Force One) force-archived only when actually received "
+        "via 1090MHz ADS-B, not merely via MLAT -- it often suppresses its position and is "
+        "then only visible via MLAT triangulation, which doesn't imply it's actually nearby. "
+        "If it isn't showing up on 1090, skip the force-archive and let the normal MLAT-only "
+        "archive skip apply.",
+        "identifier": "af1_1090_verified",
+        "enabled": True,
+        "force_archive": True,
+        "conditions": [
+            {"type": "aircraft_icao_hex", "operator": "equals", "value": "ADFDF8"},
+            {"type": "receiver_source", "operator": "equals", "value": ["1090"]},
+        ],
+    },
 }
 
 _AREA_EXAMPLES: dict[str, dict] = {
@@ -341,6 +356,22 @@ class MilitaryCondition(_ConditionBase):
     value: str
 
 
+class ReceiverSourceCondition(_ConditionBase):
+    type: Literal["receiver_source"]
+    operator: Literal["equals"]
+    # 1-2 of "1090"/"978"/"MLAT", no duplicates -- all 3 would be equivalent
+    # to no filter at all (every flight has at least one), so RulesEngine
+    # rejects that as dead weight rather than a real filter.
+    value: list[Literal["1090", "978", "MLAT"]] = Field(min_length=1, max_length=2)
+
+    @field_validator("value")
+    @classmethod
+    def _check_no_duplicates(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("receiver_source list must not contain duplicates")
+        return v
+
+
 class OperatorAirlineDesignatorCondition(_ConditionBase):
     type: Literal["operator_airline_designator"]
     operator: Literal["equals"]
@@ -414,6 +445,7 @@ Condition = Annotated[
     Union[
         AltitudeCondition, VelocityCondition, VerticalSpeedCondition, HeadingCondition,
         DateCondition, IdentCondition, SquawkCondition, MilitaryCondition,
+        ReceiverSourceCondition,
         OperatorAirlineDesignatorCondition, AircraftTypeDesignatorCondition,
         AircraftRegistrationCondition, AircraftIcaoHexCondition,
         AircraftPowerplantCountCondition, WakeTurbulenceCategoryCondition,

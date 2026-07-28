@@ -460,6 +460,7 @@ class TestConditionOperatorEnforcement:
         {"type": "ident", "operator": "minimum", "value": "DAL2"},
         {"type": "squawk", "operator": "minimum", "value": "1200"},
         {"type": "military", "operator": "minimum", "value": "true"},
+        {"type": "receiver_source", "operator": "in_list", "value": ["1090"]},
         {"type": "operator_airline_designator", "operator": "minimum", "value": "UAL"},
         {"type": "aircraft_type_designator", "operator": "minimum", "value": "B752"},
         {"type": "aircraft_registration", "operator": "minimum", "value": "N659DL"},
@@ -486,6 +487,7 @@ class TestConditionOperatorEnforcement:
         {"type": "ident", "operator": "equals", "value": "DAL2"},
         {"type": "squawk", "operator": "equals", "value": "1200"},
         {"type": "military", "operator": "equals", "value": "true"},
+        {"type": "receiver_source", "operator": "equals", "value": ["1090", "978"]},
         {"type": "operator_airline_designator", "operator": "equals", "value": "UAL"},
         {"type": "aircraft_type_designator", "operator": "equals", "value": "B752"},
         {"type": "aircraft_registration", "operator": "equals", "value": "N659DL"},
@@ -500,6 +502,40 @@ class TestConditionOperatorEnforcement:
     def test_valid_operator_for_type_returns_201(self, client, condition):
         client.post("/api/areas", json=_area("LI"))  # only needed by the 'area' case
         resp = client.post("/api/rules", json=_rule("ok", conditions=[condition]))
+        assert resp.status_code == 201
+
+
+class TestReceiverSourceCondition:
+    """
+    receiver_source's list-shaped value has constraints beyond a plain
+    operator check (1-2 elements, no duplicates, only 1090/978/MLAT) --
+    covered separately from TestConditionOperatorEnforcement's single
+    valid/invalid-operator table.
+    """
+
+    def test_empty_list_returns_422(self, client):
+        cond = {"type": "receiver_source", "operator": "equals", "value": []}
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[cond]))
+        assert resp.status_code == 422
+
+    def test_three_values_rejected(self, client):
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["1090", "978", "MLAT"]}
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[cond]))
+        assert resp.status_code == 422
+
+    def test_duplicate_values_rejected(self, client):
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["1090", "1090"]}
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[cond]))
+        assert resp.status_code == 422
+
+    def test_unknown_value_rejected(self, client):
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["4096"]}
+        resp = client.post("/api/rules", json=_rule("bad", conditions=[cond]))
+        assert resp.status_code == 422
+
+    def test_single_value_accepted(self, client):
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["MLAT"]}
+        resp = client.post("/api/rules", json=_rule("ok", conditions=[cond]))
         assert resp.status_code == 201
 
 

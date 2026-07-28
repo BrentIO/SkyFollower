@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _PRIORITY = {
     "military": 50,
+    "receiver_source": 50,
     "aircraft_powerplant_count": 50,
     "altitude": 100,
     "velocity": 110,
@@ -50,6 +51,8 @@ _WAKE_TURBULENCE_CATEGORIES = frozenset({
     "light", "medium", "medium 1", "medium 2",
     "high vortex aircraft", "heavy", "super", "rotorcraft", "high performance",
 })
+
+_RECEIVER_SOURCES = frozenset({"1090", "978", "MLAT"})
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +478,28 @@ class RulesEngine:
         c["value"] = val
         return c
 
+    def _validate_receiver_source(self, c: dict) -> dict:
+        if c["operator"] != "equals":
+            raise _ConditionError("receiver_source only supports 'equals'")
+        if not isinstance(c["value"], list):
+            raise _ConditionError("receiver_source value must be a list")
+        # Capped at 2: all 3 sources selected is equivalent to no filter at
+        # all (every flight has at least one), so a 3-value condition would
+        # be dead weight -- reject it here rather than let it silently
+        # always match.
+        if not (1 <= len(c["value"]) <= 2):
+            raise _ConditionError("receiver_source list must have 1 or 2 elements")
+        if len(set(c["value"])) != len(c["value"]):
+            raise _ConditionError("receiver_source list must not contain duplicates")
+        values = [str(v).strip() for v in c["value"]]
+        for v in values:
+            if v not in _RECEIVER_SOURCES:
+                raise _ConditionError(
+                    f"unknown receiver_source '{v}'; valid values: {sorted(_RECEIVER_SOURCES)}"
+                )
+        c["value"] = values
+        return c
+
     def _validate_matched_rules(self, c: dict) -> dict:
         if c["operator"] not in ("in_list", "not_in_list"):
             raise _ConditionError("matched_rules only supports 'in_list' or 'not_in_list'")
@@ -593,6 +618,9 @@ class RulesEngine:
 
     def _eval_military(self, c: dict, flight) -> bool:
         return flight.aircraft.get("military") == c["value"]
+
+    def _eval_receiver_source(self, c: dict, flight) -> bool:
+        return bool(set(c["value"]) & set(flight.receiver_sources))
 
     def _eval_operator_airline_designator(self, c: dict, flight) -> bool:
         return flight.operator.get("airline_designator", "").upper() == c["value"]
