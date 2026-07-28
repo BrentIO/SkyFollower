@@ -185,15 +185,19 @@ _RULE_EXAMPLES: dict[str, dict] = {
             {"type": "date", "operator": "maximum", "value": "2027-06-27T18:50Z"},
         ],
     },
-    "Seen via ADS-B, never MLAT-only": {
-        "name": "Seen via ADS-B, never MLAT-only",
-        "description": "Ident DAL2 seen via 1090MHz ADS-B or 978 UAT -- excludes flights "
-        "only ever seen via MLAT",
-        "identifier": "dal2_adsb_seen",
+    "Air Force One overhead, verified via 1090": {
+        "name": "Air Force One overhead, verified via 1090",
+        "description": "ADFDF8 (Air Force One) force-archived only when actually received "
+        "via 1090MHz ADS-B, not merely via MLAT -- it often suppresses its position and is "
+        "then only visible via MLAT triangulation, which doesn't imply it's actually nearby. "
+        "If it isn't showing up on 1090, skip the force-archive and let the normal MLAT-only "
+        "archive skip apply.",
+        "identifier": "af1_1090_verified",
         "enabled": True,
+        "force_archive": True,
         "conditions": [
-            {"type": "ident", "operator": "equals", "value": "DAL2"},
-            {"type": "receiver_source", "operator": "equals", "value": ["1090", "978"]},
+            {"type": "aircraft_icao_hex", "operator": "equals", "value": "ADFDF8"},
+            {"type": "receiver_source", "operator": "equals", "value": ["1090"]},
         ],
     },
 }
