@@ -8,10 +8,11 @@ import {
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { ChevronDown, ChevronUp, Lock, MapPinPlusInside, Unlock } from "lucide-react";
-import { mdiExportVariant, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
+import { mdiExportVariant, mdiFileImportOutline, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
-import { AreaNameModal } from "../components/AreaNameModal";
+import { AreaNameModal, IDENTIFIER_PATTERN } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { ImportAreaModal, type ImportedFeature } from "../components/ImportAreaModal";
 import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
@@ -327,6 +328,13 @@ export function AreasView() {
   // Drives the naming modal's "Name this area/line/point" title -- set
   // alongside pendingDrawFeatureId at both call sites that open it.
   const [pendingGeometryType, setPendingGeometryType] = useState<Area["geometry"]["type"]>("Polygon");
+  // locked value to apply once the pending feature is actually created --
+  // always false for a fresh draw/duplicate (existing behavior), but an
+  // imported feature's properties.locked, when present, must survive
+  // through to createArea() even if the identifier/name still need the
+  // AreaNameModal detour.
+  const [pendingLocked, setPendingLocked] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
 
@@ -347,11 +355,13 @@ export function AreasView() {
   const handleDrawFinishRef = useRef((featureId: string) => {
     setPendingNameSuggestion(null);
     setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
+    setPendingLocked(false);
     setPendingDrawFeatureId(featureId);
   });
   handleDrawFinishRef.current = (featureId: string) => {
     setPendingNameSuggestion(null);
     setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
+    setPendingLocked(false);
     setPendingDrawFeatureId(featureId);
   };
 
@@ -602,6 +612,7 @@ export function AreasView() {
       setOriginal(null);
       setPendingNameSuggestion(sourceName ? `${sourceName} copy` : "");
       setPendingGeometryType(sourceGeometry.type);
+      setPendingLocked(false);
       setPendingDrawFeatureId(tempId);
     });
   }
@@ -627,12 +638,16 @@ export function AreasView() {
     );
   }
 
-  async function handleNameConfirm(identifier: string, name: string) {
+  // Shared tail end of "a pending draw-map feature becomes a real, saved
+  // Area" -- used both by handleNameConfirm (identifier/name came from the
+  // AreaNameModal) and handleImportFeature's direct-create path (identifier/
+  // name already resolved from the imported feature's own properties, no
+  // modal needed). `locked` is a parameter rather than always `false`
+  // because imports must be able to preserve properties.locked -- every
+  // other caller (draw/duplicate) still just passes `false`.
+  async function createAreaFromPendingFeature(tempId: string, identifier: string, name: string, locked: boolean) {
     const draw = drawRef.current;
-    const tempId = pendingDrawFeatureId;
-    setPendingDrawFeatureId(null);
-    setPendingNameSuggestion(null);
-    if (!draw || !tempId) return;
+    if (!draw) return;
 
     const feature = draw.getSnapshotFeature(tempId);
     if (!feature) {
@@ -649,15 +664,11 @@ export function AreasView() {
 
     setSaving(true);
     try {
-      // New areas (including duplicates -- see duplicateArea's own
-      // comment) always start unlocked, regardless of the source shape's
-      // lock state: the offset+duplicate flow exists specifically so the
-      // copy can be immediately dragged into place.
       const saved = await createArea({
         identifier,
         name,
         geometry: feature.geometry as Area["geometry"],
-        locked: false,
+        locked,
       });
       removeFeatureIfPresent(draw, tempId);
       draw.addFeatures([
@@ -672,7 +683,7 @@ export function AreasView() {
       setAreas((current) => [...current, saved]);
       setDraft(clone(saved));
       setOriginal(clone(saved));
-      setSelectDraggable(false);
+      setSelectDraggable(saved.locked);
       showToast("success", `${geometryDisplayNoun(saved.geometry.type)} '${saved.identifier}' created.`);
     } catch (err) {
       removeFeatureIfPresent(draw, tempId);
@@ -682,6 +693,58 @@ export function AreasView() {
     }
   }
 
+  async function handleNameConfirm(identifier: string, name: string) {
+    const tempId = pendingDrawFeatureId;
+    const locked = pendingLocked;
+    setPendingDrawFeatureId(null);
+    setPendingNameSuggestion(null);
+    setPendingLocked(false);
+    if (!tempId) return;
+    await createAreaFromPendingFeature(tempId, identifier, name, locked);
+  }
+
+  // Places an imported feature onto the draw map exactly like a fresh draw
+  // or a duplicate, then either creates it immediately (name + a usable,
+  // non-duplicate identifier both present in the feature's properties) or
+  // falls through to the existing AreaNameModal -- reusing its identifier
+  // validation/duplicate rejection rather than reimplementing it here.
+  function handleImportFeature(feature: ImportedFeature) {
+    requestSwitch(() => {
+      const draw = drawRef.current;
+      if (!draw) return;
+
+      const props = feature.properties ?? {};
+      const rawName = typeof props.name === "string" ? props.name : "";
+      const rawIdentifier = typeof props.identifier === "string" ? props.identifier : "";
+      const rawLocked = typeof props.locked === "boolean" ? props.locked : false;
+      const identifierUsable =
+        rawIdentifier.trim() !== "" &&
+        IDENTIFIER_PATTERN.test(rawIdentifier) &&
+        !areas.some((a) => a.identifier === rawIdentifier);
+
+      const tempId = crypto.randomUUID();
+      draw.addFeatures([
+        {
+          id: tempId,
+          type: "Feature",
+          properties: { mode: geometryToModeName(feature.geometry.type), name: rawName },
+          geometry: feature.geometry,
+        },
+      ]);
+      setDraft(null);
+      setOriginal(null);
+
+      if (rawName.trim() && identifierUsable) {
+        void createAreaFromPendingFeature(tempId, rawIdentifier, rawName.trim(), rawLocked);
+      } else {
+        setPendingNameSuggestion(rawName || null);
+        setPendingGeometryType(feature.geometry.type);
+        setPendingLocked(rawLocked);
+        setPendingDrawFeatureId(tempId);
+      }
+    });
+  }
+
   function handleNameCancel() {
     const draw = drawRef.current;
     if (pendingDrawFeatureId && draw) {
@@ -689,6 +752,7 @@ export function AreasView() {
     }
     setPendingDrawFeatureId(null);
     setPendingNameSuggestion(null);
+    setPendingLocked(false);
     draw?.setMode("select");
   }
 
@@ -783,6 +847,15 @@ export function AreasView() {
             className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
           >
             <MapPinPlusInside size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportModalOpen(true)}
+            aria-label="Import"
+            title="Import"
+            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <MdiIcon path={mdiFileImportOutline} size={18} />
           </button>
           <button
             type="button"
@@ -953,6 +1026,14 @@ export function AreasView() {
         geometryType={pendingGeometryType}
         onConfirm={handleNameConfirm}
         onCancel={handleNameCancel}
+      />
+      <ImportAreaModal
+        open={importModalOpen}
+        onImport={(feature) => {
+          setImportModalOpen(false);
+          handleImportFeature(feature);
+        }}
+        onCancel={() => setImportModalOpen(false)}
       />
     </div>
   );
