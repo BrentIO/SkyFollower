@@ -24,6 +24,14 @@ const TABS: { key: TabKey; label: string; placeholder: string }[] = [
   { key: "route", label: "Route", placeholder: "Flight ident (DAL2)" },
 ];
 
+// Every lookup type across all four tabs is alphanumeric plus, at most,
+// a space or hyphen (registrations like "VP-CKA", idents, designators) --
+// strips anything else as it's typed/pasted rather than merely flagging it
+// invalid after the fact.
+function sanitizeQuery(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9 -]/g, "");
+}
+
 // 6 hex digits -> icao_hex; anything else -> registration. Registration
 // formats vary too much by country to validate further client-side (see
 // #558) -- non-hex input is just passed through and a 404 means "not found."
@@ -99,6 +107,12 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{children}</div>;
 }
 
+// A raw code (icao_hex, airline/IATA designator) shown as-is rather than in
+// "(parens)" -- monospace distinguishes it as a code from surrounding prose.
+function Mono({ children }: { children: ReactNode }) {
+  return <span className="font-mono text-sm text-slate-700 dark:text-slate-300">{children}</span>;
+}
+
 type BadgeColor = "yellow" | "green" | "blue" | "red";
 
 const BADGE_CLASSES: Record<BadgeColor, string> = {
@@ -144,7 +158,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const seats = displayStr(data.seats);
 
   const powerplant = displayObj(data.powerplant);
-  const ppCountType = joinParts([displayStr(powerplant?.count), displayStr(powerplant?.type)]);
+  const ppCountType = joinParts([displayStr(powerplant?.count), displayStr(powerplant?.type)], " x ");
   const ppManufacturerModel = joinParts([displayStr(powerplant?.manufacturer), displayStr(powerplant?.model)]);
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 
@@ -155,12 +169,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline gap-2">
-        <Label>Registration</Label>
         {registration && (
           <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{registration}</span>
         )}
-        {icaoHex && <span className="text-sm text-slate-700 dark:text-slate-300">({icaoHex})</span>}
-        {military && <Badge color="yellow">Military</Badge>}
+        {icaoHex && <Mono>{icaoHex}</Mono>}
+        {military && <Badge color="green">Military</Badge>}
         {specialLivery && <Badge color="yellow">{specialLivery}</Badge>}
       </div>
 
@@ -212,7 +225,9 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
       {dataSources && (
         <div>
           <SectionLabel>Sources</SectionLabel>
-          <div className="pl-4 text-sm text-slate-900 dark:text-slate-100">{dataSources.join(", ")}</div>
+          <div className="pl-4 text-sm text-slate-900 dark:text-slate-100">
+            {dataSources.map((s, i) => <div key={i}>{s}</div>)}
+          </div>
         </div>
       )}
     </div>
@@ -235,7 +250,7 @@ function OperatorResultView({ data }: { data: OperatorRecord }) {
         {name ? (
           <>
             <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{name}</span>
-            <span className="text-sm text-slate-700 dark:text-slate-300">({designator})</span>
+            <Mono>{designator}</Mono>
           </>
         ) : (
           <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
@@ -361,10 +376,13 @@ function toDeg(rad: number): number {
 
 // Spherical linear interpolation between two [lon, lat] points along the
 // great-circle arc connecting them -- straight rhumb-line segments would
-// visibly cut corners on anything but a very short hop. Doesn't handle
-// antimeridian crossing (a route that would cross +/-180 longitude renders
-// as a straight line across the map instead of wrapping) -- not worth the
-// extra complexity unless a real route actually needs it.
+// visibly cut corners on anything but a very short hop. Each interpolated
+// point's longitude comes from its own atan2(), independently wrapped to
+// (-180, 180] -- a path that actually crosses the antimeridian (e.g.
+// ZSPD -> PANC, whose shortest path runs over the Bering Sea) produces a
+// point sequence that jumps from just under +180 to just over -180 (or vice
+// versa) partway through. unwrapLongitudes() below straightens that back
+// into a continuous sequence before it's ever handed to MapLibre.
 function greatCircleSegment(
   [lon1, lat1]: [number, number],
   [lon2, lat2]: [number, number],
@@ -398,13 +416,41 @@ function greatCircleSegment(
   return points;
 }
 
+// Walks the coordinate sequence and adds/subtracts multiples of 360 to keep
+// each point's longitude within 180 degrees of the one before it -- turns a
+// sequence that jumps across +/-180 into a continuous one that may run
+// outside the standard [-180, 180] range (e.g. 190 instead of -170).
+// MapLibre's Mercator projection renders that correctly with
+// renderWorldCopies (the default): a longitude outside the standard range
+// simply lands in the adjacent world copy, visually continuous with the
+// rest of the line.
+function unwrapLongitudes(coords: [number, number][]): [number, number][] {
+  if (coords.length === 0) return coords;
+  const out: [number, number][] = [coords[0]];
+  let offset = 0;
+  for (let i = 1; i < coords.length; i++) {
+    let lon = coords[i][0] + offset;
+    const prevLon = out[i - 1][0];
+    while (lon - prevLon > 180) {
+      lon -= 360;
+      offset -= 360;
+    }
+    while (lon - prevLon < -180) {
+      lon += 360;
+      offset += 360;
+    }
+    out.push([lon, coords[i][1]]);
+  }
+  return out;
+}
+
 function buildGreatCircleLine(waypoints: [number, number][]): [number, number][] {
   const coords: [number, number][] = [];
   for (let i = 0; i < waypoints.length - 1; i++) {
     const segment = greatCircleSegment(waypoints[i], waypoints[i + 1], 64);
     coords.push(...(i === 0 ? segment : segment.slice(1)));
   }
-  return coords;
+  return unwrapLongitudes(coords);
 }
 
 function iconMarkerElement(color: string): HTMLDivElement {
@@ -516,7 +562,7 @@ function RouteResultView({ data }: { data: RouteLookup }) {
             <div key={i} className="flex flex-wrap items-baseline gap-2 text-sm">
               <Badge color={ROLE_BADGE_COLOR[role]}>{ROLE_LABEL[role]}</Badge>
               <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
-              {iataCode && <span className="text-slate-700 dark:text-slate-300">({iataCode})</span>}
+              {iataCode && <Mono>{iataCode}</Mono>}
               {detailLine && <span className="text-slate-900 dark:text-slate-100">{detailLine}</span>}
             </div>
           );
@@ -606,7 +652,7 @@ export function LookupView() {
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => setQuery(sanitizeQuery(e.target.value))}
           placeholder={activeTabInfo.placeholder}
           className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
         />
