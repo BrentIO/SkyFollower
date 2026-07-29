@@ -141,6 +141,45 @@ class TestAircraftRecord:
         )
         assert rec.data_sources == ["mictronics", "us-faa-registry"]
 
+    def test_type_category_seats_manufacturer_model_default_to_none(self):
+        rec = AircraftRecord(icao_hex="A8AE7F")
+        assert rec.type is None
+        assert rec.category is None
+        assert rec.seats is None
+        assert rec.manufacturer_model is None
+        assert rec.registrant is None
+
+    def test_type_category_seats_manufacturer_model_fields(self):
+        rec = AircraftRecord(
+            icao_hex="A8AE7F",
+            type="Airplane",
+            category="Land",
+            seats=189,
+            manufacturer_model="BOEING 767-332ER",
+        )
+        assert rec.type == "Airplane"
+        assert rec.category == "Land"
+        assert rec.seats == 189
+        assert rec.manufacturer_model == "BOEING 767-332ER"
+
+    def test_registrant_field(self):
+        from shared.models import RegistrantInfo
+        rec = AircraftRecord(
+            icao_hex="A8AE7F",
+            registrant=RegistrantInfo(
+                names=["Delta Air Lines Inc"],
+                street=["1030 Delta Blvd"],
+                city="Atlanta",
+                administrative_area="GA",
+                postal_code="30354",
+                country="US",
+                type="Corporation",
+            ),
+        )
+        assert rec.registrant.names == ["Delta Air Lines Inc"]
+        assert rec.registrant.city == "Atlanta"
+        assert rec.registrant.type == "Corporation"
+
 
 class TestOperatorRecord:
     def test_minimal(self):

@@ -876,6 +876,16 @@ components:
           - type: string
           - type: 'null'
           title: Type Designator
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
         manufacturer:
           anyOf:
           - type: string
@@ -886,6 +896,16 @@ components:
           - type: string
           - type: 'null'
           title: Model
+        manufacturer_model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manufacturer Model
+        seats:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Seats
         powerplant:
           anyOf:
           - $ref: '#/components/schemas/PowerplantInfo'
@@ -920,6 +940,10 @@ components:
           - type: boolean
           - type: 'null'
           title: Is Private Operator
+        registrant:
+          anyOf:
+          - $ref: '#/components/schemas/RegistrantInfo'
+          - type: 'null'
         special_livery:
           anyOf:
           - type: string
@@ -1464,6 +1488,50 @@ components:
       - operator
       - value
       title: ReceiverSourceCondition
+    RegistrantInfo:
+      properties:
+        names:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Names
+        street:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Street
+        city:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: City
+        administrative_area:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Administrative Area
+        postal_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Postal Code
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type
+      type: object
+      title: RegistrantInfo
+      description: Owner/registrant information from the national civil aircraft registry.
     RouteLookup:
       properties:
         origin:
