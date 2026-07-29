@@ -1355,12 +1355,27 @@ components:
           type: string
           description: ICAO type code
           example: B763
+        type:
+          type: string
+          description: Aircraft category
+          example: Airplane
+        category:
+          type: string
+          description: Landing-gear category
+          example: Land
         manufacturer:
           type: string
           example: Boeing
         model:
           type: string
           example: 767-332ER
+        manufacturer_model:
+          type: string
+          description: Combined manufacturer + model string
+          example: BOEING 767-332ER
+        seats:
+          type: integer
+          example: 189
         wake_turbulence_category:
           type: string
           example: Heavy
@@ -1381,6 +1396,36 @@ components:
           example: "2005-01-01"
         is_private_operator:
           type: boolean
+        registrant:
+          type: object
+          description: Owner/registrant information from the national civil aircraft registry
+          properties:
+            names:
+              type: array
+              items:
+                type: string
+              example: [Delta Air Lines Inc]
+            street:
+              type: array
+              items:
+                type: string
+              example: ["1030 Delta Blvd"]
+            city:
+              type: string
+              example: Atlanta
+            administrative_area:
+              type: string
+              example: GA
+            postal_code:
+              type: string
+              example: "30354"
+            country:
+              type: string
+              example: US
+            type:
+              type: string
+              description: Registrant category
+              example: Corporation
         data_sources:
           type: array
           items:

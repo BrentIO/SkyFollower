@@ -889,6 +889,50 @@ class TestAircraftLookup:
         assert body["manufactured_date"] == "2005-01-01"
         assert body["data_sources"] == ["mictronics", "us-faa-registry"]
 
+    def test_hex_survives_type_category_seats_manufacturer_model_registrant(self, client, fake_redis):
+        """Registry-only fields not on Mictronics -- including the top-level
+        (not aircraft-nested) registrant sub-object, matching real runner
+        output shape (e.g. au-casa-registry's _build_record) -- must survive
+        merge_aircraft.lua's merge and _flatten_aircraft_doc()'s promotion."""
+        fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F", "registration": "N659DL", "military": False, "source": "mictronics",
+        })
+        fake_redis.store["aircraft:registry:A8AE7F"] = json.dumps({
+            "icao_hex": "A8AE7F", "registration": "N659DL", "military": False,
+            "source": "us-faa-registry",
+            "aircraft": {
+                "type": "Airplane",
+                "category": "Land",
+                "seats": 189,
+                "manufacturer_model": "BOEING 767-332ER",
+            },
+            "registrant": {
+                "names": ["Delta Air Lines Inc"],
+                "street": ["1030 Delta Blvd"],
+                "city": "Atlanta",
+                "administrative_area": "GA",
+                "postal_code": "30354",
+                "country": "US",
+                "type": "Corporation",
+            },
+        })
+        resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["type"] == "Airplane"
+        assert body["category"] == "Land"
+        assert body["seats"] == 189
+        assert body["manufacturer_model"] == "BOEING 767-332ER"
+        assert body["registrant"] == {
+            "names": ["Delta Air Lines Inc"],
+            "street": ["1030 Delta Blvd"],
+            "city": "Atlanta",
+            "administrative_area": "GA",
+            "postal_code": "30354",
+            "country": "US",
+            "type": "Corporation",
+        }
+
     def test_hex_miss_returns_404(self, client):
         resp = client.get("/api/aircraft", params={"icao_hex": "FFFFFF"})
         assert resp.status_code == 404

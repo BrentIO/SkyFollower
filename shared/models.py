@@ -72,6 +72,18 @@ class PowerplantInfo(BaseModel):
     type: Optional[str] = None
 
 
+class RegistrantInfo(BaseModel):
+    """Owner/registrant information from the national civil aircraft registry."""
+
+    names: Optional[list[str]] = None       # primary name first, additional DBA names follow
+    street: Optional[list[str]] = None      # street address lines
+    city: Optional[str] = None
+    administrative_area: Optional[str] = None  # first-level country subdivision (US state, Canadian province, etc.)
+    postal_code: Optional[str] = None
+    country: Optional[str] = None           # ISO 3166-1 alpha-2 country code
+    type: Optional[str] = None              # registrant category, e.g. "Individual"/"Corporation"/"Government"
+
+
 class AircraftRecord(BaseModel):
     """
     Aircraft registration and type enrichment.
@@ -87,8 +99,12 @@ class AircraftRecord(BaseModel):
     icao_hex: str
     registration: Optional[str] = None
     type_designator: Optional[str] = None   # ICAO type code, e.g. "B763"
+    type: Optional[str] = None              # aircraft category, e.g. "Airplane"/"Rotorcraft"/"Glider"
+    category: Optional[str] = None          # landing-gear category, e.g. "Land"/"Sea"/"Amphibian"
     manufacturer: Optional[str] = None
     model: Optional[str] = None
+    manufacturer_model: Optional[str] = None  # combined manufacturer + model string, e.g. "BOEING 757-200"; synthesized by merge_aircraft.lua from manufacturer/model if absent
+    seats: Optional[int] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None
     operator: Optional[str] = None          # operator/owner name from registry
@@ -96,6 +112,7 @@ class AircraftRecord(BaseModel):
     serial_number: Optional[str] = None
     manufactured_date: Optional[str] = None
     is_private_operator: Optional[bool] = None
+    registrant: Optional[RegistrantInfo] = None
     special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
     data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order
 
