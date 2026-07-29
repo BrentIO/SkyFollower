@@ -1,4 +1,6 @@
-import { type FormEvent, useState } from "react";
+import * as maplibregl from "maplibre-gl";
+import { mdiMapMarker } from "@mdi/js";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   getAircraft,
   getAirport,
@@ -11,6 +13,7 @@ import {
 } from "../api/reference";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
+import { MAP_STYLE } from "../lib/maplibreSetup";
 
 type TabKey = "aircraft" | "operator" | "airport" | "route";
 
@@ -52,87 +55,480 @@ type LookupResult =
   | { tab: "airport"; data: AirportRecord }
   | { tab: "route"; data: RouteLookup };
 
-function humanizeKey(key: string): string {
-  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+// ---------------------------------------------------------------------------
+// Loose-value display helpers -- these endpoints return whatever's really in
+// Redis (see api/reference.ts), not a fixed schema, so every field read
+// below is optional/unverified at the type level.
+// ---------------------------------------------------------------------------
+
+function displayStr(v: unknown): string | undefined {
+  if (typeof v === "string") return v.trim() !== "" ? v : undefined;
+  if (typeof v === "number") return String(v);
+  return undefined;
 }
 
-// These endpoints return whatever's actually in Redis, not a fixed schema
-// (see api/reference.ts's comment) -- render every key present rather than
-// a hardcoded field list, so nothing real ends up hidden. Handles nested
-// objects (e.g. an aircraft's registrant/powerplant) and arrays (a list of
-// primitives joined inline, a list of objects rendered as sub-blocks)
-// recursively.
-function RecordFields({ data }: { data: Record<string, unknown> }) {
+function displayBool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function displayArray(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.map(displayStr).filter((x): x is string => !!x);
+  return out.length > 0 ? out : undefined;
+}
+
+function displayObj(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+}
+
+function joinParts(parts: (string | undefined)[], sep = " "): string | undefined {
+  const filtered = parts.filter((p): p is string => !!p);
+  return filtered.length > 0 ? filtered.join(sep) : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Shared field-name styling -- distinct color from the value it labels,
+// consistently across all four tabs.
+// ---------------------------------------------------------------------------
+
+function Label({ children }: { children: ReactNode }) {
+  return <span className="text-sm text-slate-500 dark:text-slate-400">{children}</span>;
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{children}</div>;
+}
+
+type BadgeColor = "yellow" | "green" | "blue" | "red";
+
+const BADGE_CLASSES: Record<BadgeColor, string> = {
+  yellow: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+  green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+  blue: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200",
+  red: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
+};
+
+function Badge({ color, children }: { color: BadgeColor; children: ReactNode }) {
+  return <span className={`rounded px-2 py-0.5 text-xs font-semibold ${BADGE_CLASSES[color]}`}>{children}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Aircraft
+// ---------------------------------------------------------------------------
+
+function AircraftResultView({ data }: { data: AircraftRecord }) {
+  const registration = displayStr(data.registration);
+  const icaoHex = displayStr(data.icao_hex);
+  const military = displayBool(data.military);
+  const specialLivery = displayStr(data.special_livery);
+
+  const registrant = displayObj(data.registrant);
+  const names = displayArray(registrant?.names);
+  const street = displayArray(registrant?.street);
+  const city = displayStr(registrant?.city);
+  const adminLine = joinParts([
+    displayStr(registrant?.administrative_area),
+    displayStr(registrant?.country),
+    displayStr(registrant?.postal_code),
+  ]);
+  const hasRegistrant = !!(names || street || city || adminLine);
+
+  const categoryTypeLine = joinParts([displayStr(data.category), displayStr(data.type)]);
+  const manufacturerModel = displayStr(data.manufacturer_model);
+  const typeDesignator = displayStr(data.type_designator);
+  const manufacturerModelLine =
+    manufacturerModel || typeDesignator
+      ? joinParts([manufacturerModel, typeDesignator ? `(${typeDesignator})` : undefined])
+      : undefined;
+  const serialNumber = displayStr(data.serial_number);
+  const seats = displayStr(data.seats);
+
+  const powerplant = displayObj(data.powerplant);
+  const ppCountType = joinParts([displayStr(powerplant?.count), displayStr(powerplant?.type)]);
+  const ppManufacturerModel = joinParts([displayStr(powerplant?.manufacturer), displayStr(powerplant?.model)]);
+  const hasPowerplant = !!(ppCountType || ppManufacturerModel);
+
+  const hasAircraftSection = !!(categoryTypeLine || manufacturerModelLine || serialNumber || seats || hasPowerplant);
+
+  const dataSources = displayArray(data.data_sources);
+
   return (
-    <div>
-      {Object.entries(data).map(([key, value]) => {
-        if (value === undefined || value === null || value === "") return null;
-        return <FieldValue key={key} label={humanizeKey(key)} value={value} />;
-      })}
-    </div>
-  );
-}
-
-function FieldValue({ label, value }: { label: string; value: unknown }) {
-  if (Array.isArray(value)) {
-    if (value.length === 0) return null;
-    if (typeof value[0] === "object" && value[0] !== null) {
-      return (
-        <div className="border-b border-slate-100 py-1.5 dark:border-slate-800">
-          <div className="text-sm text-slate-500 dark:text-slate-400">{label}</div>
-          <ul className="ml-4 list-disc py-1">
-            {value.map((item, i) => (
-              <li key={i} className="mb-1">
-                <RecordFields data={item as Record<string, unknown>} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      );
-    }
-    return <FieldRow label={label} value={value.join(", ")} />;
-  }
-  if (typeof value === "object") {
-    return (
-      <div className="border-b border-slate-100 py-1.5 dark:border-slate-800">
-        <div className="text-sm text-slate-500 dark:text-slate-400">{label}</div>
-        <div className="ml-4">
-          <RecordFields data={value as Record<string, unknown>} />
-        </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <Label>Registration</Label>
+        {registration && (
+          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{registration}</span>
+        )}
+        {icaoHex && <span className="text-sm text-slate-700 dark:text-slate-300">({icaoHex})</span>}
+        {military && <Badge color="yellow">Military</Badge>}
+        {specialLivery && <Badge color="yellow">{specialLivery}</Badge>}
       </div>
-    );
-  }
-  return <FieldRow label={label} value={value} />;
-}
 
-function FieldRow({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="flex gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0 dark:border-slate-800">
-      <span className="w-40 shrink-0 text-slate-500 dark:text-slate-400">{label}</span>
-      <span className="text-slate-900 dark:text-slate-100">{String(value)}</span>
+      {hasRegistrant && (
+        <div>
+          <SectionLabel>Registrant</SectionLabel>
+          <div className="pl-4 text-sm text-slate-900 dark:text-slate-100">
+            {names?.map((n, i) => <div key={`name-${i}`}>{n}</div>)}
+            {street?.map((s, i) => <div key={`street-${i}`}>{s}</div>)}
+            {city && <div>{city}</div>}
+            {adminLine && <div>{adminLine}</div>}
+          </div>
+        </div>
+      )}
+
+      {hasAircraftSection && (
+        <div>
+          <SectionLabel>Aircraft</SectionLabel>
+          <div className="flex flex-col gap-1 pl-4 text-sm text-slate-900 dark:text-slate-100">
+            {categoryTypeLine && <div>{categoryTypeLine}</div>}
+            {manufacturerModelLine && (
+              <div>
+                <Label>Manufacturer/Model</Label> {manufacturerModelLine}
+              </div>
+            )}
+            {serialNumber && (
+              <div>
+                <Label>Serial Number</Label> {serialNumber}
+              </div>
+            )}
+            {seats && (
+              <div>
+                <Label>Seats</Label> {seats}
+              </div>
+            )}
+            {hasPowerplant && (
+              <div>
+                <Label>Powerplant</Label>
+                <div className="pl-4">
+                  {ppCountType && <div>{ppCountType}</div>}
+                  {ppManufacturerModel && <div>{ppManufacturerModel}</div>}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {dataSources && (
+        <div>
+          <SectionLabel>Sources</SectionLabel>
+          <div className="pl-4 text-sm text-slate-900 dark:text-slate-100">{dataSources.join(", ")}</div>
+        </div>
+      )}
     </div>
   );
 }
 
-function airportLabel(a: AirportRecord): string {
-  return a.name ? `${a.icao_code} — ${a.name}` : a.icao_code;
+// ---------------------------------------------------------------------------
+// Operator
+// ---------------------------------------------------------------------------
+
+function OperatorResultView({ data }: { data: OperatorRecord }) {
+  const name = displayStr(data.name);
+  const designator = displayStr(data.airline_designator) ?? "";
+  const callsign = displayStr(data.callsign);
+  const country = displayStr(data.country);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-baseline gap-2">
+        {name ? (
+          <>
+            <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{name}</span>
+            <span className="text-sm text-slate-700 dark:text-slate-300">({designator})</span>
+          </>
+        ) : (
+          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
+        )}
+      </div>
+      {callsign && (
+        <div className="text-sm text-slate-900 dark:text-slate-100">
+          <Label>Callsign</Label> {callsign}
+        </div>
+      )}
+      {country && (
+        <div className="text-sm text-slate-900 dark:text-slate-100">
+          <Label>Country</Label> {country}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Airport
+// ---------------------------------------------------------------------------
+
+function AirportMap({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: MAP_STYLE,
+      center: [longitude, latitude],
+      zoom: 11,
+      // Pan/zoom only -- matches the "I can pan and zoom with the map, but
+      // that's it" ask. Same lock pattern as AreasView.tsx's map: maxPitch
+      // is the hard guarantee against tilt, the rest plus the two
+      // disableRotation() calls below block every gesture path (mouse,
+      // touch, keyboard) that could otherwise rotate or tilt it.
+      maxPitch: 0,
+      pitchWithRotate: false,
+      dragRotate: false,
+      touchPitch: false,
+    });
+    map.touchZoomRotate.disableRotation();
+    map.keyboard.disableRotation();
+    // showCompass: false -- rotation is locked above, so a reset-bearing
+    // compass button has nothing to do.
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    new maplibregl.Marker().setLngLat([longitude, latitude]).addTo(map);
+    return () => {
+      map.remove();
+    };
+  }, [latitude, longitude]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-80 w-full rounded-md border border-slate-200 dark:border-slate-700"
+    />
+  );
+}
+
+function AirportResultView({ data }: { data: AirportRecord }) {
+  const icaoCode = displayStr(data.icao_code) ?? "";
+  const name = displayStr(data.name);
+  const locLine = joinParts([displayStr(data.city), displayStr(data.region), displayStr(data.country)]);
+  const phonic = displayStr(data.phonic);
+  const latitude = typeof data.latitude === "number" ? data.latitude : undefined;
+  const longitude = typeof data.longitude === "number" ? data.longitude : undefined;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
+      {name && <div className="text-sm text-slate-900 dark:text-slate-100">{name}</div>}
+      {locLine && <div className="text-sm text-slate-900 dark:text-slate-100">{locLine}</div>}
+      {phonic && <div className="text-sm italic text-slate-900 dark:text-slate-100">"{phonic}"</div>}
+      {latitude !== undefined && longitude !== undefined && (
+        <div className="mt-2">
+          <AirportMap latitude={latitude} longitude={longitude} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Route
+// ---------------------------------------------------------------------------
+
+type RouteRole = "origin" | "stop" | "destination";
+
+const ROLE_COLOR: Record<RouteRole, string> = {
+  origin: "#16a34a", // green-600
+  stop: "#0284c7", // sky-600
+  destination: "#dc2626", // red-600
+};
+
+const ROLE_BADGE_COLOR: Record<RouteRole, BadgeColor> = {
+  origin: "green",
+  stop: "blue",
+  destination: "red",
+};
+
+const ROLE_LABEL: Record<RouteRole, string> = {
+  origin: "Origin",
+  stop: "Stop",
+  destination: "Destination",
+};
+
+function roleFor(index: number, total: number): RouteRole {
+  if (index === 0) return "origin";
+  if (index === total - 1) return "destination";
+  return "stop";
+}
+
+function toRad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+
+function toDeg(rad: number): number {
+  return (rad * 180) / Math.PI;
+}
+
+// Spherical linear interpolation between two [lon, lat] points along the
+// great-circle arc connecting them -- straight rhumb-line segments would
+// visibly cut corners on anything but a very short hop. Doesn't handle
+// antimeridian crossing (a route that would cross +/-180 longitude renders
+// as a straight line across the map instead of wrapping) -- not worth the
+// extra complexity unless a real route actually needs it.
+function greatCircleSegment(
+  [lon1, lat1]: [number, number],
+  [lon2, lat2]: [number, number],
+  steps: number,
+): [number, number][] {
+  const phi1 = toRad(lat1);
+  const lambda1 = toRad(lon1);
+  const phi2 = toRad(lat2);
+  const lambda2 = toRad(lon2);
+  const d =
+    2 *
+    Math.asin(
+      Math.sqrt(
+        Math.sin((phi2 - phi1) / 2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin((lambda2 - lambda1) / 2) ** 2,
+      ),
+    );
+  if (d === 0) return [[lon1, lat1]];
+
+  const points: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const A = Math.sin((1 - f) * d) / Math.sin(d);
+    const B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(phi1) * Math.cos(lambda1) + B * Math.cos(phi2) * Math.cos(lambda2);
+    const y = A * Math.cos(phi1) * Math.sin(lambda1) + B * Math.cos(phi2) * Math.sin(lambda2);
+    const z = A * Math.sin(phi1) + B * Math.sin(phi2);
+    const phi = Math.atan2(z, Math.sqrt(x * x + y * y));
+    const lambda = Math.atan2(y, x);
+    points.push([toDeg(lambda), toDeg(phi)]);
+  }
+  return points;
+}
+
+function buildGreatCircleLine(waypoints: [number, number][]): [number, number][] {
+  const coords: [number, number][] = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const segment = greatCircleSegment(waypoints[i], waypoints[i + 1], 64);
+    coords.push(...(i === 0 ? segment : segment.slice(1)));
+  }
+  return coords;
+}
+
+function iconMarkerElement(color: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.innerHTML = `<svg width="28" height="28" viewBox="0 0 24 24" fill="${color}"><path d="${mdiMapMarker}"/></svg>`;
+  return el;
+}
+
+function labelMarkerElement(color: string, text: string): HTMLDivElement {
+  const el = document.createElement("div");
+  el.textContent = text;
+  el.style.fontWeight = "700";
+  el.style.fontSize = "14px";
+  el.style.color = color;
+  el.style.whiteSpace = "nowrap";
+  el.style.textShadow = "0 1px 3px rgba(255,255,255,0.9), 0 1px 3px rgba(255,255,255,0.9)";
+  return el;
+}
+
+function stopCoordinates(stops: AirportRecord[]): [number, number][] {
+  return stops
+    .map((s) => {
+      const lat = typeof s.latitude === "number" ? s.latitude : undefined;
+      const lon = typeof s.longitude === "number" ? s.longitude : undefined;
+      return lat !== undefined && lon !== undefined ? ([lon, lat] as [number, number]) : null;
+    })
+    .filter((p): p is [number, number] => p !== null);
+}
+
+function RouteMap({ stops }: { stops: AirportRecord[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const points = stopCoordinates(stops);
+    if (points.length === 0) return;
+
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: MAP_STYLE,
+      center: points[0],
+      zoom: 3,
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+
+    map.on("load", () => {
+      if (points.length > 1) {
+        map.addSource("route-line", {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: buildGreatCircleLine(points) },
+          },
+        });
+        map.addLayer({
+          id: "route-line",
+          type: "line",
+          source: "route-line",
+          paint: { "line-color": "#0284c7", "line-width": 3 },
+        });
+      }
+
+      stops.forEach((stop, i) => {
+        const lat = typeof stop.latitude === "number" ? stop.latitude : undefined;
+        const lon = typeof stop.longitude === "number" ? stop.longitude : undefined;
+        if (lat === undefined || lon === undefined) return;
+        const color = ROLE_COLOR[roleFor(i, stops.length)];
+        new maplibregl.Marker({ element: iconMarkerElement(color), anchor: "bottom" })
+          .setLngLat([lon, lat])
+          .addTo(map);
+        new maplibregl.Marker({
+          element: labelMarkerElement(color, displayStr(stop.icao_code) ?? ""),
+          anchor: "top",
+          offset: [0, 2],
+        })
+          .setLngLat([lon, lat])
+          .addTo(map);
+      });
+
+      const bounds = points.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(points[0], points[0]));
+      map.fitBounds(bounds, { padding: 60, animate: false });
+    });
+
+    return () => {
+      map.remove();
+    };
+  }, [stops]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="h-96 w-full rounded-md border border-slate-200 dark:border-slate-700"
+    />
+  );
 }
 
 function RouteResultView({ data }: { data: RouteLookup }) {
   return (
-    <div>
-      <div className="mb-3 text-base font-semibold text-slate-900 dark:text-slate-100">
-        {airportLabel(data.origin)} → {airportLabel(data.destination)}
+    <div className="flex flex-col gap-4">
+      <RouteMap stops={data.stops} />
+      <div className="flex flex-col gap-2">
+        {data.stops.map((stop, i) => {
+          const role = roleFor(i, data.stops.length);
+          const icaoCode = displayStr(stop.icao_code) ?? "";
+          const iataCode = displayStr(stop.iata_code);
+          const detailLine = joinParts([displayStr(stop.phonic), displayStr(stop.city), displayStr(stop.region)], ", ");
+          return (
+            <div key={i} className="flex flex-wrap items-baseline gap-2 text-sm">
+              <Badge color={ROLE_BADGE_COLOR[role]}>{ROLE_LABEL[role]}</Badge>
+              <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
+              {iataCode && <span className="text-slate-700 dark:text-slate-300">({iataCode})</span>}
+              {detailLine && <span className="text-slate-900 dark:text-slate-100">{detailLine}</span>}
+            </div>
+          );
+        })}
       </div>
-      <span className="text-sm text-slate-500 dark:text-slate-400">Full stop sequence</span>
-      <ol className="mt-1 list-decimal pl-5 text-sm text-slate-900 dark:text-slate-100">
-        {data.stops.map((stop, i) => (
-          <li key={i}>{airportLabel(stop)}</li>
-        ))}
-      </ol>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// LookupView
+// ---------------------------------------------------------------------------
 
 export function LookupView() {
   const { showToast } = useToast();
@@ -159,11 +555,9 @@ export function LookupView() {
     setNotFound(false);
     try {
       switch (tab) {
-        case "aircraft": {
-          const data = await getAircraftGuessing(trimmed);
-          setResult({ tab: "aircraft", data });
+        case "aircraft":
+          setResult({ tab: "aircraft", data: await getAircraftGuessing(trimmed) });
           break;
-        }
         case "operator":
           setResult({ tab: "operator", data: await getOperator(trimmed) });
           break;
@@ -225,11 +619,13 @@ export function LookupView() {
         </button>
       </form>
 
-      <div className="max-w-lg">
+      <div className="max-w-3xl">
         {loading && <p className="text-slate-400">Searching...</p>}
         {!loading && notFound && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
+        {!loading && result?.tab === "aircraft" && <AircraftResultView data={result.data} />}
+        {!loading && result?.tab === "operator" && <OperatorResultView data={result.data} />}
+        {!loading && result?.tab === "airport" && <AirportResultView data={result.data} />}
         {!loading && result?.tab === "route" && <RouteResultView data={result.data} />}
-        {!loading && result && result.tab !== "route" && <RecordFields data={result.data} />}
       </div>
     </div>
   );
