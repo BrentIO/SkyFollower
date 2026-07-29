@@ -315,7 +315,7 @@ export function AreasView() {
   // Mobile-only accordion state for the area list -- ignored at the md+
   // breakpoint, where the list is always visible regardless (see the
   // className on the <ul> below).
-  const [mobileListOpen, setMobileListOpen] = useState(true);
+  const [mobileListOpen, setMobileListOpen] = useState(false);
 
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
