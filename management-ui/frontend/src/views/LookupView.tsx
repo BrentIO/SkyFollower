@@ -543,6 +543,17 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
 
       const bounds = points.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(points[0], points[0]));
       map.fitBounds(bounds, { padding: 60, animate: false });
+
+      // fitBounds centers on the bounding box's own centroid, which for a
+      // long-haul route (e.g. Sydney -> Chicago) lands somewhere over land
+      // between them rather than on the great-circle path itself. Keep the
+      // zoom level fitBounds picked (still scaled to show the whole route)
+      // but re-center on the actual midpoint of the origin/destination
+      // great-circle arc -- for that Sydney/Chicago example, the Pacific
+      // crossing near the Bering Sea, not a naive lat/lon average of the
+      // two endpoints.
+      const midpoint = greatCircleSegment(points[0], points[points.length - 1], 2)[1];
+      map.setCenter(midpoint);
     });
 
     return () => {
