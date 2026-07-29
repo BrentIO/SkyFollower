@@ -777,16 +777,17 @@ export function AreasView() {
           >
             <MapPinPlusInside size={18} />
           </button>
+          <button
+            type="button"
+            onClick={exportAllAreas}
+            disabled={areas.length === 0}
+            aria-label="Export all"
+            title="Export all"
+            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <MdiIcon path={mdiExportVariant} size={18} />
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={exportAllAreas}
-          disabled={areas.length === 0}
-          className="rounded-md border border-slate-300 px-2 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-        >
-          Export GeoJSON
-        </button>
 
         {loading ? (
           <p className="text-slate-400">Loading areas...</p>
