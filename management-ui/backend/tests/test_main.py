@@ -879,12 +879,14 @@ class TestAircraftLookup:
         })
         fake_redis.store["aircraft:registry:A8AE7F"] = json.dumps({
             "icao_hex": "A8AE7F", "registration": "N659DL", "military": False,
-            "source": "us-faa-registry", "aircraft": {"serial_number": "12345"},
+            "source": "us-faa-registry",
+            "aircraft": {"serial_number": "12345", "manufactured_date": "2005-01-01"},
         })
         resp = client.get("/api/aircraft", params={"icao_hex": "A8AE7F"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["serial_number"] == "12345"
+        assert body["manufactured_date"] == "2005-01-01"
         assert body["data_sources"] == ["mictronics", "us-faa-registry"]
 
     def test_hex_miss_returns_404(self, client):

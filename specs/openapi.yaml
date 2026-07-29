@@ -910,11 +910,11 @@ components:
           - type: string
           - type: 'null'
           title: Serial Number
-        year_built:
+        manufactured_date:
           anyOf:
           - type: string
           - type: 'null'
-          title: Year Built
+          title: Manufactured Date
         is_private_operator:
           anyOf:
           - type: boolean

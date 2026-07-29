@@ -310,7 +310,7 @@ class TestBuildAircraftRecord:
         """Non-data-dictionary fields must be absent from the record."""
         row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
         record = build_aircraft_record(row, row)
-        for field in ("interesting", "is_private_operator", "operator", "airline_code", "serial_number", "year_built"):
+        for field in ("interesting", "is_private_operator", "operator", "airline_code", "serial_number", "manufactured_date"):
             assert field not in record, f"Unexpected field: {field!r}"
 
     def test_military_true(self):
