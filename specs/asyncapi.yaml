@@ -1376,9 +1376,9 @@ components:
           example: DAL
         serial_number:
           type: string
-        year_built:
+        manufactured_date:
           type: string
-          example: "2005"
+          example: "2005-01-01"
         is_private_operator:
           type: boolean
         data_sources:
