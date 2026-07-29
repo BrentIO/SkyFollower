@@ -7,7 +7,7 @@ import {
   TerraDrawSelectMode,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { Lock, MapPinPlusInside, Unlock } from "lucide-react";
+import { ChevronDown, ChevronUp, Lock, MapPinPlusInside, Unlock } from "lucide-react";
 import { mdiExportVariant, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal } from "../components/AreaNameModal";
@@ -312,6 +312,11 @@ export function AreasView() {
   const [original, setOriginal] = useState<Area | null>(null);
   const [draft, setDraft] = useState<Area | null>(null);
 
+  // Mobile-only accordion state for the area list -- ignored at the md+
+  // breakpoint, where the list is always visible regardless (see the
+  // className on the <ul> below).
+  const [mobileListOpen, setMobileListOpen] = useState(false);
+
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
   const [pendingDrawFeatureId, setPendingDrawFeatureId] = useState<string | null>(null);
@@ -558,6 +563,7 @@ export function AreasView() {
       setOriginal(clone(area));
       setSelectDraggable(area.locked);
       drawRef.current?.selectFeature(area.identifier);
+      setMobileListOpen(false);
     });
   }
 
@@ -566,6 +572,7 @@ export function AreasView() {
       setDraft(null);
       setOriginal(null);
       drawRef.current?.setMode(type);
+      setMobileListOpen(false);
     });
   }
 
@@ -789,10 +796,23 @@ export function AreasView() {
           </button>
         </div>
 
+        <button
+          type="button"
+          onClick={() => setMobileListOpen((open) => !open)}
+          aria-expanded={mobileListOpen}
+          className="flex items-center justify-center gap-2 rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:hidden"
+        >
+          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          <span>Areas</span>
+          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+
         {loading ? (
           <p className="text-slate-400">Loading areas...</p>
         ) : (
-          <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto md:max-h-none">
+          <ul
+            className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
+          >
             {areas.map((area) => {
               const isSelected = draft?.identifier === area.identifier;
               return (
