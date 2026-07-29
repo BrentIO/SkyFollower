@@ -147,7 +147,8 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   ]);
   const hasRegistrant = !!(names || street || city || adminLine);
 
-  const categoryTypeLine = joinParts([displayStr(data.category), displayStr(data.type)]);
+  const category = displayStr(data.category);
+  const type = displayStr(data.type);
   const manufacturerModel = displayStr(data.manufacturer_model);
   const typeDesignator = displayStr(data.type_designator);
   const manufacturerModelLine =
@@ -162,7 +163,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const ppManufacturerModel = joinParts([displayStr(powerplant?.manufacturer), displayStr(powerplant?.model)]);
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 
-  const hasAircraftSection = !!(categoryTypeLine || manufacturerModelLine || serialNumber || seats || hasPowerplant);
+  const hasAircraftSection = !!(category || type || manufacturerModelLine || serialNumber || seats || hasPowerplant);
 
   const dataSources = displayArray(data.data_sources);
 
@@ -170,7 +171,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline gap-2">
         {registration && (
-          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{registration}</span>
+          <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{registration}</span>
         )}
         {icaoHex && <Mono>{icaoHex}</Mono>}
         {military && <Badge color="green">Military</Badge>}
@@ -193,7 +194,16 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
         <div>
           <SectionLabel>Aircraft</SectionLabel>
           <div className="flex flex-col gap-1 pl-4 text-sm text-slate-900 dark:text-slate-100">
-            {categoryTypeLine && <div>{categoryTypeLine}</div>}
+            {category && (
+              <div>
+                <Label>Category</Label> {category}
+              </div>
+            )}
+            {type && (
+              <div>
+                <Label>Type</Label> {type}
+              </div>
+            )}
             {manufacturerModelLine && (
               <div>
                 <Label>Manufacturer/Model</Label> {manufacturerModelLine}
@@ -249,11 +259,11 @@ function OperatorResultView({ data }: { data: OperatorRecord }) {
       <div className="flex flex-wrap items-baseline gap-2">
         {name ? (
           <>
-            <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{name}</span>
+            <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{name}</span>
             <Mono>{designator}</Mono>
           </>
         ) : (
-          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
+          <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
         )}
       </div>
       {callsign && (
@@ -323,7 +333,7 @@ function AirportResultView({ data }: { data: AirportRecord }) {
 
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
+      <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
       {name && <div className="text-sm text-slate-900 dark:text-slate-100">{name}</div>}
       {locLine && <div className="text-sm text-slate-900 dark:text-slate-100">{locLine}</div>}
       {phonic && <div className="text-sm italic text-slate-900 dark:text-slate-100">"{phonic}"</div>}
