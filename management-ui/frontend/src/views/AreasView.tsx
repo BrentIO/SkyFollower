@@ -5,6 +5,8 @@ import {
   TerraDrawPointMode,
   TerraDrawPolygonMode,
   TerraDrawSelectMode,
+  type GeoJSONStoreFeatures,
+  type HexColor,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
 import { ChevronDown, ChevronUp, Lock, MapPinPlusInside, Unlock } from "lucide-react";
@@ -23,6 +25,83 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
+// Matches Terra Draw's own default stroke/fill/marker color (see #625) --
+// the fallback whenever an area has no simplestyle-spec color of its own.
+const DEFAULT_SHAPE_COLOR: HexColor = "#3f97e0";
+
+// Area.fill/stroke/marker-color are plain Optional[str] on the backend, not
+// format-validated -- narrows to Terra Draw's HexColor before handing a
+// value to a styling callback, falling back to the default for anything
+// that isn't actually "#..." (a stray non-hex CSS color name, say).
+function asHexColor(value: unknown): HexColor | undefined {
+  return typeof value === "string" && value.startsWith("#") ? (value as HexColor) : undefined;
+}
+
+const STYLE_KEYS = [
+  "fill",
+  "fill-opacity",
+  "stroke",
+  "stroke-width",
+  "stroke-opacity",
+  "marker-color",
+  "marker-size",
+  "marker-symbol",
+] as const;
+type StyleFields = Partial<Pick<Area, (typeof STYLE_KEYS)[number]>>;
+
+// Picks only the style keys a typed Area (or Area-shaped draft) actually
+// has set -- used to carry a shape's own color into a duplicate, and into
+// Terra Draw feature properties so the per-feature styling callbacks below
+// (and MapLibre's area-labels text-color expression) can read them.
+function pickStyleFields(source: StyleFields): StyleFields {
+  const style: StyleFields = {};
+  for (const key of STYLE_KEYS) {
+    if (source[key] !== undefined) (style as Record<string, unknown>)[key] = source[key];
+  }
+  return style;
+}
+
+// Same idea as pickStyleFields, but from an untyped GeoJSON Feature's
+// properties (an imported area) -- validates each value's type before
+// accepting it, rather than trusting arbitrary external JSON.
+function extractStyleFields(props: Record<string, unknown>): StyleFields {
+  const style: StyleFields = {};
+  if (typeof props.fill === "string") style.fill = props.fill;
+  if (typeof props["fill-opacity"] === "number") style["fill-opacity"] = props["fill-opacity"];
+  if (typeof props.stroke === "string") style.stroke = props.stroke;
+  if (typeof props["stroke-width"] === "number") style["stroke-width"] = props["stroke-width"];
+  if (typeof props["stroke-opacity"] === "number") style["stroke-opacity"] = props["stroke-opacity"];
+  if (typeof props["marker-color"] === "string") style["marker-color"] = props["marker-color"];
+  const markerSize = props["marker-size"];
+  if (markerSize === "small" || markerSize === "medium" || markerSize === "large") {
+    style["marker-size"] = markerSize;
+  }
+  if (typeof props["marker-symbol"] === "string") style["marker-symbol"] = props["marker-symbol"];
+  return style;
+}
+
+// Per-feature Terra Draw styling callbacks (HexColorStyling supports a
+// constant OR a function of the feature) -- read straight off whichever
+// style properties were set on that feature (see the properties spread at
+// every draw.addFeatures() call site), falling back to Terra Draw's own
+// default color when unset, matching every other unstyled area.
+function featureFillColor(feature: GeoJSONStoreFeatures): HexColor {
+  return asHexColor(feature.properties?.fill) ?? DEFAULT_SHAPE_COLOR;
+}
+function featureStrokeColor(feature: GeoJSONStoreFeatures): HexColor {
+  return asHexColor(feature.properties?.stroke) ?? DEFAULT_SHAPE_COLOR;
+}
+function featureMarkerColor(feature: GeoJSONStoreFeatures): HexColor {
+  return asHexColor(feature.properties?.["marker-color"]) ?? DEFAULT_SHAPE_COLOR;
+}
+
+// The area-labels layer's own color source -- Polygon/LineString match
+// their stroke, Point its marker color, same convention as the shapes
+// themselves (see #625).
+function areaLabelColor(area: Area): string | undefined {
+  return area.geometry.type === "Point" ? area["marker-color"] : area.stroke;
+}
+
 // GeoJSON Feature shape shared by the all-areas and single-area exports --
 // geometry copied as-is, properties carrying the full Area shape minus
 // geometry itself.
@@ -34,6 +113,7 @@ function areaToFeature(area: Area) {
       identifier: area.identifier,
       name: area.name,
       locked: area.locked,
+      ...pickStyleFields(area),
     },
   };
 }
@@ -442,6 +522,10 @@ export function AreasView() {
   // through to createArea() even if the identifier/name still need the
   // AreaNameModal detour.
   const [pendingLocked, setPendingLocked] = useState(false);
+  // Style fields to apply once the pending feature is actually created --
+  // empty for a fresh draw, copied from the source area for a duplicate,
+  // extracted from the imported feature's own properties for an import.
+  const [pendingStyle, setPendingStyle] = useState<StyleFields>({});
   const [importModalOpen, setImportModalOpen] = useState(false);
   // Screen-space alignment guides (#580) -- only ever non-empty while a
   // shape is actively being dragged/reshaped; cleared the moment the drag
@@ -474,9 +558,14 @@ export function AreasView() {
       features: areasForLabels.map((area) => {
         const name = area.name || area.identifier;
         const maxWidthEms = computeMaxWidthEms(map, area, name);
+        const color = areaLabelColor(area);
         return {
           type: "Feature",
-          properties: { name, ...(maxWidthEms !== undefined ? { maxWidthEms } : {}) },
+          properties: {
+            name,
+            ...(maxWidthEms !== undefined ? { maxWidthEms } : {}),
+            ...(color ? { color } : {}),
+          },
           geometry: { type: "Point", coordinates: labelPosition(area.geometry) },
         };
       }),
@@ -502,21 +591,31 @@ export function AreasView() {
     setPendingNameSuggestion(null);
     setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
     setPendingLocked(false);
+    setPendingStyle({});
     setPendingDrawFeatureId(featureId);
   });
   handleDrawFinishRef.current = (featureId: string) => {
     setPendingNameSuggestion(null);
     setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
     setPendingLocked(false);
+    setPendingStyle({});
     setPendingDrawFeatureId(featureId);
   };
 
+  // setDraft's functional-updater form (not a `{...draft, geometry}`
+  // spread of the closed-over `draft`) matters here specifically: a
+  // geometry-target change event can arrive in the same tick as another
+  // draft field just changed via a properties-target update (e.g. the
+  // color <input>s below calling updateFeatureProperties, or handleDiscard
+  // resetting style fields then immediately calling updateFeatureGeometry)
+  // -- spreading the stale closure draft would silently discard that other
+  // change instead of layering geometry on top of the current state.
   const handleDrawChangeRef = useRef((ids: string[]) => {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
-    setDraft({ ...draft, geometry });
+    setDraft((prev) => (prev ? { ...prev, geometry } : prev));
     // Live-track the label position/fit while dragging or reshaping (#590)
     // -- not just after Save, which is all the areas-list effect below
     // would otherwise cover.
@@ -531,7 +630,7 @@ export function AreasView() {
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
-    setDraft({ ...draft, geometry });
+    setDraft((prev) => (prev ? { ...prev, geometry } : prev));
     refreshLabelSource(areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry } : a)));
     const map = mapRef.current;
     if (map) {
@@ -642,11 +741,16 @@ export function AreasView() {
           // fixed-size behavior" fallback for a too-small shape or a Point.
           "text-max-width": ["coalesce", ["get", "maxWidthEms"], 10],
         },
-        // #3f97e0 matches Terra Draw's own default stroke/fill color
-        // (polygonOutlineColor/lineStringColor/pointColor) -- AreasView.tsx
-        // never overrides Terra Draw's style defaults, so this is the
-        // actual color every shape renders in.
-        paint: { "text-color": "#3f97e0", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+        // Each label feature carries its own area's stroke/marker-color as
+        // `color` (see labelsFeatureCollection/areaLabelColor) -- falls
+        // back to DEFAULT_SHAPE_COLOR (#3f97e0, Terra Draw's own default
+        // stroke/fill/marker color -- see #625) for an area with no custom
+        // style, same color every unstyled shape actually renders in.
+        paint: {
+          "text-color": ["coalesce", ["get", "color"], DEFAULT_SHAPE_COLOR],
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
       });
 
       // Terra Draw's MapLibre adapter must be created after the map's
@@ -678,10 +782,27 @@ export function AreasView() {
             // no-ops already (rotateable/scaleable are never set below) but
             // disabled too for clarity.
             keyEvents: { deselect: null, delete: null, rotate: null, scale: null },
+            // Selected-state colors are separate style keys from the base
+            // mode's own (selectedPolygonColor vs. fillColor, etc.) --
+            // without overriding these too, a feature's custom color would
+            // visibly flip to Terra Draw's default the moment it's
+            // selected/dragged.
+            styles: {
+              selectedPolygonColor: featureFillColor,
+              selectedPolygonOutlineColor: featureStrokeColor,
+              selectedLineStringColor: featureStrokeColor,
+              selectedPointColor: featureMarkerColor,
+            },
           }),
-          new TerraDrawPolygonMode(),
-          new TerraDrawLineStringMode(),
-          new TerraDrawPointMode(),
+          new TerraDrawPolygonMode({
+            styles: { fillColor: featureFillColor, outlineColor: featureStrokeColor },
+          }),
+          new TerraDrawLineStringMode({
+            styles: { lineStringColor: featureStrokeColor },
+          }),
+          new TerraDrawPointMode({
+            styles: { pointColor: featureMarkerColor },
+          }),
         ],
       });
       drawRef.current = draw;
@@ -708,8 +829,16 @@ export function AreasView() {
       const clearGuideLines = () => setGuideLines([]);
       map.getCanvasContainer().addEventListener("mouseup", clearGuideLines);
       map.getCanvasContainer().addEventListener("touchend", clearGuideLines);
-      draw.on("change", (ids, type) => {
-        if (type === "update") handleDrawChangeRef.current(ids.map(String));
+      draw.on("change", (ids, type, context) => {
+        // A properties-only update (e.g. this view's own color-picker
+        // calling updateFeatureProperties -- see the color <input>s below)
+        // also fires type "update", indistinguishable from a geometry drag
+        // without checking context.target: without this check,
+        // handleDrawChangeRef's stale-draft-closure geometry sync would
+        // clobber whatever the properties update just set on draft.
+        if (type === "update" && context?.target === "geometry") {
+          handleDrawChangeRef.current(ids.map(String));
+        }
       });
       draw.on("select", (id) => handleDrawSelectRef.current(String(id)));
       map.on("zoom", () => handleZoomRef.current());
@@ -739,7 +868,7 @@ export function AreasView() {
             loaded.map((area) => ({
               id: area.identifier,
               type: "Feature" as const,
-              properties: { mode: geometryToModeName(area.geometry.type), name: area.name },
+              properties: { mode: geometryToModeName(area.geometry.type), name: area.name, ...pickStyleFields(area) },
               geometry: area.geometry,
             })),
           );
@@ -795,6 +924,7 @@ export function AreasView() {
     if (!draft) return;
     const sourceGeometry = draft.geometry;
     const sourceName = draft.name;
+    const sourceStyle = pickStyleFields(draft);
     requestSwitch(() => {
       const draw = drawRef.current;
       if (!draw) return;
@@ -803,7 +933,7 @@ export function AreasView() {
         {
           id: tempId,
           type: "Feature",
-          properties: { mode: geometryToModeName(sourceGeometry.type), name: sourceName },
+          properties: { mode: geometryToModeName(sourceGeometry.type), name: sourceName, ...sourceStyle },
           geometry: offsetGeometry(sourceGeometry),
         },
       ]);
@@ -812,6 +942,7 @@ export function AreasView() {
       setPendingNameSuggestion(sourceName ? `${sourceName} copy` : "");
       setPendingGeometryType(sourceGeometry.type);
       setPendingLocked(false);
+      setPendingStyle(sourceStyle);
       setPendingDrawFeatureId(tempId);
     });
   }
@@ -844,7 +975,13 @@ export function AreasView() {
   // modal needed). `locked` is a parameter rather than always `false`
   // because imports must be able to preserve properties.locked -- every
   // other caller (draw/duplicate) still just passes `false`.
-  async function createAreaFromPendingFeature(tempId: string, identifier: string, name: string, locked: boolean) {
+  async function createAreaFromPendingFeature(
+    tempId: string,
+    identifier: string,
+    name: string,
+    locked: boolean,
+    style: StyleFields,
+  ) {
     const draw = drawRef.current;
     if (!draw) return;
 
@@ -868,13 +1005,14 @@ export function AreasView() {
         name,
         geometry: feature.geometry as Area["geometry"],
         locked,
+        ...style,
       });
       removeFeatureIfPresent(draw, tempId);
       draw.addFeatures([
         {
           id: saved.identifier,
           type: "Feature",
-          properties: { mode: geometryToModeName(saved.geometry.type), name: saved.name },
+          properties: { mode: geometryToModeName(saved.geometry.type), name: saved.name, ...pickStyleFields(saved) },
           geometry: saved.geometry,
         },
       ]);
@@ -895,11 +1033,13 @@ export function AreasView() {
   async function handleNameConfirm(identifier: string, name: string) {
     const tempId = pendingDrawFeatureId;
     const locked = pendingLocked;
+    const style = pendingStyle;
     setPendingDrawFeatureId(null);
     setPendingNameSuggestion(null);
     setPendingLocked(false);
+    setPendingStyle({});
     if (!tempId) return;
-    await createAreaFromPendingFeature(tempId, identifier, name, locked);
+    await createAreaFromPendingFeature(tempId, identifier, name, locked, style);
   }
 
   // Places an imported feature onto the draw map exactly like a fresh draw
@@ -916,6 +1056,7 @@ export function AreasView() {
       const rawName = typeof props.name === "string" ? props.name : "";
       const rawIdentifier = typeof props.identifier === "string" ? props.identifier : "";
       const rawLocked = typeof props.locked === "boolean" ? props.locked : false;
+      const rawStyle = extractStyleFields(props);
       const identifierUsable =
         rawIdentifier.trim() !== "" &&
         IDENTIFIER_PATTERN.test(rawIdentifier) &&
@@ -926,7 +1067,7 @@ export function AreasView() {
         {
           id: tempId,
           type: "Feature",
-          properties: { mode: geometryToModeName(feature.geometry.type), name: rawName },
+          properties: { mode: geometryToModeName(feature.geometry.type), name: rawName, ...rawStyle },
           geometry: feature.geometry,
         },
       ]);
@@ -934,11 +1075,12 @@ export function AreasView() {
       setOriginal(null);
 
       if (rawName.trim() && identifierUsable) {
-        void createAreaFromPendingFeature(tempId, rawIdentifier, rawName.trim(), rawLocked);
+        void createAreaFromPendingFeature(tempId, rawIdentifier, rawName.trim(), rawLocked, rawStyle);
       } else {
         setPendingNameSuggestion(rawName || null);
         setPendingGeometryType(feature.geometry.type);
         setPendingLocked(rawLocked);
+        setPendingStyle(rawStyle);
         setPendingDrawFeatureId(tempId);
       }
     });
@@ -952,6 +1094,7 @@ export function AreasView() {
     setPendingDrawFeatureId(null);
     setPendingNameSuggestion(null);
     setPendingLocked(false);
+    setPendingStyle({});
     draw?.setMode("select");
   }
 
@@ -997,6 +1140,13 @@ export function AreasView() {
     setDraft(clone(original));
     drawRef.current?.updateFeatureGeometry(original.identifier, original.geometry);
     setGuideLines([]);
+    // Explicitly clears every style key back to original's value (or
+    // undefined if original never set it) -- a live color-picker preview
+    // change (see the color <input>s below) must fully revert on Discard,
+    // not just whichever keys happen to still be set.
+    const revertedStyle: Record<string, string | number | undefined> = {};
+    for (const key of STYLE_KEYS) revertedStyle[key] = original[key];
+    drawRef.current?.updateFeatureProperties(original.identifier, revertedStyle);
   }
 
   async function handleDeleteConfirmed() {
@@ -1106,6 +1256,67 @@ export function AreasView() {
                         placeholder="Display name"
                         className="rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"
                       />
+                      {/* Color control(s) matching the geometry type (#579) --
+                          fill+stroke for Polygon, stroke only for LineString
+                          (no fill to speak of), marker color for Point.
+                          Live-previewed on the map via updateFeatureProperties,
+                          not just applied on Save. */}
+                      {draft.geometry.type === "Polygon" && (
+                        <div className="flex gap-2">
+                          <label className="flex flex-1 items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                            Fill
+                            <input
+                              type="color"
+                              value={draft.fill ?? DEFAULT_SHAPE_COLOR}
+                              onChange={(e) => {
+                                setDraft({ ...draft, fill: e.target.value });
+                                drawRef.current?.updateFeatureProperties(draft.identifier, { fill: e.target.value });
+                              }}
+                              className="h-7 flex-1 cursor-pointer rounded border border-slate-300 dark:border-slate-600"
+                            />
+                          </label>
+                          <label className="flex flex-1 items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                            Stroke
+                            <input
+                              type="color"
+                              value={draft.stroke ?? DEFAULT_SHAPE_COLOR}
+                              onChange={(e) => {
+                                setDraft({ ...draft, stroke: e.target.value });
+                                drawRef.current?.updateFeatureProperties(draft.identifier, { stroke: e.target.value });
+                              }}
+                              className="h-7 flex-1 cursor-pointer rounded border border-slate-300 dark:border-slate-600"
+                            />
+                          </label>
+                        </div>
+                      )}
+                      {draft.geometry.type === "LineString" && (
+                        <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                          Stroke
+                          <input
+                            type="color"
+                            value={draft.stroke ?? DEFAULT_SHAPE_COLOR}
+                            onChange={(e) => {
+                              setDraft({ ...draft, stroke: e.target.value });
+                              drawRef.current?.updateFeatureProperties(draft.identifier, { stroke: e.target.value });
+                            }}
+                            className="h-7 flex-1 cursor-pointer rounded border border-slate-300 dark:border-slate-600"
+                          />
+                        </label>
+                      )}
+                      {draft.geometry.type === "Point" && (
+                        <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                          Marker color
+                          <input
+                            type="color"
+                            value={draft["marker-color"] ?? DEFAULT_SHAPE_COLOR}
+                            onChange={(e) => {
+                              setDraft({ ...draft, "marker-color": e.target.value });
+                              drawRef.current?.updateFeatureProperties(draft.identifier, { "marker-color": e.target.value });
+                            }}
+                            className="h-7 flex-1 cursor-pointer rounded border border-slate-300 dark:border-slate-600"
+                          />
+                        </label>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
