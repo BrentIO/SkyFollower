@@ -507,13 +507,27 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
     map.on("load", () => {
-      if (points.length > 1) {
+      // Points along the actual rendered great-circle path (already
+      // longitude-unwrapped for antimeridian crossings), not just the
+      // stops themselves -- for a long-haul route the path's northward
+      // bulge or antimeridian crossing can reach well outside the
+      // stops-only bounding box (e.g. Sydney -> Chicago passing near the
+      // Bering Sea). Fitting bounds to the path directly, in one
+      // fitBounds() call, frames the whole visible route and every stop
+      // together -- a previous version fit only the stops' bounding box
+      // and then separately re-centered on the great-circle midpoint,
+      // which kept fitBounds's narrower zoom level but moved the
+      // endpoints toward or past the edge of the now-differently-centered
+      // viewport (see #638).
+      const lineCoords = points.length > 1 ? buildGreatCircleLine(points) : [];
+
+      if (lineCoords.length > 0) {
         map.addSource("route-line", {
           type: "geojson",
           data: {
             type: "Feature",
             properties: {},
-            geometry: { type: "LineString", coordinates: buildGreatCircleLine(points) },
+            geometry: { type: "LineString", coordinates: lineCoords },
           },
         });
         map.addLayer({
@@ -541,19 +555,12 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
           .addTo(map);
       });
 
-      const bounds = points.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(points[0], points[0]));
+      const boundsPoints = lineCoords.length > 0 ? lineCoords : points;
+      const bounds = boundsPoints.reduce(
+        (b, p) => b.extend(p),
+        new maplibregl.LngLatBounds(boundsPoints[0], boundsPoints[0]),
+      );
       map.fitBounds(bounds, { padding: 60, animate: false });
-
-      // fitBounds centers on the bounding box's own centroid, which for a
-      // long-haul route (e.g. Sydney -> Chicago) lands somewhere over land
-      // between them rather than on the great-circle path itself. Keep the
-      // zoom level fitBounds picked (still scaled to show the whole route)
-      // but re-center on the actual midpoint of the origin/destination
-      // great-circle arc -- for that Sydney/Chicago example, the Pacific
-      // crossing near the Bering Sea, not a naive lat/lon average of the
-      // two endpoints.
-      const midpoint = greatCircleSegment(points[0], points[points.length - 1], 2)[1];
-      map.setCenter(midpoint);
     });
 
     return () => {
