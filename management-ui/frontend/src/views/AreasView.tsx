@@ -114,6 +114,49 @@ function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
   return found ? [[minLng, minLat], [maxLng, maxLat]] : null;
 }
 
+// Rough average glyph advance width for a bold sans-serif, as a fraction of
+// font size -- avoids depending on canvas measureText with the actual
+// "Noto Sans Bold" (which isn't necessarily loaded as a usable browser
+// font just because MapLibre's glyph server serves it -- see #620). Biased
+// slightly wide on purpose, so a shape wraps a little early rather than
+// text creeping past its edge.
+const LABEL_FONT_SIZE_PX = 14;
+const AVG_GLYPH_WIDTH_RATIO = 0.62;
+// Shapes smaller than this on screen aren't worth wrapping into -- keeps
+// the existing fixed-size/no-wrap behavior for anything genuinely tiny,
+// matching the "still requires zooming in for tiny shapes" decision.
+const MIN_FIT_WIDTH_PX = 40;
+
+function estimateTextWidthPx(text: string): number {
+  return text.length * LABEL_FONT_SIZE_PX * AVG_GLYPH_WIDTH_RATIO;
+}
+
+// Screen-space width (#590) -- Polygon/LineString only (a Point has no
+// width to fit). Projects the shape's geographic bounding box through the
+// live map (so it reflects the current zoom, not a fixed geographic size)
+// to get an actual on-screen pixel width, then converts to the em-based
+// unit MapLibre's text-max-width layout property expects. Returns
+// undefined (falls back to MapLibre's own default wrap width, 10ems) when
+// the shape is too small to bother fitting, or the name already fits at
+// the default width without needing to wrap tighter.
+function computeMaxWidthEms(map: maplibregl.Map, area: Area, name: string): number | undefined {
+  if (area.geometry.type === "Point") return undefined;
+  const bounds = computeBounds([area]);
+  if (!bounds) return undefined;
+  const [[minLng, minLat], [maxLng, maxLat]] = bounds as [[number, number], [number, number]];
+  const centerLat = (minLat + maxLat) / 2;
+  const left = map.project([minLng, centerLat]);
+  const right = map.project([maxLng, centerLat]);
+  const widthPx = Math.abs(right.x - left.x);
+  if (widthPx < MIN_FIT_WIDTH_PX) return undefined;
+
+  const availablePx = widthPx * 0.9; // small margin so text doesn't touch the shape's own edge
+  if (estimateTextWidthPx(name) <= availablePx) return undefined; // already fits, no need to wrap tighter than default
+
+  const maxWidthEms = availablePx / LABEL_FONT_SIZE_PX;
+  return Math.max(maxWidthEms, 2); // a floor so a very narrow shape doesn't wrap to one character per line
+}
+
 function segmentLength(a: number[], b: number[]): number {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
@@ -349,17 +392,6 @@ function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
   ]);
 }
 
-function labelsFeatureCollection(areas: Area[]): GeoJSON.FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: areas.map((area) => ({
-      type: "Feature",
-      properties: { name: area.name || area.identifier },
-      geometry: { type: "Point", coordinates: labelPosition(area.geometry) },
-    })),
-  };
-}
-
 function DeleteAreaMessage({ area }: { area: Area }) {
   const idCode = (
     <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-slate-800">
@@ -426,6 +458,40 @@ export function AreasView() {
     }
   }
 
+  // The area-labels source's single source of truth (#590) -- called
+  // whenever anything that affects a label's position or fit changes: the
+  // saved area list, an in-progress drag/vertex edit (via
+  // handleDrawChangeRef below, passing the in-progress geometry in place
+  // of the saved one), and zoom (screen-space width changes even though
+  // the shape's geographic size doesn't).
+  function refreshLabelSource(areasForLabels: Area[]) {
+    const map = mapRef.current;
+    if (!map) return;
+    const source = map.getSource("area-labels") as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    source.setData({
+      type: "FeatureCollection",
+      features: areasForLabels.map((area) => {
+        const name = area.name || area.identifier;
+        const maxWidthEms = computeMaxWidthEms(map, area, name);
+        return {
+          type: "Feature",
+          properties: { name, ...(maxWidthEms !== undefined ? { maxWidthEms } : {}) },
+          geometry: { type: "Point", coordinates: labelPosition(area.geometry) },
+        };
+      }),
+    });
+  }
+
+  // Substitutes the in-progress draft's geometry for its saved counterpart
+  // in the areas list -- shared by handleDrawChangeRef's live-drag refresh
+  // and the zoom handler, both of which need "what's on screen right now"
+  // rather than "what's actually saved" while an edit is in progress.
+  function areasWithDraftGeometry(): Area[] {
+    if (!draft) return areas;
+    return areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry: draft.geometry } : a));
+  }
+
   // Terra Draw's event listeners are registered exactly once, when the
   // map's 'load' event fires (see the mount effect below), so they'd
   // otherwise close over that first render's state forever. Each handler
@@ -451,6 +517,10 @@ export function AreasView() {
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
     setDraft({ ...draft, geometry });
+    // Live-track the label position/fit while dragging or reshaping (#590)
+    // -- not just after Save, which is all the areas-list effect below
+    // would otherwise cover.
+    refreshLabelSource(areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry } : a)));
     const map = mapRef.current;
     if (map) {
       setGuideLines(dedupeAlignmentGuides(computeAlignmentGuides(map, { ...draft, geometry }, areas)));
@@ -462,6 +532,7 @@ export function AreasView() {
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
     setDraft({ ...draft, geometry });
+    refreshLabelSource(areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry } : a)));
     const map = mapRef.current;
     if (map) {
       setGuideLines(dedupeAlignmentGuides(computeAlignmentGuides(map, { ...draft, geometry }, areas)));
@@ -489,6 +560,19 @@ export function AreasView() {
       setOriginal(clone(match));
       setSelectDraggable(match.locked);
     });
+  };
+
+  // computeMaxWidthEms's fit is screen-space, not geographic (#590) -- a
+  // shape's on-screen width changes with zoom even though its real size
+  // doesn't, so labels need re-fitting on zoom too, not just when a
+  // shape's geometry or the saved area list changes. Rotation/pitch are
+  // both locked (see the map constructor/disableRotation calls below), so
+  // zoom is the only view change that affects projected width.
+  const handleZoomRef = useRef(() => {
+    refreshLabelSource(areasWithDraftGeometry());
+  });
+  handleZoomRef.current = () => {
+    refreshLabelSource(areasWithDraftGeometry());
   };
 
   // Terra Draw's select-mode drag/vertex-edit flags are configured per
@@ -552,6 +636,11 @@ export function AreasView() {
           "text-font": ["Noto Sans Bold"],
           "text-size": 14,
           "text-anchor": "center",
+          // Wraps to computeMaxWidthEms's per-area value (#590) when the
+          // shape is wide enough to be worth fitting into; MapLibre's own
+          // default (10ems) otherwise -- effectively the "current
+          // fixed-size behavior" fallback for a too-small shape or a Point.
+          "text-max-width": ["coalesce", ["get", "maxWidthEms"], 10],
         },
         // #3f97e0 matches Terra Draw's own default stroke/fill color
         // (polygonOutlineColor/lineStringColor/pointColor) -- AreasView.tsx
@@ -604,20 +693,26 @@ export function AreasView() {
         // (dragFeature/dragCoordinate/dragCoordinateResize) -- only a
         // brand new polygon (action "draw") should prompt for a name.
         if (context.action === "draw") handleDrawFinishRef.current(String(id));
-        // Alignment guides (#580) are only meaningful mid-drag -- "finish"
-        // covers every drag-ending case (a completed shape/vertex drag as
-        // well as a brand new draw), so clearing here regardless of
-        // action is the single place that always catches "the drag just
-        // ended". setGuideLines itself has a stable identity across
-        // renders (unlike state values), so it's safe to call directly
-        // from this one-time closure without the ref-callback indirection
-        // used elsewhere in this effect.
-        setGuideLines([]);
       });
+      // Alignment guides (#580) are only meaningful mid-drag. "finish"
+      // looked like the natural place to clear them (it's documented to
+      // also fire for completed drags), but empirically does NOT fire for
+      // every whole-feature drag (confirmed: a plain fill-drag, as opposed
+      // to a vertex/coordinate drag, never emits it here) -- so guides
+      // could get stuck visible after a drag "finish" silently doesn't
+      // fire. A raw mouseup/touchend on the map's own canvas container is
+      // a guaranteed catch-all for "the drag gesture just ended"
+      // regardless of Terra Draw's internal event semantics; clearing an
+      // already-empty guide list on every unrelated click is a harmless
+      // no-op.
+      const clearGuideLines = () => setGuideLines([]);
+      map.getCanvasContainer().addEventListener("mouseup", clearGuideLines);
+      map.getCanvasContainer().addEventListener("touchend", clearGuideLines);
       draw.on("change", (ids, type) => {
         if (type === "update") handleDrawChangeRef.current(ids.map(String));
       });
       draw.on("select", (id) => handleDrawSelectRef.current(String(id)));
+      map.on("zoom", () => handleZoomRef.current());
 
       setMapReady(true);
     });
@@ -663,13 +758,12 @@ export function AreasView() {
     };
   }, [mapReady, showToast]);
 
-  // Keeps the label source (committed areas only, not in-progress edits) in
-  // sync whenever the saved area list changes.
+  // Keeps the label source (committed areas -- handleDrawChangeRef covers
+  // in-progress edits separately, see #590) in sync whenever the saved
+  // area list changes.
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    const source = map.getSource("area-labels") as maplibregl.GeoJSONSource | undefined;
-    source?.setData(labelsFeatureCollection(areas));
+    if (!mapReady) return;
+    refreshLabelSource(areas);
   }, [areas, mapReady]);
 
   function selectArea(area: Area) {
