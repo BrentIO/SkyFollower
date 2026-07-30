@@ -456,9 +456,11 @@ export function AreasView() {
           // style-spec default ("Open Sans Regular, Arial Unicode MS
           // Regular"), which OpenFreeMap's glyph server doesn't serve for
           // this style (only the Noto Sans family) -- causing a 404 per
-          // glyph range for every rendered character.
-          "text-font": ["Noto Sans Regular"],
-          "text-size": 12,
+          // glyph range for every rendered character. Bold confirmed
+          // servable (200, real glyph data) before switching from Regular,
+          // to match LookupView.tsx's route-stop label weight/size.
+          "text-font": ["Noto Sans Bold"],
+          "text-size": 14,
           "text-anchor": "center",
         },
         paint: { "text-color": "#0f172a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
