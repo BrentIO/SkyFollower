@@ -580,7 +580,9 @@ function RouteResultView({ data }: { data: RouteLookup }) {
       {operatorName && (
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-slate-900 dark:text-slate-100">{operatorName}</span>
-          {operatorCallsign && <Mono>{operatorCallsign}</Mono>}
+          {operatorCallsign && (
+            <span className="text-sm italic text-slate-900 dark:text-slate-100">"{operatorCallsign}"</span>
+          )}
         </div>
       )}
       <div className="flex flex-col gap-2">
