@@ -271,22 +271,46 @@ function lineStringMidpoint(coordinates: number[][]): [number, number] {
   return [coordinates[0][0], coordinates[0][1]];
 }
 
-// Label anchor point per geometry type: Polygon keeps the plain outer-ring
-// average (good enough for placement, not a claim of geometric precision --
-// no turf dependency just for this); LineString uses the by-length
-// midpoint above; Point is trivially itself.
+// Area-weighted (shoelace) centroid of a polygon's outer ring -- unlike a
+// plain vertex average, this is unaffected by uneven vertex density (extra
+// points bunched on one edge, a concave shape, an elongated shape), so it
+// stays visually centered regardless of how the shape was drawn. Falls
+// back to the vertex average only for a degenerate (zero-area) ring, where
+// the shoelace formula's 1/(6*area) would divide by zero.
+function polygonCentroid(ring: number[][]): [number, number] {
+  let area = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x0, y0] = ring[i];
+    const [x1, y1] = ring[i + 1];
+    const cross = x0 * y1 - x1 * y0;
+    area += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  area /= 2;
+  if (area === 0) {
+    let sumLng = 0;
+    let sumLat = 0;
+    for (const [lng, lat] of ring) {
+      sumLng += lng;
+      sumLat += lat;
+    }
+    return [sumLng / ring.length, sumLat / ring.length];
+  }
+  return [cx / (6 * area), cy / (6 * area)];
+}
+
+// Label anchor point per geometry type: Polygon uses the area-weighted
+// centroid above; LineString uses the by-length midpoint above; Point is
+// trivially itself.
 function labelPosition(geometry: Area["geometry"]): [number, number] {
   switch (geometry.type) {
     case "Polygon": {
       const ring = geometry.coordinates[0] ?? [];
       if (ring.length === 0) return [0, 0];
-      let sumLng = 0;
-      let sumLat = 0;
-      for (const [lng, lat] of ring) {
-        sumLng += lng;
-        sumLat += lat;
-      }
-      return [sumLng / ring.length, sumLat / ring.length];
+      return polygonCentroid(ring);
     }
     case "LineString":
       return lineStringMidpoint(geometry.coordinates);
@@ -563,6 +587,7 @@ export function AreasView() {
           type: "Feature",
           properties: {
             name,
+            geometryType: area.geometry.type,
             ...(maxWidthEms !== undefined ? { maxWidthEms } : {}),
             ...(color ? { color } : {}),
           },
@@ -734,7 +759,21 @@ export function AreasView() {
           // to match LookupView.tsx's route-stop label weight/size.
           "text-font": ["Noto Sans Bold"],
           "text-size": 14,
-          "text-anchor": "center",
+          // Polygon labels sit centered on the (now area-weighted centroid)
+          // anchor point. LineString/Point labels anchor below the line/
+          // marker they name instead -- "center" there would draw the text
+          // directly on top of the line or marker, same underlying bug for
+          // both geometry types.
+          "text-anchor": ["match", ["get", "geometryType"], "LineString", "top", "Point", "top", "center"],
+          "text-offset": [
+            "match",
+            ["get", "geometryType"],
+            "LineString",
+            ["literal", [0, 0.6]],
+            "Point",
+            ["literal", [0, 0.6]],
+            ["literal", [0, 0]],
+          ],
           // Wraps to computeMaxWidthEms's per-area value (#590) when the
           // shape is wide enough to be worth fitting into; MapLibre's own
           // default (10ems) otherwise -- effectively the "current
