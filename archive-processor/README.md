@@ -110,10 +110,30 @@ to. The archive processor detects and merges this after the fact:
   union of `matched_rules`, and summed `total_messages` — and overwrites
   the *original* S3 object under its original `_id`. The new segment's own
   S3 object is never created.
-- A gap beyond `flight_ttl_seconds` (or no pointer at all) means this is a
-  genuinely new flight; it's archived normally and a fresh pointer is
-  written. Three or more consecutive artificial splits chain correctly —
-  each stitches into the same original segment, not a new one each time.
+- A gap beyond `flight_ttl_seconds`, a *negative* gap, or no pointer at
+  all means this is treated as a genuinely new flight; it's archived
+  normally and a fresh pointer is written. Three or more consecutive
+  artificial splits chain correctly — each stitches into the same
+  original segment, not a new one each time.
+- A negative gap means the pointer found is for a segment that actually
+  started *after* the flight being archived now — this flight arrived out
+  of order (e.g. it failed on its first write attempt and sat in the
+  local retry queue while its own continuation raced ahead and archived
+  normally in the meantime). Merging always takes `first_message` from
+  the pointed-to segment and leaves `last_message` from the segment being
+  processed, which assumes the pointed-to segment is chronologically
+  earlier — merging backwards would silently produce (and write to S3,
+  overwriting the correct object already there) a record with
+  `last_message` before `first_message`, so this case is rejected the
+  same way a too-large gap already is, rather than attempting the merge.
+  This is a known, accepted limitation: an out-of-order arrival like this
+  is rare enough (it needs an S3 write failure that survives the AWS SDK's
+  own internal retries, *and* a same-aircraft continuation landing within
+  one `telemetry_interval_seconds` tick of that failure) that the result —
+  two separate archived records instead of one merged one — is treated as
+  an acceptable outcome rather than something worth adding cross-thread
+  coordination between the live write path and the local retry queue to
+  prevent.
 - This is a purely archive-side concern: it doesn't touch the message
   processor or affect live MQTT rule notifications, which are published in
   real time as each segment is tracked, before the archive processor ever

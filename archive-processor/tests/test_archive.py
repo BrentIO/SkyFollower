@@ -913,6 +913,59 @@ class TestStitching:
             key = next(iter(processor._s3_client.objects))
             assert processor._s3_client.read_json(key)["_id"] == "new-uuid"
 
+    def test_negative_gap_writes_normally_instead_of_merging_backwards(self):
+        """A flight can arrive out of order relative to the pointer it
+        finds -- e.g. it failed and sat in the local retry queue while a
+        later continuation for the same aircraft raced ahead and archived
+        first. The pointer's last_message then lands *after* this flight's
+        own first_message (a negative gap), which the too-large-gap check
+        alone doesn't catch. Before this guard, _merge_segments would
+        still run and -- since it takes first_message from the pointed-to
+        segment and leaves last_message from the segment being processed --
+        silently produce (and write to S3, overwriting the correct object)
+        a record with last_message before first_message.
+
+        Archives the "later continuation" for real first (a genuine S3
+        object + pointer to fetch and merge against), matching what
+        _try_stitch actually does -- a pointer referencing a nonexistent
+        key would short-circuit in _fetch_previous_segment before ever
+        reaching the gap check this test is about, silently passing for
+        the wrong reason."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
+            processor._s3_client = _FakeS3()
+
+            later_continuation = _make_flight(
+                _id="later-continuation-uuid",
+                first_message=datetime.fromtimestamp(1050.0, tz=timezone.utc),
+                last_message=datetime.fromtimestamp(1200.0, tz=timezone.utc),
+            )
+            mock_redis.get.return_value = None
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(later_continuation)
+            later_key = next(iter(processor._s3_client.objects))
+            pointer = json.loads(mock_redis.set.call_args.args[1])
+            assert pointer["s3_key"] == later_key
+            mock_redis.get.return_value = json.dumps(pointer)
+
+            late_arriving_earlier_segment = _make_flight(
+                _id="earlier-segment-uuid",
+                first_message=datetime.fromtimestamp(0.0, tz=timezone.utc),
+                last_message=datetime.fromtimestamp(1000.0, tz=timezone.utc),
+            )
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(late_arriving_earlier_segment)
+
+            # Archived as its own new object, not merged backwards into
+            # the pointed-to (chronologically later) segment.
+            assert len(processor._s3_client.objects) == 2
+            new_key = next(k for k in processor._s3_client.objects if k != later_key)
+            doc = processor._s3_client.read_json(new_key)
+            assert doc["_id"] == "earlier-segment-uuid"
+            assert doc["first_message"] < doc["last_message"]  # never inverted
+            # The earlier-archived (later-continuation) object is untouched
+            assert processor._s3_client.read_json(later_key)["_id"] == "later-continuation-uuid"
+
     def test_gap_within_ttl_stitches(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
