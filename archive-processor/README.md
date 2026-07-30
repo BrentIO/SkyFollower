@@ -189,29 +189,66 @@ flight is missing from the index. So a failed index write is queued — as
 `{flight_json, s3_key}` — and retried without re-archiving the flight
 object itself.
 
-Both queues are drained the same way, on two triggers: whenever the
-background S3-connectivity thread detects a reconnect (checked every 10
-seconds), and independently, once per `telemetry_interval_seconds`. Only
-the index queue strictly needs the second trigger — it can fill even while
-S3 never registers as fully disconnected, so the reconnect-based trigger
-alone wouldn't be enough for it. The flight queue only ever fills while S3
-*is* known to be down, so the reconnect trigger is sufficient for it in
-theory — but it gets the periodic trigger too, since checking an empty
-queue costs nothing and a periodic sweep is a strictly stronger guarantee
-than relying solely on an edge-triggered "was down, now up" detection.
+Both queues are retried on the same two triggers — whenever the background
+S3-connectivity thread detects a reconnect (checked every 10 seconds), and
+independently, once per `telemetry_interval_seconds` — but the *flight*
+queue's reconnect-triggered drain works differently from every other
+drain, on purpose.
 
-Both triggers go through the same `drain_in_background()` on each queue: it
-spawns the actual drain on a background thread and returns immediately, so
-a slow drain never delays that telemetry cycle's publish. Each queue has
-its own single-flight guard (a non-blocking lock, independent per queue),
-ensuring at most one drain is ever in progress *for that queue* regardless
-of which trigger started it — draining the flight queue never blocks a
-concurrent drain of the index queue, but two overlapping drains of the
-*same* queue (e.g. the periodic tick firing while the reconnect-triggered
-drain is still working through a backlog) would otherwise both select the
-same oldest row before either deletes it, genuinely duplicate-processing
-that row — a duplicate archived flight or a duplicate Parquet index write,
-not just a harmless retry.
+**The flight queue, on reconnect, drains synchronously before
+`s3_connected` is set.** A live flight is only ever routed directly to S3
+once `s3_connected` is `True`; a continuation of a still-archiving flight
+(a resize-induced split, see [Split-Flight
+Stitching](#split-flight-stitching) below) has to look up a pointer written
+by the segment it continues. If the reconnect-triggered drain ran in the
+background the way every other drain does, a continuation segment could
+arrive live and go straight to S3 — missing that pointer, since the
+segment it continues might still be sitting undrained in the backlog — and
+archive as an independent flight instead of stitching, silently splitting
+one flight into two S3 objects. Running this specific drain synchronously,
+and only flipping `s3_connected` to `True` once it's fully empty, closes
+that race by construction: any flight arriving on the RabbitMQ consumer
+thread while the drain is still running still sees `s3_connected == False`
+and queues behind the backlog rather than going live — and since the queue
+drains strictly oldest-first, a continuation can never be processed before
+whatever it continues. No per-aircraft locking or queue scanning needed,
+and RabbitMQ consumption itself never stalls (a queued-not-drained flight
+is still just a fast local SQLite insert). If the drain stops early (S3
+goes down again mid-drain), `s3_connected` stays `False` and the whole
+sequence — reconnect, then this drain — retries on the next 10-second tick,
+picking up wherever the queue was left. This same gate also covers a
+leftover backlog found at startup (e.g. after a crash mid-outage), not just
+a live reconnect, since `start()` runs it before consuming anything.
+
+Every other drain — the flight queue's periodic `telemetry_interval_seconds`
+safety sweep, and the index queue on *either* trigger — still runs the way
+it always has: `drain_in_background()` spawns the actual drain on a
+background thread and returns immediately, so a slow drain never delays
+that cycle's telemetry publish. The index queue never participates in the
+stitch race above (it only retries a Parquet index row for a flight object
+that already wrote successfully), so it's unaffected either way. By the
+time `s3_connected` first becomes `True`, the flight queue is already
+guaranteed empty (that's the point of the gate above) — so its periodic
+sweep only ever finds something to do for a flight that failed and was
+re-queued by a single transient write error while otherwise connected — a
+narrower race than the reconnect-window one above, tracked separately
+since closing it needs its own design discussion (whether that's worth a
+similar gate, given it'd have to be per-aircraft rather than a simple
+global flip, since `s3_connected` never goes false in that scenario).
+
+Each queue has its own single-flight guard (a non-blocking lock,
+independent per queue), ensuring at most one drain is ever in progress
+*for that queue* regardless of which trigger started it — draining the
+flight queue never blocks a concurrent drain of the index queue, but two
+overlapping drains of the *same* queue (e.g. the periodic tick firing while
+a background drain is still working through a backlog) would otherwise
+both select the same oldest row before either deletes it, genuinely
+duplicate-processing that row — a duplicate archived flight or a duplicate
+Parquet index write, not just a harmless retry. The synchronous
+reconnect-triggered flight-queue drain doesn't use this guard at all — it
+runs inline on the S3-reconnect thread itself, before `s3_connected` (and
+therefore the periodic sweep's own trigger condition) ever becomes `True`,
+so there's nothing for it to overlap with.
 
 ![Flight & Parquet index write, with retry](./archive-write-sequence.svg)
 
