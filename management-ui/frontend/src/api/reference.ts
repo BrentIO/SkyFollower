@@ -19,6 +19,7 @@ export interface RouteLookup {
   origin: AirportRecord;
   destination: AirportRecord;
   stops: AirportRecord[];
+  operator: OperatorRecord | null;
 }
 
 // Exactly one of icaoHex/registration must be set -- the backend 422s

@@ -1101,3 +1101,35 @@ class TestRouteLookup:
         fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
         resp = client.get("/api/routes/AAL16")
         assert resp.status_code == 404
+
+    def test_operator_resolved_from_ident_prefix(self, client, fake_redis):
+        fake_redis.store["route:AAL15"] = "KMIA-KJFK"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        fake_redis.store["operator:AAL"] = json.dumps(
+            {"airline_designator": "AAL", "name": "American Airlines", "callsign": "AMERICAN"}
+        )
+        resp = client.get("/api/routes/AAL15")
+        assert resp.status_code == 200
+        assert resp.json()["operator"] == {
+            "airline_designator": "AAL",
+            "name": "American Airlines",
+            "callsign": "AMERICAN",
+        }
+
+    def test_missing_operator_omitted_not_fatal(self, client, fake_redis):
+        fake_redis.store["route:AAL15"] = "KMIA-KJFK"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        resp = client.get("/api/routes/AAL15")
+        assert resp.status_code == 200
+        assert resp.json()["operator"] is None
+
+    def test_short_ident_prefix_omits_operator(self, client, fake_redis):
+        fake_redis.store["route:N12345"] = "KMIA-KJFK"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        fake_redis.store["operator:N"] = json.dumps({"airline_designator": "N", "name": "Not A Real Operator"})
+        resp = client.get("/api/routes/N12345")
+        assert resp.status_code == 200
+        assert resp.json()["operator"] is None

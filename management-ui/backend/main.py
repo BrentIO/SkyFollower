@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -942,13 +943,17 @@ class RouteLookup(BaseModel):
     what it searched for. `origin`/`destination` are the first/last airport
     in the resolved sequence (a quick-glance header); `stops` is the full
     sequence in order, duplicates preserved (e.g. a round trip returns the
-    same airport at both ends).
+    same airport at both ends). `operator` is resolved from the ident's
+    ICAO airline-designator prefix (same logic as message-processor's
+    `_enrich_operator`) and is best-effort -- a route still resolves
+    without one.
     """
 
     ident: str
     origin: AirportRecord
     destination: AirportRecord
     stops: list[AirportRecord]
+    operator: Optional[OperatorRecord] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1318,9 +1323,21 @@ def get_route(ident: str):
     airports = json.loads(raw) if raw else []
     if not airports:
         raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")
+
+    # Best-effort operator enrichment -- same ICAO airline-designator
+    # extraction message-processor's _enrich_operator uses (letters before
+    # the first digit). A too-short/missing prefix or no matching
+    # operator:{designator} record just omits `operator`; it never fails
+    # the route lookup itself.
+    operator = None
+    prefix = re.split(r"[^a-zA-Z]", ident)[0]
+    if len(prefix) >= 2:
+        operator = _redis_json_get(operator_key(prefix))
+
     return JSONResponse(content={
         "ident": ident.upper(),
         "origin": airports[0],
         "destination": airports[-1],
         "stops": airports,
+        "operator": operator,
     })
