@@ -846,6 +846,14 @@ export function AreasView() {
       });
       drawRef.current = draw;
       draw.start();
+      // Terra Draw's adapter adds its own Polygon/LineString/Point layers
+      // inside register(), called here by start() -- after "area-labels"
+      // was already added above, which otherwise leaves the label layer
+      // buried under Terra Draw's fill/stroke/marker layers. Layers are
+      // only ever added once (subsequent renders/mode switches just call
+      // setData on the existing sources), so a single moveLayer() to the
+      // top, right after start(), holds for the life of the map.
+      map.moveLayer("area-labels");
       draw.setMode("select");
 
       draw.on("finish", (id, context) => {
