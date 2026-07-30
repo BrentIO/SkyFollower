@@ -1590,6 +1590,10 @@ components:
             $ref: '#/components/schemas/AirportRecord'
           type: array
           title: Stops
+        operator:
+          anyOf:
+          - $ref: '#/components/schemas/OperatorRecord'
+          - type: 'null'
       type: object
       required:
       - ident
@@ -1607,7 +1611,13 @@ components:
 
         sequence in order, duplicates preserved (e.g. a round trip returns the
 
-        same airport at both ends).'
+        same airport at both ends). `operator` is resolved from the ident''s
+
+        ICAO airline-designator prefix (same logic as message-processor''s
+
+        `_enrich_operator`) and is best-effort -- a route still resolves
+
+        without one.'
     Rule:
       properties:
         name:

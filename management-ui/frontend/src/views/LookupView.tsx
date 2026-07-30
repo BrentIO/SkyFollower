@@ -570,10 +570,19 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
 }
 
 function RouteResultView({ data }: { data: RouteLookup }) {
+  const operatorName = displayStr(data.operator?.name);
+  const operatorCallsign = displayStr(data.operator?.callsign);
+
   return (
     <div className="flex flex-col gap-4">
       <RouteMap stops={data.stops} />
       <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{data.ident}</span>
+      {operatorName && (
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-slate-900 dark:text-slate-100">{operatorName}</span>
+          {operatorCallsign && <Mono>{operatorCallsign}</Mono>}
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         {data.stops.map((stop, i) => {
           const role = roleFor(i, data.stops.length);
