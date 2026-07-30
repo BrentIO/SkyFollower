@@ -43,23 +43,12 @@ end
 == S3 reconnects — flight queue drains synchronously before live writes resume ==
 
 note over Reconnect, Consumer
-    Split-flight stitching (see split-flight-stitching-sequence.puml) depends on a
-    continuation segment never being live-processed before the segment it continues
-    has already been archived and pointer-updated. The two threads below show how
-    that ordering is preserved across an S3 outage ending mid-backlog: the drain on
-    the left and any new arrival on the right both target the *same* queue, and the
-    queue is strictly oldest-first -- so a continuation can never jump ahead of what
-    it continues.
+    See split-flight-stitching-sequence.puml for why a continuation
+    segment must never be live-processed before the segment it continues.
 end note
 
 par S3 reconnect thread — draining the backlog
     Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.list_buckets()""
-    note right of Reconnect
-        s3_connected is deliberately NOT set here.
-        It stays whatever it already was (False)
-        until the drain below fully empties the
-        queue -- see _finish_s3_connect.
-    end note
     loop for each queued full flight, oldest first
         Reconnect -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
         FallbackDB --> Reconnect-- : Record
@@ -98,13 +87,10 @@ end
 == Every telemetry_interval_seconds while s3_connected — flight queue background safety sweep ==
 
 note right of Telemetry
-    By the time s3_connected first becomes True (above), the flight queue
-    is already guaranteed empty. This periodic sweep only ever finds
-    something to do here for a flight that failed and was re-queued by a
-    single transient write error while otherwise connected -- a narrower
-    race than the reconnect-window one above, tracked and designed
-    separately since s3_connected never goes False in that scenario, so
-    the same gate can't apply as-is.
+    Only reaches here for a flight re-queued by a single transient write
+    error while otherwise connected -- the reconnect gate above already
+    guarantees this queue is empty by the time s3_connected first becomes
+    True.
 end note
 
 Telemetry -> Telemetry : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
@@ -142,10 +128,8 @@ end
 == S3 reconnects (after the synchronous flight drain succeeds) or every telemetry_interval_seconds — index queue ==
 
 note right of Telemetry
-    The index queue never participates in the stitch race -- it only
-    retries a Parquet index row for a flight object that already wrote
-    successfully -- so both triggers keep draining it in the background,
-    unaffected by the reconnect gate above.
+    Only retries a Parquet index row for a flight object that already
+    wrote successfully -- never participates in the stitch race above.
 end note
 
 Telemetry -> Telemetry : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
