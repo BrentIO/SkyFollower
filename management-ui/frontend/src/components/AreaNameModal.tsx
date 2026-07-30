@@ -16,7 +16,11 @@ interface AreaNameModalProps {
   onCancel: () => void;
 }
 
-const IDENTIFIER_PATTERN = /^\S+$/; // non-empty, no whitespace -- matches the backend's _IDENTIFIER_PATTERN
+// non-empty, no whitespace -- matches the backend's _IDENTIFIER_PATTERN.
+// Exported so ImportAreaModal's parent (AreasView.tsx) can apply the exact
+// same rule when deciding whether an imported feature's properties.identifier
+// is usable as-is, without duplicating the regex.
+export const IDENTIFIER_PATTERN = /^\S+$/;
 
 // Replaces spaces with underscores, then drops anything else non-whitespace
 // rules wouldn't already allow -- same auto-fill-from-Name convenience
