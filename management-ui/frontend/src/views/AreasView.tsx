@@ -463,7 +463,11 @@ export function AreasView() {
           "text-size": 14,
           "text-anchor": "center",
         },
-        paint: { "text-color": "#0f172a", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+        // #3f97e0 matches Terra Draw's own default stroke/fill color
+        // (polygonOutlineColor/lineStringColor/pointColor) -- AreasView.tsx
+        // never overrides Terra Draw's style defaults, so this is the
+        // actual color every shape renders in.
+        paint: { "text-color": "#3f97e0", "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       });
 
       // Terra Draw's MapLibre adapter must be created after the map's
