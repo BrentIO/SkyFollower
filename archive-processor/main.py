@@ -131,10 +131,21 @@ def build_geojson_feature(flight: CompletedFlight) -> Optional[dict]:
 
 def _normalize_timestamps(items: list[dict]) -> list[dict]:
     """
-    Parse a previously-archived S3 object's position/velocity timestamp
-    strings back into datetime objects, matching the shape a live
-    CompletedFlight's positions/velocities already use — so a merged list
-    can be sorted uniformly regardless of which segment an item came from.
+    Parse a position/velocity list's timestamp values back into datetime
+    objects wherever they're still strings, so a merged list can be sorted
+    uniformly regardless of which segment (or serialization round-trip) an
+    item came from.
+
+    Needed on *both* sides of a merge, not just the previously-archived
+    segment fetched from S3: CompletedFlight.positions/.velocities are
+    untyped `list[dict]` fields (see shared/models.py), so pydantic never
+    re-parses their inner "timestamp" strings back into datetime objects on
+    model_validate_json() -- meaning even a live flight fresh off RabbitMQ
+    (or one that round-tripped through the local SQLite fallback queue) has
+    string timestamps by the time it reaches here, same as the S3-fetched
+    segment. Skipping this on the live segment previously crashed every
+    real stitch attempt with positions/velocities present (comparing a
+    normalized datetime against a raw str during the sort below).
     """
     out = []
     for item in items:
@@ -154,12 +165,14 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
     """
     prev_positions = _normalize_timestamps(prev.get("positions") or [])
     prev_velocities = _normalize_timestamps(prev.get("velocities") or [])
+    new_positions = _normalize_timestamps(new_flight.positions)
+    new_velocities = _normalize_timestamps(new_flight.velocities)
 
     merged_positions = sorted(
-        prev_positions + new_flight.positions, key=lambda p: p["timestamp"]
+        prev_positions + new_positions, key=lambda p: p["timestamp"]
     )
     merged_velocities = sorted(
-        prev_velocities + new_flight.velocities, key=lambda v: v["timestamp"]
+        prev_velocities + new_velocities, key=lambda v: v["timestamp"]
     )
     # Union, not concatenation: a rule may have matched independently on
     # both segments (each processor evaluates rules with no knowledge of
