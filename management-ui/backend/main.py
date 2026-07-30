@@ -537,7 +537,10 @@ class Area(BaseModel):
     free-text display label and may.
     """
 
-    model_config = {"json_schema_extra": {"examples": list(_AREA_EXAMPLES.values())}}
+    model_config = {
+        "populate_by_name": True,
+        "json_schema_extra": {"examples": list(_AREA_EXAMPLES.values())},
+    }
 
     identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     name: str = ""
@@ -548,6 +551,23 @@ class Area(BaseModel):
     # through the dirty/Save flow, since it's a direct state flip like
     # delete, not an in-progress geometry edit.
     locked: bool = False
+    # simplestyle-spec (https://github.com/mapbox/simplestyle-spec)
+    # properties, matching legacy SkyFollower's areas.geojson convention.
+    # All optional -- an area with none of them set falls back to
+    # AreasView.tsx's default color scheme (its per-feature Terra Draw
+    # styling callbacks coalesce to the same default Terra Draw itself
+    # already uses, #3f97e0, when a field is absent). fill/marker-size/
+    # marker-symbol aren't cross-validated against geometry type here,
+    # matching simplestyle itself -- a Point with a stray `fill` set is
+    # simply never read by anything, not rejected.
+    fill: Optional[str] = None
+    fill_opacity: Optional[float] = Field(default=None, alias="fill-opacity")
+    stroke: Optional[str] = None
+    stroke_width: Optional[float] = Field(default=None, alias="stroke-width")
+    stroke_opacity: Optional[float] = Field(default=None, alias="stroke-opacity")
+    marker_color: Optional[str] = Field(default=None, alias="marker-color")
+    marker_size: Optional[Literal["small", "medium", "large"]] = Field(default=None, alias="marker-size")
+    marker_symbol: Optional[str] = Field(default=None, alias="marker-symbol")
 
 
 class ErrorDetail(BaseModel):
@@ -1035,24 +1055,47 @@ def delete_rule(identifier: str):
 # translated to/from that FeatureCollection at this boundary.
 # ---------------------------------------------------------------------------
 
+# simplestyle-spec property names (https://github.com/mapbox/simplestyle-spec)
+# -- the exact keys Area's style fields alias to, and also the keys they
+# live under in the persisted GeoJSON Feature's `properties`, so a feature
+# round-tripped through _area_to_feature/_feature_to_area stays valid
+# simplestyle GeoJSON the whole way, not just a SkyFollower-internal shape.
+_AREA_STYLE_KEYS = (
+    "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
+    "marker-color", "marker-size", "marker-symbol",
+)
+
+
 def _feature_to_area(feature: dict) -> dict:
     props = feature.get("properties", {})
-    return {
+    area = {
         "identifier": props.get("identifier", ""),
         "name": props.get("name", ""),
         "geometry": feature.get("geometry", {}),
         "locked": bool(props.get("locked", False)),
     }
+    # Omitted (not None) when absent, matching simplestyle-spec convention
+    # and area.model_dump(exclude_none=True)'s shape -- an area that never
+    # set a style property looks identical whether it just got created or
+    # round-tripped through storage.
+    for key in _AREA_STYLE_KEYS:
+        if key in props:
+            area[key] = props[key]
+    return area
 
 
 def _area_to_feature(area: dict) -> dict:
+    properties = {
+        "identifier": area.get("identifier", ""),
+        "name": area.get("name", ""),
+        "locked": area.get("locked", False),
+    }
+    for key in _AREA_STYLE_KEYS:
+        if area.get(key) is not None:
+            properties[key] = area[key]
     return {
         "type": "Feature",
-        "properties": {
-            "identifier": area.get("identifier", ""),
-            "name": area.get("name", ""),
-            "locked": area.get("locked", False),
-        },
+        "properties": properties,
         "geometry": area.get("geometry", {}),
     }
 
@@ -1131,7 +1174,7 @@ def create_area(area: Area):
     if any(a.get("identifier") == identifier for a in areas):
         raise HTTPException(status_code=409, detail=f"Area '{identifier}' already exists")
 
-    area_dict = area.model_dump()
+    area_dict = area.model_dump(by_alias=True, exclude_none=True)
     areas.append(area_dict)
     _save_areas_array(areas, expect_identifier=identifier)
     return JSONResponse(status_code=201, content=area_dict)
@@ -1155,7 +1198,7 @@ def update_area(identifier: str, area: Area):
             detail=f"Body identifier '{area.identifier}' does not match path identifier '{identifier}'",
         )
 
-    areas[idx] = area.model_dump()
+    areas[idx] = area.model_dump(by_alias=True, exclude_none=True)
     _save_areas_array(areas, expect_identifier=identifier)
     return JSONResponse(content=areas[idx])
 

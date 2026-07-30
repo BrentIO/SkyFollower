@@ -1112,6 +1112,50 @@ components:
           type: boolean
           title: Locked
           default: false
+        fill:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Fill
+        fill-opacity:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Fill-Opacity
+        stroke:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Stroke
+        stroke-width:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Stroke-Width
+        stroke-opacity:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Stroke-Opacity
+        marker-color:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Marker-Color
+        marker-size:
+          anyOf:
+          - type: string
+            enum:
+            - small
+            - medium
+            - large
+          - type: 'null'
+          title: Marker-Size
+        marker-symbol:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Marker-Symbol
       type: object
       required:
       - identifier
