@@ -818,6 +818,60 @@ class TestMergeSegments:
         merged = _merge_segments(new, self._prev_dict())
         assert merged.last_message == datetime(2024, 5, 31, 14, 0, 0, tzinfo=timezone.utc)
 
+    def test_new_segment_with_string_timestamps_merges_without_crashing(self):
+        """A live CompletedFlight's positions/velocities have string
+        timestamps by the time they reach here -- CompletedFlight.positions
+        is an untyped list[dict] (see shared/models.py), so pydantic never
+        re-parses a "timestamp" string back into datetime on
+        model_validate_json(), which is exactly what deserializes every
+        real flight off RabbitMQ (or the local SQLite fallback queue).
+        _make_flight() constructs positions with real datetime objects
+        directly, which doesn't exercise this -- this test simulates the
+        actual shape a live segment has instead."""
+        new = _make_flight(
+            positions=[
+                {"timestamp": "2024-05-31T12:15:00+00:00",
+                 "latitude": 34.0, "longitude": -85.0, "altitude": 2000},
+                {"timestamp": "2024-05-31T12:45:00+00:00",
+                 "latitude": 35.0, "longitude": -86.0, "altitude": 3000},
+            ],
+            velocities=[
+                {"timestamp": "2024-05-31T12:15:00+00:00", "ground_speed": 400},
+            ],
+        )
+        merged = _merge_segments(new, self._prev_dict())  # must not raise
+
+        assert [p["timestamp"] for p in merged.positions] == [
+            datetime(2024, 5, 31, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 5, 31, 12, 15, 0, tzinfo=timezone.utc),
+            datetime(2024, 5, 31, 12, 45, 0, tzinfo=timezone.utc),
+        ]
+        assert merged.velocities[0]["timestamp"] == datetime(
+            2024, 5, 31, 12, 15, 0, tzinfo=timezone.utc
+        )
+
+    def test_mixed_string_and_datetime_timestamps_sort_correctly(self):
+        """A previously-archived (string-timestamp) segment and a live
+        (also string-timestamp, post-round-trip) segment must interleave
+        into true chronological order, not just "prev items then new
+        items" -- proves the fix actually normalizes both sides rather
+        than merely avoiding the crash."""
+        new = _make_flight(
+            positions=[
+                # Earlier than the previous segment's own position below --
+                # a correct merge must sort it first, not leave it trailing
+                # just because it came from "new_flight".
+                {"timestamp": "2024-05-31T11:00:00+00:00",
+                 "latitude": 30.0, "longitude": -80.0, "altitude": 500},
+            ],
+            velocities=[],
+        )
+        merged = _merge_segments(new, self._prev_dict())  # prev position at 12:00:00
+        assert [p["timestamp"] for p in merged.positions] == [
+            datetime(2024, 5, 31, 11, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 5, 31, 12, 0, 0, tzinfo=timezone.utc),
+        ]
+
 
 class TestStitching:
     def test_no_pointer_writes_normally(self):
@@ -957,6 +1011,53 @@ class TestStitching:
             assert merged["total_messages"] == 3
             assert merged["matched_rules"] == ["rule_a", "rule_b", "rule_c"]
             assert len(merged["positions"]) == 3  # one per segment
+
+    def test_stitch_survives_a_real_wire_round_trip(self):
+        """End-to-end regression test for the crash a real continuation
+        segment always hit: every other stitching test in this class
+        constructs its "new" segment directly via _make_flight() and calls
+        _archive_flight_to_s3() with it, which keeps real datetime
+        objects the whole way through and never exercises the shape a
+        live flight actually has. This test instead round-trips the
+        continuation segment through model_dump_json()/model_validate_json()
+        -- exactly what _on_message() does for every real RabbitMQ message
+        -- and drives it through _process_flight(), the real entry point,
+        not _archive_flight_to_s3() directly."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
+            processor._s3_client = _FakeS3()
+
+            seg1 = _make_flight(
+                _id="seg1-uuid",
+                first_message=datetime.fromtimestamp(0.0, tz=timezone.utc),
+                last_message=datetime.fromtimestamp(1000.0, tz=timezone.utc),
+                total_messages=10,
+            )
+            mock_redis.get.return_value = None
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(seg1)
+            seg1_key = next(iter(processor._s3_client.objects))
+            pointer = json.loads(mock_redis.set.call_args.args[1])
+            mock_redis.get.return_value = json.dumps(pointer)
+
+            seg2 = _make_flight(
+                _id="seg2-uuid",
+                first_message=datetime.fromtimestamp(1050.0, tz=timezone.utc),
+                last_message=datetime.fromtimestamp(1200.0, tz=timezone.utc),
+                total_messages=5,
+            )
+            wire_payload = seg2.model_dump_json(by_alias=True)  # what RabbitMQ actually carries
+            live_seg2 = CompletedFlight.model_validate_json(wire_payload)  # what _on_message actually does
+            assert isinstance(live_seg2.positions[0]["timestamp"], str)  # confirms this reproduces the real shape
+
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._process_flight(live_seg2)  # must not raise
+
+            assert len(processor._s3_client.objects) == 1  # stitched, not split
+            merged = processor._s3_client.read_json(seg1_key)
+            assert merged["_id"] == "seg1-uuid"
+            assert merged["total_messages"] == 15
+            assert len(merged["positions"]) == len(seg1.positions) + len(seg2.positions)
 
 
 # ---------------------------------------------------------------------------
