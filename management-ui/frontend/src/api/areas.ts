@@ -30,6 +30,21 @@ export interface Area {
   // name edits or deletion. Toggling this saves immediately rather than
   // going through the dirty/Save flow -- see AreasView.tsx's toggleLock.
   locked: boolean;
+  // simplestyle-spec (https://github.com/mapbox/simplestyle-spec) style
+  // properties, matching management-ui/backend/main.py's Area field
+  // aliases exactly (hyphenated key names, not the backend's underscored
+  // Python attribute names). All optional -- an area with none of them
+  // set renders with AreasView.tsx's default color scheme. fill/
+  // fill-opacity apply to Polygon; stroke/stroke-width/stroke-opacity to
+  // Polygon and LineString; marker-* to Point.
+  fill?: string;
+  "fill-opacity"?: number;
+  stroke?: string;
+  "stroke-width"?: number;
+  "stroke-opacity"?: number;
+  "marker-color"?: string;
+  "marker-size"?: "small" | "medium" | "large";
+  "marker-symbol"?: string;
 }
 
 // Display noun for a geometry type -- shared by the naming modal's title

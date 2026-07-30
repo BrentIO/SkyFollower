@@ -455,6 +455,72 @@ class TestAreaLocked:
         assert get_resp.json()["locked"] is True
 
 
+class TestAreaStyle:
+    """simplestyle-spec style properties (#579) -- persisted via config:areas'
+    GeoJSON FeatureCollection (_area_to_feature/_feature_to_area), a
+    separate boundary from Area's own alias-based (de)serialization that
+    both need to agree on the same hyphenated key names."""
+
+    def test_style_fields_round_trip_through_get(self, client):
+        area = _area("LI", **{
+            "fill": "#ff0000",
+            "fill-opacity": 0.5,
+            "stroke": "#00ff00",
+            "stroke-width": 3,
+            "stroke-opacity": 0.8,
+        })
+        resp = client.post("/api/areas", json=area)
+        assert resp.status_code == 201
+        assert resp.json()["fill"] == "#ff0000"
+        assert resp.json()["fill-opacity"] == 0.5
+        assert resp.json()["stroke-width"] == 3
+
+        get_resp = client.get("/api/areas/LI")
+        assert get_resp.json()["fill"] == "#ff0000"
+        assert get_resp.json()["stroke"] == "#00ff00"
+        assert get_resp.json()["stroke-opacity"] == 0.8
+
+    def test_marker_style_round_trips_for_point_area(self, client):
+        area = _area("PT", geometry={"type": "Point", "coordinates": [0, 0]}, **{
+            "marker-color": "#123456",
+            "marker-size": "large",
+            "marker-symbol": "airport",
+        })
+        resp = client.post("/api/areas", json=area)
+        assert resp.status_code == 201
+        assert resp.json()["marker-color"] == "#123456"
+        assert resp.json()["marker-size"] == "large"
+        assert resp.json()["marker-symbol"] == "airport"
+
+    def test_unset_style_fields_are_omitted_not_null(self, client):
+        resp = client.post("/api/areas", json=_area("LI"))
+        assert resp.status_code == 201
+        for key in ("fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "marker-color", "marker-size", "marker-symbol"):
+            assert key not in resp.json(), f"Unexpected key present with no value set: {key!r}"
+
+        get_resp = client.get("/api/areas/LI")
+        for key in ("fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "marker-color", "marker-size", "marker-symbol"):
+            assert key not in get_resp.json()
+
+    def test_invalid_marker_size_returns_422(self, client):
+        resp = client.post("/api/areas", json=_area(
+            "PT", geometry={"type": "Point", "coordinates": [0, 0]}, **{"marker-size": "huge"},
+        ))
+        assert resp.status_code == 422
+
+    def test_update_changes_style(self, client):
+        client.post("/api/areas", json=_area("LI", **{"stroke": "#111111"}))
+        resp = client.put("/api/areas/LI", json=_area("LI", **{"stroke": "#222222"}))
+        assert resp.status_code == 200
+        assert resp.json()["stroke"] == "#222222"
+
+    def test_update_clears_style_when_omitted(self, client):
+        client.post("/api/areas", json=_area("LI", **{"stroke": "#111111"}))
+        resp = client.put("/api/areas/LI", json=_area("LI"))
+        assert resp.status_code == 200
+        assert "stroke" not in resp.json()
+
+
 class TestDeleteArea:
     def test_deletes_and_returns_204(self, client):
         client.post("/api/areas", json=_area("LI"))
