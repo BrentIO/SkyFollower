@@ -113,6 +113,7 @@ function areaToFeature(area: Area) {
       identifier: area.identifier,
       name: area.name,
       locked: area.locked,
+      ...pickStyleFields(area),
     },
   };
 }
