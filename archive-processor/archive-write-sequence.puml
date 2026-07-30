@@ -4,7 +4,9 @@
 title Archive Processor — Flight & Parquet Index Write
 
 box "Archive Processor" $OnPrem
-    participant "Archiver" as Archiver
+    participant "Archiver\n(RabbitMQ consumer thread)" as Consumer
+    participant "Archiver\n(S3 reconnect thread)" as Reconnect
+    participant "Archiver\n(telemetry thread)" as Telemetry
     database "s3.db\n(SQLite WAL)" as FallbackDB
 end box
 
@@ -12,81 +14,161 @@ box "AWS" $AWS
     participant "S3" as S3
 end box
 
-== Normal write ==
+== Normal write (RabbitMQ consumer thread) ==
 
-Archiver -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-alt flight write succeeds
-    S3 --> Archiver-- : success
-    Archiver -> Archiver : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-    Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-    alt index write succeeds
-        S3 --> Archiver-- : success
-    else index write fails
-        S3 --> Archiver-- : error or timeout
-        Archiver -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-        FallbackDB --> Archiver-- : OK
-    end
-else flight write fails
-    S3 --> Archiver-- : error or timeout
-    Archiver -> FallbackDB++ : **Insert flight into the retry queue**\n""INSERT INTO queue {flight_json}""
-    FallbackDB --> Archiver-- : OK
-end
-
-== Retry: S3 reconnects, or every telemetry_interval_seconds ==
-
-Archiver -> Archiver : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
-alt guard acquired
-    Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    loop for each queued full flight
-        Archiver -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
-        FallbackDB --> Archiver-- : Record
-        Archiver -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-        alt flight write succeeds
-            S3 --> Archiver-- : success
-            Archiver -> Archiver : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-            Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-            alt index write succeeds
-                S3 --> Archiver-- : success
-            else index write fails
-                S3 --> Archiver-- : error or timeout
-                Archiver -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-                FallbackDB --> Archiver-- : OK
-            end
-            Archiver -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
-            FallbackDB --> Archiver-- : OK
-        else flight write fails
-            S3 --> Archiver-- : error or timeout
-            break
-                Archiver -> Archiver : **Stop draining — retry next cycle**
-            end
-        end
-    end
-    Archiver -> Archiver : **Release the flight-queue drain guard**\n""_fallback._drain_lock.release()""
-else guard already held
-    Archiver -> Archiver : **Skip — a flight-queue drain is already in progress**
-end
-
-Archiver -> Archiver : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
-alt guard acquired
-    Archiver -\ Archiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    loop for each queued index-only retry
-        Archiver -> FallbackDB++ : **Get next row**\n""SELECT * FROM index_queue ORDER BY id ASC LIMIT 1""
-        FallbackDB --> Archiver-- : Record
-        Archiver -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+Consumer -> Consumer : **Check whether S3 is currently available for direct writes**\n""s3_available = self._s3_connected""
+alt s3_available
+    Consumer -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+    alt flight write succeeds
+        S3 --> Consumer-- : success
+        Consumer -> Consumer : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+        Consumer -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
         alt index write succeeds
-            S3 --> Archiver-- : success
-            Archiver -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
-            FallbackDB --> Archiver-- : OK
+            S3 --> Consumer-- : success
         else index write fails
-            S3 --> Archiver-- : error or timeout
+            S3 --> Consumer-- : error or timeout
+            Consumer -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+            FallbackDB --> Consumer-- : OK
+        end
+    else flight write fails
+        S3 --> Consumer-- : error or timeout
+        Consumer -> FallbackDB++ : **Insert flight into the retry queue**\n""INSERT INTO queue {flight_json}""
+        FallbackDB --> Consumer-- : OK
+    end
+else not s3_available
+    Consumer -> FallbackDB++ : **Insert flight into the retry queue**\n""INSERT INTO queue {flight_json}""
+    FallbackDB --> Consumer-- : OK
+end
+
+== S3 reconnects — flight queue drains synchronously before live writes resume ==
+
+note over Reconnect, Consumer
+    Split-flight stitching (see split-flight-stitching-sequence.puml) depends on a
+    continuation segment never being live-processed before the segment it continues
+    has already been archived and pointer-updated. The two threads below show how
+    that ordering is preserved across an S3 outage ending mid-backlog: the drain on
+    the left and any new arrival on the right both target the *same* queue, and the
+    queue is strictly oldest-first -- so a continuation can never jump ahead of what
+    it continues.
+end note
+
+par S3 reconnect thread — draining the backlog
+    Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.list_buckets()""
+    note right of Reconnect
+        s3_connected is deliberately NOT set here.
+        It stays whatever it already was (False)
+        until the drain below fully empties the
+        queue -- see _finish_s3_connect.
+    end note
+    loop for each queued full flight, oldest first
+        Reconnect -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        FallbackDB --> Reconnect-- : Record
+        Reconnect -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+        alt flight write succeeds
+            S3 --> Reconnect-- : success
+            Reconnect -> Reconnect : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+            Reconnect -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+            alt index write succeeds
+                S3 --> Reconnect-- : success
+            else index write fails
+                S3 --> Reconnect-- : error or timeout
+                Reconnect -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+                FallbackDB --> Reconnect-- : OK
+            end
+            Reconnect -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
+            FallbackDB --> Reconnect-- : OK
+        else flight write fails
+            S3 --> Reconnect-- : error or timeout
             break
-                Archiver -> Archiver : **Stop draining — retry next cycle**
+                Reconnect -> Reconnect : **Stop draining — stay disconnected, retry the whole sequence next tick**\n""drain() returns False""
             end
         end
     end
-    Archiver -> Archiver : **Release the index-queue drain guard**\n""_index_fallback._drain_lock.release()""
+    alt queue fully drained
+        Reconnect -> Reconnect : **Set S3 connected — now safe to route live flights directly**\n""self._s3_connected = True""
+        Reconnect -\ FallbackDB : **Kick off the index-queue background drain too**\n""threading.Thread(target=drain).start()""
+    end
+else RabbitMQ consumer thread — concurrent arrivals during the drain above
+    Consumer -> Consumer : **Check whether S3 is currently available for direct writes**\n""s3_available = self._s3_connected""
+    Consumer -> Consumer : **Still False — the drain hasn't finished yet**
+    Consumer -> FallbackDB++ : **Queue behind the backlog instead of writing directly**\n""INSERT INTO queue {flight_json}""
+    FallbackDB --> Consumer-- : OK
+end
+
+== Every telemetry_interval_seconds while s3_connected — flight queue background safety sweep ==
+
+note right of Telemetry
+    By the time s3_connected first becomes True (above), the flight queue
+    is already guaranteed empty. This periodic sweep only ever finds
+    something to do here for a flight that failed and was re-queued by a
+    single transient write error while otherwise connected -- a narrower
+    race than the reconnect-window one above, tracked and designed
+    separately since s3_connected never goes False in that scenario, so
+    the same gate can't apply as-is.
+end note
+
+Telemetry -> Telemetry : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
+alt guard acquired
+    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
+    loop for each queued full flight
+        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        FallbackDB --> Telemetry-- : Record
+        Telemetry -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+        alt flight write succeeds
+            S3 --> Telemetry-- : success
+            Telemetry -> Telemetry : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+            Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+            alt index write succeeds
+                S3 --> Telemetry-- : success
+            else index write fails
+                S3 --> Telemetry-- : error or timeout
+                Telemetry -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+                FallbackDB --> Telemetry-- : OK
+            end
+            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
+            FallbackDB --> Telemetry-- : OK
+        else flight write fails
+            S3 --> Telemetry-- : error or timeout
+            break
+                Telemetry -> Telemetry : **Stop draining — retry next tick**
+            end
+        end
+    end
+    Telemetry -> Telemetry : **Release the flight-queue drain guard**\n""_fallback._drain_lock.release()""
 else guard already held
-    Archiver -> Archiver : **Skip — an index-queue drain is already in progress**
+    Telemetry -> Telemetry : **Skip — a flight-queue drain is already in progress**
+end
+
+== S3 reconnects (after the synchronous flight drain succeeds) or every telemetry_interval_seconds — index queue ==
+
+note right of Telemetry
+    The index queue never participates in the stitch race -- it only
+    retries a Parquet index row for a flight object that already wrote
+    successfully -- so both triggers keep draining it in the background,
+    unaffected by the reconnect gate above.
+end note
+
+Telemetry -> Telemetry : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
+alt guard acquired
+    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
+    loop for each queued index-only retry
+        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM index_queue ORDER BY id ASC LIMIT 1""
+        FallbackDB --> Telemetry-- : Record
+        Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+        alt index write succeeds
+            S3 --> Telemetry-- : success
+            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
+            FallbackDB --> Telemetry-- : OK
+        else index write fails
+            S3 --> Telemetry-- : error or timeout
+            break
+                Telemetry -> Telemetry : **Stop draining — retry next cycle**
+            end
+        end
+    end
+    Telemetry -> Telemetry : **Release the index-queue drain guard**\n""_index_fallback._drain_lock.release()""
+else guard already held
+    Telemetry -> Telemetry : **Skip — an index-queue drain is already in progress**
 end
 
 @enduml

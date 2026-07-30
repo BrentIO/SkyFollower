@@ -441,6 +441,30 @@ class TestS3FallbackQueue:
             q.drain(fail)
             assert q.depth() == 2  # nothing removed
 
+    def test_drain_returns_true_when_fully_drained(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            q.put("only item")
+            assert q.drain(lambda _: None) is True
+
+    def test_drain_returns_true_on_an_already_empty_queue(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            assert q.drain(lambda _: None) is True
+
+    def test_drain_returns_false_when_stopped_early(self):
+        """Callers gating other state on "the backlog is fully clear" (see
+        ArchiveProcessor._finish_s3_connect) need this to be a real
+        signal, not just a side effect they infer from depth()."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            q = _S3FallbackQueue(tmp.name)
+            q.put("item1")
+
+            def fail(_):
+                raise ConnectionError("S3 gone")
+
+            assert q.drain(fail) is False
+
     def test_survives_reopen(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             path = tmp.name
@@ -1154,6 +1178,168 @@ class TestIndexWriteRetryQueue:
             assert len(flight_keys) == 1  # the drained full flight
             assert len(index_keys) == 2  # one from that flight's own index write,
             # one from the index-only retry
+
+
+# ---------------------------------------------------------------------------
+# S3 reconnect: synchronous backlog drain gates _s3_connected
+# ---------------------------------------------------------------------------
+
+def _fake_redis_get_set(mock_redis) -> dict:
+    """Wires a MagicMock's get/set to a real backing dict, so a pointer
+    written by one _archive_flight_to_s3 call is actually visible to a
+    later _try_stitch lookup within the same test -- the plain MagicMock
+    used elsewhere in this file doesn't connect get() to a prior set()."""
+    store: dict = {}
+
+    def fake_set(key, value, **kwargs):
+        store[key] = value
+
+    def fake_get(key):
+        return store.get(key)
+
+    mock_redis.set.side_effect = fake_set
+    mock_redis.get.side_effect = fake_get
+    return store
+
+
+class TestFinishS3Connect:
+    def test_flips_s3_connected_only_after_backlog_drains(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            processor._s3_connected = False
+            mock_redis.get.return_value = None
+
+            processor._fallback.put(_make_flight(_id="queued").model_dump_json(by_alias=True))
+            assert processor._fallback.depth() == 1
+
+            processor._finish_s3_connect()
+
+            assert processor._s3_connected is True
+            assert processor._fallback.depth() == 0
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            assert len(flight_keys) == 1
+
+    def test_stays_disconnected_if_drain_fails_partway(self):
+        """S3 goes away again mid-drain: _s3_connected must stay False so
+        the normal reconnect-loop retry cadence tries the whole sequence
+        again later, rather than prematurely routing new live flights
+        directly to a client that just proved unreliable."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            processor._s3_connected = False
+            mock_redis.get.return_value = None
+
+            processor._fallback.put(_make_flight(_id="queued").model_dump_json(by_alias=True))
+
+            with patch.object(processor, "_write_to_s3", side_effect=ConnectionError("gone again")):
+                processor._finish_s3_connect()
+
+            assert processor._s3_connected is False
+            assert processor._fallback.depth() == 1  # left queued, not lost
+
+    def test_reconnect_drain_gate_prevents_live_flight_from_jumping_the_backlog(self):
+        """The core reconnect-race regression test. Segment A (queued while
+        S3 was down) is still being drained when segment B -- its continuation,
+        same aircraft, within flight_ttl_seconds -- arrives on what would
+        be the live RabbitMQ consumer path. Before the fix, B would see
+        s3_connected already True and archive independently (missing A's
+        not-yet-written stitch pointer), splitting one flight into two S3
+        objects. With the fix, B must still see s3_connected as False at
+        that moment and queue behind A instead -- so by the time B is
+        actually processed (later in this same drain), A's pointer already
+        exists and B correctly stitches into a single object."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
+            processor._s3_client = _FakeS3()
+            processor._s3_connected = False
+            _fake_redis_get_set(mock_redis)
+
+            seg_a = _make_flight(
+                _id="seg-a-uuid",
+                aircraft={"icao_hex": "A8AE7F", "registration": "N659DL"},
+                first_message=datetime.fromtimestamp(0.0, tz=timezone.utc),
+                last_message=datetime.fromtimestamp(1000.0, tz=timezone.utc),
+            )
+            processor._fallback.put(seg_a.model_dump_json(by_alias=True))
+
+            seg_b = _make_flight(
+                _id="seg-b-uuid",
+                aircraft={"icao_hex": "A8AE7F", "registration": "N659DL"},
+                first_message=datetime.fromtimestamp(1050.0, tz=timezone.utc),  # 50s gap, within ttl
+                last_message=datetime.fromtimestamp(1200.0, tz=timezone.utc),
+                # Empty, not _make_flight's default positions -- this test
+                # goes through the same JSON round-trip (fallback queue
+                # put -> model_validate_json) that a real live flight does,
+                # which turns positions[]/velocities[]' timestamps into
+                # plain strings (untyped list[dict] fields). _merge_segments
+                # doesn't normalize the *new* segment's timestamps back to
+                # datetime (only the previously-archived one it's merging
+                # against), so a non-empty positions list here would trip
+                # that unrelated, separately-filed bug instead of exercising
+                # what this test is actually about.
+                positions=[],
+                velocities=[],
+            )
+
+            s3_connected_when_b_arrived = []
+            injected = {"done": False}
+            original_process = processor._process_fallback_flight
+
+            def intercept(payload):
+                # Fires once, while draining segment A -- simulates B
+                # arriving concurrently on the live consumer thread.
+                if not injected["done"]:
+                    injected["done"] = True
+                    with processor._s3_lock:
+                        s3_connected_when_b_arrived.append(processor._s3_connected)
+                    processor._process_flight(seg_b)
+                original_process(payload)
+
+            with patch.object(processor, "_process_fallback_flight", side_effect=intercept):
+                processor._finish_s3_connect()
+
+            assert s3_connected_when_b_arrived == [False]  # B was gated, not routed live
+            assert processor._s3_connected is True
+            assert processor._fallback.depth() == 0  # both eventually drained
+
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            assert len(flight_keys) == 1  # stitched into one object, not split into two
+            merged = processor._s3_client.read_json(flight_keys[0])
+            assert merged["_id"] == "seg-a-uuid"
+            assert merged["total_messages"] == seg_a.total_messages + seg_b.total_messages
+
+    def test_new_arrivals_during_drain_queue_behind_not_ahead(self):
+        """A flight for an unrelated aircraft arriving mid-drain must also
+        still be gated (not just same-aircraft continuations) -- the gate
+        is on s3_connected globally, not per-aircraft."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            processor._s3_connected = False
+            mock_redis.get.return_value = None
+
+            seg_a = _make_flight(_id="seg-a", aircraft={"icao_hex": "AAAAAA"})
+            processor._fallback.put(seg_a.model_dump_json(by_alias=True))
+            unrelated = _make_flight(_id="unrelated", aircraft={"icao_hex": "BBBBBB"})
+
+            injected = {"done": False}
+            original_process = processor._process_fallback_flight
+
+            def intercept(payload):
+                if not injected["done"]:
+                    injected["done"] = True
+                    processor._process_flight(unrelated)
+                original_process(payload)
+
+            with patch.object(processor, "_process_fallback_flight", side_effect=intercept):
+                processor._finish_s3_connect()
+
+            assert processor._s3_connected is True
+            assert processor._fallback.depth() == 0
+            flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
+            assert len(flight_keys) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -354,8 +354,14 @@ class _S3FallbackQueue:
             )
             self._conn.commit()
 
-    def drain(self, process_fn) -> None:
-        """Drain all queued items oldest-first via process_fn(payload)."""
+    def drain(self, process_fn) -> bool:
+        """Drain all queued items oldest-first via process_fn(payload).
+        Returns True if the queue was fully drained (empty when this
+        returned), False if it stopped early because process_fn raised
+        (e.g. S3 went away again mid-drain) -- callers that gate other
+        state on "the backlog is fully clear" (see
+        ArchiveProcessor._finish_s3_connect) need to tell these two
+        outcomes apart, not just call this and move on."""
         while True:
             with self._lock:
                 cur = self._conn.execute(
@@ -363,7 +369,7 @@ class _S3FallbackQueue:
                 )
                 row = cur.fetchone()
                 if row is None:
-                    break
+                    return True
                 row_id, payload = row
             try:
                 process_fn(payload)
@@ -371,7 +377,7 @@ class _S3FallbackQueue:
                     self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row_id,))
                     self._conn.commit()
             except Exception:
-                break  # S3 went away again; stop draining
+                return False  # S3 went away again; stop draining
 
     def drain_in_background(self, process_fn, on_done=None) -> None:
         """Spawn a background thread to drain(), unless a drain is already
@@ -456,7 +462,8 @@ class ArchiveProcessor:
     def start(self) -> None:
         self._setup_logging()
         self._connect_mqtt()
-        self._connect_s3()
+        if self._connect_s3():
+            self._finish_s3_connect()
         self._load_flight_ttl_seconds()
 
         # Background threads
@@ -479,7 +486,11 @@ class ArchiveProcessor:
     # S3
     # ------------------------------------------------------------------
 
-    def _connect_s3(self) -> None:
+    def _connect_s3(self) -> bool:
+        """Establishes (or re-establishes) the S3 client. Returns whether
+        the connectivity check succeeded. Deliberately does NOT set
+        _s3_connected itself -- callers decide when it's actually safe to
+        route live flights directly to S3, via _finish_s3_connect."""
         s3_cfg = self._cfg.get("s3", {})
         try:
             session = boto3.Session(
@@ -492,12 +503,56 @@ class ArchiveProcessor:
             client.list_buckets()
             with self._s3_lock:
                 self._s3_client = client
-                self._s3_connected = True
-            logger.info("S3 connected.")
+            logger.info("S3 client connected.")
+            return True
         except Exception as exc:
             logger.warning("S3 unavailable: %s. Will retry in background.", exc)
             with self._s3_lock:
                 self._s3_connected = False
+            return False
+
+    def _finish_s3_connect(self) -> None:
+        """Called after a successful _connect_s3(): synchronously drains
+        the flight-fallback queue to empty *before* allowing _process_flight
+        to route any live flight directly to S3.
+
+        Without this gate, a continuation segment for an aircraft whose
+        prior segment is still sitting in the fallback queue could be
+        live-processed (and miss its _try_stitch() pointer lookup, since
+        the prior segment hasn't been written/pointer-updated yet) before
+        the background drain gets around to that prior segment -- splitting
+        one flight into two archived records.
+
+        Any flight arriving on the RabbitMQ consumer thread while this
+        drain is running still sees s3_available=False (this method hasn't
+        returned yet), so it queues to the *same* fallback queue rather
+        than going live -- fast, non-blocking (a local SQLite insert), no
+        RabbitMQ backpressure. Since _S3FallbackQueue.drain() is strictly
+        oldest-first, a continuation segment can never be drained (and
+        therefore never reach _try_stitch()) before the segment it
+        continues. No per-icao_hex locking or queue scanning needed -- the
+        single queue's own ordering does the work.
+
+        If the drain stops early (S3 went away again mid-drain), _s3_connected
+        is left False and the normal 10s reconnect-loop retry cadence picks
+        the whole sequence -- reconnect, then this drain again -- back up
+        later, continuing from wherever the queue was left.
+
+        The index-fallback queue doesn't participate in the stitch race (it
+        only retries a Parquet index row for a flight object already
+        successfully written) so it keeps draining in the background as
+        before, not gated on this.
+        """
+        if not self._fallback.drain(self._process_fallback_flight):
+            return
+        with self._s3_lock:
+            self._s3_connected = True
+        logger.info("S3 connected — flight fallback queue fully drained.")
+        self._drain_index_fallback()
+
+    def _process_fallback_flight(self, payload: str) -> None:
+        flight = CompletedFlight.model_validate_json(payload)
+        self._archive_flight_to_s3(flight)
 
     def _s3_reconnect_loop(self) -> None:
         """Periodically attempt to reconnect to S3 if disconnected."""
@@ -505,16 +560,8 @@ class ArchiveProcessor:
             time.sleep(10)
             with self._s3_lock:
                 already_connected = self._s3_connected
-            if not already_connected:
-                self._connect_s3()
-                with self._s3_lock:
-                    reconnected = self._s3_connected
-                if reconnected:
-                    logger.info("S3 reconnected — draining fallback queues.")
-                    # _drain_all_fallbacks() spawns its own background
-                    # threads (or skips if one's already running per
-                    # queue) -- see drain_in_background.
-                    self._drain_all_fallbacks()
+            if not already_connected and self._connect_s3():
+                self._finish_s3_connect()
 
     def _write_to_s3(self, flight: CompletedFlight, payload_bytes: bytes, s3_key: str) -> None:
         s3_cfg = self._cfg.get("s3", {})
@@ -655,15 +702,15 @@ class ArchiveProcessor:
             )
 
     def _drain_fallback(self) -> None:
-        """Drain the SQLite fallback queue into S3."""
-        def process(payload: str) -> None:
-            flight = CompletedFlight.model_validate_json(payload)
-            self._archive_flight_to_s3(flight)
-
+        """Drain the SQLite fallback queue into S3 in the background --
+        the periodic telemetry-tick safety sweep's path (_drain_all_fallbacks,
+        called whenever s3_connected is already True). The reconnect-
+        triggered drain runs synchronously instead, gating _s3_connected
+        itself -- see _finish_s3_connect."""
         def _log_done() -> None:
             logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
 
-        self._fallback.drain_in_background(process, on_done=_log_done)
+        self._fallback.drain_in_background(self._process_fallback_flight, on_done=_log_done)
 
     def _drain_all_fallbacks(self) -> None:
         """
