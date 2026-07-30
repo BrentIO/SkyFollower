@@ -172,6 +172,82 @@ function labelPosition(geometry: Area["geometry"]): [number, number] {
   }
 }
 
+// Screen-space alignment guides (#580) -- PowerPoint-style "your shape is
+// lining up with another one" assistance while dragging, no ready-made
+// terra-draw feature for this. `axis: "x"` is a vertical guide line at a
+// constant screen X (a horizontal-alignment match); `axis: "y"` is
+// horizontal at a constant screen Y. `from`/`to` are the perpendicular
+// span the drawn line covers, wide enough to visibly connect the dragged
+// point to whichever other shape it aligned with.
+interface AlignmentGuide {
+  axis: "x" | "y";
+  pos: number;
+  from: number;
+  to: number;
+}
+
+const GUIDE_TOLERANCE_PX = 7;
+
+// The dragged shape contributes every vertex plus its centroid (so a
+// single-vertex edit can still line up a far corner even if the shape's
+// overall bounding box barely moved); every *other* area only contributes
+// its bounding-box edges and centroid, per the issue's spec -- comparing
+// against every other shape's individual vertices too would be far
+// noisier without being any more useful for this purpose.
+function computeAlignmentGuides(map: maplibregl.Map, draggedArea: Area, otherAreas: Area[]): AlignmentGuide[] {
+  const draggedPoints: maplibregl.Point[] = [];
+  forEachCoordinate(draggedArea.geometry, (coord) => draggedPoints.push(map.project(coord)));
+  draggedPoints.push(map.project(labelPosition(draggedArea.geometry)));
+
+  const guides: AlignmentGuide[] = [];
+
+  for (const other of otherAreas) {
+    if (other.identifier === draggedArea.identifier) continue;
+    const bounds = computeBounds([other]);
+    if (!bounds) continue;
+    const [[minLng, minLat], [maxLng, maxLat]] = bounds as [[number, number], [number, number]];
+    const corner1 = map.project([minLng, maxLat]);
+    const corner2 = map.project([maxLng, minLat]);
+    const left = Math.min(corner1.x, corner2.x);
+    const right = Math.max(corner1.x, corner2.x);
+    const top = Math.min(corner1.y, corner2.y);
+    const bottom = Math.max(corner1.y, corner2.y);
+    const centroid = map.project(labelPosition(other.geometry));
+
+    for (const p of draggedPoints) {
+      for (const x of [left, right, centroid.x]) {
+        if (Math.abs(p.x - x) <= GUIDE_TOLERANCE_PX) {
+          guides.push({ axis: "x", pos: x, from: Math.min(p.y, top), to: Math.max(p.y, bottom) });
+        }
+      }
+      for (const y of [top, bottom, centroid.y]) {
+        if (Math.abs(p.y - y) <= GUIDE_TOLERANCE_PX) {
+          guides.push({ axis: "y", pos: y, from: Math.min(p.x, left), to: Math.max(p.x, right) });
+        }
+      }
+    }
+  }
+  return guides;
+}
+
+// Merges guides that landed on (near enough) the same line -- a shape
+// with several vertices near the same alignment would otherwise draw the
+// same line many times over.
+function dedupeAlignmentGuides(guides: AlignmentGuide[]): AlignmentGuide[] {
+  const merged = new Map<string, AlignmentGuide>();
+  for (const g of guides) {
+    const key = `${g.axis}:${Math.round(g.pos)}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.from = Math.min(existing.from, g.from);
+      existing.to = Math.max(existing.to, g.to);
+    } else {
+      merged.set(key, { ...g });
+    }
+  }
+  return Array.from(merged.values());
+}
+
 // Terra Draw feature properties.mode must equal the owning mode's own
 // name ("polygon"/"linestring"/"point") -- addFeatures() validates against
 // it (see offsetGeometry's own comment on validation) -- so every place a
@@ -335,6 +411,10 @@ export function AreasView() {
   // AreaNameModal detour.
   const [pendingLocked, setPendingLocked] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  // Screen-space alignment guides (#580) -- only ever non-empty while a
+  // shape is actively being dragged/reshaped; cleared the moment the drag
+  // ends (draw's "finish" event) or selection otherwise changes.
+  const [guideLines, setGuideLines] = useState<AlignmentGuide[]>([]);
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
 
@@ -369,13 +449,23 @@ export function AreasView() {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
-    setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
+    const geometry = feature.geometry as Area["geometry"];
+    setDraft({ ...draft, geometry });
+    const map = mapRef.current;
+    if (map) {
+      setGuideLines(dedupeAlignmentGuides(computeAlignmentGuides(map, { ...draft, geometry }, areas)));
+    }
   });
   handleDrawChangeRef.current = (ids: string[]) => {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
-    setDraft({ ...draft, geometry: feature.geometry as Area["geometry"] });
+    const geometry = feature.geometry as Area["geometry"];
+    setDraft({ ...draft, geometry });
+    const map = mapRef.current;
+    if (map) {
+      setGuideLines(dedupeAlignmentGuides(computeAlignmentGuides(map, { ...draft, geometry }, areas)));
+    }
   };
 
   const handleDrawSelectRef = useRef((featureId: string) => {
@@ -514,6 +604,15 @@ export function AreasView() {
         // (dragFeature/dragCoordinate/dragCoordinateResize) -- only a
         // brand new polygon (action "draw") should prompt for a name.
         if (context.action === "draw") handleDrawFinishRef.current(String(id));
+        // Alignment guides (#580) are only meaningful mid-drag -- "finish"
+        // covers every drag-ending case (a completed shape/vertex drag as
+        // well as a brand new draw), so clearing here regardless of
+        // action is the single place that always catches "the drag just
+        // ended". setGuideLines itself has a stable identity across
+        // renders (unlike state values), so it's safe to call directly
+        // from this one-time closure without the ref-callback indirection
+        // used elsewhere in this effect.
+        setGuideLines([]);
       });
       draw.on("change", (ids, type) => {
         if (type === "update") handleDrawChangeRef.current(ids.map(String));
@@ -803,6 +902,7 @@ export function AreasView() {
     if (!original) return;
     setDraft(clone(original));
     drawRef.current?.updateFeatureGeometry(original.identifier, original.geometry);
+    setGuideLines([]);
   }
 
   async function handleDeleteConfirmed() {
@@ -1002,6 +1102,28 @@ export function AreasView() {
           conflict with maplibregl-map's own position: relative.
         */}
         <div ref={mapContainerRef} className="h-full w-full" />
+        {/* Alignment guides (#580) -- screen-space, so a plain SVG overlay
+            sharing this same relatively-positioned container (matching
+            map.project()'s own pixel coordinate origin exactly) is
+            simpler and more precise than round-tripping through
+            unproject() into a MapLibre GeoJSON layer. pointer-events-none
+            so it never blocks clicks on the map/controls beneath it. */}
+        {guideLines.length > 0 && (
+          <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+            {guideLines.map((g, i) => (
+              <line
+                key={i}
+                x1={g.axis === "x" ? g.pos : g.from}
+                y1={g.axis === "x" ? g.from : g.pos}
+                x2={g.axis === "x" ? g.pos : g.to}
+                y2={g.axis === "x" ? g.to : g.pos}
+                stroke="#ec4899"
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+              />
+            ))}
+          </svg>
+        )}
       </div>
 
       <ConfirmModal
