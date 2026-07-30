@@ -15,6 +15,7 @@ export type OperatorRecord = Record<string, unknown> & { airline_designator: str
 export type AirportRecord = Record<string, unknown> & { icao_code: string; name?: string };
 
 export interface RouteLookup {
+  ident: string;
   origin: AirportRecord;
   destination: AirportRecord;
   stops: AirportRecord[];
