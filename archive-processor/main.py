@@ -795,8 +795,8 @@ class ArchiveProcessor:
         If this flight's start is within flight_ttl_seconds of the last
         archived segment for the same aircraft, fetch that segment and
         merge. Returns (merged_flight, original_s3_key), or None if this is
-        a genuinely new flight (no prior pointer, gap too large, or the
-        prior segment couldn't be fetched).
+        a genuinely new flight (no prior pointer, gap too large or negative,
+        or the prior segment couldn't be fetched).
         """
         icao_hex = flight.aircraft.get("icao_hex", "")
         if not icao_hex:
@@ -819,7 +819,17 @@ class ArchiveProcessor:
 
         ttl = self._flight_ttl_seconds
         gap = flight.first_message.timestamp() - prev_last_message
-        if gap > ttl:
+        # A negative gap means the pointer is for a segment that actually
+        # started *after* this one -- this flight arrived out of order
+        # (e.g. it failed and got parked in the local retry queue while a
+        # later continuation raced ahead and archived first).
+        # _merge_segments always takes first_message from `prev` and
+        # leaves last_message from `flight`, which assumes `prev` is
+        # chronologically earlier -- merging backwards here would silently
+        # produce a record with last_message before first_message rather
+        # than just missing a legitimate stitch, so this is rejected the
+        # same way a too-large gap already is.
+        if gap > ttl or gap < 0:
             return None
 
         prev = self._fetch_previous_segment(prev_s3_key)
