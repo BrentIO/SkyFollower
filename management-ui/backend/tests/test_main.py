@@ -1078,10 +1078,19 @@ class TestRouteLookup:
         resp = client.get("/api/routes/AAL15")
         assert resp.status_code == 200
         body = resp.json()
+        assert body["ident"] == "AAL15"
         assert body["origin"]["icao_code"] == "KMIA"
         assert body["destination"]["icao_code"] == "KMIA"
         assert len(body["stops"]) == 3
         assert body["stops"][1]["icao_code"] == "KJFK"
+
+    def test_ident_echoed_uppercased_regardless_of_request_case(self, client, fake_redis):
+        fake_redis.store["route:AAL15"] = "KMIA-KJFK"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        resp = client.get("/api/routes/aal15")
+        assert resp.status_code == 200
+        assert resp.json()["ident"] == "AAL15"
 
     def test_no_route_returns_404(self, client):
         resp = client.get("/api/routes/UNKNOWN1")

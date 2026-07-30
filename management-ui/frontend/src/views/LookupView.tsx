@@ -573,6 +573,7 @@ function RouteResultView({ data }: { data: RouteLookup }) {
   return (
     <div className="flex flex-col gap-4">
       <RouteMap stops={data.stops} />
+      <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{data.ident}</span>
       <div className="flex flex-col gap-2">
         {data.stops.map((stop, i) => {
           const role = roleFor(i, data.stops.length);

@@ -937,12 +937,15 @@ def _flatten_aircraft_doc(doc: dict) -> dict:
 
 class RouteLookup(BaseModel):
     """
-    Resolved route for a flight ident. `origin`/`destination` are the
-    first/last airport in the resolved sequence (a quick-glance header);
-    `stops` is the full sequence in order, duplicates preserved (e.g. a
-    round trip returns the same airport at both ends).
+    Resolved route for a flight ident. `ident` echoes the path parameter
+    used to resolve it, so the frontend doesn't have to separately remember
+    what it searched for. `origin`/`destination` are the first/last airport
+    in the resolved sequence (a quick-glance header); `stops` is the full
+    sequence in order, duplicates preserved (e.g. a round trip returns the
+    same airport at both ends).
     """
 
+    ident: str
     origin: AirportRecord
     destination: AirportRecord
     stops: list[AirportRecord]
@@ -1316,6 +1319,7 @@ def get_route(ident: str):
     if not airports:
         raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")
     return JSONResponse(content={
+        "ident": ident.upper(),
         "origin": airports[0],
         "destination": airports[-1],
         "stops": airports,
