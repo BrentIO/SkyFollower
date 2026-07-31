@@ -36,6 +36,7 @@ import redis as redis_lib
 
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
+from shared.fallback_queue import FallbackQueue
 from shared.logging_setup import configure_logging
 from shared.models import (
     AircraftRecord,
@@ -467,81 +468,6 @@ class Flight:
 
 
 # ---------------------------------------------------------------------------
-# Local archive fallback queue
-# ---------------------------------------------------------------------------
-
-class _ArchiveFallbackQueue:
-    """SQLite-backed fallback for completed flights when RabbitMQ is offline."""
-
-    def __init__(self, path: str) -> None:
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS queue "
-            "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, queued_at REAL)"
-        )
-        self._conn.commit()
-        self._lock = threading.Lock()
-        # Single-flight guard: drain() only locks around each individual
-        # SELECT/DELETE, not the whole fetch-publish-delete cycle for a
-        # row, so two overlapping drain() calls (reconnect-triggered and
-        # periodic telemetry-tick both firing close together) could each
-        # SELECT the same oldest row before either DELETEs it and
-        # duplicate-publish it. This lock ensures at most one drain runs
-        # at a time regardless of which trigger started it.
-        self._drain_lock = threading.Lock()
-
-    def put(self, payload: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO queue (payload, queued_at) VALUES (?,?)",
-                (payload, time.time()),
-            )
-            self._conn.commit()
-
-    def drain(self, publish_fn) -> None:
-        """Drain all queued items oldest-first via publish_fn(payload)."""
-        while True:
-            with self._lock:
-                cur = self._conn.execute(
-                    "SELECT id, payload FROM queue ORDER BY id ASC LIMIT 1"
-                )
-                row = cur.fetchone()
-                if row is None:
-                    break
-                row_id, payload = row
-            try:
-                publish_fn(payload)
-                with self._lock:
-                    self._conn.execute("DELETE FROM queue WHERE id=?", (row_id,))
-                    self._conn.commit()
-            except Exception:
-                break  # RabbitMQ went away again; stop draining
-
-    def drain_in_background(self, publish_fn) -> None:
-        """Spawn a background thread to drain(), unless a drain is already
-        in progress for this queue -- in which case this is a cheap no-op
-        rather than a second overlapping drain. Never blocks the caller
-        (the telemetry loop calling this can publish its own stats
-        immediately regardless of how long the actual drain takes)."""
-        if not self._drain_lock.acquire(blocking=False):
-            logger.debug("Drain already in progress; skipping this trigger.")
-            return
-
-        def _run() -> None:
-            try:
-                self.drain(publish_fn)
-            finally:
-                self._drain_lock.release()
-
-        threading.Thread(target=_run, daemon=True, name="fallback-drain").start()
-
-    def depth(self) -> int:
-        with self._lock:
-            cur = self._conn.execute("SELECT COUNT(*) FROM queue")
-            return cur.fetchone()[0]
-
-
-# ---------------------------------------------------------------------------
 # Message Processor
 # ---------------------------------------------------------------------------
 
@@ -580,7 +506,7 @@ class MessageProcessor:
         self._message_clock: float = row[0] if row and row[0] is not None else time.time()
 
         # Archive fallback
-        self._fallback = _ArchiveFallbackQueue(os.path.join(data_dir, "completed_flights.db"))
+        self._fallback = FallbackQueue(os.path.join(data_dir, "completed_flights.db"))
 
         # Metrics
         self._rate = _RateTracker()
@@ -1289,6 +1215,9 @@ class MessageProcessor:
             retain=True,
         )
         self._mqtt.publish(f"{base}/local_archive_queue_depth", str(self._fallback.depth()), retain=True)
+        self._mqtt.publish(
+            f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
+        )
         self._mqtt.publish(f"{base}/active_flights", str(active), retain=True)
         self._mqtt.publish(
             f"{base}/registration_misses_hour",
@@ -1408,6 +1337,7 @@ class MessageProcessor:
             ("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
             ("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement", None),
             ("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement", None),
+            ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
             ("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing", None),
             ("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing", None),
             ("aircraft_type_misses_hour", "Aircraft Type Misses (Hour)", "mdi:broadcast", "total_increasing", None),

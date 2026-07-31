@@ -4,12 +4,15 @@ Tests for receiver/main.py components that don't require live infrastructure.
 Covers:
 - TCP stream parsing (bytes → hex messages)
 - ICAO hex extraction and routing (modulo)
-- SQLite fallback queue put/drain/depth
+- The receiver-specific queue_name wrap/unwrap around shared.FallbackQueue
+  (the queue itself -- put/drain/depth/dead-lettering -- is covered in
+  shared/tests/test_fallback_queue.py)
 - Rate tracker
 """
 
 from __future__ import annotations
 
+import json
 import socket
 import tempfile
 import threading
@@ -19,7 +22,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from receiver.main import (
-    _FallbackQueue,
     _RateTracker,
     parse_978_line,
 )
@@ -251,133 +253,32 @@ class TestIcaoRoutingIntegration:
 # SQLite fallback queue
 # ---------------------------------------------------------------------------
 
-class TestFallbackQueue:
-    """Tests for _FallbackQueue put / drain / depth."""
+class TestFallbackPutWrapsQueueName:
+    """FallbackQueue (shared/fallback_queue.py) is payload-only -- Receiver
+    wraps queue_name into the JSON payload it puts, since queue_name is the
+    target RabbitMQ routing key computed once at insert time and has to
+    survive being persisted alongside the payload rather than recomputed
+    on drain."""
 
-    def _make_queue(self) -> _FallbackQueue:
-        td = tempfile.mkdtemp()
-        return _FallbackQueue(f"{td}/queue.db")
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
 
-    def test_put_increases_depth(self):
-        q = self._make_queue()
-        assert q.depth() == 0
-        q.put("adsb-0", '{"raw": "AA"}')
-        assert q.depth() == 1
-        q.put("adsb-1", '{"raw": "BB"}')
-        assert q.depth() == 2
+    def test_fallback_put_wraps_queue_name_and_payload(self):
+        r = self._make_receiver()
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        assert r._fallback.depth() == 1
 
-    def test_drain_calls_publish_fn_in_order(self):
-        q = self._make_queue()
-        q.put("adsb-0", "first")
-        q.put("adsb-1", "second")
-        q.put("adsb-0", "third")
-
-        drained: list[tuple] = []
-        q.drain(lambda qn, p: drained.append((qn, p)))
-
-        assert drained == [
-            ("adsb-0", "first"),
-            ("adsb-1", "second"),
-            ("adsb-0", "third"),
-        ]
-        assert q.depth() == 0
-
-    def test_drain_stops_on_publish_error(self):
-        """If publish_fn raises, drain stops and remaining items are kept."""
-        q = self._make_queue()
-        q.put("adsb-0", "first")
-        q.put("adsb-0", "second")
-
-        call_count = [0]
-
-        def failing_publish(qn, p):
-            call_count[0] += 1
-            if call_count[0] >= 1:
-                raise RuntimeError("RabbitMQ gone")
-
-        q.drain(failing_publish)
-
-        # First item triggered the error; it and all subsequent items remain
-        assert q.depth() == 2
-
-    def test_drain_on_empty_queue_is_noop(self):
-        q = self._make_queue()
-        called = []
-        q.drain(lambda qn, p: called.append(p))
-        assert called == []
-        assert q.depth() == 0
-
-    def test_depth_after_partial_drain(self):
-        """Verify depth decrements as items are drained."""
-        q = self._make_queue()
-        for i in range(5):
-            q.put("adsb-0", f"msg-{i}")
-        assert q.depth() == 5
-
-        drained = []
-        q.drain(lambda qn, p: drained.append(p))
-        assert q.depth() == 0
-        assert len(drained) == 5
-
-    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
-        """Simulates the reconnect-triggered and periodic telemetry-tick
-        triggers firing close together (#534): if a drain is already
-        holding the single-flight guard, a second call must not spawn
-        another drain -- overlapping drains could otherwise both SELECT
-        the same oldest row before either DELETEs it and duplicate-publish
-        it."""
-        q = self._make_queue()
-        q.put("adsb-0", "payload")
-        q._drain_lock.acquire()  # simulate an in-progress drain
-        try:
-            calls = []
-            q.drain_in_background(lambda qn, p: calls.append((qn, p)))
-            time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
-            assert calls == []
-            assert q.depth() == 1
-        finally:
-            q._drain_lock.release()
-
-    def test_drain_in_background_runs_and_releases_the_guard(self):
-        q = self._make_queue()
-        q.put("adsb-0", "payload")
-        calls = []
-
-        q.drain_in_background(lambda qn, p: calls.append((qn, p)))
-
-        # Wait on the lock itself, not depth() -- drain() drops depth to 0
-        # on its final DELETE, then still has to loop once more (SELECT
-        # finds nothing, breaks, returns) before its finally block releases
-        # _drain_lock. Polling depth() alone races ahead of that by up to
-        # one iteration, occasionally catching the lock still held.
-        deadline = time.monotonic() + 2
-        while q._drain_lock.locked() and time.monotonic() < deadline:
-            time.sleep(0.01)
-
-        assert calls == [("adsb-0", "payload")]
-        assert q.depth() == 0
-        assert not q._drain_lock.locked()
-
-    def test_wal_mode_enabled(self):
-        """Confirm WAL journal mode is applied."""
-        import sqlite3
-        td = tempfile.mkdtemp()
-        q = _FallbackQueue(f"{td}/queue.db")
-        conn = sqlite3.connect(f"{td}/queue.db")
-        row = conn.execute("PRAGMA journal_mode").fetchone()
-        conn.close()
-        assert row[0] == "wal"
-
-    def test_schema_columns(self):
-        """queue table has id, queue_name, payload, received_at columns."""
-        import sqlite3
-        td = tempfile.mkdtemp()
-        q = _FallbackQueue(f"{td}/queue.db")
-        conn = sqlite3.connect(f"{td}/queue.db")
-        info = conn.execute("PRAGMA table_info(queue)").fetchall()
-        conn.close()
-        col_names = {row[1] for row in info}
-        assert {"id", "queue_name", "payload", "received_at"}.issubset(col_names)
+        captured = []
+        r._fallback.drain(captured.append)
+        item = json.loads(captured[0])
+        assert item == {"queue_name": "adsb-0", "payload": '{"raw": "AA"}'}
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +315,7 @@ class TestDrainFallback:
 
     def test_drain_fallback_publishes_queued_items(self):
         r = self._make_receiver()
-        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
         mock_channel = MagicMock()
         r._rmq_channel = mock_channel
 
@@ -427,7 +328,7 @@ class TestDrainFallback:
 
     def test_drain_fallback_leaves_items_queued_if_channel_gone(self):
         r = self._make_receiver()
-        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
         r._rmq_channel = None
 
         with _synchronous_drain_thread():
@@ -440,7 +341,7 @@ class TestDrainFallback:
         the connection is broken as a failed live-path publish — mirror
         _publish()'s handling."""
         r = self._make_receiver()
-        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
         mock_channel = MagicMock()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
         r._rmq_channel = mock_channel
@@ -469,7 +370,7 @@ class TestDrainFallback:
         connected — this is what lets a stuck/missed reconnect-triggered
         drain (see #525) still recover on the next tick."""
         r = self._make_receiver()
-        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
         r._rmq_channel = MagicMock()
         r._rmq_connected = True
 
@@ -480,7 +381,7 @@ class TestDrainFallback:
 
     def test_telemetry_tick_does_not_drain_when_disconnected(self):
         r = self._make_receiver()
-        r._fallback.put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("adsb-0", '{"raw": "AA"}')
         r._rmq_connected = False
 
         self._run_one_telemetry_tick(r)

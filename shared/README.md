@@ -1,11 +1,12 @@
 # Shared Data Models
 
-The `shared` package contains the Pydantic data models and Redis key name
-functions used by all SkyFollower components. Keeping these in one place
-ensures that the message envelope format and Redis key naming stay consistent
-across the receiver, processor, archive processor, data runners, and UI
-backend. Components that run in their own containers install the package at
-build time via a relative path reference in their `requirements.txt`.
+The `shared` package contains the Pydantic data models, Redis key name
+functions, and other common primitives used by all SkyFollower components.
+Keeping these in one place ensures that the message envelope format, Redis
+key naming, and fault-tolerance behavior stay consistent across the
+receiver, processor, archive processor, data runners, and UI backend.
+Components that run in their own containers install the package at build
+time via a relative path reference in their `requirements.txt`.
 
 ## Contents
 
@@ -19,6 +20,19 @@ build time via a relative path reference in their `requirements.txt`.
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.
+
+- **`fallback_queue.py`** — `FallbackQueue`, the SQLite-backed local
+  retry queue every component that talks to an external dependency
+  (RabbitMQ, S3) uses when that dependency is unreachable. Below a
+  per-row retry threshold (default 5), a failure behaves like a plain
+  outage — stop the drain pass, retry from the top next time. At the
+  threshold, the row is judged permanently poison: it's written out as a
+  standalone JSON file under `{dirname(db_path)}/dead_letters/{table_name}/`
+  (size-capped at 100MB, oldest-evicted-first) for an operator to inspect
+  or discard out-of-band, and the drain pass continues past it instead of
+  stopping — so one permanently-failing item can no longer silently block
+  everything queued behind it forever. See each component's own README
+  (Fault Tolerance section) for how it's wired in.
 
 ## Usage
 

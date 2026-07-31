@@ -20,7 +20,6 @@ import logging.handlers
 import os
 import signal
 import socket
-import sqlite3
 import sys
 import threading
 import time
@@ -33,6 +32,7 @@ import pika
 import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
+from shared.fallback_queue import FallbackQueue
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
@@ -68,94 +68,6 @@ class _RateTracker:
 
 
 # ---------------------------------------------------------------------------
-# SQLite fallback queue
-# ---------------------------------------------------------------------------
-
-class _FallbackQueue:
-    """
-    Persistent SQLite queue used when RabbitMQ is unavailable.
-    Written to /app/data/queue.db (host-mounted volume).
-    """
-
-    _SCHEMA = (
-        "CREATE TABLE IF NOT EXISTS queue "
-        "(id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        " queue_name TEXT, "
-        " payload TEXT, "
-        " received_at REAL)"
-    )
-
-    def __init__(self, path: str) -> None:
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(self._SCHEMA)
-        self._conn.commit()
-        self._lock = threading.Lock()
-        # Single-flight guard: drain() only locks around each individual
-        # SELECT/DELETE, not the whole fetch-publish-delete cycle for a
-        # row, so two overlapping drain() calls (reconnect-triggered and
-        # periodic telemetry-tick both firing close together) could each
-        # SELECT the same oldest row before either DELETEs it and
-        # duplicate-publish it. This lock ensures at most one drain runs
-        # at a time regardless of which trigger started it.
-        self._drain_lock = threading.Lock()
-
-    def put(self, queue_name: str, payload: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO queue (queue_name, payload, received_at) VALUES (?,?,?)",
-                (queue_name, payload, time.time()),
-            )
-            self._conn.commit()
-
-    def drain(self, publish_fn) -> None:
-        """Drain all queued items oldest-first via publish_fn(queue_name, payload).
-
-        Stops immediately if publish_fn raises (RabbitMQ went away again).
-        """
-        while True:
-            with self._lock:
-                cur = self._conn.execute(
-                    "SELECT id, queue_name, payload FROM queue ORDER BY id ASC LIMIT 1"
-                )
-                row = cur.fetchone()
-                if row is None:
-                    break
-                row_id, queue_name, payload = row
-
-            try:
-                publish_fn(queue_name, payload)
-                with self._lock:
-                    self._conn.execute("DELETE FROM queue WHERE id=?", (row_id,))
-                    self._conn.commit()
-            except Exception:
-                break  # RabbitMQ went away; stop draining
-
-    def drain_in_background(self, publish_fn) -> None:
-        """Spawn a background thread to drain(), unless a drain is already
-        in progress for this queue -- in which case this is a cheap no-op
-        rather than a second overlapping drain. Never blocks the caller
-        (the telemetry loop calling this can publish its own stats
-        immediately regardless of how long the actual drain takes)."""
-        if not self._drain_lock.acquire(blocking=False):
-            logger.debug("Drain already in progress; skipping this trigger.")
-            return
-
-        def _run() -> None:
-            try:
-                self.drain(publish_fn)
-            finally:
-                self._drain_lock.release()
-
-        threading.Thread(target=_run, daemon=True, name="fallback-drain").start()
-
-    def depth(self) -> int:
-        with self._lock:
-            cur = self._conn.execute("SELECT COUNT(*) FROM queue")
-            return cur.fetchone()[0]
-
-
-# ---------------------------------------------------------------------------
 # Receiver
 # ---------------------------------------------------------------------------
 
@@ -175,7 +87,7 @@ class Receiver:
         # Fallback SQLite queue
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
-        self._fallback = _FallbackQueue(os.path.join(data_dir, "queue.db"))
+        self._fallback = FallbackQueue(os.path.join(data_dir, "queue.db"))
 
         # RabbitMQ state
         self._rmq_connection: Optional[pika.BlockingConnection] = None
@@ -437,10 +349,25 @@ class Receiver:
                 with self._rmq_lock:
                     self._rmq_connected = False
 
-        self._fallback.put(queue_name, payload)
+        self._fallback_put(queue_name, payload)
+
+    def _fallback_put(self, queue_name: str, payload: str) -> None:
+        """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
+        has no queue_name column of its own, unlike this component's
+        pre-#643 fallback queue. queue_name is the target RabbitMQ routing
+        key computed once at insert time (see _route_message), and has to
+        be persisted alongside the payload rather than recomputed on drain
+        against a possibly-since-changed processor_count -- so it's wrapped
+        into one JSON string here and unwrapped again in _drain_fallback's
+        process_fn."""
+        self._fallback.put(json.dumps({"queue_name": queue_name, "payload": payload}))
 
     def _drain_fallback(self) -> None:
-        def publish_fn(queue_name: str, payload: str) -> None:
+        def process_fn(wrapped: str) -> None:
+            item = json.loads(wrapped)
+            queue_name = item["queue_name"]
+            payload = item["payload"]
+
             with self._rmq_lock:
                 channel = self._rmq_channel
             if channel is None:
@@ -457,7 +384,7 @@ class Receiver:
                     self._rmq_connected = False
                 raise
 
-        self._fallback.drain_in_background(publish_fn)
+        self._fallback.drain_in_background(process_fn)
 
     # ------------------------------------------------------------------
     # MQTT
@@ -537,6 +464,9 @@ class Receiver:
                 retain=True,
             )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
+        self._mqtt.publish(
+            f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
+        )
         self._mqtt.publish(f"{base}/rabbitmq_connected", str(rmq_connected), retain=True)
 
     # ------------------------------------------------------------------
@@ -568,6 +498,8 @@ class Receiver:
         sensors += [
             ("local_queue_depth", f"Receiver {rid} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
+            ("dead_letter_queue_depth", f"Receiver {rid} — Dead Letter Queue Depth",
+             "mdi:skull-crossbones", "measurement", None),
             ("rabbitmq_connected", f"Receiver {rid} — RabbitMQ Connected",
              "mdi:rabbit", None, None),
         ]

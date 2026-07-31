@@ -128,11 +128,16 @@ On RabbitMQ connect the receiver pre-declares all queues (`adsb-0` through
 ## Fault Tolerance
 
 When RabbitMQ is unavailable (at startup or after a disconnect), messages are
-written to `queue.db` (SQLite WAL mode) in `data_dir`. Each row stores the
-target `queue_name`, the JSON payload, and the `received_at` timestamp. When
-the RabbitMQ connection is re-established, the fallback queue is drained
-oldest-first before new messages are forwarded. If RabbitMQ drops mid-drain,
-draining stops cleanly and resumes on the next reconnect.
+written to `queue.db` (SQLite WAL mode) in `data_dir` via the shared
+`FallbackQueue` (see [shared/README.md](../shared/README.md)). Since that
+class is payload-only, the receiver wraps `{queue_name, payload}` into one
+JSON string before queueing it, and unwraps it again on drain — `queue_name`
+(the target RabbitMQ routing key) is computed once at insert time and has
+to survive being persisted alongside the payload, not recomputed against a
+possibly-since-changed `processor_count`. When the RabbitMQ connection is
+re-established, the fallback queue is drained oldest-first before new
+messages are forwarded. If RabbitMQ drops mid-drain, draining stops cleanly
+and resumes on the next reconnect.
 
 Draining is also attempted independently every `telemetry_interval_seconds`,
 not just on a detected reconnect. A publish failure can leave messages queued
@@ -149,6 +154,23 @@ in progress at a time regardless of which trigger started it — if the
 periodic tick fires while the reconnect-triggered drain is still running,
 it's a no-op rather than a second overlapping drain, which could otherwise
 select the same queued row twice and publish it twice.
+
+### Dead-Lettering Poison Messages
+
+A message that fails to publish on every drain attempt — not because
+RabbitMQ is down, but because something about that specific message causes
+a deterministic failure — would otherwise retry forever, and since `drain()`
+always re-selects the oldest row first, it would also block every other
+queued message behind it indefinitely. `FallbackQueue` tracks a per-row
+retry count: below the threshold (5, hardcoded), a failure behaves exactly
+as before — stop the drain pass, retry from the top next time. At the
+threshold, the row is judged permanently poison: it's written out as a
+standalone JSON file under `dead_letters/queue/` in `data_dir` (capped at
+100MB total, oldest file evicted first) for manual inspection, and the
+drain pass continues to whatever's queued behind it instead of stopping.
+There's no automated replay path — a dead-lettered file is purely something
+an operator inspects or discards out-of-band (`data_dir` is already a
+host-mounted volume, same as `queue.db` itself).
 
 ## MQTT Topics Published
 
@@ -167,6 +189,7 @@ All topics use the root `SkyFollower`.
 | `messages_978_per_second` | Float as string | Average 978 MHz UAT message rate since last report; only present if a `978` source is configured |
 | `messages_MLAT_per_second` | Float as string | Average MLAT message rate since last report; only present if an `MLAT` source is configured |
 | `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) |
+| `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 
