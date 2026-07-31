@@ -42,12 +42,20 @@ import pyarrow.parquet as pq
 # /app/archive-compaction or /app.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.aws_setup import write_aws_setup_files
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
 
 logger = logging.getLogger("archive-compaction")
 
 MQTT_ROOT = "SkyFollower/archive-compaction"
+
+# Template resolved (__BUCKET_NAME__ substitution only, no AWS API calls)
+# and written to {data_dir}/aws-setup/ on every run -- see
+# shared/aws_setup.py and docs/aws-setup.md.
+_IAM_POLICY_TEMPLATE = os.path.join(
+    os.path.dirname(__file__), "..", "specs", "aws", "iam-policies", "archive-compaction.json"
+)
 
 # Matches archive-processor's _PARQUET_INDEX_SCHEMA exactly (see
 # archive-processor/main.py) -- every per-flight file this job reads was
@@ -544,6 +552,12 @@ def main() -> None:
     try:
         s3_cfg = cfg["s3"]
         bucket = s3_cfg["bucket"]
+
+        write_aws_setup_files(
+            cfg.get("data_dir", "/app/data"), bucket,
+            {_IAM_POLICY_TEMPLATE: "iam-policy.json"},
+        )
+
         s3_client = connect_s3(s3_cfg)
 
         result = run_compaction(s3_client, bucket)

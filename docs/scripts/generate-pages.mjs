@@ -48,11 +48,19 @@ const ROUTE_BY_DIR = new Map([
 // "runners/ourairports/README.md".
 const README_LINK_RE = /\]\((?:\.\.\/|[\w.-]+\/)*([\w.-]+)\/README\.md\)/g;
 
+// Matches a markdown link target that is a relative path into docs/ itself
+// (a flat page, not a component README), e.g. "../docs/aws-setup.md" from
+// archive-processor/README.md. VitePress serves docs/<page>.md at the
+// extensionless route /<page>.
+const DOCS_PAGE_LINK_RE = /\]\((?:\.\.\/)*docs\/([\w.-]+)\.md\)/g;
+
 function rewriteReadmeLinks(content) {
-  return content.replace(README_LINK_RE, (match, dirName) => {
-    const route = ROUTE_BY_DIR.get(dirName);
-    return route ? `](${route})` : match;
-  });
+  return content
+    .replace(README_LINK_RE, (match, dirName) => {
+      const route = ROUTE_BY_DIR.get(dirName);
+      return route ? `](${route})` : match;
+    })
+    .replace(DOCS_PAGE_LINK_RE, (match, page) => `](/${page})`);
 }
 
 function writePage(relPath, sourceReadmePath) {

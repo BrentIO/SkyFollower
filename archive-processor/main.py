@@ -38,6 +38,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 # /app/archive-processor or /app.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.aws_setup import write_aws_setup_files
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
 from shared.redis_keys import (
@@ -48,6 +49,15 @@ from shared.redis_keys import (
 )
 
 logger = logging.getLogger("archive-processor")
+
+# Templates resolved (__BUCKET_NAME__ substitution only, no AWS API calls)
+# and written to {data_dir}/aws-setup/ on every startup -- see
+# shared/aws_setup.py and docs/aws-setup.md.
+_AWS_SETUP_DIR = os.path.join(os.path.dirname(__file__), "..", "specs", "aws")
+_AWS_SETUP_TEMPLATES = {
+    os.path.join(_AWS_SETUP_DIR, "glue-table-definition.json"): "glue-table-definition.json",
+    os.path.join(_AWS_SETUP_DIR, "iam-policies", "archive-processor.json"): "iam-policy.json",
+}
 
 # How long the "last archived segment" pointer for an aircraft is kept in
 # Redis before it expires on its own (see _try_stitch / _update_stitch_pointer).
@@ -440,6 +450,10 @@ class ArchiveProcessor:
         # Separate table, same file: retries for flights whose object write
         # already succeeded but whose Parquet index row failed to write.
         self._index_fallback = _S3FallbackQueue(s3_db_path, table_name="index_queue")
+
+        write_aws_setup_files(
+            data_dir, config.get("s3", {}).get("bucket", ""), _AWS_SETUP_TEMPLATES
+        )
 
         # S3
         self._s3_client: Optional[object] = None

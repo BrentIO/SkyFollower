@@ -29,7 +29,7 @@ flights are queued locally and drained automatically once S3 reconnects.
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) is written |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS reference files — see [AWS Setup](#aws-setup)) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 `flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
@@ -187,8 +187,30 @@ Writing one small file per flight (rather than appending to one shared
 file) is deliberate: it's what makes this index queryable directly from S3
 via Athena/Glue partition projection, with no local-only, single-instance
 state to lose or rebuild. Daily compaction of these small per-flight files
-into one file per partition, and the Glue table/partition projection setup
-itself, are separate, not-yet-built pieces of work.
+into one file per partition is a separate job — see `archive-compaction`'s
+own README (`archive-compaction/README.md`). The Glue table itself is a
+one-time, human-run console setup — see [AWS Setup](#aws-setup) below.
+
+## AWS Setup
+
+This process never calls a Glue, IAM, or Athena provisioning API — table,
+database, and identity creation are one-time admin actions performed
+directly in the AWS console. Instead, on every startup, the archive
+processor resolves its own `__BUCKET_NAME__`-templated reference files
+(baked into its image from `specs/aws/`) against its configured
+`s3.bucket` and writes them to `{data_dir}/aws-setup/`:
+
+- `glue-table-definition.json` — the Glue table definition for the
+  [Parquet index](#parquet-index) above, including partition projection
+  properties, for the console's "Add table" wizard
+- `iam-policy.json` — the least-privilege IAM policy this component
+  itself needs, for pasting into the console's JSON policy editor
+
+Re-running (restarting) always regenerates both files from the current
+config and the image's current templates — safe to do any time, and picks
+up a changed bucket name or an upgraded template on the next restart. See
+[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
+setup guide these files feed into.
 
 ## Fault Tolerance
 

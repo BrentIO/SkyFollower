@@ -1,0 +1,47 @@
+{
+  "_comment": "Template for the Glue Catalog table over the archive Parquet index (see docs/aws-setup.md). __BUCKET_NAME__ is resolved by archive-processor at startup against its own s3.bucket config and written to {data_dir}/aws-setup/glue-table-definition.json -- copy each value from that resolved file into the console's 'Add table' wizard. No component ever calls the Glue API to create this table; this JSON is a reference only.",
+  "DatabaseName": "skyfollower",
+  "TableInput": {
+    "Name": "archive_flights",
+    "Description": "Per-flight Parquet index for the SkyFollower S3 archive (specs/data-dictionary.yaml's archive_parquet_index record), one row per flight, partitioned by the UTC date of the flight's first_message.",
+    "StorageDescriptor": {
+      "Location": "s3://__BUCKET_NAME__/index/",
+      "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+      "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+      "SerdeInfo": {
+        "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+      },
+      "Columns": [
+        { "Name": "icao_hex", "Type": "string" },
+        { "Name": "registration", "Type": "string" },
+        { "Name": "type_designator", "Type": "string" },
+        { "Name": "military", "Type": "boolean" },
+        { "Name": "operator_designator", "Type": "string" },
+        { "Name": "ident", "Type": "string" },
+        { "Name": "first_message", "Type": "timestamp" },
+        { "Name": "last_message", "Type": "timestamp" },
+        { "Name": "s3_key", "Type": "string" }
+      ]
+    },
+    "PartitionKeys": [
+      { "Name": "year", "Type": "string" },
+      { "Name": "month", "Type": "string" },
+      { "Name": "day", "Type": "string" }
+    ],
+    "TableType": "EXTERNAL_TABLE",
+    "Parameters": {
+      "EXTERNAL": "TRUE",
+      "classification": "parquet",
+      "projection.enabled": "true",
+      "projection.year.type": "integer",
+      "projection.year.range": "2024,2100",
+      "projection.month.type": "integer",
+      "projection.month.range": "1,12",
+      "projection.month.digits": "2",
+      "projection.day.type": "integer",
+      "projection.day.range": "1,31",
+      "projection.day.digits": "2",
+      "storage.location.template": "s3://__BUCKET_NAME__/index/year=${year}/month=${month}/day=${day}/"
+    }
+  }
+}

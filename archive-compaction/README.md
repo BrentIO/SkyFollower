@@ -72,10 +72,27 @@ logged clearly via `files_delete_failed` when it happens.
 | `mqtt.port` | integer | `1883` | |
 | `mqtt.username` | string | — | Optional MQTT auth; omit for an anonymous broker |
 | `mqtt.password` | string | — | |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `aws-setup/iam-policy.json` (resolved AWS reference file — see [AWS Setup](#aws-setup)) is written |
 | `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
 
 The settings file path defaults to `/app/settings.json` and can be
 overridden with the `SETTINGS_PATH` environment variable.
+
+## AWS Setup
+
+This job never calls a Glue, IAM, or Athena provisioning API — table,
+database, and identity creation are one-time admin actions performed
+directly in the AWS console. Instead, on every run, it resolves its own
+`__BUCKET_NAME__`-templated IAM policy (baked into its image from
+`specs/aws/iam-policies/archive-compaction.json`) against its configured
+`s3.bucket` and writes it to `{data_dir}/aws-setup/iam-policy.json`, for
+pasting directly into the console's JSON policy editor. This is a
+deliberately separate identity from `archive-processor`'s — it needs
+`Delete` and bucket-level `List` permissions archive-processor doesn't,
+and no access to `flights/*` object content at all (it only lists
+`flights/*` keys for the parity check, never reads them). See
+[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
+setup guide.
 
 ## MQTT
 

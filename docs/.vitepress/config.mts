@@ -29,6 +29,7 @@ export default defineConfig({
     nav: [
       { text: "Getting Started", link: "/getting-started/" },
       { text: "Deployment", link: "/deployment/" },
+      { text: "AWS Setup", link: "/aws-setup" },
       { text: "Architecture", link: "/architecture/" },
       { text: "Rules & Areas", link: "/rules-and-areas/" },
       { text: "Components", link: "/components/" },
@@ -41,6 +42,7 @@ export default defineConfig({
         items: [
           { text: "Getting Started", link: "/getting-started/" },
           { text: "Deployment", link: "/deployment/" },
+          { text: "AWS Setup", link: "/aws-setup" },
           { text: "Architecture", link: "/architecture/" },
           { text: "Rules & Areas", link: "/rules-and-areas/" },
         ],
