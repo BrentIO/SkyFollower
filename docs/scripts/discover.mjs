@@ -15,7 +15,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(__dirname, "..", "..");
 
-const COMPONENT_DIRS = ["receiver", "message-processor", "shared", "archive-processor"];
+const COMPONENT_DIRS = [
+  "receiver", "message-processor", "shared", "archive-processor", "archive-compaction",
+];
 
 function h1Title(readmePath, fallback) {
   const firstLine = readFileSync(readmePath, "utf-8").split("\n", 1)[0];
