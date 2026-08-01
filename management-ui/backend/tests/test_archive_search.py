@@ -358,7 +358,9 @@ class TestBackgroundPolling:
         resp = _create_search(client)
         uuid = resp.json()["uuid"]
 
-        assert client.get(f"/api/archive/search/{uuid}").json()["status"] == "COMPLETE"
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        assert detail["status"] == "COMPLETE"
+        assert detail["error"] is None
 
     def test_failed_query_marks_search_failed_with_reason(self, client, fake_athena):
         real_start = fake_athena.start_query_execution
@@ -375,6 +377,7 @@ class TestBackgroundPolling:
 
         detail = client.get(f"/api/archive/search/{uuid}").json()
         assert detail["status"] == "FAILED"
+        assert detail["error"] == "TABLE_NOT_FOUND"
 
     def test_deadline_exceeded_aborts_and_calls_stop_query_execution(self, client, fake_athena):
         # Never reaches a terminal state; force the deadline to have
@@ -387,6 +390,7 @@ class TestBackgroundPolling:
 
         detail = client.get(f"/api/archive/search/{uuid}").json()
         assert detail["status"] == "ABORTED"
+        assert detail["error"] == "Deadline exceeded (2 minutes)"
         assert qid in fake_athena.stopped
 
 
@@ -446,7 +450,9 @@ class TestResultsRetrieval:
 
         resp = client.get(f"/api/archive/search/{uuid}/results")
         assert resp.status_code == 200
-        rows = resp.json()
+        body = resp.json()
+        assert body["total_rows"] == 1
+        rows = body["rows"]
         assert len(rows) == 1
         result_row = rows[0]
         assert "s3_key" not in result_row
@@ -461,7 +467,7 @@ class TestResultsRetrieval:
                "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000", s3_key)
         uuid = self._complete_search(client, fake_athena, fake_s3, [row])
 
-        token = client.get(f"/api/archive/search/{uuid}/results").json()[0]["token"]
+        token = client.get(f"/api/archive/search/{uuid}/results").json()["rows"][0]["token"]
         assert ui_main._decrypt_token(token) == s3_key
 
     def test_pagination_returns_100_rows_per_page(self, client, fake_athena, fake_s3):
@@ -475,8 +481,10 @@ class TestResultsRetrieval:
 
         page1 = client.get(f"/api/archive/search/{uuid}/results?page=1").json()
         page2 = client.get(f"/api/archive/search/{uuid}/results?page=2").json()
-        assert len(page1) == 100
-        assert len(page2) == 50
+        assert len(page1["rows"]) == 100
+        assert len(page2["rows"]) == 50
+        assert page1["total_rows"] == 150
+        assert page2["total_rows"] == 150
 
     def test_second_page_request_reuses_cache_no_second_s3_fetch(self, client, fake_athena, fake_s3):
         rows = [("A1", "N1", "B738", "false", "DAL", "DAL1",

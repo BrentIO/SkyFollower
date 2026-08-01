@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Purpose** | REST API and React frontend for rules and areas configuration. The backend is the sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
+| **Purpose** | REST API and React frontend for rules/areas configuration and archive search history. The backend is the sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
 | **Auth** | None (single-instance, trusted-network deployment) |
 | **Reads/writes** | Redis only |
 
@@ -11,7 +11,8 @@ viewing live aircraft movement rather than editing configuration.
 
 ## Status
 
-The React rules editor and areas editor (`frontend/`) are both built.
+The React rules editor, areas editor, and archive search history page
+(`frontend/`) are all built.
 The Dockerfile is a multi-stage build — a `node` stage produces the static
 frontend bundle, and the final stage runs both uvicorn (bound to
 `127.0.0.1:8000`, not exposed outside the container) and nginx, started by
@@ -144,6 +145,25 @@ component library, to keep dependencies minimal for ARM builds.
   Draw's `direct_select` mode for vertex editing and shows an inline Name
   field + Save/Discard/Delete in the side list; geometry edits on the map
   and name edits in the list share the same dirty/save/discard state.
+- `api/archiveSearch.ts` — typed client for `/api/archive/search/*` and
+  `/api/archive/flights/{token}`. `downloadArchiveFlight` fetches via
+  `Blob` + a synthetic `<a download>` click rather than a plain
+  navigation, specifically so an expired/invalid token's `400` can be
+  caught and shown as a toast instead of the browser just rendering a
+  raw JSON error page.
+- `views/HistoryView.tsx` — search list (left) + selected search's
+  results (right on desktop; the same content renders inline as an
+  accordion under the selected list entry on mobile instead, since
+  there's no persistent side-by-side space below the `md:` breakpoint).
+  Polls `GET /api/archive/search` every few seconds while any visible
+  search is `RUNNING`, so status pills update to `COMPLETE`/`FAILED`/
+  `ABORTED` live. Results (once `COMPLETE`) are fetched and cached
+  per-page client-side, keyed by `{uuid}:{page}`, so paging back to an
+  already-viewed page never re-fetches. `components/NewSearchModal.tsx`
+  collects `name` + a raw SQL `where_clause` (plain `<textarea>`, not a
+  syntax-highlighted editor) alongside a persistent column-reference
+  legend, since the whole point of that field is writing SQL against
+  exact column names from memory.
 
 Client-side validation (`validateRule`/`validateCondition` in `RuleForm.tsx`)
 mirrors `message-processor/rules_engine.py`'s per-type checks as a fast-fail
@@ -179,17 +199,17 @@ overridden with the `SETTINGS_PATH` environment variable.
 Athena/Glue query layer over the archive's Parquet index (see
 [Archive Processor](../archive-processor/README.md)'s Parquet Index
 section and `specs/data-dictionary.yaml`'s `archive_parquet_index`
-record for the 9 underlying columns). This is a backend-only feature —
-there's no frontend for it yet.
+record for the 9 underlying columns), with a History page
+(`views/HistoryView.tsx`) in the frontend below.
 
 ![Archive search: create, background poll, fetch results, fetch a flight, delete](./archive-search-sequence.svg)
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/archive/search` | Start a search: `{name, where_clause}` body. `HTTP 202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below). `HTTP 502` if Athena rejects the query outright (e.g. a permissions mismatch) |
-| `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at}` each |
+| `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at, error}` each (`error` is only ever set for `FAILED`/`ABORTED`) |
 | `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause`. `HTTP 404` if not found |
-| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 502` if Athena/S3 fails to locate or return the result file (e.g. a permissions mismatch, or the file is already gone) |
+| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results: `{rows: [...], total_rows}` — `total_rows` is the full match count, not just this page's length, for the frontend's Prev/Next/"Page X of Y" pagination. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 502` if Athena/S3 fails to locate or return the result file (e.g. a permissions mismatch, or the file is already gone) |
 | `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `HTTP 204`, or `HTTP 404` if not found |
 | `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `HTTP 400` on an invalid/expired token, `HTTP 502` if S3 fails to return the object (e.g. it's already gone, or a permissions mismatch) |
 

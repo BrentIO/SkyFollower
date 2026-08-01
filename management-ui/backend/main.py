@@ -1445,10 +1445,21 @@ class ArchiveSearchSummary(BaseModel):
     status: Literal["RUNNING", "COMPLETE", "FAILED", "ABORTED"]
     submitted_at: str
     expires_at: str
+    # Only ever set for FAILED (Athena's own StateChangeReason) or ABORTED
+    # (this backend's own deadline/restart message) -- absent otherwise.
+    error: Optional[str] = None
 
 
 class ArchiveSearchDetail(ArchiveSearchSummary):
     where_clause: str
+
+
+class ArchiveSearchResultsPage(BaseModel):
+    rows: list[ArchiveSearchResultRow]
+    # The full match count, not just len(rows) -- rows is only this page's
+    # slice. The backend already has this for free: _fetch_and_cache_results
+    # downloads and fully parses the CSV before any pagination slicing.
+    total_rows: int
 
 
 class ArchiveSearchResultRow(BaseModel):
@@ -1502,6 +1513,7 @@ def _search_summary(uuid: str, record: dict) -> dict:
         "status": record["status"],
         "submitted_at": record["submitted_at"],
         "expires_at": _expires_at(record["submitted_at"]),
+        "error": record.get("error"),
     }
 
 
@@ -1780,7 +1792,7 @@ def get_archive_search(uuid: str):
 @app.get(
     "/api/archive/search/{uuid}/results",
     tags=["archive"],
-    response_model=list[ArchiveSearchResultRow],
+    response_model=ArchiveSearchResultsPage,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
 )
 def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge=1)):
@@ -1792,7 +1804,7 @@ def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge
         )
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
     start = (page - 1) * _PAGE_SIZE
-    return JSONResponse(content=rows[start:start + _PAGE_SIZE])
+    return JSONResponse(content={"rows": rows[start:start + _PAGE_SIZE], "total_rows": len(rows)})
 
 
 @app.delete(

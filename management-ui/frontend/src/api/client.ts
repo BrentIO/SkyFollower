@@ -46,6 +46,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function filenameFromContentDisposition(header: string | null): string | undefined {
+  return header?.match(/filename="?([^";]+)"?/)?.[1];
+}
+
+// For a binary response (e.g. the archive flight-download endpoint) that a
+// plain request<T>() can't handle -- there's no JSON body to parse, and
+// the caller needs the actual bytes plus a filename to trigger a browser
+// download, not a parsed object.
+async function download(path: string): Promise<{ blob: Blob; filename?: string }> {
+  const response = await fetch(path);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorDetail(response));
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get("Content-Disposition")),
+  };
+}
+
 export const apiClient = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
@@ -53,4 +72,5 @@ export const apiClient = {
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   delete: (path: string) => request<void>(path, { method: "DELETE" }),
+  download,
 };

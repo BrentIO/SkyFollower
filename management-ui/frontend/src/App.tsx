@@ -2,6 +2,7 @@ import { Navigate, Route, BrowserRouter, Routes } from "react-router-dom";
 import { Layout } from "./Layout";
 import { ToastProvider } from "./components/ToastContainer";
 import { AreasView } from "./views/AreasView";
+import { HistoryView } from "./views/HistoryView";
 import { LookupView } from "./views/LookupView";
 import { RulesView } from "./views/RulesView";
 
@@ -17,6 +18,7 @@ export default function App() {
             <Route path="rules" element={<RulesView />} />
             <Route path="areas" element={<AreasView />} />
             <Route path="lookup" element={<LookupView />} />
+            <Route path="history" element={<HistoryView />} />
           </Route>
         </Routes>
       </BrowserRouter>

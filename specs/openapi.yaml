@@ -974,11 +974,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ArchiveSearchResultRow'
-                title: Response Get Archive Search Results Api Archive Search  Uuid  Results
-                  Get
+                $ref: '#/components/schemas/ArchiveSearchResultsPage'
         '404':
           description: Not found
           content:
@@ -1356,6 +1352,11 @@ components:
         expires_at:
           type: string
           title: Expires At
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
         where_clause:
           type: string
           title: Where Clause
@@ -1420,6 +1421,21 @@ components:
         server-side from s3_key, not a column in the index itself) and an
 
         encrypted, opaque token in s3_key''s place.'
+    ArchiveSearchResultsPage:
+      properties:
+        rows:
+          items:
+            $ref: '#/components/schemas/ArchiveSearchResultRow'
+          type: array
+          title: Rows
+        total_rows:
+          type: integer
+          title: Total Rows
+      type: object
+      required:
+      - rows
+      - total_rows
+      title: ArchiveSearchResultsPage
     ArchiveSearchSummary:
       properties:
         uuid:
@@ -1442,6 +1458,11 @@ components:
         expires_at:
           type: string
           title: Expires At
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
       type: object
       required:
       - uuid
