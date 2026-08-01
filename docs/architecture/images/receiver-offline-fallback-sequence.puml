@@ -61,15 +61,34 @@ Receiver -> Receiver : **Attempt to claim the drain guard**\n""_drain_lock.acqui
 alt guard acquired
     Receiver -\ Receiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
     loop For each row in database
-        Receiver -> ReceiverDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        Receiver -> ReceiverDB++ : **Get next row**\n""SELECT id, payload, retry_count FROM queue ORDER BY id ASC LIMIT 1""
         ReceiverDB --> Receiver-- : Record
         Receiver -\ AdsbQ : **Publish**
-        break basic_publish raises error
+        alt basic_publish succeeds
+            Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+            ReceiverDB --> Receiver-- : OK
+        else basic_publish raises error
             Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-            Receiver -> Receiver : **Stop draining**
+            Receiver -> Receiver : **Count this failure**\n""new_count = retry_count + 1""
+            alt new_count reaches the retry threshold (5)
+                Receiver -> ReceiverDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
+                ReceiverDB --> Receiver-- : OK
+                Receiver -> Receiver : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
+                note right of Receiver
+                    Judged permanently unrecoverable, not just a
+                    transient outage — draining continues to the next
+                    row instead of stopping, which is what keeps one
+                    poison message from blocking everything queued
+                    behind it forever.
+                end note
+            else new_count still below the retry threshold
+                Receiver -> ReceiverDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count} WHERE id = {id}""
+                ReceiverDB --> Receiver-- : OK
+                break
+                    Receiver -> Receiver : **Stop draining**\n""could still just be RabbitMQ down again""
+                end
+            end
         end
-        Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
-        ReceiverDB --> Receiver-- : OK
     end
     Receiver -> Receiver : **Release the drain guard**\n""_drain_lock.release()""
 else guard already held

@@ -61,15 +61,34 @@ Processor -> Processor : **Attempt to claim the drain guard**\n""_drain_lock.acq
 alt guard acquired
     Processor -\ Processor : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
     loop For each row in database
-        Processor -> ProcessorDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        Processor -> ProcessorDB++ : **Get next row**\n""SELECT id, payload, retry_count FROM queue ORDER BY id ASC LIMIT 1""
         ProcessorDB --> Processor-- : Record
         Processor -\ ArchiveQ : **Publish**
-        break basic_publish raises error
+        alt basic_publish succeeds
+            Processor -> ProcessorDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+            ProcessorDB --> Processor-- : OK
+        else basic_publish raises error
             Processor -> Processor : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-            Processor -> Processor : **Stop draining**
+            Processor -> Processor : **Count this failure**\n""new_count = retry_count + 1""
+            alt new_count reaches the retry threshold (5)
+                Processor -> ProcessorDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
+                ProcessorDB --> Processor-- : OK
+                Processor -> Processor : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
+                note right of Processor
+                    Judged permanently unrecoverable, not just a
+                    transient outage — draining continues to the next
+                    row instead of stopping, which is what keeps one
+                    poison flight from blocking everything queued
+                    behind it forever.
+                end note
+            else new_count still below the retry threshold
+                Processor -> ProcessorDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count} WHERE id = {id}""
+                ProcessorDB --> Processor-- : OK
+                break
+                    Processor -> Processor : **Stop draining**\n""could still just be RabbitMQ down again""
+                end
+            end
         end
-        Processor -> ProcessorDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
-        ProcessorDB --> Processor-- : OK
     end
     Processor -> Processor : **Release the drain guard**\n""_drain_lock.release()""
 else guard already held
