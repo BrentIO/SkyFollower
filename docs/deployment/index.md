@@ -18,7 +18,7 @@ host up once you know which compose file(s) it runs.
 | Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
 | Host B — Central server | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
 | Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
-| Host D — Archive host | Long-term storage | `archive-processor` |
+| Host D — Archive host | Long-term storage | `archive-processor`, `archive-compaction` (optional, `--profile compaction`), its own `ofelia` instance |
 
 ## Compose Files
 
@@ -36,7 +36,7 @@ appropriate file(s):
 | `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Host B — Central server | `management-ui` |
 | `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
-| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor` |
+| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`; `archive-compaction` + its own `ofelia` instance (behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
 
 ## Components
 
@@ -46,6 +46,7 @@ appropriate file(s):
 | `receiver` (MLAT instance, optional) | Same image, second `RECEIVER_ID`, dedicated to MLAT-only `sources[]` on its own host | — |
 | `message-processor-0` | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
+| `archive-compaction` | Daily job (its own `ofelia` instance, Host D) consolidating each day's per-flight Parquet index files into one file per partition | — |
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
@@ -73,14 +74,16 @@ on the host. Example files for every component are in `config/`:
 | `config/receiver/settings.json.example` | `docker-compose.receiver.yaml` |
 | `config/receiver/mlat-settings.json.example` | `docker-compose.receiver-mlat.yaml` |
 | `config/message-processor/settings.json.example` | `docker-compose.message-processor.yaml` |
-| `config/archive/settings.json.example` | `docker-compose.archive.yaml` |
+| `config/archive/settings.json.example` | `docker-compose.archive.yaml` (`archive-processor`) |
+| `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
 | `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
 | `config/runners/settings.json.example` | All runners in `docker-compose.server.yaml` |
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
 
 See the component pages for the full list of settings fields:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
-[Archive Processor](/components/archive-processor), and
+[Archive Processor](/components/archive-processor),
+[Archive Compaction](/components/archive-compaction), and
 [Data Runners](/runners/) (logging convention, plus one page per
 runner).
 
@@ -131,6 +134,13 @@ flights to the durable `archive` RabbitMQ queue (or their own local
 fallback if RabbitMQ is also unavailable at the time), which simply grows
 while the archive processor is down. Restart it and it drains normally —
 already fault-tolerant by design, no special handling needed.
+
+**Archive compaction** — no live process to stop; it's a one-shot job its
+own `ofelia` instance launches on a daily schedule, not a long-running
+container. Taking the host down between scheduled runs just means the next
+run picks up wherever the watermark was left — see [Archive
+Compaction](/components/archive-compaction)'s own Fault Tolerance
+characteristics (parity checks, watermark catch-up).
 
 **Management UI** — stop it. It's a stateless REST API with no queue and no
 background work; nothing writes to `config:rules`/`config:areas` while it's
