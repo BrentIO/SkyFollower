@@ -4,7 +4,8 @@ SkyFollower Management UI Backend
 
 FastAPI service that is the sole write path for the rules and areas
 configuration read by every message processor (config:rules / config:areas
-in Redis, polled every 30 seconds). No authentication — home lab deployment.
+in Redis, polled every 30 seconds). No authentication — single-instance,
+trusted-network deployment.
 
 Named "management" to leave room for a future, separate UI for viewing live
 aircraft movement, distinct from this configuration-focused one.
