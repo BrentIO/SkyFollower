@@ -5,7 +5,7 @@ import tempfile
 import time
 from unittest.mock import patch
 
-from shared.fallback_queue import FallbackQueue
+from shared.fallback_queue import DEFAULT_MIN_RETRY_INTERVAL_SECONDS, FallbackQueue
 
 
 def _make_queue(tmp_dir: str, **kwargs) -> FallbackQueue:
@@ -47,7 +47,7 @@ class TestPutAndDepth:
             info = conn.execute("PRAGMA table_info(queue)").fetchall()
             conn.close()
             col_names = {row[1] for row in info}
-            assert {"id", "payload", "queued_at", "retry_count"}.issubset(col_names)
+            assert {"id", "payload", "queued_at", "retry_count", "last_attempted_at"}.issubset(col_names)
 
     def test_custom_table_name(self):
         with tempfile.TemporaryDirectory() as td:
@@ -84,6 +84,34 @@ class TestPutAndDepth:
             row = conn.execute("SELECT retry_count FROM queue").fetchone()
             conn.close()
             assert row[0] == 0
+
+    def test_migrates_pre_existing_table_missing_last_attempted_at(self):
+        """A queue.db created with retry_count but before last_attempted_at
+        existed (e.g. an earlier build of this same PR) needs the same
+        ALTER TABLE treatment, independently of the retry_count migration."""
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "queue.db")
+            conn = sqlite3.connect(path)
+            conn.execute(
+                "CREATE TABLE queue (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "payload TEXT, queued_at REAL, retry_count INTEGER DEFAULT 0)"
+            )
+            conn.execute(
+                "INSERT INTO queue (payload, queued_at, retry_count) VALUES ('old', 1.0, 2)"
+            )
+            conn.commit()
+            conn.close()
+
+            q = FallbackQueue(path, retry_threshold=5)
+            assert q.depth() == 1
+            # NULL last_attempted_at (never attempted since migrating) means
+            # the row is immediately eligible -- not permanently cooled down.
+            result = q.drain(lambda p: (_ for _ in ()).throw(RuntimeError("still broken")))
+            assert result is False
+            conn = sqlite3.connect(path)
+            row = conn.execute("SELECT retry_count FROM queue").fetchone()
+            conn.close()
+            assert row[0] == 3  # pre-existing retry_count (2) preserved and incremented
 
 
 class TestDrainOrderingAndBackoff:
@@ -131,7 +159,7 @@ class TestDrainOrderingAndBackoff:
 
     def test_repeated_failures_of_same_row_accumulate_retry_count(self):
         with tempfile.TemporaryDirectory() as td:
-            q = _make_queue(td, retry_threshold=5)
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=0)
             q.put("poison")
 
             for expected in (1, 2, 3, 4):
@@ -143,10 +171,124 @@ class TestDrainOrderingAndBackoff:
                 assert row[0] == expected
 
 
+class TestMinRetryInterval:
+    """Covers the false-positive risk found reviewing #652: a caller whose
+    own retry trigger fires in rapid bursts (e.g. a flapping RabbitMQ
+    connection reconnecting every few seconds, each reconnect immediately
+    re-draining) could otherwise burn through retry_threshold in well
+    under a real recovery window, dead-lettering a row that was never
+    actually poison -- just unlucky timing during a brief instability."""
+
+    def test_default_min_retry_interval_is_thirty_seconds(self):
+        assert DEFAULT_MIN_RETRY_INTERVAL_SECONDS == 30
+
+    def test_first_attempt_is_never_blocked_by_cooldown(self):
+        """A freshly queued row has no last_attempted_at yet, so it's
+        eligible immediately regardless of min_retry_interval_seconds."""
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, min_retry_interval_seconds=9999)
+            q.put("payload")
+            attempted = []
+            q.drain(attempted.append)
+            assert attempted == ["payload"]
+
+    def test_immediate_retry_after_a_failure_is_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=9999)
+            q.put("poison")
+
+            attempts = []
+
+            def fail(payload):
+                attempts.append(payload)
+                raise RuntimeError("still broken")
+
+            first = q.drain(fail)
+            second = q.drain(fail)  # immediately after -- should be skipped
+
+            assert first is False
+            assert second is False
+            assert len(attempts) == 1  # the second drain() never actually called fail again
+
+            conn = sqlite3.connect(os.path.join(td, "queue.db"))
+            row = conn.execute("SELECT retry_count FROM queue").fetchone()
+            conn.close()
+            assert row[0] == 1  # not incremented by the blocked second call
+
+    def test_retry_allowed_again_once_the_interval_elapses(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=0.05)
+            q.put("poison")
+
+            attempts = []
+
+            def fail(payload):
+                attempts.append(payload)
+                raise RuntimeError("still broken")
+
+            q.drain(fail)
+            time.sleep(0.1)
+            q.drain(fail)
+
+            assert len(attempts) == 2
+            conn = sqlite3.connect(os.path.join(td, "queue.db"))
+            row = conn.execute("SELECT retry_count FROM queue").fetchone()
+            conn.close()
+            assert row[0] == 2
+
+    def test_flapping_bursts_cannot_reach_threshold_faster_than_the_interval_allows(self):
+        """Simulates a flapping connection retrying every 10ms (far faster
+        than min_retry_interval_seconds) -- the row should still only
+        accumulate roughly one retry per interval, not one per call."""
+        with tempfile.TemporaryDirectory() as td:
+            # retry_threshold set high enough that reaching it would require
+            # ~1s of real elapsed time at one attempt per 0.1s interval --
+            # the 20-call burst below spans well under that (~0.2s wall
+            # time), so if the cooldown weren't working it would dead-letter
+            # almost immediately (call 1 already reaches a low threshold).
+            q = _make_queue(td, retry_threshold=10, min_retry_interval_seconds=0.1)
+            q.put("poison")
+
+            def fail(_payload):
+                raise RuntimeError("still broken")
+
+            for _ in range(20):  # far more calls than retry_threshold
+                q.drain(fail)
+                time.sleep(0.01)  # much shorter than the 0.1s interval
+
+            # Real elapsed time (~0.2s) only allows a couple of real
+            # attempts through the cooldown gate -- nowhere near 20 calls'
+            # worth, and nowhere near retry_threshold.
+            assert q.dead_letter_depth() == 0
+            conn = sqlite3.connect(os.path.join(td, "queue.db"))
+            row = conn.execute("SELECT retry_count FROM queue").fetchone()
+            conn.close()
+            assert row[0] < 5
+
+    def test_cooldown_stops_the_whole_pass_preserving_order(self):
+        """A cooling-down oldest row must not be skipped in favor of a
+        newer row behind it -- strict oldest-first ordering matters (e.g.
+        archive-processor's split-flight stitching depends on it)."""
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=9999)
+            q.put("first")
+            q.put("second")
+
+            def fail(_payload):
+                raise RuntimeError("still broken")
+
+            q.drain(fail)  # "first" fails once, now cooling down
+            attempted = []
+            q.drain(attempted.append)  # should not reach "second"
+
+            assert attempted == []
+            assert q.depth() == 2
+
+
 class TestDeadLettering:
     def test_row_dead_lettered_at_threshold_and_removed_from_queue(self):
         with tempfile.TemporaryDirectory() as td:
-            q = _make_queue(td, retry_threshold=2)
+            q = _make_queue(td, retry_threshold=2, min_retry_interval_seconds=0)
             q.put('{"flight_id": "abc"}')
 
             q.drain(lambda _p: (_ for _ in ()).throw(RuntimeError("attempt 1")))  # retry_count -> 1
@@ -213,7 +355,7 @@ class TestDeadLettering:
 
     def test_default_retry_threshold_is_five(self):
         with tempfile.TemporaryDirectory() as td:
-            q = _make_queue(td)
+            q = _make_queue(td, min_retry_interval_seconds=0)
             q.put("poison")
 
             for _ in range(4):

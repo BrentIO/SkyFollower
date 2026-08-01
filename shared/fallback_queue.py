@@ -16,6 +16,18 @@ time). At the threshold, the row is dead-lettered -- written out as a
 standalone JSON file under `{dirname(db_path)}/dead_letters/{table_name}/`
 for an operator to inspect/discard out-of-band -- and the drain pass
 continues to whatever's queued behind it, instead of stopping.
+
+A raw attempt count alone isn't enough: a caller can retry a row far more
+often than once per `retry_threshold`-worth-of-outage-time if its own
+retry trigger fires in rapid bursts (e.g. a flapping connection
+reconnecting every few seconds, each reconnect immediately re-attempting
+the head-of-queue row) -- which would dead-letter a perfectly recoverable
+row within seconds of real instability, not genuine unrecoverability.
+`min_retry_interval_seconds` bounds the *rate* of attempts against a
+single row, independent of how often the caller invokes drain(): the
+oldest row is skipped (the whole pass stops, to preserve strict
+oldest-first ordering) until at least that long has passed since its own
+last attempt.
 """
 
 from __future__ import annotations
@@ -33,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_THRESHOLD = 5
 DEFAULT_DEAD_LETTER_MAX_BYTES = 100 * 1024 * 1024
+DEFAULT_MIN_RETRY_INTERVAL_SECONDS = 30
 
 
 class FallbackQueue:
@@ -42,10 +55,12 @@ class FallbackQueue:
         table_name: str = "queue",
         retry_threshold: int = DEFAULT_RETRY_THRESHOLD,
         dead_letter_max_bytes: int = DEFAULT_DEAD_LETTER_MAX_BYTES,
+        min_retry_interval_seconds: float = DEFAULT_MIN_RETRY_INTERVAL_SECONDS,
     ) -> None:
         self._table = table_name
         self._retry_threshold = retry_threshold
         self._dead_letter_max_bytes = dead_letter_max_bytes
+        self._min_retry_interval_seconds = min_retry_interval_seconds
         self._dead_letter_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "dead_letters", table_name
         )
@@ -55,11 +70,14 @@ class FallbackQueue:
         self._conn.execute(
             f"CREATE TABLE IF NOT EXISTS {self._table} "
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, "
-            " queued_at REAL, retry_count INTEGER DEFAULT 0)"
+            " queued_at REAL, retry_count INTEGER DEFAULT 0, "
+            " last_attempted_at REAL)"
         )
         existing = {row[1] for row in self._conn.execute(f"PRAGMA table_info({self._table})")}
         if "retry_count" not in existing:
             self._conn.execute(f"ALTER TABLE {self._table} ADD COLUMN retry_count INTEGER DEFAULT 0")
+        if "last_attempted_at" not in existing:
+            self._conn.execute(f"ALTER TABLE {self._table} ADD COLUMN last_attempted_at REAL")
         self._conn.commit()
 
         self._lock = threading.Lock()
@@ -83,27 +101,43 @@ class FallbackQueue:
     def drain(self, process_fn: Callable[[str], None]) -> bool:
         """Drain queued items oldest-first via process_fn(payload).
 
-        Returns True if the queue was fully drained (empty when this
-        returned). Returns False if it stopped early because process_fn
-        raised and the failing row's retry count is still below
-        `retry_threshold` -- callers that gate other state on "the backlog
-        is fully clear" need to tell these two outcomes apart, not just
-        call this and move on.
+        Returns True if the queue was empty when this returned -- False in
+        every other case, including a row still sitting in its retry
+        cooldown, since the queue isn't actually empty either way. Callers
+        that gate other state on "the backlog is fully clear" need this
+        distinction, not just to call this and move on.
 
         A row that reaches `retry_threshold` is dead-lettered and skipped;
         the pass continues to whatever's queued behind it rather than
         stopping, since that failure has already been judged permanent
         rather than a dependency that might still recover.
+
+        A row attempted less than `min_retry_interval_seconds` ago is left
+        alone this pass -- this caps how fast a row can accumulate retries
+        regardless of how often the caller invokes drain(), so a caller
+        whose own retry trigger fires in rapid bursts (e.g. a flapping
+        connection reconnecting every few seconds, each reconnect
+        immediately re-draining) can't burn through retry_threshold in
+        well under a real recovery window and dead-letter a row that was
+        never actually poison. The whole pass stops rather than skipping
+        ahead to a newer row, to preserve strict oldest-first ordering.
         """
         while True:
             with self._lock:
                 cur = self._conn.execute(
-                    f"SELECT id, payload, retry_count FROM {self._table} ORDER BY id ASC LIMIT 1"
+                    f"SELECT id, payload, retry_count, last_attempted_at "
+                    f"FROM {self._table} ORDER BY id ASC LIMIT 1"
                 )
                 row = cur.fetchone()
                 if row is None:
                     return True
-                row_id, payload, retry_count = row
+                row_id, payload, retry_count, last_attempted_at = row
+
+            if (
+                last_attempted_at is not None
+                and (time.time() - last_attempted_at) < self._min_retry_interval_seconds
+            ):
+                return False
 
             try:
                 process_fn(payload)
@@ -117,7 +151,8 @@ class FallbackQueue:
                     continue
                 with self._lock:
                     self._conn.execute(
-                        f"UPDATE {self._table} SET retry_count=? WHERE id=?", (new_count, row_id)
+                        f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
+                        (new_count, time.time(), row_id),
                     )
                     self._conn.commit()
                 return False

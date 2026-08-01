@@ -31,8 +31,13 @@ time via a relative path reference in their `requirements.txt`.
   (size-capped at 100MB, oldest-evicted-first) for an operator to inspect
   or discard out-of-band, and the drain pass continues past it instead of
   stopping — so one permanently-failing item can no longer silently block
-  everything queued behind it forever. See each component's own README
-  (Fault Tolerance section) for how it's wired in.
+  everything queued behind it forever. A row also can't accumulate retries
+  faster than once per `min_retry_interval_seconds` (default 30), no
+  matter how often a caller invokes `drain()` — otherwise a caller whose
+  own retry trigger fires in rapid bursts (e.g. a flapping connection
+  reconnecting every few seconds) could dead-letter a row within seconds,
+  even though it was never actually poison. See each component's own
+  README (Fault Tolerance section) for how it's wired in.
 
 ## Usage
 

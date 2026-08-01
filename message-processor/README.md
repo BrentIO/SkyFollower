@@ -344,6 +344,17 @@ There's no automated replay path — a dead-lettered file is purely something
 an operator inspects or discards out-of-band (`data_dir` is already a
 host-mounted volume, same as `completed_flights.db` itself).
 
+A raw attempt count alone isn't safe: `_drain_fallback()` is called on
+every successful RabbitMQ reconnect (not just on the `telemetry_interval_seconds`
+tick), so a flapping connection reconnecting every few seconds could
+otherwise burn through the retry threshold within seconds — dead-lettering
+a flight that was never actually poison, just unlucky enough to be at the
+head of the queue during a brief instability. `FallbackQueue` also enforces
+a minimum time between attempts on the same row (30 seconds, hardcoded,
+independent of how often `_drain_fallback()` itself gets called), so
+reaching the threshold always takes a real, bounded amount of elapsed
+time — not just a burst of rapid reconnect attempts.
+
 ### Active flight store durability & crash recovery
 
 `active_flights.db` (SQLite, WAL mode, `data_dir`) holds every currently
