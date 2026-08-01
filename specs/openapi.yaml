@@ -655,8 +655,8 @@ paths:
           anyOf:
           - type: string
           - type: 'null'
+          title: ICAO Hex
           description: 6-character ICAO hex, e.g. A8AE7F
-          title: Icao Hex
         description: 6-character ICAO hex, e.g. A8AE7F
       - name: registration
         in: query
@@ -865,7 +865,7 @@ components:
       properties:
         icao_hex:
           type: string
-          title: Icao Hex
+          title: ICAO Hex
         registration:
           anyOf:
           - type: string
@@ -1021,7 +1021,7 @@ components:
       properties:
         icao_code:
           type: string
-          title: Icao Code
+          title: ICAO Code
         name:
           anyOf:
           - type: string
@@ -1439,7 +1439,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          title: Iata
+          title: IATA
         source:
           anyOf:
           - type: string
