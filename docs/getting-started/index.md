@@ -11,6 +11,28 @@ copy the example settings for whichever components run on that host (see
 [Deployment](/deployment/#configuration) for the full list) and fill in
 real values before starting containers.
 
+Cloning the whole monorepo is right for contributors, but every
+`docker-compose.*.yaml` file already references a pre-built
+`ghcr.io/brentio/skyfollower-*` image — none of them build from source. If
+you're deploying the finished product rather than developing it, a host
+only needs its own compose file(s) and matching `config/*/*.example`
+files, not the full source tree. `scripts/download-host-files.sh` fetches
+just those, without a `git clone`:
+
+```bash
+./scripts/download-host-files.sh <role> [dest-dir]
+
+# or, without cloning anything first:
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/download-host-files.sh \
+  | bash -s -- <role>
+```
+
+`<role>` is one of `receiver`, `receiver-mlat`, `server`, `management-ui`,
+`message-processor`, or `archive` — matching the Compose Files table in
+[Deployment](/deployment/#compose-files). Host B runs the script twice
+(`server` and `management-ui`), since it brings up both compose files.
+`[dest-dir]` defaults to the current directory.
+
 ## Quick Start
 
 ```bash

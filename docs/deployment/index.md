@@ -1,8 +1,10 @@
 # Deployment
 
 SkyFollower is a single monorepo, but it deploys as four independent
-hosts — each one clones the repo and brings up one or more Docker Compose
-files. Every host but Host B brings up exactly one; Host B brings up two
+hosts — each one brings up one or more Docker Compose files, either from a
+full repo clone or, for a pre-built-image deployment, just the file(s) it
+needs (see [Getting Started](/getting-started/) for both paths). Every
+host but Host B brings up exactly one; Host B brings up two
 (`docker-compose.server.yaml` and `docker-compose.management-ui.yaml`),
 since `management-ui`'s only dependency is Redis and there's no reason to
 entangle its lifecycle with the rabbitmq/redis/runner stack's compose
@@ -25,7 +27,9 @@ host up once you know which compose file(s) it runs.
 Every host but Host B runs exactly one compose file; Host B runs two
 (`management-ui` is kept separate from the rest of Host B's stack so it can
 move to a different host later without disturbing rabbitmq/redis/runners
-— its only dependency is Redis). Clone the repo on each host,
+— its only dependency is Redis). Get the relevant file(s) onto each host —
+clone the repo, or use `scripts/download-host-files.sh` to fetch just
+what a given role needs (see [Getting Started](/getting-started/)) —
 populate the relevant `config/` settings files, then bring up the
 appropriate file(s):
 
