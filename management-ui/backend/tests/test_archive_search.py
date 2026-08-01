@@ -20,6 +20,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -91,8 +92,15 @@ class FakeAthenaClient:
         self.started_queries: list[dict] = []
         self.stopped: list[str] = []
         self._next_id = 1
+        # Set by a test to simulate an AWS-side failure (e.g. a permissions
+        # mismatch) on the next call -- covers the 502 paths in main.py that
+        # a plain state-transition can't exercise.
+        self.raise_on_start: Optional[Exception] = None
+        self.raise_on_get_query_execution: Optional[Exception] = None
 
     def start_query_execution(self, QueryString, QueryExecutionContext=None, WorkGroup=None):
+        if self.raise_on_start is not None:
+            raise self.raise_on_start
         qid = f"exec-{self._next_id}"
         self._next_id += 1
         self.started_queries.append({
@@ -108,6 +116,8 @@ class FakeAthenaClient:
         return {"QueryExecutionId": qid}
 
     def get_query_execution(self, QueryExecutionId):
+        if self.raise_on_get_query_execution is not None:
+            raise self.raise_on_get_query_execution
         info = self.executions[QueryExecutionId]
         status = {"State": info["State"]}
         if info["State"] in ("FAILED", "CANCELLED"):
@@ -318,6 +328,11 @@ class TestCreateAndListSearches:
         uuid = resp.json()["uuid"]
         assert client.get(f"/api/archive/search/{uuid}").json()["status"] == "RUNNING"
 
+    def test_athena_start_failure_returns_502_not_500(self, client, fake_athena):
+        fake_athena.raise_on_start = Exception("AccessDeniedException: not authorized")
+        resp = client.post("/api/archive/search", json={"name": "x", "where_clause": "1=1"})
+        assert resp.status_code == 502
+
 
 # ---------------------------------------------------------------------------
 # Background polling
@@ -404,6 +419,24 @@ class TestResultsRetrieval:
         uuid = resp.json()["uuid"]
         results_resp = client.get(f"/api/archive/search/{uuid}/results")
         assert results_resp.status_code == 400
+
+    def test_athena_failure_locating_results_returns_502_not_500(self, client, fake_athena, fake_s3):
+        """_result_output_location's get_query_execution call must be
+        covered by the same try/except as the S3 download -- a permissions
+        mismatch or other AWS-side failure there must not surface as an
+        unhandled 500."""
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        fake_athena.raise_on_get_query_execution = Exception("AccessDeniedException: not authorized")
+        resp = client.get(f"/api/archive/search/{uuid}/results")
+        assert resp.status_code == 502
+
+    def test_missing_result_file_returns_502_not_500(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        # Simulate the CSV having been deleted/never written -- fake_s3
+        # raises KeyError for a missing key, same as a real 404/NoSuchKey.
+        fake_s3.objects.clear()
+        resp = client.get(f"/api/archive/search/{uuid}/results")
+        assert resp.status_code == 502
 
     def test_results_omit_s3_key_and_include_uuid_and_token(self, client, fake_athena, fake_s3):
         row = ("A8AE7F", "N659DL", "B738", "false", "DAL", "DAL123",
@@ -520,6 +553,17 @@ class TestFlightFetch:
     def test_invalid_token_returns_400(self, client):
         resp = client.get("/api/archive/flights/not-a-real-token")
         assert resp.status_code == 400
+
+    def test_missing_flight_object_returns_502_not_500(self, client, fake_s3):
+        """A valid token whose flight object is gone (404/NoSuchKey) or
+        unreachable (e.g. a permissions mismatch, 403) must surface as a
+        clean 502 -- the same AWS-error contract as every other archive
+        endpoint -- not an unhandled 500."""
+        s3_key = "flights/2026/07/31/A8AE7F_DAL123_uuid.json.gz"
+        token = ui_main._encrypt_s3_key(s3_key)  # never written to fake_s3.objects
+
+        resp = client.get(f"/api/archive/flights/{token}")
+        assert resp.status_code == 502
 
     def test_valid_token_downloads_the_flight_object(self, client, fake_s3):
         s3_key = "flights/2026/07/31/A8AE7F_DAL123_uuid.json.gz"

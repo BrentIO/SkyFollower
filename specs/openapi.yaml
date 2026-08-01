@@ -1375,7 +1375,7 @@ components:
           title: Uuid
         icao_hex:
           type: string
-          title: Icao Hex
+          title: ICAO Hex
         registration:
           type: string
           title: Registration

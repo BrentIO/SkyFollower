@@ -186,12 +186,14 @@ there's no frontend for it yet.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/archive/search` | Start a search: `{name, where_clause}` body. `202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below) |
+| `POST` | `/api/archive/search` | Start a search: `{name, where_clause}` body. `HTTP 202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below). `HTTP 502` if Athena rejects the query outright (e.g. a permissions mismatch) |
 | `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at}` each |
-| `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause`. `404` if not found |
-| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results. `400` if the search isn't `COMPLETE` yet |
-| `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `204`, or `404` if not found |
-| `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `400` on an invalid/expired token |
+| `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause`. `HTTP 404` if not found |
+| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 502` if Athena/S3 fails to locate or return the result file (e.g. a permissions mismatch, or the file is already gone) |
+| `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `HTTP 204`, or `HTTP 404` if not found |
+| `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `HTTP 400` on an invalid/expired token, `HTTP 502` if S3 fails to return the object (e.g. it's already gone, or a permissions mismatch) |
+
+Every `HTTP 502` above shares the same `_AWS_ERROR` response contract: any AWS-side failure (Athena or S3) is caught and surfaced as a single opaque `HTTP 502`, never the raw upstream AWS status code — so a `404`/`NoSuchKey` and a `403`/`AccessDenied` from S3 are indistinguishable to the caller, both just `HTTP 502`.
 
 ### Query construction: a raw, user-supplied `WHERE` clause
 

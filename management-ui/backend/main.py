@@ -1456,7 +1456,7 @@ class ArchiveSearchResultRow(BaseModel):
     encrypted, opaque token in s3_key's place."""
 
     uuid: str
-    icao_hex: str
+    icao_hex: str = Field(title="ICAO Hex")
     registration: str
     type_designator: str
     military: bool
@@ -1668,9 +1668,9 @@ def _fetch_and_cache_results(uuid: str, query_execution_id: str) -> list[dict]:
     if cached is not None:
         return cached
 
-    output_location = _result_output_location(query_execution_id)
-    bucket, key = _parse_s3_uri(output_location)
     try:
+        output_location = _result_output_location(query_execution_id)
+        bucket, key = _parse_s3_uri(output_location)
         obj = _s3_client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read().decode("utf-8")
     except Exception as exc:
