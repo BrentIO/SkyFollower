@@ -1,8 +1,8 @@
 """
-Regression test for issue #312: SourceCapture used to assign its stop
-Event to `self._stop`, which shadows threading.Thread's own private
-`_stop()` method. Thread.join() calls that method internally once the
-thread has finished, so joining a completed SourceCapture always raised
+Regression test: SourceCapture used to assign its stop Event to
+`self._stop`, which shadows threading.Thread's own private `_stop()`
+method. Thread.join() calls that method internally once the thread has
+finished, so joining a completed SourceCapture always raised
 `TypeError: 'Event' object is not callable`.
 """
 

@@ -82,8 +82,8 @@ jobs:
 
       # No image currently bundles specs/*.yaml, so there's nothing to stamp
       # here. release.yaml stamps version-substituted copies once and
-      # attaches them to the GitHub Release directly (see #306) instead of
-      # repeating that work in every one of this job's matrix entries.
+      # attaches them to the GitHub Release directly instead of repeating
+      # that work in every one of this job's matrix entries.
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4

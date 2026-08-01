@@ -161,10 +161,10 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
     if "force_archive" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN force_archive INTEGER")
     if "route_resolution_attempted" not in existing:
-        # A flight recovered from a pre-#498 store has never had route
-        # resolution attempted -- NULL/0 (falsy) is the correct starting
-        # value, same as a brand-new flight, so no backfill needed beyond
-        # adding the column.
+        # A flight recovered from a store predating this column has never
+        # had route resolution attempted -- NULL/0 (falsy) is the correct
+        # starting value, same as a brand-new flight, so no backfill needed
+        # beyond adding the column.
         db.execute("ALTER TABLE flights ADD COLUMN route_resolution_attempted INTEGER")
     if "route_candidate_airports" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN route_candidate_airports TEXT")

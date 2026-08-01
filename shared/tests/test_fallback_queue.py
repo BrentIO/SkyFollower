@@ -172,7 +172,7 @@ class TestDrainOrderingAndBackoff:
 
 
 class TestMinRetryInterval:
-    """Covers the false-positive risk found reviewing #652: a caller whose
+    """Covers a false-positive dead-lettering risk: a caller whose
     own retry trigger fires in rapid bursts (e.g. a flapping RabbitMQ
     connection reconnecting every few seconds, each reconnect immediately
     re-draining) could otherwise burn through retry_threshold in well

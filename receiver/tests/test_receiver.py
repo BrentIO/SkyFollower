@@ -368,7 +368,7 @@ class TestDrainFallback:
     def test_telemetry_loop_drains_when_connected(self):
         """The periodic tick must attempt a drain when RabbitMQ is
         connected — this is what lets a stuck/missed reconnect-triggered
-        drain (see #525) still recover on the next tick."""
+        drain still recover on the next tick."""
         r = self._make_receiver()
         r._fallback_put("adsb-0", '{"raw": "AA"}')
         r._rmq_channel = MagicMock()

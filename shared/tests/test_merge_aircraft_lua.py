@@ -141,7 +141,7 @@ class TestManufacturerModelFallback:
 class TestLiveryLayer:
     """Covers the third merge tier — aircraft:livery:{icao_hex}, written by
     the airportwebcams-special-liveries runner — added on top of the existing
-    mictronics/registry two-key merge (see #490)."""
+    mictronics/registry two-key merge."""
 
     def test_livery_absent_merge_unaffected(self, redis_client, merge_sha, icao_hex):
         """An aircraft with no special livery (the common case) must merge
@@ -201,9 +201,9 @@ class TestLiveryLayer:
 
 
 class TestDataSources:
-    """Covers merge_aircraft.lua's data_sources aggregation (#494) — every
-    present key's own scalar `source` collected into an array, instead of
-    the old deep_merge behaviour where only the last-written key's `source`
+    """Covers merge_aircraft.lua's data_sources aggregation — every present
+    key's own scalar `source` collected into an array, instead of the old
+    deep_merge behaviour where only the last-written key's `source`
     survived."""
 
     def test_no_source_fields_present_no_data_sources_key(self, redis_client, merge_sha, icao_hex):

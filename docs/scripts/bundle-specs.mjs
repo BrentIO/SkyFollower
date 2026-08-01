@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copies the AsyncAPI web component bundle + the repo's specs/asyncapi.yaml
-// into docs/public/asyncapi/ so the interactive spec viewer (see #433) has
-// something to fetch at runtime. Regenerated on every docs:dev/docs:build —
+// into docs/public/asyncapi/ so the interactive spec viewer has something
+// to fetch at runtime. Regenerated on every docs:dev/docs:build —
 // output is gitignored, matching generate-pages.mjs's approach: nothing
 // binary or spec-derived is committed, it's all copied from node_modules /
 // specs/ at build time.

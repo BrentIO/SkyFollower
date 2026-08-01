@@ -43,8 +43,8 @@ channels:
 
   # Rather than a single combined-JSON statistics payload, the receiver
   # publishes one retained topic per stat, matching how archive-compaction
-  # and every data runner already publish (see #542) -- each stat gets its
-  # own channel/message/schema rather than being folded into one object.
+  # and every data runner already publish -- each stat gets its own
+  # channel/message/schema rather than being folded into one object.
 
   receiverMessages1090PerSecond:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_1090_per_second'
@@ -148,7 +148,7 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  # One retained topic per stat (see #542), matching the receiver above.
+  # One retained topic per stat, matching the receiver above.
 
   messageProcessorMessagesPerSecond:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/messages_per_second'
@@ -311,8 +311,8 @@ channels:
       StatusMessage:
         $ref: '#/components/messages/StatusMessage'
 
-  # One retained topic per stat (see #542), matching the receiver/message
-  # processor above.
+  # One retained topic per stat, matching the receiver/message processor
+  # above.
 
   archiveFlightsArchivedHour:
     address: SkyFollower/archive/statistic/flights_archived_hour

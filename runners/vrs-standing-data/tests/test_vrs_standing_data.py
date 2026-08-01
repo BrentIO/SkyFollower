@@ -156,8 +156,8 @@ class TestStageData:
             conn.close()
 
     def test_multi_leg_route_not_filtered_or_split(self):
-        """The out-and-back case (#8 discussion): a 3-airport route must be
-        stored whole, not skipped or truncated to 2 airports."""
+        """The out-and-back case: a 3-airport route must be stored whole,
+        not skipped or truncated to 2 airports."""
         with tempfile.TemporaryDirectory() as tmpdir:
             conn = stage_data(_make_files(), os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()

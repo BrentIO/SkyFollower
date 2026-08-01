@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Renders every PlantUML (.puml) diagram source in the repo to SVG (see
-// #435, #463), matching the FireFly-Docs precedent. Requires the `plantuml`
+// Renders every PlantUML (.puml) diagram source in the repo to SVG,
+// matching the FireFly-Docs precedent. Requires the `plantuml`
 // command on PATH — .github/workflows/deploy-docs.yaml installs it via a
 // JAR wrapper before running `npm run docs:build`. Locally, a contributor
 // without PlantUML installed just won't see rendered diagrams (a missing
@@ -8,7 +8,7 @@
 // build for the deployed site. Output SVGs are gitignored — regenerated
 // from the .puml source every build.
 //
-// Diagram sources aren't confined to docs/ (see #463): a component's own
+// Diagram sources aren't confined to docs/: a component's own
 // architecture diagram (e.g. receiver/receiver.puml) lives next to its
 // source and README, and gets `!include`d into docs/architecture/images/
 // pipeline.puml as a reusable fragment (via PlantUML's !startsub/!endsub +
@@ -38,7 +38,7 @@
 //    relative position next to the generated page, no link-rewriting is
 //    needed — the reference resolves unchanged. This intentionally does
 //    *not* render on GitHub (the source .svg is gitignored, never
-//    committed) — docs-site only, see #463.
+//    committed) — docs-site only.
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
@@ -90,7 +90,7 @@ for (const file of pumlFiles) {
 }
 
 // Step 1: mirror .puml files already under docs/ into public/ at their
-// literal relative path (unchanged from #435/#458).
+// literal relative path.
 for (const file of pumlFiles) {
   if (!file.startsWith(DOCS_ROOT)) continue;
   const svgPath = file.replace(/\.puml$/, ".svg");
@@ -100,8 +100,8 @@ for (const file of pumlFiles) {
 }
 
 // Step 2: copy each component's own diagram SVG(s) next to its generated
-// docs page (see #463) — every .puml directly in the component's
-// directory, not just one matching the component's own name.
+// docs page — every .puml directly in the component's directory, not
+// just one matching the component's own name.
 const componentsDir = join(DOCS_ROOT, "components");
 for (const component of discoverComponents()) {
   for (const entry of readdirSync(component.dir, { withFileTypes: true })) {

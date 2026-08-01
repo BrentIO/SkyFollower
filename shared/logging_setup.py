@@ -1,5 +1,5 @@
 """
-Shared logging configuration for data runners (issue #331).
+Shared logging configuration for data runners.
 
 Every runner's `main()` used to call `logging.basicConfig(level=logging.INFO,
 ...)` before loading settings.json, so the documented `log_level` config field

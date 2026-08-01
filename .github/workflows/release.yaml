@@ -34,8 +34,8 @@ jobs:
           git push origin ${{ inputs.version }}
 
       - name: Stamp spec versions
-        # specs/*.yaml carry a checked-in 9999.99.99 placeholder (see #305)
-        # so main never has a stale or manually-bumped version string. This
+        # specs/*.yaml carry a checked-in 9999.99.99 placeholder so main
+        # never has a stale or manually-bumped version string. This
         # never edits the checked-out files in place or commits anything —
         # it writes stamped copies to dist/specs/ that are only attached to
         # the GitHub Release below. Any spec file with the placeholder is

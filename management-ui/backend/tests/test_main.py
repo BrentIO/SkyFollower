@@ -392,7 +392,7 @@ class TestCreateArea:
         assert resp.status_code == 422
 
     def test_point_geometry_creates_201(self, client):
-        # Point/LineString areas are valid (#578) -- only usable as an
+        # Point/LineString areas are valid -- only usable as an
         # `area` rule condition's value is restricted to Polygon.
         resp = client.post("/api/areas", json=_area(
             "SHREK2", geometry={"type": "Point", "coordinates": [0, 0]},
@@ -415,7 +415,7 @@ class TestCreateArea:
         # A bowtie ring: valid per Pydantic (floats in the right shape) but
         # rejected by shapely's is_valid check in RulesEngine._load_areas --
         # exercises _save_areas_array's "did it actually survive" safety
-        # net, which (per #578) now only applies to Polygon areas.
+        # net, which only applies to Polygon areas.
         resp = client.post("/api/areas", json=_area("LI", geometry={
             "type": "Polygon",
             "coordinates": [[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]],
@@ -469,7 +469,7 @@ class TestAreaLocked:
 
 
 class TestAreaStyle:
-    """simplestyle-spec style properties (#579) -- persisted via config:areas'
+    """simplestyle-spec style properties -- persisted via config:areas'
     GeoJSON FeatureCollection (_area_to_feature/_feature_to_area), a
     separate boundary from Area's own alias-based (de)serialization that
     both need to agree on the same hyphenated key names."""
@@ -844,8 +844,9 @@ class TestConditionValueConstraints:
     """
     Numeric bounds and charset patterns on Condition.value, moved from
     UI-only client-side checks (RuleForm.tsx's validateCondition) into the
-    same per-type models #567 introduced, so the backend is the actual
-    source of truth per management-ui/README.md's own framing.
+    same per-type models that already discriminate each condition's
+    operator, so the backend is the actual source of truth per
+    management-ui/README.md's own framing.
     """
 
     _VALID = [

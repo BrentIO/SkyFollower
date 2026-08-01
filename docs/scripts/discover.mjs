@@ -1,4 +1,4 @@
-// Shared filesystem discovery for docs generation (see #434).
+// Shared filesystem discovery for docs generation.
 //
 // Components are a fixed, explicit set — mirroring the explicit
 // receiver/message-processor/archive-processor/ui cases in

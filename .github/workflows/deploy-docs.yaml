@@ -40,9 +40,8 @@ jobs:
         run: npm ci
 
       # docs:build's predocs:build hook renders every docs/**/*.puml
-      # diagram to SVG via generate-diagrams.mjs (see #435) — it needs the
-      # plantuml command on PATH, which ubuntu-latest doesn't have by
-      # default.
+      # diagram to SVG via generate-diagrams.mjs — it needs the plantuml
+      # command on PATH, which ubuntu-latest doesn't have by default.
       - name: Install PlantUML
         run: |
           sudo apt-get update

@@ -69,13 +69,13 @@ function parseAndValidate(text: string): ParseResult {
   };
 }
 
-// Counterpart to #593/#595's export -- imports a single area from a
-// GeoJSON FeatureCollection (drag-drop, click/tap-to-browse, or direct
-// paste into the textbox). Name/identifier/locked resolution from the
-// parsed feature's properties, and the missing/duplicate-identifier
-// fallback to AreaNameModal, both live in AreasView.tsx (the parent) --
-// this component's only job is getting a validated single Feature out to
-// its onImport callback.
+// Counterpart to AreasView.tsx's own Export/"Export all" actions -- imports
+// a single area from a GeoJSON FeatureCollection (drag-drop,
+// click/tap-to-browse, or direct paste into the textbox). Name/identifier/
+// locked resolution from the parsed feature's properties, and the
+// missing/duplicate-identifier fallback to AreaNameModal, both live in
+// AreasView.tsx (the parent) -- this component's only job is getting a
+// validated single Feature out to its onImport callback.
 export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalProps) {
   const [text, setText] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
