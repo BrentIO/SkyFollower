@@ -11,5 +11,6 @@
         "username": "change_me",
         "password": "change_me"
     },
+    "data_dir": "/app/data",
     "log_level": "info"
 }

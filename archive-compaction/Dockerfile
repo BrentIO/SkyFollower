@@ -6,6 +6,7 @@ COPY archive-compaction/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared/ ./shared/
+COPY specs/aws/ ./specs/aws/
 COPY archive-compaction/ ./archive-compaction/
 
 ENV PYTHONPATH=/app

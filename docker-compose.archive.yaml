@@ -22,6 +22,7 @@ services:
     profiles: ["compaction"]
     volumes:
       - ./config/archive/compaction-settings.json:/app/settings.json:ro
+      - archive-compaction-data:/app/data
 
   ofelia:
     image: mcuadros/ofelia:latest
@@ -35,3 +36,4 @@ services:
 
 volumes:
   archive-data:
+  archive-compaction-data:

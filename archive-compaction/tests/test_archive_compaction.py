@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import sys
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -65,6 +67,7 @@ read_watermark = _mod.read_watermark
 write_watermark = _mod.write_watermark
 run_compaction = _mod.run_compaction
 publish_completion_stats = _mod.publish_completion_stats
+main = _mod.main
 MQTT_ROOT = _mod.MQTT_ROOT
 _PARQUET_INDEX_SCHEMA = _mod._PARQUET_INDEX_SCHEMA
 _WATERMARK_KEY = _mod._WATERMARK_KEY
@@ -561,3 +564,37 @@ class TestPublishCompletionStats:
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
         assert calls[f"{self._base_topic}/last_run_status"] == "failure"
+
+
+# ---------------------------------------------------------------------------
+# AWS setup reference file (see shared/aws_setup.py)
+# ---------------------------------------------------------------------------
+
+class TestAwsSetupFileWrittenOnRun:
+    def test_iam_policy_written_with_bucket_resolved(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings_path = os.path.join(tmp_dir, "settings.json")
+            data_dir = os.path.join(tmp_dir, "data")
+            with open(settings_path, "w") as f:
+                json.dump({"s3": {"bucket": "test-bucket"}, "data_dir": data_dir}, f)
+
+            with patch.dict(os.environ, {"SETTINGS_PATH": settings_path}), \
+                 patch("archive_compaction_main.connect_s3", return_value=_FakeS3()), \
+                 patch("archive_compaction_main.run_compaction",
+                       return_value={"files_compacted": 0, "files_delete_failed": 0,
+                                     "days_compacted": 0, "last_compacted_date": None,
+                                     "mismatch_date": None, "mismatch_uuids": set()}), \
+                 patch("archive_compaction_main.publish_completion_stats"):
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+            out_path = os.path.join(data_dir, "aws-setup", "iam-policy.json")
+            with open(out_path) as f:
+                policy = json.load(f)
+            assert "__BUCKET_NAME__" not in json.dumps(policy)
+            assert any(
+                "test-bucket" in stmt["Resource"]
+                for stmt in policy["Statement"]
+            )

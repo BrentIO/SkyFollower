@@ -1,0 +1,31 @@
+{
+  "_comment": "Template for the IAM identity archive-compaction uses. __BUCKET_NAME__ is resolved by archive-compaction on every run against its own s3.bucket config and written to {data_dir}/aws-setup/iam-policy.json -- paste that resolved file directly into the console's JSON policy editor (see docs/aws-setup.md). Deliberately its own identity, not shared with archive-processor's -- it needs Delete and bucket-level List that archive-processor doesn't, and no access to flights/* content at all (it only lists flights/* keys for the parity check, never reads them).",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBucketForParityCheckAndCompaction",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::__BUCKET_NAME__"
+    },
+    {
+      "Sid": "ParquetIndexFiles",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::__BUCKET_NAME__/index/*"
+    },
+    {
+      "Sid": "WatermarkState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::__BUCKET_NAME__/_compaction_state/*"
+    }
+  ]
+}

@@ -29,7 +29,7 @@ flights are queued locally and drained automatically once S3 reconnects.
 | `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
 | `s3.bucket` | string | — | S3 bucket name flights are written to |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) is written |
+| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS reference files — see [AWS Setup](#aws-setup)) are written |
 | `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
 
 `flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
@@ -185,10 +185,38 @@ schema is the authoritative source in
 
 Writing one small file per flight (rather than appending to one shared
 file) is deliberate: it's what makes this index queryable directly from S3
-via Athena/Glue partition projection, with no local-only, single-instance
-state to lose or rebuild. Daily compaction of these small per-flight files
-into one file per partition, and the Glue table/partition projection setup
-itself, are separate, not-yet-built pieces of work.
+via Athena/Glue partition projection, once that querying setup exists (see
+[AWS Setup](#aws-setup) below) — with no local-only, single-instance state
+to lose or rebuild in the meantime. Daily compaction of these small
+per-flight files into one file per partition is a separate job — see
+`archive-compaction`'s own README (`archive-compaction/README.md`).
+
+## AWS Setup
+
+**Nothing described in this section exists yet in AWS** — no Glue
+database, no Glue table, no Athena workgroup, no IAM identity. This
+component only ever prepares *local reference files* an operator uses to
+create those resources by hand; it never calls a Glue, IAM, or Athena
+provisioning API itself, and table/database/identity creation is not
+something this project automates anywhere. Until an operator actually
+works through [docs/aws-setup.md](../docs/aws-setup.md)'s console
+click-path setup guide in their own AWS account, the archive's Parquet
+index is written to S3 but isn't queryable by anything.
+
+On every startup, the archive processor resolves its own
+`__BUCKET_NAME__`-templated reference files (baked into its image from
+`specs/aws/`) against its configured `s3.bucket` and writes them to
+`{data_dir}/aws-setup/`:
+
+- `glue-table-definition.json` — the Glue table definition for the
+  [Parquet index](#parquet-index) above, including partition projection
+  properties, for the console's "Add table" wizard
+- `iam-policy.json` — the least-privilege IAM policy this component
+  itself needs, for pasting into the console's JSON policy editor
+
+Re-running (restarting) always regenerates both files from the current
+config and the image's current templates — safe to do any time, and picks
+up a changed bucket name or an upgraded template on the next restart.
 
 ## Fault Tolerance
 
