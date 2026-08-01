@@ -13,5 +13,11 @@
   "devDependencies": {
     "@asyncapi/web-component": "^3.1.4",
     "vitepress": "^1.6.4"
+  },
+  "scarfSettings": {
+    "enabled": false
+  },
+  "dependencies": {
+    "swagger-ui-dist": "^5.32.11"
   }
 }
