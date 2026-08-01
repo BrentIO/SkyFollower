@@ -47,6 +47,10 @@ the host up:
 docker compose -f <compose-file> up -d
 ```
 
+On the `server` host specifically, once it's up, see [Loading All
+Data](#loading-all-data) below to do a first-time data import instead of
+waiting on each runner's own scheduled `ofelia` run.
+
 ## Advanced
 
 Clone the repo on every host that will run a SkyFollower component
