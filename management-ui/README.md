@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Purpose** | REST API and React frontend for rules and areas configuration. The backend is the sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
-| **Auth** | None (home lab deployment) |
+| **Auth** | None (single-instance, trusted-network deployment) |
 | **Reads/writes** | Redis only |
 
 Named "management" to leave room for a future, separate UI focused on
@@ -284,11 +284,10 @@ process startup, held only in memory, never written to
 previous process — a search still open in a browser tab across a restart
 gets a `400` on "view flight" until the page is refreshed (which re-fetches
 results from the now-running process, producing freshly-encrypted tokens).
-Acceptable for a single-instance, low-traffic home-lab tool with
-infrequent deploys; every restart is effectively a free, automatic key
-rotation. This assumes a single running instance of this component,
-matching this project's actual deployment model (no horizontal scaling
-anywhere in its design).
+Acceptable for a low-traffic tool with infrequent deploys; every restart
+is effectively a free, automatic key rotation. This assumes a single
+running instance of this component, matching this project's actual
+deployment model (no horizontal scaling anywhere in its design).
 
 ### TTLs
 
