@@ -32,7 +32,6 @@ import gzip
 from archive_processor.main import (  # noqa: E402  (after sys.path manipulation)
     ArchiveProcessor,
     _DepthHWM,
-    _S3FallbackQueue,
     _interpolate_altitudes,
     _merge_segments,
     _normalize_timestamps,
@@ -454,182 +453,9 @@ class TestBuildGeoJsonFeature:
         assert coords[1][2] == 2000
 
 
-# ---------------------------------------------------------------------------
-# SQLite fallback queue
-# ---------------------------------------------------------------------------
-
-class TestS3FallbackQueue:
-    def test_put_increases_depth(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            assert q.depth() == 0
-            q.put('{"test": 1}')
-            assert q.depth() == 1
-            q.put('{"test": 2}')
-            assert q.depth() == 2
-
-    def test_drain_oldest_first(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("first")
-            q.put("second")
-            q.put("third")
-            received = []
-            q.drain(received.append)
-            assert received == ["first", "second", "third"]
-            assert q.depth() == 0
-
-    def test_drain_stops_on_exception(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("item1")
-            q.put("item2")
-
-            def fail(_):
-                raise ConnectionError("S3 gone")
-
-            q.drain(fail)
-            assert q.depth() == 2  # nothing removed
-
-    def test_drain_returns_true_when_fully_drained(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("only item")
-            assert q.drain(lambda _: None) is True
-
-    def test_drain_returns_true_on_an_already_empty_queue(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            assert q.drain(lambda _: None) is True
-
-    def test_drain_returns_false_when_stopped_early(self):
-        """Callers gating other state on "the backlog is fully clear" (see
-        ArchiveProcessor._finish_s3_connect) need this to be a real
-        signal, not just a side effect they infer from depth()."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("item1")
-
-            def fail(_):
-                raise ConnectionError("S3 gone")
-
-            assert q.drain(fail) is False
-
-    def test_survives_reopen(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            path = tmp.name
-        q = _S3FallbackQueue(path)
-        q.put('{"persist": true}')
-        del q
-        q2 = _S3FallbackQueue(path)
-        assert q2.depth() == 1
-        os.unlink(path)
-
-    def test_partial_drain_leaves_rest(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("a")
-            q.put("b")
-            q.put("c")
-
-            call_count = [0]
-
-            def process_one(payload):
-                call_count[0] += 1
-                if call_count[0] >= 2:
-                    raise RuntimeError("stop")
-
-            q.drain(process_one)
-            assert q.depth() == 2  # only "a" was processed
-
-    def test_table_name_isolates_queues_sharing_one_file(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            flights_q = _S3FallbackQueue(tmp.name)
-            index_q = _S3FallbackQueue(tmp.name, table_name="index_queue")
-
-            flights_q.put("a flight")
-            assert flights_q.depth() == 1
-            assert index_q.depth() == 0
-
-            index_q.put("an index retry")
-            assert flights_q.depth() == 1
-            assert index_q.depth() == 1
-
-    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
-        """Simulates the S3-reconnect-triggered and periodic telemetry-tick
-        triggers firing close together (#534): if a drain is already
-        holding the single-flight guard, a second call must not spawn
-        another drain -- overlapping drains could otherwise both SELECT
-        the same oldest row before either DELETEs it and duplicate-process
-        it."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("payload")
-            q._drain_lock.acquire()  # simulate an in-progress drain
-            try:
-                calls = []
-                q.drain_in_background(calls.append)
-                time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
-                assert calls == []
-                assert q.depth() == 1
-            finally:
-                q._drain_lock.release()
-
-    def test_drain_in_background_runs_and_releases_the_guard(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("payload")
-            calls = []
-
-            q.drain_in_background(calls.append)
-
-            # Wait on the lock itself, not depth() -- drain() drops depth to
-            # 0 on its final DELETE, then still has to loop once more
-            # (SELECT finds nothing, breaks, returns) before its finally
-            # block releases _drain_lock. Polling depth() alone races ahead
-            # of that by up to one iteration, occasionally catching the lock
-            # still held.
-            deadline = time.monotonic() + 2
-            while q._drain_lock.locked() and time.monotonic() < deadline:
-                time.sleep(0.01)
-
-            assert calls == ["payload"]
-            assert q.depth() == 0
-            assert not q._drain_lock.locked()
-
-    def test_drain_in_background_calls_on_done_after_completion(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _S3FallbackQueue(tmp.name)
-            q.put("payload")
-            done = threading.Event()
-
-            q.drain_in_background(lambda p: None, on_done=done.set)
-
-            assert done.wait(timeout=2)
-
-    def test_two_queues_sharing_one_file_have_independent_drain_guards(self):
-        """table_name isolates the data (see test_table_name_isolates_queues_
-        sharing_one_file above); the single-flight guard must be similarly
-        isolated per instance, so draining one queue (e.g. the flight
-        queue) never blocks a concurrent drain of the other (e.g. the
-        index queue) -- see _drain_all_fallbacks."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            flights_q = _S3FallbackQueue(tmp.name)
-            index_q = _S3FallbackQueue(tmp.name, table_name="index_queue")
-            index_q.put("an index retry")
-
-            flights_q._drain_lock.acquire()  # simulate flights_q mid-drain
-            try:
-                calls = []
-                index_q.drain_in_background(calls.append)
-                deadline = time.monotonic() + 2
-                while index_q.depth() != 0 and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                assert calls == ["an index retry"]
-                assert index_q.depth() == 0
-            finally:
-                flights_q._drain_lock.release()
-
+# Fallback queue put/drain/depth/dead-lettering is now covered by
+# shared/tests/test_fallback_queue.py -- ArchiveProcessor just wires
+# shared.FallbackQueue in for both its tables (queue, index_queue).
 
 # ---------------------------------------------------------------------------
 # Redis counter increments
@@ -1752,3 +1578,44 @@ class TestPublishTelemetryRmqQueueDepthHwm:
             processor._publish_telemetry()
             second_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
             assert second_calls[self._TOPIC] == "-1"
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter queue depth telemetry (both tables, see shared/fallback_queue.py)
+# ---------------------------------------------------------------------------
+
+class TestDeadLetterQueueDepthTelemetry:
+    def test_both_dead_letter_topics_present_and_zero_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert calls["SkyFollower/archive/statistic/dead_letter_queue_depth"] == "0"
+            assert calls["SkyFollower/archive/statistic/dead_letter_index_queue_depth"] == "0"
+
+    def test_reflects_actual_dead_lettered_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            # Disable the retry-spacing cooldown so this test can force 5
+            # real attempts back-to-back rather than waiting out real time.
+            processor._fallback._min_retry_interval_seconds = 0
+            processor._fallback.put("poison")
+            for _ in range(5):
+                processor._fallback.drain(
+                    lambda _p: (_ for _ in ()).throw(RuntimeError("always fails"))
+                )
+            assert processor._fallback.dead_letter_depth() == 1
+
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert calls["SkyFollower/archive/statistic/dead_letter_queue_depth"] == "1"
+            assert calls["SkyFollower/archive/statistic/dead_letter_index_queue_depth"] == "0"

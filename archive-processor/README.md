@@ -298,6 +298,40 @@ runs inline on the S3-reconnect thread itself, before `s3_connected` (and
 therefore the periodic sweep's own trigger condition) ever becomes `True`,
 so there's nothing for it to overlap with.
 
+Both queues are the shared `FallbackQueue` (see
+[shared/README.md](../shared/README.md)) rather than a component-local
+class.
+
+### Dead-Lettering Poison Messages and Index Rows
+
+An item that fails on every drain attempt — not because S3 is down, but
+because something about that specific flight or index row causes a
+deterministic failure — would otherwise retry forever, and since `drain()`
+always re-selects the oldest row first, it would also block every other
+queued item behind it indefinitely. `FallbackQueue` tracks a per-row retry
+count: below the threshold (5, hardcoded), a failure behaves exactly as
+before — stop the drain pass, retry from the top next time. At the
+threshold, the row is judged permanently poison: it's written out as a
+standalone JSON file under `dead_letters/{queue,index_queue}/` in
+`data_dir` (each queue capped at 100MB total, oldest file evicted first)
+for manual inspection, and the drain pass continues to whatever's queued
+behind it instead of stopping. There's no automated replay path — a
+dead-lettered file is purely something an operator inspects or discards
+out-of-band (`data_dir` is already a host-mounted volume, same as `s3.db`
+itself).
+
+A raw attempt count alone isn't safe: the flight queue's reconnect-drain
+runs on every successful S3 reconnect (not just the `telemetry_interval_seconds`
+tick — see above), so a flapping S3 connection reconnecting every few
+seconds could otherwise burn through the retry threshold within seconds —
+dead-lettering a flight that was never actually poison, just unlucky
+enough to be at the head of the queue during a brief instability.
+`FallbackQueue` also enforces a minimum time between attempts on the same
+row (30 seconds, hardcoded, independent of how often a drain is
+triggered), so reaching the threshold always takes a real, bounded amount
+of elapsed time — not just a burst of rapid reconnect attempts. This
+applies identically to both queues.
+
 ![Flight & Parquet index write, with retry](./archive-write-sequence.svg)
 
 ## MQTT Topics Published
@@ -321,6 +355,8 @@ All topics use the root `SkyFollower`.
 | `s3_connected` | `True` or `False` | Current S3 connectivity state |
 | `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
+| `dead_letter_queue_depth` | Integer as string | Flights dead-lettered after repeatedly failing to write to S3 (see [Dead-Lettering Poison Messages and Index Rows](#dead-lettering-poison-messages-and-index-rows)) |
+| `dead_letter_index_queue_depth` | Integer as string | Parquet index rows dead-lettered after repeatedly failing to write |
 | `rabbitmq_archive_queue_depth_hwm` | Integer as string | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 
 Each stat is published as its own retained topic (not a combined JSON

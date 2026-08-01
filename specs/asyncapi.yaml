@@ -378,6 +378,30 @@ channels:
       ArchiveLocalIndexQueueDepthMessage:
         $ref: '#/components/messages/ArchiveLocalIndexQueueDepthMessage'
 
+  archiveDeadLetterQueueDepth:
+    address: SkyFollower/archive/statistic/dead_letter_queue_depth
+    description: >
+      Number of completed flights dead-lettered from the local SQLite
+      fallback (s3.db) after repeatedly failing to write to S3 -- files
+      under dead_letters/queue/ in data_dir, not counted in
+      local_queue_depth. Published every telemetry_interval_seconds,
+      retained.
+    messages:
+      ArchiveDeadLetterQueueDepthMessage:
+        $ref: '#/components/messages/ArchiveDeadLetterQueueDepthMessage'
+
+  archiveDeadLetterIndexQueueDepth:
+    address: SkyFollower/archive/statistic/dead_letter_index_queue_depth
+    description: >
+      Number of Parquet index rows dead-lettered (index_queue table in
+      s3.db) after repeatedly failing to write -- files under
+      dead_letters/index_queue/ in data_dir, not counted in
+      local_index_queue_depth. Published every telemetry_interval_seconds,
+      retained.
+    messages:
+      ArchiveDeadLetterIndexQueueDepthMessage:
+        $ref: '#/components/messages/ArchiveDeadLetterIndexQueueDepthMessage'
+
   archiveRabbitmqArchiveQueueDepthHwm:
     address: SkyFollower/archive/statistic/rabbitmq_archive_queue_depth_hwm
     description: >
@@ -726,6 +750,18 @@ operations:
       $ref: '#/channels/archiveLocalIndexQueueDepth'
     summary: Archive processor publishes its local index-retry queue depth
 
+  publishArchiveDeadLetterQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/archiveDeadLetterQueueDepth'
+    summary: Archive processor publishes its dead-lettered (permanently poison) flight count
+
+  publishArchiveDeadLetterIndexQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/archiveDeadLetterIndexQueueDepth'
+    summary: Archive processor publishes its dead-lettered (permanently poison) index-row count
+
   publishArchiveRabbitmqArchiveQueueDepthHwm:
     action: send
     channel:
@@ -1034,6 +1070,22 @@ components:
       payload:
         $ref: '#/components/schemas/ArchiveLocalIndexQueueDepth'
 
+    ArchiveDeadLetterQueueDepthMessage:
+      name: ArchiveDeadLetterQueueDepthMessage
+      title: Archive dead-letter queue depth
+      summary: Completed flights dead-lettered from the local SQLite fallback after repeatedly failing to write to S3
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveDeadLetterQueueDepth'
+
+    ArchiveDeadLetterIndexQueueDepthMessage:
+      name: ArchiveDeadLetterIndexQueueDepthMessage
+      title: Archive dead-letter index queue depth
+      summary: Parquet index rows dead-lettered after repeatedly failing to write
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveDeadLetterIndexQueueDepth'
+
     ArchiveRabbitmqArchiveQueueDepthHwmMessage:
       name: ArchiveRabbitmqArchiveQueueDepthHwmMessage
       title: Archive RabbitMQ archive queue depth high-water mark
@@ -1289,6 +1341,16 @@ components:
     ArchiveLocalIndexQueueDepth:
       type: integer
       description: Number of Parquet index rows queued for retry (index_queue table in s3.db) after their flight object wrote successfully but the index write failed
+      example: 0
+
+    ArchiveDeadLetterQueueDepth:
+      type: integer
+      description: Number of completed flights dead-lettered from the local SQLite fallback (dead_letters/queue/ in data_dir) after repeatedly failing to write to S3
+      example: 0
+
+    ArchiveDeadLetterIndexQueueDepth:
+      type: integer
+      description: Number of Parquet index rows dead-lettered (dead_letters/index_queue/ in data_dir) after repeatedly failing to write
       example: 0
 
     ArchiveRabbitmqArchiveQueueDepthHwm:
