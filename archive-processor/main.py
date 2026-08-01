@@ -19,7 +19,6 @@ import logging.handlers
 import os
 import re
 import signal
-import sqlite3
 import sys
 import threading
 import time
@@ -39,6 +38,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
+from shared.fallback_queue import FallbackQueue
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
 from shared.redis_keys import (
@@ -337,101 +337,6 @@ class _DepthHWM:
 
 
 # ---------------------------------------------------------------------------
-# SQLite fallback queue
-# ---------------------------------------------------------------------------
-
-class _S3FallbackQueue:
-    """
-    SQLite-backed fallback queue for anything that needs to survive an S3
-    outage and be retried later. table_name lets two independent queues
-    (e.g. full flights vs. index-only retries) share one SQLite file
-    without colliding — always an internal literal, never user input.
-    """
-
-    def __init__(self, path: str, table_name: str = "queue") -> None:
-        self._table = table_name
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._table} "
-            "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, queued_at REAL)"
-        )
-        self._conn.commit()
-        self._lock = threading.Lock()
-        # Single-flight guard: drain() only locks around each individual
-        # SELECT/DELETE, not the whole fetch-process-delete cycle for a
-        # row, so two overlapping drain() calls (reconnect-triggered and
-        # periodic telemetry-tick both firing close together) could each
-        # SELECT the same oldest row before either DELETEs it and
-        # duplicate-process it. This lock ensures at most one drain runs
-        # at a time for *this* queue instance -- each table (queue vs.
-        # index_queue) gets its own instance and therefore its own
-        # independent lock, so draining one never blocks the other.
-        self._drain_lock = threading.Lock()
-
-    def put(self, payload: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                f"INSERT INTO {self._table} (payload, queued_at) VALUES (?, ?)",
-                (payload, time.time()),
-            )
-            self._conn.commit()
-
-    def drain(self, process_fn) -> bool:
-        """Drain all queued items oldest-first via process_fn(payload).
-        Returns True if the queue was fully drained (empty when this
-        returned), False if it stopped early because process_fn raised
-        (e.g. S3 went away again mid-drain) -- callers that gate other
-        state on "the backlog is fully clear" (see
-        ArchiveProcessor._finish_s3_connect) need to tell these two
-        outcomes apart, not just call this and move on."""
-        while True:
-            with self._lock:
-                cur = self._conn.execute(
-                    f"SELECT id, payload FROM {self._table} ORDER BY id ASC LIMIT 1"
-                )
-                row = cur.fetchone()
-                if row is None:
-                    return True
-                row_id, payload = row
-            try:
-                process_fn(payload)
-                with self._lock:
-                    self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row_id,))
-                    self._conn.commit()
-            except Exception:
-                return False  # S3 went away again; stop draining
-
-    def drain_in_background(self, process_fn, on_done=None) -> None:
-        """Spawn a background thread to drain(), unless a drain is already
-        in progress for this queue -- in which case this is a cheap no-op
-        rather than a second overlapping drain. Never blocks the caller
-        (the telemetry loop calling this can publish its own stats
-        immediately regardless of how long the actual drain takes).
-        on_done(), if given, runs after the drain completes -- e.g. to log
-        the resulting depth once the drain is actually finished rather
-        than at spawn time."""
-        if not self._drain_lock.acquire(blocking=False):
-            logger.debug("Drain already in progress; skipping this trigger.")
-            return
-
-        def _run() -> None:
-            try:
-                self.drain(process_fn)
-            finally:
-                self._drain_lock.release()
-            if on_done:
-                on_done()
-
-        threading.Thread(target=_run, daemon=True, name="fallback-drain").start()
-
-    def depth(self) -> int:
-        with self._lock:
-            cur = self._conn.execute(f"SELECT COUNT(*) FROM {self._table}")
-            return cur.fetchone()[0]
-
-
-# ---------------------------------------------------------------------------
 # Archive Processor
 # ---------------------------------------------------------------------------
 
@@ -446,10 +351,10 @@ class ArchiveProcessor:
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
         s3_db_path = os.path.join(data_dir, "s3.db")
-        self._fallback = _S3FallbackQueue(s3_db_path)
+        self._fallback = FallbackQueue(s3_db_path)
         # Separate table, same file: retries for flights whose object write
         # already succeeded but whose Parquet index row failed to write.
-        self._index_fallback = _S3FallbackQueue(s3_db_path, table_name="index_queue")
+        self._index_fallback = FallbackQueue(s3_db_path, table_name="index_queue")
 
         write_aws_setup_files(
             data_dir, config.get("s3", {}).get("bucket", ""), _AWS_SETUP_TEMPLATES
@@ -554,7 +459,7 @@ class ArchiveProcessor:
         drain is running still sees s3_available=False (this method hasn't
         returned yet), so it queues to the *same* fallback queue rather
         than going live -- fast, non-blocking (a local SQLite insert), no
-        RabbitMQ backpressure. Since _S3FallbackQueue.drain() is strictly
+        RabbitMQ backpressure. Since FallbackQueue.drain() is strictly
         oldest-first, a continuation segment can never be drained (and
         therefore never reach _try_stitch()) before the segment it
         continues. No per-icao_hex locking or queue scanning needed -- the
@@ -971,6 +876,8 @@ class ArchiveProcessor:
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),
+            ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
+            ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None),
             ("rabbitmq_archive_queue_depth_hwm", "RabbitMQ Archive Queue Depth HWM", "mdi:tray-full", "measurement", None),
             ("started_at", "Archive Started At", "mdi:clock", None, None),
         ]
@@ -1050,6 +957,14 @@ class ArchiveProcessor:
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/local_index_queue_depth", str(self._index_fallback.depth()), retain=True
+        )
+        self._mqtt.publish(
+            f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
+        )
+        self._mqtt.publish(
+            f"{base}/dead_letter_index_queue_depth",
+            str(self._index_fallback.dead_letter_depth()),
+            retain=True,
         )
         self._mqtt.publish(
             f"{base}/rabbitmq_archive_queue_depth_hwm",

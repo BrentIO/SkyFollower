@@ -50,26 +50,48 @@ end note
 par S3 reconnect thread — draining the backlog
     Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.list_buckets()""
     loop for each queued full flight, oldest first
-        Reconnect -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        Reconnect -> FallbackDB++ : **Get next row**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 1""
         FallbackDB --> Reconnect-- : Record
-        Reconnect -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-        alt flight write succeeds
-            S3 --> Reconnect-- : success
-            Reconnect -> Reconnect : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-            Reconnect -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-            alt index write succeeds
-                S3 --> Reconnect-- : success
-            else index write fails
-                S3 --> Reconnect-- : error or timeout
-                Reconnect -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-                FallbackDB --> Reconnect-- : OK
-            end
-            Reconnect -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
-            FallbackDB --> Reconnect-- : OK
-        else flight write fails
-            S3 --> Reconnect-- : error or timeout
+        alt row attempted less than 30s ago
             break
-                Reconnect -> Reconnect : **Stop draining — stay disconnected, retry the whole sequence next tick**\n""drain() returns False""
+                Reconnect -> Reconnect : **Stop draining**\n""still cooling down — a flapping S3 reconnect can't rush this row to the poison threshold""
+            end
+        else row eligible to retry
+            Reconnect -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+            alt flight write succeeds
+                S3 --> Reconnect-- : success
+                Reconnect -> Reconnect : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+                Reconnect -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+                alt index write succeeds
+                    S3 --> Reconnect-- : success
+                else index write fails
+                    S3 --> Reconnect-- : error or timeout
+                    Reconnect -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+                    FallbackDB --> Reconnect-- : OK
+                end
+                Reconnect -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
+                FallbackDB --> Reconnect-- : OK
+            else flight write fails
+                S3 --> Reconnect-- : error or timeout
+                Reconnect -> Reconnect : **Count this failure**\n""new_count = retry_count + 1""
+                alt new_count reaches the retry threshold (5)
+                    Reconnect -> FallbackDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
+                    FallbackDB --> Reconnect-- : OK
+                    Reconnect -> Reconnect : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
+                    note right of Reconnect
+                        Judged permanently unrecoverable, not just a
+                        transient outage — draining continues to the
+                        next row instead of stopping, which is what
+                        keeps one poison flight from blocking
+                        everything queued behind it forever.
+                    end note
+                else new_count still below the retry threshold
+                    Reconnect -> FallbackDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                    FallbackDB --> Reconnect-- : OK
+                    break
+                        Reconnect -> Reconnect : **Stop draining — stay disconnected, retry the whole sequence next tick**\n""drain() returns False""
+                    end
+                end
             end
         end
     end
@@ -97,26 +119,46 @@ Telemetry -> Telemetry : **Attempt to claim the flight-queue drain guard**\n""_f
 alt guard acquired
     Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
     loop for each queued full flight
-        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
+        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 1""
         FallbackDB --> Telemetry-- : Record
-        Telemetry -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-        alt flight write succeeds
-            S3 --> Telemetry-- : success
-            Telemetry -> Telemetry : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-            Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-            alt index write succeeds
-                S3 --> Telemetry-- : success
-            else index write fails
-                S3 --> Telemetry-- : error or timeout
-                Telemetry -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-                FallbackDB --> Telemetry-- : OK
-            end
-            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
-            FallbackDB --> Telemetry-- : OK
-        else flight write fails
-            S3 --> Telemetry-- : error or timeout
+        alt row attempted less than 30s ago
             break
-                Telemetry -> Telemetry : **Stop draining — retry next tick**
+                Telemetry -> Telemetry : **Stop draining**\n""still cooling down""
+            end
+        else row eligible to retry
+            Telemetry -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+            alt flight write succeeds
+                S3 --> Telemetry-- : success
+                Telemetry -> Telemetry : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+                Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+                alt index write succeeds
+                    S3 --> Telemetry-- : success
+                else index write fails
+                    S3 --> Telemetry-- : error or timeout
+                    Telemetry -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+                    FallbackDB --> Telemetry-- : OK
+                end
+                Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
+                FallbackDB --> Telemetry-- : OK
+            else flight write fails
+                S3 --> Telemetry-- : error or timeout
+                Telemetry -> Telemetry : **Count this failure**\n""new_count = retry_count + 1""
+                alt new_count reaches the retry threshold (5)
+                    Telemetry -> FallbackDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
+                    FallbackDB --> Telemetry-- : OK
+                    Telemetry -> Telemetry : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
+                    note right of Telemetry
+                        Draining continues to the next row instead of
+                        stopping, which is what keeps one poison flight
+                        from blocking everything queued behind it.
+                    end note
+                else new_count still below the retry threshold
+                    Telemetry -> FallbackDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                    FallbackDB --> Telemetry-- : OK
+                    break
+                        Telemetry -> Telemetry : **Stop draining — retry next tick**
+                    end
+                end
             end
         end
     end
@@ -136,17 +178,37 @@ Telemetry -> Telemetry : **Attempt to claim the index-queue drain guard**\n""_in
 alt guard acquired
     Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
     loop for each queued index-only retry
-        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM index_queue ORDER BY id ASC LIMIT 1""
+        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT id, payload, retry_count, last_attempted_at FROM index_queue ORDER BY id ASC LIMIT 1""
         FallbackDB --> Telemetry-- : Record
-        Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-        alt index write succeeds
-            S3 --> Telemetry-- : success
-            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
-            FallbackDB --> Telemetry-- : OK
-        else index write fails
-            S3 --> Telemetry-- : error or timeout
+        alt row attempted less than 30s ago
             break
-                Telemetry -> Telemetry : **Stop draining — retry next cycle**
+                Telemetry -> Telemetry : **Stop draining**\n""still cooling down""
+            end
+        else row eligible to retry
+            Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+            alt index write succeeds
+                S3 --> Telemetry-- : success
+                Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
+                FallbackDB --> Telemetry-- : OK
+            else index write fails
+                S3 --> Telemetry-- : error or timeout
+                Telemetry -> Telemetry : **Count this failure**\n""new_count = retry_count + 1""
+                alt new_count reaches the retry threshold (5)
+                    Telemetry -> FallbackDB++ : **Delete the poison row**\n""DELETE FROM index_queue WHERE id = {id}""
+                    FallbackDB --> Telemetry-- : OK
+                    Telemetry -> Telemetry : **Dead-letter the payload**\n""write dead_letters/index_queue/{timestamp}_{id}.json""
+                    note right of Telemetry
+                        Draining continues to the next row instead of
+                        stopping, which is what keeps one poison index
+                        row from blocking everything queued behind it.
+                    end note
+                else new_count still below the retry threshold
+                    Telemetry -> FallbackDB++ : **Record the failed attempt**\n""UPDATE index_queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                    FallbackDB --> Telemetry-- : OK
+                    break
+                        Telemetry -> Telemetry : **Stop draining — retry next cycle**
+                    end
+                end
             end
         end
     end
