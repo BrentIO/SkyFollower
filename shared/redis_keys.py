@@ -160,3 +160,14 @@ def archive_last_segment_key(icao_hex: str) -> str:
     archive:last_segment:{icao_hex}
     """
     return f"archive:last_segment:{icao_hex.upper()}"
+
+
+def archive_search_key(uuid: str) -> str:
+    """
+    Archive search record (management-ui backend's Athena query layer, see
+    management-ui/README.md). JSON {name, where_clause, status, submitted_at,
+    query_execution_id, error}. Set with a fixed 7-day TTL from creation,
+    never refreshed on access.
+    archive_search:{uuid}
+    """
+    return f"archive_search:{uuid}"

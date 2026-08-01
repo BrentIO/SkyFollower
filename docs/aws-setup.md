@@ -7,10 +7,7 @@ Index](/components/archive-processor#parquet-index) section) is written to
 S3 either way, but nothing can query it — via AWS Athena, against a Glue
 Catalog table, using partition projection rather than a Glue Crawler —
 until an operator manually creates that Glue database/table, an Athena
-workgroup, and two IAM identities by hand, following this page. There is
-also no UI or tool in this repo yet that actually *runs* an Athena query
-against the index once it exists — this page only covers provisioning the
-AWS-side resources a future consumer of the index will need.
+workgroup, and three IAM identities by hand, following this page.
 
 No component in this project ever calls a Glue, IAM, or Athena
 provisioning API — table, database, workgroup, and identity creation are
@@ -20,13 +17,14 @@ define, ship, or secure a new AWS credential just for provisioning.
 
 ## What each component writes instead
 
-`archive-processor` and `archive-compaction` each ship template JSON files
-(`specs/aws/`) baked into their own image, containing a literal
-`__BUCKET_NAME__` placeholder wherever their configured `s3.bucket` belongs.
-On every startup (`archive-processor`) or every run (`archive-compaction`),
-each resolves its own templates against its own config and writes the
-result to `{data_dir}/aws-setup/` — pure local string substitution, no AWS
-API calls, so this needs zero AWS permissions of its own. Re-running
+`archive-processor`, `archive-compaction`, and `management-ui`'s backend
+each ship template JSON files (`specs/aws/`) baked into their own image,
+containing a literal `__BUCKET_NAME__` placeholder wherever their
+configured `s3.bucket` belongs. On every startup (`archive-processor`,
+`management-ui`) or every run (`archive-compaction`), each resolves its
+own templates against its own config and writes the result to
+`{data_dir}/aws-setup/` — pure local string substitution, no AWS API
+calls, so this needs zero AWS permissions of its own. Re-running
 (restarting) is always safe and always reflects current config: if
 `s3.bucket` ever changes, or an image upgrade ships an updated template, the
 next restart's output changes to match.
@@ -36,6 +34,7 @@ next restart's output changes to match.
 | `specs/aws/glue-table-definition.json` | `archive-processor` (it owns the `index/` schema) | `{data_dir}/aws-setup/glue-table-definition.json` |
 | `specs/aws/iam-policies/archive-processor.json` | `archive-processor` | `{data_dir}/aws-setup/iam-policy.json` |
 | `specs/aws/iam-policies/archive-compaction.json` | `archive-compaction` | `{data_dir}/aws-setup/iam-policy.json` |
+| `specs/aws/iam-policies/management-ui.json` | `management-ui`'s backend | `{data_dir}/aws-setup/iam-policy.json` |
 
 These resolved files are what you copy exact values from in the steps
 below — no risk of a typo in your own bucket name or a partition-projection
@@ -52,6 +51,7 @@ property.
 | S3 lifecycle rule on the query-results prefix | Auto-expires old result files |
 | IAM identity for `archive-processor` | Scoped to its own S3 access only |
 | IAM identity for `archive-compaction` | A separate, narrower identity — see its README |
+| IAM identity for `management-ui`'s backend | Read-only Athena/Glue + scoped S3 access — see its README |
 
 ## Setup steps (console click-path — no CLI, no CloudShell)
 
@@ -97,6 +97,16 @@ Every resource below has a genuine point-and-click console path.
    `archive-processor`'s, not a shared or widened one — see
    `archive-compaction`'s own README (`archive-compaction/README.md`)'s AWS
    Setup section for why.
+
+8. **Create an IAM identity for `management-ui`'s backend**, the same way,
+   using *its own* resolved `iam-policy.json`. This is the identity that
+   actually runs Athena queries against the table created in step 3 and
+   reads/writes the results location from steps 4–5. Its Athena and Glue
+   permissions are `Resource: "*"` rather than scoped to a specific
+   table/workgroup ARN — a properly scoped ARN needs the AWS account ID,
+   which nothing in this project discovers or is configured with — but its
+   S3 access (the actually sensitive part) is fully scoped, same as the
+   other two identities.
 
 No IAM policy needs to be authored for steps 1–5 — those are performed
 using the human operator's own existing AWS access, not a new credential

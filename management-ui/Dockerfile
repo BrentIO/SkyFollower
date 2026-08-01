@@ -22,6 +22,7 @@ COPY management-ui/backend/requirements.txt .
 RUN pip install --no-cache-dir -r shared_requirements.txt -r requirements.txt
 
 COPY shared/ ./shared/
+COPY specs/aws/ ./specs/aws/
 COPY message-processor/__init__.py ./message_processor/__init__.py
 COPY message-processor/rules_engine.py ./message_processor/rules_engine.py
 COPY management-ui/backend/main.py ./main.py

@@ -16,7 +16,9 @@ exists, the Dockerfile will grow a node build stage and nginx will proxy
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import logging
 import os
@@ -24,16 +26,23 @@ import pathlib
 import re
 import sys
 import tempfile
+import threading
+import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal, Optional, Union
 
+import boto3
 import redis as redis_lib
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException, Response
 from fastapi import Query as FastAPIQuery
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from redis.commands.search.query import Query as RedisSearchQuery
+from uuid_extensions import uuid7
 
 # Add the repo root to sys.path so shared/ is importable when this module is
 # run outside Docker (e.g. tests, local `uvicorn main:app`, OpenAPI export).
@@ -44,6 +53,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from shared.aws_setup import write_aws_setup_files  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
@@ -51,6 +61,7 @@ from shared.redis_keys import (  # noqa: E402
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     AIRPORT_SEARCH_INDEX,
     airport_key,
+    archive_search_key,
     config_areas_key,
     config_areas_version_key,
     config_rules_key,
@@ -606,6 +617,16 @@ _engine: Optional[RulesEngine] = None
 _merge_aircraft_sha: Optional[str] = None
 _route_airports_sha: Optional[str] = None
 
+# Archive search -- Athena/Glue query layer over the archive's Parquet
+# index. _fernet is generated fresh at every process startup, held only in
+# memory, never written to settings.json/env/disk -- see "Flight fetch" in
+# _encrypt_s3_key/_decrypt_token below for why.
+_s3_client: Optional[object] = None
+_athena_client: Optional[object] = None
+_s3_bucket: str = ""
+_athena_cfg: dict = {}
+_fernet: Optional[Fernet] = None
+
 
 def _load_config() -> dict:
     path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
@@ -709,10 +730,21 @@ _LUA_DIR = pathlib.Path(_HERE) / "shared" / "lua"
 if not _LUA_DIR.is_dir():
     _LUA_DIR = pathlib.Path(_REPO_ROOT) / "shared" / "lua"
 
+# Same dual-path story as _LUA_DIR above -- the Docker image copies
+# specs/aws/ flat alongside main.py (see management-ui/Dockerfile).
+_AWS_DIR = pathlib.Path(_HERE) / "specs" / "aws"
+if not _AWS_DIR.is_dir():
+    _AWS_DIR = pathlib.Path(_REPO_ROOT) / "specs" / "aws"
+
+_AWS_SETUP_TEMPLATES = {
+    str(_AWS_DIR / "iam-policies" / "management-ui.json"): "iam-policy.json",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _redis, _engine, _merge_aircraft_sha, _route_airports_sha
+    global _s3_client, _athena_client, _s3_bucket, _athena_cfg, _fernet
     config = _load_config()
     configure_logging(config.get("log_level"))
 
@@ -730,6 +762,21 @@ async def lifespan(app: FastAPI):
     _reconcile_backup_with_redis(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
     _engine.reload_if_changed()
 
+    s3_cfg = config.get("s3", {})
+    _s3_bucket = s3_cfg.get("bucket", "")
+    _athena_cfg = config.get("athena", {})
+    session = boto3.Session(
+        aws_access_key_id=s3_cfg.get("access_key_id"),
+        aws_secret_access_key=s3_cfg.get("secret_access_key"),
+        region_name=s3_cfg.get("region", "us-east-1"),
+    )
+    _s3_client = session.client("s3")
+    _athena_client = session.client("athena")
+    _fernet = Fernet(Fernet.generate_key())
+
+    write_aws_setup_files(_data_dir(), _s3_bucket, _AWS_SETUP_TEMPLATES)
+    _reconcile_stuck_archive_searches()
+
     logger.info("Management UI backend started.")
     yield
     logger.info("Management UI backend shutting down.")
@@ -738,9 +785,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SkyFollower Management",
     description="Rules/areas configuration API (writes config:rules/"
-    "config:areas in Redis, read by every message processor) plus read-only "
+    "config:areas in Redis, read by every message processor), read-only "
     "reference-data lookups (aircraft/operator/airport/route) over the same "
-    "enrichment Redis already holds for rule evaluation.",
+    "enrichment Redis already holds for rule evaluation, and an archive "
+    "search API (Athena/Glue query layer over the S3 archive's Parquet "
+    "index).",
     version="9999.99.99",
     lifespan=lifespan,
 )
@@ -860,9 +909,9 @@ def _redis_get(key: str) -> Optional[str]:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
 
-def _redis_set(key: str, value: str) -> None:
+def _redis_set(key: str, value: str, **kwargs) -> None:
     try:
-        _redis.set(key, value)
+        _redis.set(key, value, **kwargs)
     except redis_lib.RedisError as exc:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
@@ -1341,3 +1390,462 @@ def get_route(ident: str):
         "stops": airports,
         "operator": operator,
     })
+
+
+# ---------------------------------------------------------------------------
+# Archive search -- Athena/Glue query layer over the archive's Parquet
+# index (see archive-processor's Parquet Index section and
+# specs/data-dictionary.yaml's archive_parquet_index record for the 9
+# underlying columns). A search record lives at archive_search:{uuid} in
+# Redis for a fixed 7 days from creation (never refreshed on access);
+# result rows themselves are never cached in Redis, only a pointer to
+# where Athena wrote them in S3 -- see _fetch_and_cache_results below.
+# ---------------------------------------------------------------------------
+
+_SEARCH_TTL_SECONDS = 7 * 86400
+_PAGE_SIZE = 100
+_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
+_POLL_DEADLINE_SECONDS = 120
+_RESULT_CACHE_MAX_ENTRIES = 10
+
+# Column order here is exactly what the Athena SELECT below returns, so
+# _fetch_and_cache_results can map each CSV row positionally without
+# needing to consult the header row Athena also writes. s3_key IS selected
+# (needed server-side to mint each row's fetch token and derive its flight
+# UUID -- see _row_from_csv_fields) but is never included in the dict a
+# response actually returns to the browser.
+_SEARCH_SELECT_COLUMNS = [
+    "icao_hex", "registration", "type_designator", "military",
+    "operator_designator", "ident", "first_message", "last_message", "s3_key",
+]
+
+# Cheap early rejection before ever calling Athena -- not a real security
+# boundary (the querying IAM identity is already read-only on just this one
+# table), purely so a mistake produces an instant, clear 400 instead of a
+# slower, more opaque Athena AccessDenied. Word-boundary so a legitimate
+# value that happens to contain one of these words (e.g. ident = 'INSERT1')
+# doesn't false-positive.
+_FORBIDDEN_WHERE_CLAUSE_RE = re.compile(
+    r"\b(DROP|CREATE|ALTER|INSERT|DELETE|UPDATE|GRANT)\b", re.IGNORECASE
+)
+
+_AWS_ERROR = {502: {"description": "AWS (Athena/S3) error", "model": ErrorDetail}}
+
+
+class ArchiveSearchCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    where_clause: str = Field(..., min_length=1)
+
+
+class ArchiveSearchSummary(BaseModel):
+    uuid: str
+    name: str
+    status: Literal["RUNNING", "COMPLETE", "FAILED", "ABORTED"]
+    submitted_at: str
+    expires_at: str
+
+
+class ArchiveSearchDetail(ArchiveSearchSummary):
+    where_clause: str
+
+
+class ArchiveSearchResultRow(BaseModel):
+    """One archive_parquet_index row, minus s3_key (never sent to the
+    browser -- see "Flight fetch" below) plus the flight's own uuid (parsed
+    server-side from s3_key, not a column in the index itself) and an
+    encrypted, opaque token in s3_key's place."""
+
+    uuid: str
+    icao_hex: str = Field(title="ICAO Hex")
+    registration: str
+    type_designator: str
+    military: bool
+    operator_designator: str
+    ident: str
+    first_message: str
+    last_message: str
+    token: str
+
+
+def _validate_where_clause(where_clause: str) -> None:
+    if ";" in where_clause:
+        raise HTTPException(status_code=400, detail="where_clause must not contain ';'")
+    match = _FORBIDDEN_WHERE_CLAUSE_RE.search(where_clause)
+    if match:
+        raise HTTPException(
+            status_code=400,
+            detail=f"where_clause contains a forbidden keyword: '{match.group(1)}'",
+        )
+
+
+def _build_search_query(where_clause: str) -> str:
+    """The SELECT list and FROM table are always backend-controlled, never
+    influenced by user input -- where_clause only ever fills the WHERE
+    fragment, parenthesized so it can't prematurely close the clause and
+    inject a sibling SQL construct."""
+    columns = ", ".join(_SEARCH_SELECT_COLUMNS)
+    table = f'{_athena_cfg["database"]}.{_athena_cfg["table"]}'
+    return f"SELECT {columns} FROM {table} WHERE ({where_clause})"
+
+
+def _expires_at(submitted_at_iso: str) -> str:
+    submitted = datetime.fromisoformat(submitted_at_iso)
+    return (submitted + timedelta(seconds=_SEARCH_TTL_SECONDS)).isoformat()
+
+
+def _search_summary(uuid: str, record: dict) -> dict:
+    return {
+        "uuid": uuid,
+        "name": record["name"],
+        "status": record["status"],
+        "submitted_at": record["submitted_at"],
+        "expires_at": _expires_at(record["submitted_at"]),
+    }
+
+
+def _redis_scan_keys(pattern: str) -> list[str]:
+    try:
+        return list(_redis.scan_iter(match=pattern))
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+
+
+def _get_search_record(uuid: str) -> dict:
+    raw = _redis_get(archive_search_key(uuid))
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"Search '{uuid}' not found")
+    return json.loads(raw)
+
+
+def _update_search_record(uuid: str, **fields) -> None:
+    """Conditional SET ... XX KEEPTTL -- only writes if the key still
+    exists (a no-op otherwise), and never resets/extends the fixed 7-day
+    TTL set at creation. Guards against the background polling thread
+    resurrecting a record the user already deleted: every write it makes
+    goes through this same function, so a delete that lands between this
+    thread's last GET and its next write is never undone by that write."""
+    key = archive_search_key(uuid)
+    try:
+        raw = _redis.get(key)
+        if raw is None:
+            return
+        record = json.loads(raw)
+        record.update(fields)
+        _redis.set(key, json.dumps(record), xx=True, keepttl=True)
+    except redis_lib.RedisError as exc:
+        logger.warning("Failed to update archive search %s: %s", uuid, exc)
+
+
+def _reconcile_stuck_archive_searches() -> None:
+    """On startup, any archive_search:* record still RUNNING had its
+    polling thread die with the previous process -- nothing is left alive
+    to ever finish that job, so mark it ABORTED rather than leaving it
+    stuck RUNNING forever."""
+    for key in _redis_scan_keys("archive_search:*"):
+        raw = _redis.get(key)
+        if not raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if record.get("status") == "RUNNING":
+            uuid = key.split(":", 1)[-1]
+            _update_search_record(
+                uuid, status="ABORTED", error="Process restarted while this search was running"
+            )
+            logger.info("Marked stuck archive search %s ABORTED on startup.", uuid)
+
+
+def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
+    """One thread per in-flight search. Exponential backoff (1s, 2s, 4s,
+    8s, 16s, then capped at 30s) for up to 2 minutes wall-clock total --
+    if the deadline is hit without reaching a terminal state, this gives
+    up (ABORTED) independent of whether Athena itself might still be
+    running."""
+    deadline = time.monotonic() + _POLL_DEADLINE_SECONDS
+    attempt = 0
+    while time.monotonic() < deadline:
+        delay = (
+            _POLL_BACKOFF_SECONDS[attempt]
+            if attempt < len(_POLL_BACKOFF_SECONDS)
+            else _POLL_BACKOFF_SECONDS[-1] * 2  # 30s cap, per design
+        )
+        attempt += 1
+        time.sleep(min(delay, 30))
+
+        try:
+            resp = _athena_client.get_query_execution(QueryExecutionId=query_execution_id)
+        except Exception as exc:
+            logger.warning("get_query_execution failed for search %s: %s", uuid, exc)
+            continue
+
+        state = resp["QueryExecution"]["Status"]["State"]
+        if state == "SUCCEEDED":
+            _update_search_record(uuid, status="COMPLETE")
+            return
+        if state in ("FAILED", "CANCELLED"):
+            reason = resp["QueryExecution"]["Status"].get("StateChangeReason", "")
+            _update_search_record(uuid, status="FAILED", error=reason)
+            return
+        # QUEUED / RUNNING -- keep polling
+
+    try:
+        _athena_client.stop_query_execution(QueryExecutionId=query_execution_id)
+    except Exception as exc:
+        logger.warning("Best-effort stop_query_execution failed for search %s: %s", uuid, exc)
+    _update_search_record(uuid, status="ABORTED", error="Deadline exceeded (2 minutes)")
+
+
+class _BoundedResultCache:
+    """Hand-rolled LRU (OrderedDict, move-to-end on access, pop oldest when
+    over the cap) rather than a new dependency -- simple enough to
+    implement correctly without one. Lives only in process memory, wiped
+    on restart: a page request for a search that was mid-viewing when the
+    container restarted is just a cache miss, not an error."""
+
+    def __init__(self, max_entries: int) -> None:
+        self._max_entries = max_entries
+        self._data: OrderedDict[str, list[dict]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[list[dict]]:
+        with self._lock:
+            if key not in self._data:
+                return None
+            self._data.move_to_end(key)
+            return self._data[key]
+
+    def put(self, key: str, value: list[dict]) -> None:
+        with self._lock:
+            self._data[key] = value
+            self._data.move_to_end(key)
+            while len(self._data) > self._max_entries:
+                self._data.popitem(last=False)
+
+    def discard(self, key: str) -> None:
+        with self._lock:
+            self._data.pop(key, None)
+
+
+_result_cache = _BoundedResultCache(_RESULT_CACHE_MAX_ENTRIES)
+
+
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
+    without_scheme = uri.removeprefix("s3://")
+    bucket, _, key = without_scheme.partition("/")
+    return bucket, key
+
+
+def _result_output_location(query_execution_id: str) -> str:
+    resp = _athena_client.get_query_execution(QueryExecutionId=query_execution_id)
+    return resp["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
+
+
+def _uuid_from_s3_key(s3_key: str) -> str:
+    """flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz -- icao_hex
+    and ident never contain underscores (icao_hex is hex digits; ident is
+    sanitized to alnum-only by archive-processor's build_s3_key), so the
+    final underscore-separated segment is always the uuid."""
+    filename = s3_key.rsplit("/", 1)[-1]
+    stem = filename.removesuffix(".json.gz")
+    return stem.rsplit("_", 1)[-1]
+
+
+def _encrypt_s3_key(s3_key: str) -> str:
+    return _fernet.encrypt(s3_key.encode()).decode()
+
+
+def _decrypt_token(token: str) -> str:
+    try:
+        return _fernet.decrypt(token.encode()).decode()
+    except InvalidToken as exc:
+        raise HTTPException(status_code=400, detail="Invalid or expired flight token") from exc
+
+
+def _fetch_and_cache_results(uuid: str, query_execution_id: str) -> list[dict]:
+    cached = _result_cache.get(uuid)
+    if cached is not None:
+        return cached
+
+    try:
+        output_location = _result_output_location(query_execution_id)
+        bucket, key = _parse_s3_uri(output_location)
+        obj = _s3_client.get_object(Bucket=bucket, Key=key)
+        body = obj["Body"].read().decode("utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch search results: {exc}") from exc
+
+    reader = csv.reader(io.StringIO(body))
+    data_rows = list(reader)[1:]  # skip Athena's own header row
+    rows = [_row_from_csv_fields(fields) for fields in data_rows]
+    _result_cache.put(uuid, rows)
+    return rows
+
+
+def _row_from_csv_fields(fields: list[str]) -> dict:
+    (
+        icao_hex, registration, type_designator, military,
+        operator_designator, ident, first_message, last_message, s3_key,
+    ) = fields
+    return {
+        "uuid": _uuid_from_s3_key(s3_key),
+        "icao_hex": icao_hex,
+        "registration": registration,
+        "type_designator": type_designator,
+        "military": military.strip().lower() == "true",
+        "operator_designator": operator_designator,
+        "ident": ident,
+        "first_message": first_message,
+        "last_message": last_message,
+        "token": _encrypt_s3_key(s3_key),
+    }
+
+
+@app.post(
+    "/api/archive/search",
+    tags=["archive"],
+    status_code=202,
+    responses={**_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
+)
+def create_archive_search(body: ArchiveSearchCreate):
+    where_clause = body.where_clause.strip()
+    if not where_clause:
+        raise HTTPException(status_code=400, detail="where_clause must not be empty")
+    _validate_where_clause(where_clause)
+
+    query = _build_search_query(where_clause)
+    try:
+        resp = _athena_client.start_query_execution(
+            QueryString=query,
+            QueryExecutionContext={"Database": _athena_cfg["database"]},
+            WorkGroup=_athena_cfg["workgroup"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to start Athena query: {exc}") from exc
+    query_execution_id = resp["QueryExecutionId"]
+
+    search_uuid = str(uuid7())
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    record = {
+        "name": body.name,
+        "where_clause": where_clause,
+        "status": "RUNNING",
+        "submitted_at": submitted_at,
+        "query_execution_id": query_execution_id,
+    }
+    _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=_SEARCH_TTL_SECONDS)
+
+    threading.Thread(
+        target=_poll_search_execution,
+        args=(search_uuid, query_execution_id),
+        daemon=True,
+        name=f"archive-search-{search_uuid}",
+    ).start()
+
+    return JSONResponse(status_code=202, content={"uuid": search_uuid})
+
+
+@app.get(
+    "/api/archive/search",
+    tags=["archive"],
+    response_model=list[ArchiveSearchSummary],
+    responses={**_REDIS_ERROR},
+)
+def list_archive_searches():
+    summaries = []
+    for key in _redis_scan_keys("archive_search:*"):
+        raw = _redis.get(key)
+        if not raw:
+            continue
+        record = json.loads(raw)
+        summaries.append(_search_summary(key.split(":", 1)[-1], record))
+    summaries.sort(key=lambda s: s["submitted_at"], reverse=True)
+    return JSONResponse(content=summaries)
+
+
+@app.get(
+    "/api/archive/search/{uuid}",
+    tags=["archive"],
+    response_model=ArchiveSearchDetail,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def get_archive_search(uuid: str):
+    record = _get_search_record(uuid)
+    return JSONResponse(content={**_search_summary(uuid, record), "where_clause": record["where_clause"]})
+
+
+@app.get(
+    "/api/archive/search/{uuid}/results",
+    tags=["archive"],
+    response_model=list[ArchiveSearchResultRow],
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
+)
+def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge=1)):
+    record = _get_search_record(uuid)
+    if record["status"] != "COMPLETE":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Search '{uuid}' is not complete (status: {record['status']})",
+        )
+    rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
+    start = (page - 1) * _PAGE_SIZE
+    return JSONResponse(content=rows[start:start + _PAGE_SIZE])
+
+
+@app.delete(
+    "/api/archive/search/{uuid}",
+    tags=["archive"],
+    status_code=204,
+    responses={**_NOT_FOUND, **_REDIS_ERROR},
+)
+def delete_archive_search(uuid: str):
+    record = _get_search_record(uuid)
+
+    if record["status"] == "RUNNING":
+        # Fire, don't wait -- the delete proceeds regardless of whether
+        # Athena's cancellation has actually taken effect yet.
+        try:
+            _athena_client.stop_query_execution(QueryExecutionId=record["query_execution_id"])
+        except Exception as exc:
+            logger.warning("Best-effort stop_query_execution failed for search %s: %s", uuid, exc)
+
+    if record["status"] == "COMPLETE":
+        # Delete the risky/expensive side (the S3 result file) before the
+        # Redis pointer to it, matching archive-compaction's own
+        # write-then-delete ordering principle.
+        try:
+            output_location = _result_output_location(record["query_execution_id"])
+            bucket, key = _parse_s3_uri(output_location)
+            _s3_client.delete_object(Bucket=bucket, Key=key)
+        except Exception as exc:
+            logger.warning("Failed to delete Athena result file for search %s: %s", uuid, exc)
+
+    try:
+        _redis.delete(archive_search_key(uuid))
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+    _result_cache.discard(uuid)
+
+    return Response(status_code=204)
+
+
+@app.get(
+    "/api/archive/flights/{token}",
+    tags=["archive"],
+    responses={**_VALIDATION_ERROR, **_AWS_ERROR},
+)
+def get_archive_flight(token: str):
+    s3_key = _decrypt_token(token)
+    try:
+        obj = _s3_client.get_object(Bucket=_s3_bucket, Key=s3_key)
+        body = obj["Body"].read()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch flight: {exc}") from exc
+
+    filename = s3_key.rsplit("/", 1)[-1]
+    return Response(
+        content=body,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
