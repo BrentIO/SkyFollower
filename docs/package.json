@@ -12,6 +12,10 @@
   },
   "devDependencies": {
     "@asyncapi/web-component": "^3.1.4",
+    "@stoplight/elements": "^9.0.24",
     "vitepress": "^1.6.4"
+  },
+  "scarfSettings": {
+    "enabled": false
   }
 }
