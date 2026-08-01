@@ -10,10 +10,10 @@ endpoints — rendered interactively from
 [`specs/openapi.yaml`](https://github.com/BrentIO/SkyFollower/blob/main/specs/openapi.yaml).
 
 ::: tip No auth
-management-ui has no authentication (home lab deployment) — the "Try it"
-console is hidden here to avoid encouraging live requests against a
-reader's own unauthenticated instance straight from this public docs
-page. Use `curl`/Postman/etc. against your own instance instead.
+management-ui has no authentication (home lab deployment). The "Try it
+out" button below sends real requests to whatever base URL you point it
+at — nothing is called automatically, but if you use it against your own
+instance, remember there's no auth in front of it.
 :::
 
 <ClientOnly>
