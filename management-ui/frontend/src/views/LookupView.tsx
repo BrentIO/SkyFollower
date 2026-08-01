@@ -33,8 +33,8 @@ function sanitizeQuery(raw: string): string {
 }
 
 // 6 hex digits -> icao_hex; anything else -> registration. Registration
-// formats vary too much by country to validate further client-side (see
-// #558) -- non-hex input is just passed through and a 404 means "not found."
+// formats vary too much by country to validate further client-side --
+// non-hex input is just passed through and a 404 means "not found."
 //
 // This guess is only a starting point, not a guarantee: plenty of real
 // registrations (e.g. "CA7116", "AEE326") happen to use only [0-9A-F]
@@ -518,7 +518,7 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
       // and then separately re-centered on the great-circle midpoint,
       // which kept fitBounds's narrower zoom level but moved the
       // endpoints toward or past the edge of the now-differently-centered
-      // viewport (see #638).
+      // viewport.
       const lineCoords = points.length > 1 ? buildGreatCircleLine(points) : [];
 
       if (lineCoords.length > 0) {
@@ -657,7 +657,7 @@ export function LookupView() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         // Redis can't distinguish "never seen," "TTL expired," or "not yet
-        // enriched" -- one generic message for all three, per #558.
+        // enriched" -- one generic message for all three.
         setNotFound(true);
       } else {
         showToast("error", err instanceof ApiError ? err.message : "Lookup failed.");

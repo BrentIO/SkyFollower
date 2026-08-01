@@ -73,7 +73,7 @@ class TestSetJson:
 
 class TestSetJsonUtf8OnTheWire:
     """Exercises the real redis-py JSON client's encoder to prove non-ASCII
-    characters reach the wire as-is, not as \\uXXXX escapes (issue #291)."""
+    characters reach the wire as-is, not as \\uXXXX escapes."""
 
     def _json_client(self):
         conn = MagicMock()

@@ -28,7 +28,7 @@
 -- an aircraft's enrichment came from more than one runner. Instead the
 -- result never carries a bare `source` — every present key's `source` is
 -- collected into `data_sources`, an array in mictronics -> registry ->
--- livery order, distinct from #492's unrelated per-flight
+-- livery order, distinct from the unrelated per-flight
 -- `receiver_sources` field (1090/978/MLAT).
 --
 -- Called by the message processor via EVALSHA so the merge is a single round-trip.

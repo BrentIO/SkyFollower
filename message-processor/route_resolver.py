@@ -47,8 +47,12 @@ HEADING_TOLERANCE_DEG = 30
 HEADING_MARGIN_DEG = 15
 
 # Cross-track sanity check: threshold_nm = max(floor, percentage * route_distance).
-# See the #498 issue discussion for why a flat nm threshold doesn't work at
-# either end of the route-length spectrum.
+# A single flat nm value doesn't work at either end of the route-length
+# spectrum -- too loose for a short hop (nearly any position "counts" as on
+# the route) and too tight for a long one (routine GPS/heading noise on a
+# multi-thousand-nm leg would fail the check), so the threshold scales with
+# the route's own distance, floored so a very short route still gets a
+# sane minimum.
 CROSS_TRACK_FLOOR_NM = 150
 CROSS_TRACK_PERCENTAGE = 0.30
 
@@ -322,8 +326,8 @@ def passes_cross_track_check(positions: list[dict], origin: dict, destination: d
       within [0, route_distance] (plus a small fixed slack for ordinary
       terminal-area maneuvering) -- catches a position that's coincidentally
       near the line's bearing but nowhere close to the actual leg, e.g. well
-      past the destination (see route_resolver module docstring / #498
-      discussion for the holding-pattern case this specifically catches)."""
+      past the destination (see this module's own docstring for the
+      holding-pattern case this specifically catches)."""
     return _sanity_check_violation(positions, origin, destination) is None
 
 

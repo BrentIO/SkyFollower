@@ -88,7 +88,7 @@ class RulesEngine:
         self._rules_version: Optional[str] = None
         self._areas_version: Optional[str] = None
         # Set on the most recent failed _load_rules/_load_areas call; consumed
-        # by the UI backend (#14) to return a 400 with a useful detail message
+        # by the UI backend to return a 400 with a useful detail message
         # instead of only the logger.critical() output below.
         self.last_error: Optional[str] = None
 

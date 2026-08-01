@@ -104,16 +104,16 @@ def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMoc
 
 
 # ---------------------------------------------------------------------------
-# _decode_1090 (#302 — pyModeS 3.x migration)
+# _decode_1090 (pyModeS 3.x migration)
 #
 # These hex frames are hand-crafted with pyModeS's own CRC function
 # (pyModeS._bits.crc_remainder) rather than copy-pasted from elsewhere, so
 # each one is deliberately built to exercise exactly one field combination
 # and independently verified against pms.decode() directly before being
-# used here. This is the coverage that would have caught the pre-#302 bug
-# (pms.df() raising V2APIRemovedError on every message) — every other test
-# in this file calls _update_flight directly with hand-built dicts and
-# never touches real decode at all.
+# used here. This is the coverage that would have caught a pyModeS 3.x
+# migration bug (pms.df() raising V2APIRemovedError on every message) —
+# every other test in this file calls _update_flight directly with
+# hand-built dicts and never touches real decode at all.
 # ---------------------------------------------------------------------------
 
 class TestDecode1090:
@@ -246,7 +246,7 @@ class TestDecode1090:
 
 
 # ---------------------------------------------------------------------------
-# _decode_978 (#320 — pyModeS978 UAT decoding)
+# _decode_978 (pyModeS978 UAT decoding)
 #
 # These UAT frames are hand-crafted with a synthetic frame builder ported
 # from pyModeS978's own test suite (tests/synth.py — test-only there, not
@@ -566,7 +566,7 @@ class TestFlight:
 
 # ---------------------------------------------------------------------------
 # MessageProcessor._archive — live-path publish, mirroring receiver._publish()'s
-# rmq_connected reset on a basic_publish failure (see #533)
+# rmq_connected reset on a basic_publish failure
 # ---------------------------------------------------------------------------
 
 class TestProcessorArchive:
@@ -607,7 +607,7 @@ class TestProcessorArchive:
         """A live basic_publish failure is the only self-correcting path
         this component has — unlike the receiver, nothing else in
         _archive() ever flips rmq_connected back, so a failure here must
-        set it False rather than leaving it pinned True (see #533)."""
+        set it False rather than leaving it pinned True."""
         p, _ = _make_processor()
         mock_channel = MagicMock()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
@@ -627,7 +627,7 @@ class TestProcessorArchive:
 
 # ---------------------------------------------------------------------------
 # MessageProcessor._drain_fallback — and its periodic-tick trigger from
-# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger (#526)
+# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger
 # ---------------------------------------------------------------------------
 
 def _synchronous_drain_thread():
@@ -675,7 +675,7 @@ class TestProcessorDrainFallback:
     def test_drain_fallback_resets_rmq_connected_on_publish_failure(self):
         """A failed basic_publish during draining is just as much evidence
         the connection is broken as a failed live-path publish — mirror
-        _archive()'s handling (and the receiver's #531 fix)."""
+        _archive()'s handling (and the receiver's equivalent fix)."""
         p, _ = _make_processor()
         p._fallback.put('{"_id": "a"}')
         mock_channel = MagicMock()
@@ -704,7 +704,7 @@ class TestProcessorDrainFallback:
     def test_telemetry_loop_drains_when_connected(self):
         """The periodic tick must attempt a drain when RabbitMQ is
         connected — this is what lets a stuck/missed reconnect-triggered
-        drain (see #526) still recover on the next tick, since a publish
+        drain still recover on the next tick, since a publish
         failure can pin _rmq_connected False without the underlying
         connection ever raising AMQPConnectionError to re-enter
         _consume_loop's own reconnect-triggered drain."""
@@ -996,7 +996,7 @@ class TestProcessorEnrichment:
 
 
 # ---------------------------------------------------------------------------
-# _route_ready / _maybe_resolve_route — route:{ident} leg resolution (#498)
+# _route_ready / _maybe_resolve_route — route:{ident} leg resolution
 #
 # The heuristics themselves (proximity, heading-vs-bearing, cross-track
 # sanity check) are unit tested in isolation in test_route_resolver.py;
@@ -1145,9 +1145,9 @@ class TestMaybeResolveRoute:
         assert "[]" in caplog.text
 
     def test_sanity_check_rejection_leaves_unset(self):
-        """Real-world case from #498: a flight's actual track ran ~800nm
-        from the KMSP-KMKE great-circle line -- the route entry was bogus
-        for this flight, and neither field should be set."""
+        """Real-world case: a flight's actual track ran ~800nm from the
+        KMSP-KMKE great-circle line -- the route entry was bogus for this
+        flight, and neither field should be set."""
         p, mock_redis = _make_processor()
         airports = [
             {"icao_code": "KMSP", "latitude": 44.882, "longitude": -93.222},
@@ -1209,8 +1209,8 @@ class TestMaybeResolveRouteHeadingStability:
     reading, or a genuinely circling/holding aircraft) must not be marked
     route_resolution_attempted -- it's re-evaluated on later messages once
     more heading samples arrive -- but the fetched airport records are
-    cached so the retry never repeats the Redis round trip (#498 follow-up:
-    the storm-holding-pattern scenario)."""
+    cached so the retry never repeats the Redis round trip (the
+    storm-holding-pattern scenario)."""
 
     KJFK = {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789}
     KMIA = {"icao_code": "KMIA", "latitude": 25.7959, "longitude": -80.2870}
@@ -1851,7 +1851,7 @@ class TestMqttLagGuard:
 
 
 # ---------------------------------------------------------------------------
-# flight_ttl_seconds: shared Redis config (#477)
+# flight_ttl_seconds: shared Redis config
 # ---------------------------------------------------------------------------
 
 class TestFlightTtlLoad:

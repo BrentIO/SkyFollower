@@ -1373,7 +1373,7 @@ class TestFinishS3Connect:
 
 
 # ---------------------------------------------------------------------------
-# flight_ttl_seconds: shared Redis config (#477)
+# flight_ttl_seconds: shared Redis config
 # ---------------------------------------------------------------------------
 
 class TestFlightTtlLoad:

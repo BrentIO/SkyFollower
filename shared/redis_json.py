@@ -4,12 +4,12 @@ Shared write path for RedisJSON documents.
 All data runners build an enrichment record as a plain dict, often leaving
 `None` in place for fields with no data (e.g. `row["model"] or None`). Writing
 that dict straight to Redis stores literal JSON `null` for those fields,
-which forces every consumer to distinguish "null" from "missing" (issue #289).
+which forces every consumer to distinguish "null" from "missing".
 
 redis-py's JSON client also serializes with `json.dumps(..., ensure_ascii=True)`
 by default, which escapes every non-ASCII character (e.g. accented Latin,
 Cyrillic, Georgian script) as a `\\uXXXX` sequence. That's valid JSON but
-unreadable in Redis Insight and other tooling (issue #291).
+unreadable in Redis Insight and other tooling.
 
 `set_json()` is the single choke point every runner writes enrichment records
 through, so both invariants — no null values, UTF-8 stored as-is — are

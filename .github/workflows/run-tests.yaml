@@ -6,7 +6,7 @@ run-name: "Run Tests ${{ github.event_name == 'pull_request' && format('PR #{0}'
 # adding a new component (data runner or otherwise) with its own
 # requirements.txt and tests/ directory is picked up automatically, with no
 # workflow change needed, mirroring the discovery convention already
-# established in build-container-images.yaml's discover-images job. See #398.
+# established in build-container-images.yaml's discover-images job.
 on:
   pull_request: {}
   push:

@@ -25,8 +25,8 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-// Matches Terra Draw's own default stroke/fill/marker color (see #625) --
-// the fallback whenever an area has no simplestyle-spec color of its own.
+// Matches Terra Draw's own default stroke/fill/marker color -- the
+// fallback whenever an area has no simplestyle-spec color of its own.
 const DEFAULT_SHAPE_COLOR: HexColor = "#3f97e0";
 
 // Area.fill/stroke/marker-color are plain Optional[str] on the backend, not
@@ -97,7 +97,7 @@ function featureMarkerColor(feature: GeoJSONStoreFeatures): HexColor {
 
 // The area-labels layer's own color source -- Polygon/LineString match
 // their stroke, Point its marker color, same convention as the shapes
-// themselves (see #625).
+// themselves.
 function areaLabelColor(area: Area): string | undefined {
   return area.geometry.type === "Point" ? area["marker-color"] : area.stroke;
 }
@@ -197,8 +197,8 @@ function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
 // Rough average glyph advance width for a bold sans-serif, as a fraction of
 // font size -- avoids depending on canvas measureText with the actual
 // "Noto Sans Bold" (which isn't necessarily loaded as a usable browser
-// font just because MapLibre's glyph server serves it -- see #620). Biased
-// slightly wide on purpose, so a shape wraps a little early rather than
+// font just because MapLibre's glyph server serves it). Biased slightly
+// wide on purpose, so a shape wraps a little early rather than
 // text creeping past its edge.
 const LABEL_FONT_SIZE_PX = 14;
 const AVG_GLYPH_WIDTH_RATIO = 0.62;
@@ -211,7 +211,7 @@ function estimateTextWidthPx(text: string): number {
   return text.length * LABEL_FONT_SIZE_PX * AVG_GLYPH_WIDTH_RATIO;
 }
 
-// Screen-space width (#590) -- Polygon/LineString only (a Point has no
+// Screen-space width -- Polygon/LineString only (a Point has no
 // width to fit). Projects the shape's geographic bounding box through the
 // live map (so it reflects the current zoom, not a fixed geographic size)
 // to get an actual on-screen pixel width, then converts to the em-based
@@ -319,7 +319,7 @@ function labelPosition(geometry: Area["geometry"]): [number, number] {
   }
 }
 
-// Screen-space alignment guides (#580) -- PowerPoint-style "your shape is
+// Screen-space alignment guides -- PowerPoint-style "your shape is
 // lining up with another one" assistance while dragging, no ready-made
 // terra-draw feature for this. `axis: "x"` is a vertical guide line at a
 // constant screen X (a horizontal-alignment match); `axis: "y"` is
@@ -551,7 +551,7 @@ export function AreasView() {
   // extracted from the imported feature's own properties for an import.
   const [pendingStyle, setPendingStyle] = useState<StyleFields>({});
   const [importModalOpen, setImportModalOpen] = useState(false);
-  // Screen-space alignment guides (#580) -- only ever non-empty while a
+  // Screen-space alignment guides -- only ever non-empty while a
   // shape is actively being dragged/reshaped; cleared the moment the drag
   // ends (draw's "finish" event) or selection otherwise changes.
   const [guideLines, setGuideLines] = useState<AlignmentGuide[]>([]);
@@ -566,7 +566,7 @@ export function AreasView() {
     }
   }
 
-  // The area-labels source's single source of truth (#590) -- called
+  // The area-labels source's single source of truth -- called
   // whenever anything that affects a label's position or fit changes: the
   // saved area list, an in-progress drag/vertex edit (via
   // handleDrawChangeRef below, passing the in-progress geometry in place
@@ -641,9 +641,9 @@ export function AreasView() {
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
     setDraft((prev) => (prev ? { ...prev, geometry } : prev));
-    // Live-track the label position/fit while dragging or reshaping (#590)
-    // -- not just after Save, which is all the areas-list effect below
-    // would otherwise cover.
+    // Live-track the label position/fit while dragging or reshaping -- not
+    // just after Save, which is all the areas-list effect below would
+    // otherwise cover.
     refreshLabelSource(areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry } : a)));
     const map = mapRef.current;
     if (map) {
@@ -686,7 +686,7 @@ export function AreasView() {
     });
   };
 
-  // computeMaxWidthEms's fit is screen-space, not geographic (#590) -- a
+  // computeMaxWidthEms's fit is screen-space, not geographic -- a
   // shape's on-screen width changes with zoom even though its real size
   // doesn't, so labels need re-fitting on zoom too, not just when a
   // shape's geometry or the saved area list changes. Rotation/pitch are
@@ -774,7 +774,7 @@ export function AreasView() {
             ["literal", [0, 0.6]],
             ["literal", [0, 0]],
           ],
-          // Wraps to computeMaxWidthEms's per-area value (#590) when the
+          // Wraps to computeMaxWidthEms's per-area value when the
           // shape is wide enough to be worth fitting into; MapLibre's own
           // default (10ems) otherwise -- effectively the "current
           // fixed-size behavior" fallback for a too-small shape or a Point.
@@ -783,8 +783,8 @@ export function AreasView() {
         // Each label feature carries its own area's stroke/marker-color as
         // `color` (see labelsFeatureCollection/areaLabelColor) -- falls
         // back to DEFAULT_SHAPE_COLOR (#3f97e0, Terra Draw's own default
-        // stroke/fill/marker color -- see #625) for an area with no custom
-        // style, same color every unstyled shape actually renders in.
+        // stroke/fill/marker color) for an area with no custom style, same
+        // color every unstyled shape actually renders in.
         paint: {
           "text-color": ["coalesce", ["get", "color"], DEFAULT_SHAPE_COLOR],
           "text-halo-color": "#ffffff",
@@ -862,7 +862,7 @@ export function AreasView() {
         // brand new polygon (action "draw") should prompt for a name.
         if (context.action === "draw") handleDrawFinishRef.current(String(id));
       });
-      // Alignment guides (#580) are only meaningful mid-drag. "finish"
+      // Alignment guides are only meaningful mid-drag. "finish"
       // looked like the natural place to clear them (it's documented to
       // also fire for completed drags), but empirically does NOT fire for
       // every whole-feature drag (confirmed: a plain fill-drag, as opposed
@@ -935,8 +935,8 @@ export function AreasView() {
   }, [mapReady, showToast]);
 
   // Keeps the label source (committed areas -- handleDrawChangeRef covers
-  // in-progress edits separately, see #590) in sync whenever the saved
-  // area list changes.
+  // in-progress edits separately) in sync whenever the saved area list
+  // changes.
   useEffect(() => {
     if (!mapReady) return;
     refreshLabelSource(areas);
@@ -1303,7 +1303,7 @@ export function AreasView() {
                         placeholder="Display name"
                         className="rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"
                       />
-                      {/* Color control(s) matching the geometry type (#579) --
+                      {/* Color control(s) matching the geometry type --
                           fill+stroke for Polygon, stroke only for LineString
                           (no fill to speak of), marker color for Point.
                           Live-previewed on the map via updateFeatureProperties,
@@ -1454,7 +1454,7 @@ export function AreasView() {
           conflict with maplibregl-map's own position: relative.
         */}
         <div ref={mapContainerRef} className="h-full w-full" />
-        {/* Alignment guides (#580) -- screen-space, so a plain SVG overlay
+        {/* Alignment guides -- screen-space, so a plain SVG overlay
             sharing this same relatively-positioned container (matching
             map.project()'s own pixel coordinate origin exactly) is
             simpler and more precise than round-tripping through

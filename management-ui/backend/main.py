@@ -9,9 +9,10 @@ in Redis, polled every 30 seconds). No authentication — home lab deployment.
 Named "management" to leave room for a future, separate UI for viewing live
 aircraft movement, distinct from this configuration-focused one.
 
-Runs standalone on port 8000 for now. Once the React frontend (#15, #16)
-exists, the Dockerfile will grow a node build stage and nginx will proxy
-/api/* to this process and serve the built frontend at /.
+Runs on port 8000, bound to 127.0.0.1 only inside the container. The
+Dockerfile is a multi-stage build: a node stage produces the static React
+frontend bundle, and the final stage runs both uvicorn and nginx --
+nginx serves the built frontend at / and proxies /api/* to this process.
 """
 
 from __future__ import annotations
@@ -1280,8 +1281,8 @@ def delete_area(identifier: str):
 # Reference-data lookup (aircraft/operator/airport/route) -- static enrichment
 # already held in Redis for rule evaluation, exposed read-only for browsing.
 # Distinct from a future live-aircraft-position UI (see this module's
-# docstring) and from #520's Athena archive search (historical flights, not
-# current Redis state).
+# docstring) and from the Athena archive search below (historical flights,
+# not current Redis state).
 # ---------------------------------------------------------------------------
 
 @app.get(

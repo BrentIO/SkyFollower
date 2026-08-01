@@ -1,8 +1,8 @@
 """
-Guards the convention from issue #305/#306: every spec file's version field
-is a checked-in 9999.99.99 placeholder on main, substituted with the real
-release version only in build/release output (see .github/workflows/release.yaml),
-never committed back to main.
+Guards the convention that every spec file's version field is a checked-in
+9999.99.99 placeholder on main, substituted with the real release version
+only in build/release output (see .github/workflows/release.yaml), never
+committed back to main.
 """
 
 from __future__ import annotations

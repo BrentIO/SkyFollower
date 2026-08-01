@@ -1,7 +1,7 @@
 """
 Tests for message-processor/route_resolver.py — pure geo math and route-leg
-resolution logic, independent of Redis/route_airports.lua (see #500 for that
-integration test, already covered in shared/tests/test_route_airports_lua.py).
+resolution logic, independent of Redis/route_airports.lua (that integration
+is covered separately in shared/tests/test_route_airports_lua.py).
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates docs/components/*.md and docs/runners/*.md from the source
-// READMEs discovered by discover.mjs (see #434). Regenerated on every
+// READMEs discovered by discover.mjs. Regenerated on every
 // `docs:dev`/`docs:build` — output is gitignored so the source READMEs stay
 // the single source of truth and the docs site can't drift from them.
 //
@@ -12,7 +12,7 @@
 // VitePress's dead-link checker correctly rejects. Rewriting known
 // `<dir>/README.md` links to their docs-site route here means the source
 // stays GitHub-correct, the generated page stays docs-site-correct, and the
-// link is still validated at build time — see #448.
+// link is still validated at build time.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -28,7 +28,7 @@ for (const component of components) {
     // Flag the gap loudly rather than silently omitting the page.
     throw new Error(
       `docs generation: ${component.name}/README.md is missing — add it ` +
-        `(or an explicit stub page) before the docs site can build. See #434.`,
+        `(or an explicit stub page) before the docs site can build.`,
     );
   }
 }
