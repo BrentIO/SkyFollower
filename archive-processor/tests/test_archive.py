@@ -122,7 +122,7 @@ class _FakeS3:
 
 
 # ---------------------------------------------------------------------------
-# AWS setup reference files (see #519, shared/aws_setup.py)
+# AWS setup reference files (see shared/aws_setup.py)
 # ---------------------------------------------------------------------------
 
 class TestAwsSetupFilesWrittenOnStartup:

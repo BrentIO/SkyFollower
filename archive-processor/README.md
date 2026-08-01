@@ -185,20 +185,28 @@ schema is the authoritative source in
 
 Writing one small file per flight (rather than appending to one shared
 file) is deliberate: it's what makes this index queryable directly from S3
-via Athena/Glue partition projection, with no local-only, single-instance
-state to lose or rebuild. Daily compaction of these small per-flight files
-into one file per partition is a separate job — see `archive-compaction`'s
-own README (`archive-compaction/README.md`). The Glue table itself is a
-one-time, human-run console setup — see [AWS Setup](#aws-setup) below.
+via Athena/Glue partition projection, once that querying setup exists (see
+[AWS Setup](#aws-setup) below) — with no local-only, single-instance state
+to lose or rebuild in the meantime. Daily compaction of these small
+per-flight files into one file per partition is a separate job — see
+`archive-compaction`'s own README (`archive-compaction/README.md`).
 
 ## AWS Setup
 
-This process never calls a Glue, IAM, or Athena provisioning API — table,
-database, and identity creation are one-time admin actions performed
-directly in the AWS console. Instead, on every startup, the archive
-processor resolves its own `__BUCKET_NAME__`-templated reference files
-(baked into its image from `specs/aws/`) against its configured
-`s3.bucket` and writes them to `{data_dir}/aws-setup/`:
+**Nothing described in this section exists yet in AWS** — no Glue
+database, no Glue table, no Athena workgroup, no IAM identity. This
+component only ever prepares *local reference files* an operator uses to
+create those resources by hand; it never calls a Glue, IAM, or Athena
+provisioning API itself, and table/database/identity creation is not
+something this project automates anywhere. Until an operator actually
+works through [docs/aws-setup.md](../docs/aws-setup.md)'s console
+click-path setup guide in their own AWS account, the archive's Parquet
+index is written to S3 but isn't queryable by anything.
+
+On every startup, the archive processor resolves its own
+`__BUCKET_NAME__`-templated reference files (baked into its image from
+`specs/aws/`) against its configured `s3.bucket` and writes them to
+`{data_dir}/aws-setup/`:
 
 - `glue-table-definition.json` — the Glue table definition for the
   [Parquet index](#parquet-index) above, including partition projection
@@ -208,9 +216,7 @@ processor resolves its own `__BUCKET_NAME__`-templated reference files
 
 Re-running (restarting) always regenerates both files from the current
 config and the image's current templates — safe to do any time, and picks
-up a changed bucket name or an upgraded template on the next restart. See
-[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
-setup guide these files feed into.
+up a changed bucket name or an upgraded template on the next restart.
 
 ## Fault Tolerance
 

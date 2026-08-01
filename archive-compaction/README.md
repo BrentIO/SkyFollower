@@ -80,19 +80,22 @@ overridden with the `SETTINGS_PATH` environment variable.
 
 ## AWS Setup
 
-This job never calls a Glue, IAM, or Athena provisioning API — table,
-database, and identity creation are one-time admin actions performed
-directly in the AWS console. Instead, on every run, it resolves its own
-`__BUCKET_NAME__`-templated IAM policy (baked into its image from
-`specs/aws/iam-policies/archive-compaction.json`) against its configured
-`s3.bucket` and writes it to `{data_dir}/aws-setup/iam-policy.json`, for
-pasting directly into the console's JSON policy editor. This is a
+**No IAM identity for this job exists yet in AWS.** It only ever prepares
+a *local reference file* an operator uses to create one by hand; it never
+calls a Glue, IAM, or Athena provisioning API itself, and identity
+creation is not something this project automates anywhere. On every run,
+it resolves its own `__BUCKET_NAME__`-templated IAM policy (baked into its
+image from `specs/aws/iam-policies/archive-compaction.json`) against its
+configured `s3.bucket` and writes it to `{data_dir}/aws-setup/iam-policy.json`,
+for pasting directly into the console's JSON policy editor. This is a
 deliberately separate identity from `archive-processor`'s — it needs
 `Delete` and bucket-level `List` permissions archive-processor doesn't,
 and no access to `flights/*` object content at all (it only lists
 `flights/*` keys for the parity check, never reads them). See
 [docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
-setup guide.
+setup guide — including the Glue database/table and Athena workgroup this
+job's own permissions assume already exist, none of which this job (or
+any other component) provisions either.
 
 ## MQTT
 

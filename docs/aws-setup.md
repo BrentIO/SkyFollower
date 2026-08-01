@@ -1,14 +1,22 @@
 # AWS Setup
 
-The archive's Parquet index ([Archive Processor](/components/archive-processor)'s
-[Parquet Index](/components/archive-processor#parquet-index) section) is
-queried via AWS Athena against a Glue Catalog table, using partition
-projection rather than a Glue Crawler. No component in this project ever
-calls a Glue, IAM, or Athena provisioning API — table, database, workgroup,
-and identity creation are one-time (or rare) admin actions a human performs
-directly in the AWS console, using whatever access they already have. This
-sidesteps having to define, ship, or secure a new AWS credential just for
-provisioning.
+**None of the AWS resources on this page exist in a fresh SkyFollower
+deployment.** The archive's Parquet index ([Archive
+Processor](/components/archive-processor)'s [Parquet
+Index](/components/archive-processor#parquet-index) section) is written to
+S3 either way, but nothing can query it — via AWS Athena, against a Glue
+Catalog table, using partition projection rather than a Glue Crawler —
+until an operator manually creates that Glue database/table, an Athena
+workgroup, and two IAM identities by hand, following this page. There is
+also no UI or tool in this repo yet that actually *runs* an Athena query
+against the index once it exists — this page only covers provisioning the
+AWS-side resources a future consumer of the index will need.
+
+No component in this project ever calls a Glue, IAM, or Athena
+provisioning API — table, database, workgroup, and identity creation are
+one-time (or rare) admin actions a human performs directly in the AWS
+console, using whatever access they already have. This sidesteps having to
+define, ship, or secure a new AWS credential just for provisioning.
 
 ## What each component writes instead
 

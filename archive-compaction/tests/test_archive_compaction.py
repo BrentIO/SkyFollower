@@ -567,7 +567,7 @@ class TestPublishCompletionStats:
 
 
 # ---------------------------------------------------------------------------
-# AWS setup reference file (see #519, shared/aws_setup.py)
+# AWS setup reference file (see shared/aws_setup.py)
 # ---------------------------------------------------------------------------
 
 class TestAwsSetupFileWrittenOnRun:

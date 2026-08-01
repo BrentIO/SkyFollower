@@ -1,5 +1,5 @@
 """
-Shared helper for writing resolved AWS setup reference files (see #519).
+Shared helper for writing resolved AWS setup reference files.
 
 archive-processor and archive-compaction each ship template JSON files
 (baked into their own image, under specs/aws/) containing a literal
