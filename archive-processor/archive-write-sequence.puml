@@ -116,7 +116,7 @@ note over Reconnect, Consumer
 end note
 
 par S3 reconnect thread — draining the backlog
-    Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.list_buckets()""
+    Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.head_bucket(Bucket=bucket)""
     Reconnect -> Reconnect : **Drain the flight queue synchronously**\n""self._fallback.drain(self._process_fallback_flight)""
     note right of Reconnect
         Refer to "Drain loop" and "Flight-queue write callback" above.
