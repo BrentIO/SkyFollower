@@ -1,6 +1,5 @@
 """
-Shared SQLite-backed fallback/retry queue with poison-message dead-lettering
-(see #643).
+Shared SQLite-backed fallback/retry queue with poison-message dead-lettering.
 
 Every component that talks to an external dependency (RabbitMQ, S3) queues
 locally when that dependency is unreachable, and drains oldest-first once it

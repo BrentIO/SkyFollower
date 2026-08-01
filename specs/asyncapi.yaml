@@ -100,9 +100,9 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/dead_letter_queue_depth'
     description: >
       Number of messages dead-lettered from the local SQLite fallback after
-      repeatedly failing to publish (see #643) -- files under
-      dead_letters/queue/ in data_dir, not counted in local_queue_depth.
-      Published every telemetry_interval_seconds, retained.
+      repeatedly failing to publish -- files under dead_letters/queue/ in
+      data_dir, not counted in local_queue_depth. Published every
+      telemetry_interval_seconds, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -217,8 +217,8 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/dead_letter_queue_depth'
     description: >
       Number of completed flights dead-lettered from the local SQLite
-      archive fallback after repeatedly failing to publish (see #643) --
-      files under dead_letters/queue/ in data_dir, not counted in
+      archive fallback after repeatedly failing to publish -- files under
+      dead_letters/queue/ in data_dir, not counted in
       local_archive_queue_depth. Published every telemetry_interval_seconds,
       retained.
     parameters:

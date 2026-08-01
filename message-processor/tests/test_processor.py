@@ -621,8 +621,8 @@ class TestProcessorArchive:
 
 
 # Fallback queue put/drain/depth/dead-lettering is now covered by
-# shared/tests/test_fallback_queue.py (see #643) -- MessageProcessor just
-# wires shared.FallbackQueue in, tested below via TestProcessorDrainFallback.
+# shared/tests/test_fallback_queue.py -- MessageProcessor just wires
+# shared.FallbackQueue in, tested below via TestProcessorDrainFallback.
 
 
 # ---------------------------------------------------------------------------

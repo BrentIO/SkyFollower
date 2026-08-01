@@ -61,9 +61,9 @@ class TestPutAndDepth:
             assert q2.depth() == 2
 
     def test_migrates_pre_existing_table_missing_retry_count(self):
-        """A queue.db created before #643 has no retry_count column --
-        CREATE TABLE IF NOT EXISTS alone won't add it to an existing file,
-        so __init__ must ALTER TABLE it in, same pattern as
+        """A queue.db created before retry_count existed has no such
+        column -- CREATE TABLE IF NOT EXISTS alone won't add it to an
+        existing file, so __init__ must ALTER TABLE it in, same pattern as
         message-processor's _migrate_schema."""
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "queue.db")

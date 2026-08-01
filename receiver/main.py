@@ -354,12 +354,12 @@ class Receiver:
     def _fallback_put(self, queue_name: str, payload: str) -> None:
         """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
         has no queue_name column of its own, unlike this component's
-        pre-#643 fallback queue. queue_name is the target RabbitMQ routing
-        key computed once at insert time (see _route_message), and has to
-        be persisted alongside the payload rather than recomputed on drain
-        against a possibly-since-changed processor_count -- so it's wrapped
-        into one JSON string here and unwrapped again in _drain_fallback's
-        process_fn."""
+        previous hand-rolled fallback queue. queue_name is the target
+        RabbitMQ routing key computed once at insert time (see
+        _route_message), and has to be persisted alongside the payload
+        rather than recomputed on drain against a possibly-since-changed
+        processor_count -- so it's wrapped into one JSON string here and
+        unwrapped again in _drain_fallback's process_fn."""
         self._fallback.put(json.dumps({"queue_name": queue_name, "payload": payload}))
 
     def _drain_fallback(self) -> None:
