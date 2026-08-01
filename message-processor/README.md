@@ -274,6 +274,7 @@ All topics use the root `SkyFollower`.
 | `rules_engine_hwm_ms` | Integer as string | Rules engine duration high-water mark since last publish; resets on publish |
 | `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
+| `dead_letter_queue_depth` | Integer as string | Completed flights dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Flights](#dead-lettering-poison-flights)) |
 | `registration_misses_hour` | Integer as string | Aircraft Redis cache misses this hour |
 | `registration_misses_today` | Integer as string | Aircraft Redis cache misses today (UTC) |
 | `aircraft_type_misses_hour` | Integer as string | Aircraft type lookup misses this hour |
@@ -321,6 +322,38 @@ in progress at a time regardless of which trigger started it — if the
 periodic tick fires while the reconnect-triggered drain is still running,
 it's a no-op rather than a second overlapping drain, which could otherwise
 select the same queued row twice and publish it twice.
+
+The fallback queue is the shared `FallbackQueue` (see
+[shared/README.md](../shared/README.md)) rather than a component-local
+class.
+
+### Dead-Lettering Poison Flights
+
+A completed flight that fails to publish on every drain attempt — not
+because RabbitMQ is down, but because something about that specific record
+causes a deterministic failure — would otherwise retry forever, and since
+`drain()` always re-selects the oldest row first, it would also block every
+other queued flight behind it indefinitely. `FallbackQueue` tracks a
+per-row retry count: below the threshold (5, hardcoded), a failure behaves
+exactly as before — stop the drain pass, retry from the top next time. At
+the threshold, the row is judged permanently poison: it's written out as a
+standalone JSON file under `dead_letters/queue/` in `data_dir` (capped at
+100MB total, oldest file evicted first) for manual inspection, and the
+drain pass continues to whatever's queued behind it instead of stopping.
+There's no automated replay path — a dead-lettered file is purely something
+an operator inspects or discards out-of-band (`data_dir` is already a
+host-mounted volume, same as `completed_flights.db` itself).
+
+A raw attempt count alone isn't safe: `_drain_fallback()` is called on
+every successful RabbitMQ reconnect (not just on the `telemetry_interval_seconds`
+tick), so a flapping connection reconnecting every few seconds could
+otherwise burn through the retry threshold within seconds — dead-lettering
+a flight that was never actually poison, just unlucky enough to be at the
+head of the queue during a brief instability. `FallbackQueue` also enforces
+a minimum time between attempts on the same row (30 seconds, hardcoded,
+independent of how often `_drain_fallback()` itself gets called), so
+reaching the threshold always takes a real, bounded amount of elapsed
+time — not just a burst of rapid reconnect attempts.
 
 ### Active flight store durability & crash recovery
 

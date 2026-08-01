@@ -47,7 +47,6 @@ if "message_processor" not in sys.modules:
 from message_processor.main import (  # noqa: E402  (after sys.path/package setup)
     Flight,
     MessageProcessor,
-    _ArchiveFallbackQueue,
     _DepthHWM,
     _RateTracker,
     _TimeTracker,
@@ -621,91 +620,9 @@ class TestProcessorArchive:
         assert p._fallback.depth() == 1
 
 
-# ---------------------------------------------------------------------------
-# _ArchiveFallbackQueue
-# ---------------------------------------------------------------------------
-
-class TestArchiveFallbackQueue:
-    def test_put_and_depth(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _ArchiveFallbackQueue(tmp.name)
-            assert q.depth() == 0
-            q.put('{"test": 1}')
-            q.put('{"test": 2}')
-            assert q.depth() == 2
-
-    def test_drain_calls_publish_in_order(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _ArchiveFallbackQueue(tmp.name)
-            q.put("first")
-            q.put("second")
-            published = []
-            q.drain(published.append)
-            assert published == ["first", "second"]
-            assert q.depth() == 0
-
-    def test_drain_stops_on_exception(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _ArchiveFallbackQueue(tmp.name)
-            q.put("first")
-            q.put("second")
-
-            def fail(_):
-                raise ConnectionError("gone")
-
-            q.drain(fail)
-            assert q.depth() == 2  # nothing removed
-
-    def test_survives_reopen(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            path = tmp.name
-        q = _ArchiveFallbackQueue(path)
-        q.put("persistent")
-        del q
-        q2 = _ArchiveFallbackQueue(path)
-        assert q2.depth() == 1
-
-    def test_drain_in_background_is_a_noop_while_a_drain_is_already_in_progress(self):
-        """Simulates the reconnect-triggered and periodic telemetry-tick
-        triggers firing close together (#534): if a drain is already
-        holding the single-flight guard, a second call must not spawn
-        another drain -- overlapping drains could otherwise both SELECT
-        the same oldest row before either DELETEs it and duplicate-publish
-        it."""
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _ArchiveFallbackQueue(tmp.name)
-            q.put("payload")
-            q._drain_lock.acquire()  # simulate an in-progress drain
-            try:
-                calls = []
-                q.drain_in_background(calls.append)
-                time.sleep(0.05)  # give a wrongly-spawned thread a chance to run
-                assert calls == []
-                assert q.depth() == 1
-            finally:
-                q._drain_lock.release()
-
-    def test_drain_in_background_runs_and_releases_the_guard(self):
-        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-            q = _ArchiveFallbackQueue(tmp.name)
-            q.put("payload")
-            calls = []
-
-            q.drain_in_background(calls.append)
-
-            # Wait on the lock itself, not depth() -- drain() drops depth to
-            # 0 on its final DELETE, then still has to loop once more
-            # (SELECT finds nothing, breaks, returns) before its finally
-            # block releases _drain_lock. Polling depth() alone races ahead
-            # of that by up to one iteration, occasionally catching the lock
-            # still held.
-            deadline = time.monotonic() + 2
-            while q._drain_lock.locked() and time.monotonic() < deadline:
-                time.sleep(0.01)
-
-            assert calls == ["payload"]
-            assert q.depth() == 0
-            assert not q._drain_lock.locked()
+# Fallback queue put/drain/depth/dead-lettering is now covered by
+# shared/tests/test_fallback_queue.py -- MessageProcessor just wires
+# shared.FallbackQueue in, tested below via TestProcessorDrainFallback.
 
 
 # ---------------------------------------------------------------------------

@@ -96,6 +96,20 @@ channels:
       ReceiverLocalQueueDepthMessage:
         $ref: '#/components/messages/ReceiverLocalQueueDepthMessage'
 
+  receiverDeadLetterQueueDepth:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/dead_letter_queue_depth'
+    description: >
+      Number of messages dead-lettered from the local SQLite fallback after
+      repeatedly failing to publish -- files under dead_letters/queue/ in
+      data_dir, not counted in local_queue_depth. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverDeadLetterQueueDepthMessage:
+        $ref: '#/components/messages/ReceiverDeadLetterQueueDepthMessage'
+
   receiverRabbitmqConnected:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/rabbitmq_connected'
     description: >
@@ -198,6 +212,21 @@ channels:
     messages:
       MessageProcessorLocalArchiveQueueDepthMessage:
         $ref: '#/components/messages/MessageProcessorLocalArchiveQueueDepthMessage'
+
+  messageProcessorDeadLetterQueueDepth:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/dead_letter_queue_depth'
+    description: >
+      Number of completed flights dead-lettered from the local SQLite
+      archive fallback after repeatedly failing to publish -- files under
+      dead_letters/queue/ in data_dir, not counted in
+      local_archive_queue_depth. Published every telemetry_interval_seconds,
+      retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorDeadLetterQueueDepthMessage:
+        $ref: '#/components/messages/MessageProcessorDeadLetterQueueDepthMessage'
 
   messageProcessorRegistrationMissesHour:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_hour'
@@ -553,6 +582,12 @@ operations:
       $ref: '#/channels/receiverLocalQueueDepth'
     summary: Receiver publishes its local fallback queue depth
 
+  publishReceiverDeadLetterQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/receiverDeadLetterQueueDepth'
+    summary: Receiver publishes its dead-lettered (permanently poison) message count
+
   publishReceiverRabbitmqConnected:
     action: send
     channel:
@@ -600,6 +635,12 @@ operations:
     channel:
       $ref: '#/channels/messageProcessorLocalArchiveQueueDepth'
     summary: Message processor publishes its local archive fallback queue depth
+
+  publishMessageProcessorDeadLetterQueueDepth:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorDeadLetterQueueDepth'
+    summary: Message processor publishes its dead-lettered (permanently poison) flight count
 
   publishMessageProcessorRegistrationMissesHour:
     action: send
@@ -817,6 +858,14 @@ components:
       payload:
         $ref: '#/components/schemas/ReceiverLocalQueueDepth'
 
+    ReceiverDeadLetterQueueDepthMessage:
+      name: ReceiverDeadLetterQueueDepthMessage
+      title: Receiver dead-letter queue depth
+      summary: Messages dead-lettered from the local SQLite fallback after repeatedly failing to publish
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverDeadLetterQueueDepth'
+
     ReceiverRabbitmqConnectedMessage:
       name: ReceiverRabbitmqConnectedMessage
       title: Receiver RabbitMQ connectivity
@@ -872,6 +921,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/MessageProcessorLocalArchiveQueueDepth'
+
+    MessageProcessorDeadLetterQueueDepthMessage:
+      name: MessageProcessorDeadLetterQueueDepthMessage
+      title: Message Processor dead-letter queue depth
+      summary: Completed flights dead-lettered from the local SQLite archive fallback after repeatedly failing to publish
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorDeadLetterQueueDepth'
 
     MessageProcessorRegistrationMissesHourMessage:
       name: MessageProcessorRegistrationMissesHourMessage
@@ -1122,6 +1179,11 @@ components:
       description: Number of messages queued in the local SQLite fallback (queue.db)
       example: 0
 
+    ReceiverDeadLetterQueueDepth:
+      type: integer
+      description: Number of messages dead-lettered from the local SQLite fallback (dead_letters/queue/ in data_dir) after repeatedly failing to publish
+      example: 0
+
     ReceiverRabbitmqConnected:
       type: boolean
       description: True when the receiver has an active RabbitMQ connection
@@ -1156,6 +1218,11 @@ components:
     MessageProcessorLocalArchiveQueueDepth:
       type: integer
       description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
+      example: 0
+
+    MessageProcessorDeadLetterQueueDepth:
+      type: integer
+      description: Number of completed flights dead-lettered from the local SQLite archive fallback (dead_letters/queue/ in data_dir) after repeatedly failing to publish
       example: 0
 
     MessageProcessorRegistrationMissesHour:
