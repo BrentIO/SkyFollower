@@ -162,10 +162,161 @@ npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
 |-------|------|---------|-------------|
 | `redis.host` | string | `"localhost"` | |
 | `redis.port` | integer | `6379` | |
+| `s3.bucket` | string | — | S3 bucket the archive is written to (see [Archive Search](#archive-search)) |
+| `s3.region` | string | `"us-east-1"` | |
+| `s3.access_key_id` | string | — | |
+| `s3.secret_access_key` | string | — | |
+| `athena.workgroup` | string | — | Athena workgroup to run queries against (see [Archive Search](#archive-search)) |
+| `athena.database` | string | — | Glue database name |
+| `athena.table` | string | — | Glue table name (`archive_flights` by default in `specs/aws/glue-table-definition.json`, but this is operator-configured, not assumed) |
 | `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
 
 The settings file path defaults to `/app/settings.json` and can be
 overridden with the `SETTINGS_PATH` environment variable.
+
+## Archive Search
+
+Athena/Glue query layer over the archive's Parquet index (see
+[Archive Processor](../archive-processor/README.md)'s Parquet Index
+section and `specs/data-dictionary.yaml`'s `archive_parquet_index`
+record for the 9 underlying columns). This is a backend-only feature —
+there's no frontend for it yet.
+
+![Archive search: create, background poll, fetch results, fetch a flight, delete](./archive-search-sequence.svg)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/archive/search` | Start a search: `{name, where_clause}` body. `202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below) |
+| `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at}` each |
+| `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause`. `404` if not found |
+| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results. `400` if the search isn't `COMPLETE` yet |
+| `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `204`, or `404` if not found |
+| `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `400` on an invalid/expired token |
+
+### Query construction: a raw, user-supplied `WHERE` clause
+
+`where_clause` is genuinely user-authored SQL, not a set of structured
+filter fields — a deliberate, informed trade-off given this tool's actual
+exposure (single operator, no auth, not internet-facing), not an
+oversight. The backend always controls the rest of the statement:
+
+```sql
+SELECT icao_hex, registration, type_designator, military, operator_designator,
+       ident, first_message, last_message, s3_key
+FROM {athena.database}.{athena.table}
+WHERE ({where_clause})
+```
+
+`where_clause` only ever fills the parenthesized `WHERE` fragment — the
+`SELECT` list, `FROM` table, and parentheses are never influenced by user
+input, and there's no way to reach a different table. Still bounded by
+more than the application layer alone: the querying IAM identity is
+already read-only on just this one table (see [AWS Setup](#aws-setup)
+below), and Athena executes one statement per `start_query_execution`
+call, so no `;`-chained multi-statement injection is possible regardless
+of content. On top of that, a cheap early rejection (before ever calling
+Athena) 400s a `where_clause` containing `;` or a DDL/DML keyword
+(`DROP`/`CREATE`/`ALTER`/`INSERT`/`DELETE`/`UPDATE`/`GRANT`, matched
+word-boundary so `ident = 'INSERT1'` doesn't false-positive) — not a real
+security boundary given the IAM scoping above, purely so a mistake
+produces an instant, clear `400` instead of a slower, more opaque Athena
+`AccessDenied`.
+
+`s3_key` **is** selected from Athena (the backend needs it server-side to
+mint each row's fetch token and derive its flight UUID — see "Flight
+fetch" below) but is never included in any HTTP response body a browser
+receives.
+
+### Background polling
+
+One daemon thread per in-flight search, started by the `POST` handler
+right after `start_query_execution` returns. Polls Athena's
+`GetQueryExecution` on exponential backoff (1s, 2s, 4s, 8s, 16s, then
+capped at 30s) for up to 2 minutes wall-clock total. If the deadline is
+hit without reaching a terminal state, the thread calls
+`stop_query_execution` and marks the search `ABORTED` — deliberately
+distinct from `FAILED` (Athena itself reported the query failed) so a
+broken Glue table setup doesn't just look like a slow query in the log.
+On every process startup, any record still `RUNNING` is immediately
+marked `ABORTED` — its polling thread died with the previous process,
+nothing is left alive to ever finish that job.
+
+Every write the polling thread makes to Redis is a conditional
+`SET ... XX KEEPTTL` (only if the key still exists, and never resets the
+fixed 7-day TTL) — this is the thread-resurrection guard: if `DELETE`
+removes the record between this thread's last read and its next write,
+that write becomes a silent no-op instead of resurrecting a record the
+user already deleted.
+
+### Result retrieval and pagination
+
+Redis stores a pointer (the Athena `QueryExecutionId`) to the result set
+in S3, not the result data itself — the polling thread never fetches or
+caches rows at completion time. Rows are only fetched from S3 the first
+time a user actually opens a completed search's results: one `GetObject`
+downloads the entire result CSV (evaluated and rejected: S3 Select,
+byte-range reads, and Athena's own sequential `GetQueryResults`
+pagination — the whole archive index is only ~820MB per the original
+design's own estimate, so any single query's matching rows are realistically
+KB to low-single-digit-MB, well within "download it all and paginate from
+memory" territory), parsed once, and cached in a bounded in-process LRU
+(`OrderedDict`, move-to-end on access, capped at 10 concurrently-cached
+result sets) keyed by search UUID — every subsequent page for that same
+search slices the already-parsed list, no repeat S3 call. The cache lives
+only in process memory and is wiped on restart: a page request for a
+search that was mid-viewing when the container restarted is just a cache
+miss (one slower request, cached again from there), not an error or data
+loss.
+
+### Flight fetch: encryption, not a raw or encoded key
+
+The browser must never receive a real `s3_key` in any form — a reversible
+encoding (e.g. base64) is equivalent to sending the plaintext key. Each
+result row's `token` is its `s3_key`, encrypted with `Fernet`
+(authenticated symmetric encryption from Python's `cryptography` library)
+— a tampered/forged token simply fails to decrypt (`400`) rather than
+decrypting to some attacker-chosen key. The Fernet key itself is
+**ephemeral**: generated fresh via `Fernet.generate_key()` at every
+process startup, held only in memory, never written to
+`settings.json`/env/disk. A restart invalidates every token minted by the
+previous process — a search still open in a browser tab across a restart
+gets a `400` on "view flight" until the page is refreshed (which re-fetches
+results from the now-running process, producing freshly-encrypted tokens).
+Acceptable for a single-instance, low-traffic home-lab tool with
+infrequent deploys; every restart is effectively a free, automatic key
+rotation. This assumes a single running instance of this component,
+matching this project's actual deployment model (no horizontal scaling
+anywhere in its design).
+
+### TTLs
+
+- `archive_search:{uuid}` Redis records: **7 days from creation, fixed** —
+  never refreshed on access/viewing, or deleted early via `DELETE`.
+- Athena query-result files in S3: **8 days**, one day longer than the
+  Redis TTL so Redis's own pointer always drops before the file it
+  references actually disappears (an S3 lifecycle rule on the
+  query-results prefix — part of [AWS Setup](#aws-setup) below, not
+  something this backend enforces itself).
+
+### AWS Setup
+
+**Nothing described here exists yet in a fresh AWS account.** Like
+`archive-processor` and `archive-compaction`, this backend never calls a
+Glue, IAM, or Athena provisioning API itself — it only prepares a *local
+reference file* an operator uses to create its IAM identity by hand. On
+every startup, it resolves its own `__BUCKET_NAME__`-templated IAM policy
+(baked into its image from `specs/aws/iam-policies/management-ui.json`)
+against its configured `s3.bucket` and writes it to
+`$DATA_DIR/aws-setup/iam-policy.json`, for pasting directly into the
+console's JSON policy editor. Its Athena and Glue permissions are
+`Resource: "*"` rather than scoped to a specific table/workgroup ARN — a
+properly scoped ARN needs the AWS account ID, which nothing in this
+project discovers or is configured with — but its S3 access (the actually
+sensitive part) is fully scoped, same as `archive-processor`/
+`archive-compaction`'s identities. See
+[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
+setup guide (Glue database/table, Athena workgroup + query-results
+location + lifecycle rule, and all three components' IAM identities).
 
 ## Backing up `config:rules`/`config:areas`
 

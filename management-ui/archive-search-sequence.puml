@@ -1,0 +1,103 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Management UI Backend — Archive Search (Athena/Glue query layer)
+
+box "Management UI Backend" $OnPrem
+    participant "Backend\n(request thread)" as Backend
+    participant "Backend\n(poll thread)" as Poll
+    database "Redis" as Redis
+end box
+
+box "AWS" $AWS
+    participant "Athena" as Athena
+    participant "S3" as S3
+end box
+
+== Create a search ==
+
+Backend -> Backend : **Validate the WHERE clause**\n""_validate_where_clause(where_clause)""
+Backend -> Athena++ : **Start the query**\n""start_query_execution(QueryString, Database, WorkGroup)""
+Athena --> Backend-- : QueryExecutionId
+Backend -> Redis++ : **Write the search record**\n""SET archive_search:{uuid} {...} EX 7d""
+Redis --> Backend-- : OK
+Backend -\ Poll : **Spawn the polling thread**\n""threading.Thread(target=_poll_search_execution).start()""
+Backend --> Backend : 202 {uuid}
+
+== Background polling (exponential backoff, 2-minute deadline) ==
+
+loop until terminal state or deadline
+    Poll -> Poll : **Sleep (backoff)**\n""1s, 2s, 4s, 8s, 16s, then capped at 30s""
+    Poll -> Athena++ : **Check status**\n""get_query_execution(QueryExecutionId)""
+    Athena --> Poll-- : State
+    alt SUCCEEDED
+        Poll -> Redis++ : **Mark complete**\n""SET ... XX KEEPTTL {status: COMPLETE}""
+        Redis --> Poll-- : OK
+        break
+            Poll -> Poll : **Done**
+        end
+    else FAILED or CANCELLED
+        Poll -> Redis++ : **Mark failed**\n""SET ... XX KEEPTTL {status: FAILED, error: reason}""
+        Redis --> Poll-- : OK
+        break
+            Poll -> Poll : **Done**
+        end
+    else still running
+        Poll -> Poll : **Keep polling**
+    end
+end
+
+opt deadline exceeded without a terminal state
+    Poll -\ Athena : **Best-effort cancel**\n""stop_query_execution(QueryExecutionId)""
+    Poll -> Redis++ : **Mark aborted**\n""SET ... XX KEEPTTL {status: ABORTED}""
+    Redis --> Poll-- : OK
+end
+
+note over Poll, Redis
+    Every write here is SET ... XX -- a no-op if DELETE has already
+    removed the key, so a poll landing after the user deletes the
+    search can never resurrect it (see Delete below).
+end note
+
+== Fetch a page of results (first request for this search) ==
+
+Backend -> Redis++ : **Load the search record**\n""GET archive_search:{uuid}""
+Redis --> Backend-- : {status: COMPLETE, query_execution_id}
+Backend -> Athena++ : **Find the result file**\n""get_query_execution(QueryExecutionId).ResultConfiguration.OutputLocation""
+Athena --> Backend-- : s3://bucket/athena-results/{id}.csv
+Backend -> S3++ : **Download the full result CSV**\n""GetObject""
+S3 --> Backend-- : CSV body
+Backend -> Backend : **Parse once, cache in the bounded LRU**\n""_result_cache.put(uuid, rows)""
+Backend -> Backend : **Encrypt each row's s3_key into a fetch token**\n""Fernet(...).encrypt(s3_key)""
+Backend --> Backend : 200 [rows][page]
+
+== Fetch a flight by its encrypted token ==
+
+Backend -> Backend : **Decrypt the token**\n""Fernet(...).decrypt(token)""
+alt token valid
+    Backend -> S3++ : **Download the flight object**\n""GetObject flights/{...}.json.gz""
+    S3 --> Backend-- : gzipped flight JSON
+    Backend --> Backend : 200 (attachment download)
+else token invalid or expired (process restarted since minting)
+    Backend --> Backend : 400
+end
+
+== Delete a search ==
+
+Backend -> Redis++ : **Load the search record**\n""GET archive_search:{uuid}""
+Redis --> Backend-- : {status, query_execution_id}
+opt status == RUNNING
+    Backend -\ Athena : **Best-effort cancel**\n""stop_query_execution(QueryExecutionId)""
+end
+opt status == COMPLETE
+    Backend -> Athena++ : **Find the result file**\n""get_query_execution(QueryExecutionId)""
+    Athena --> Backend-- : OutputLocation
+    Backend -> S3++ : **Delete the result file**\n""DeleteObject""
+    S3 --> Backend-- : OK
+end
+Backend -> Redis++ : **Delete the search record**\n""DEL archive_search:{uuid}""
+Redis --> Backend-- : OK
+Backend -> Backend : **Evict from the in-process LRU, if present**\n""_result_cache.discard(uuid)""
+Backend --> Backend : 204
+
+@enduml

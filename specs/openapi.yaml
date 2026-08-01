@@ -2,9 +2,9 @@ openapi: 3.1.0
 info:
   title: SkyFollower Management
   description: Rules/areas configuration API (writes config:rules/config:areas in
-    Redis, read by every message processor) plus read-only reference-data lookups
-    (aircraft/operator/airport/route) over the same enrichment Redis already holds
-    for rule evaluation.
+    Redis, read by every message processor), read-only reference-data lookups (aircraft/operator/airport/route)
+    over the same enrichment Redis already holds for rule evaluation, and an archive
+    search API (Athena/Glue query layer over the S3 archive's Parquet index).
   version: 9999.99.99
 paths:
   /api/rules:
@@ -813,6 +813,239 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/search:
+    get:
+      tags:
+      - archive
+      summary: List Archive Searches
+      operationId: list_archive_searches_api_archive_search_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ArchiveSearchSummary'
+                type: array
+                title: Response List Archive Searches Api Archive Search Get
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+    post:
+      tags:
+      - archive
+      summary: Create Archive Search
+      operationId: create_archive_search_api_archive_search_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveSearchCreate'
+        required: true
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/search/{uuid}:
+    get:
+      tags:
+      - archive
+      summary: Get Archive Search
+      operationId: get_archive_search_api_archive_search__uuid__get
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveSearchDetail'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - archive
+      summary: Delete Archive Search
+      operationId: delete_archive_search_api_archive_search__uuid__delete
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Uuid
+      responses:
+        '204':
+          description: Successful Response
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/search/{uuid}/results:
+    get:
+      tags:
+      - archive
+      summary: Get Archive Search Results
+      operationId: get_archive_search_results_api_archive_search__uuid__results_get
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Uuid
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ArchiveSearchResultRow'
+                title: Response Get Archive Search Results Api Archive Search  Uuid  Results
+                  Get
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/flights/{token}:
+    get:
+      tags:
+      - archive
+      summary: Get Archive Flight
+      operationId: get_archive_flight_api_archive_flights__token__get
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -1086,6 +1319,137 @@ components:
       - operator
       - value
       title: AltitudeCondition
+    ArchiveSearchCreate:
+      properties:
+        name:
+          type: string
+          minLength: 1
+          title: Name
+        where_clause:
+          type: string
+          minLength: 1
+          title: Where Clause
+      type: object
+      required:
+      - name
+      - where_clause
+      title: ArchiveSearchCreate
+    ArchiveSearchDetail:
+      properties:
+        uuid:
+          type: string
+          title: Uuid
+        name:
+          type: string
+          title: Name
+        status:
+          type: string
+          enum:
+          - RUNNING
+          - COMPLETE
+          - FAILED
+          - ABORTED
+          title: Status
+        submitted_at:
+          type: string
+          title: Submitted At
+        expires_at:
+          type: string
+          title: Expires At
+        where_clause:
+          type: string
+          title: Where Clause
+      type: object
+      required:
+      - uuid
+      - name
+      - status
+      - submitted_at
+      - expires_at
+      - where_clause
+      title: ArchiveSearchDetail
+    ArchiveSearchResultRow:
+      properties:
+        uuid:
+          type: string
+          title: Uuid
+        icao_hex:
+          type: string
+          title: Icao Hex
+        registration:
+          type: string
+          title: Registration
+        type_designator:
+          type: string
+          title: Type Designator
+        military:
+          type: boolean
+          title: Military
+        operator_designator:
+          type: string
+          title: Operator Designator
+        ident:
+          type: string
+          title: Ident
+        first_message:
+          type: string
+          title: First Message
+        last_message:
+          type: string
+          title: Last Message
+        token:
+          type: string
+          title: Token
+      type: object
+      required:
+      - uuid
+      - icao_hex
+      - registration
+      - type_designator
+      - military
+      - operator_designator
+      - ident
+      - first_message
+      - last_message
+      - token
+      title: ArchiveSearchResultRow
+      description: 'One archive_parquet_index row, minus s3_key (never sent to the
+
+        browser -- see "Flight fetch" below) plus the flight''s own uuid (parsed
+
+        server-side from s3_key, not a column in the index itself) and an
+
+        encrypted, opaque token in s3_key''s place.'
+    ArchiveSearchSummary:
+      properties:
+        uuid:
+          type: string
+          title: Uuid
+        name:
+          type: string
+          title: Name
+        status:
+          type: string
+          enum:
+          - RUNNING
+          - COMPLETE
+          - FAILED
+          - ABORTED
+          title: Status
+        submitted_at:
+          type: string
+          title: Submitted At
+        expires_at:
+          type: string
+          title: Expires At
+      type: object
+      required:
+      - uuid
+      - name
+      - status
+      - submitted_at
+      - expires_at
+      title: ArchiveSearchSummary
     Area:
       properties:
         identifier:

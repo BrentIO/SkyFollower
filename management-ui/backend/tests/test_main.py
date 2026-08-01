@@ -118,10 +118,23 @@ class FakeRedis:
             raise self.get_error
         return self.store.get(key)
 
-    def set(self, key, value):
+    def set(self, key, value, **kwargs):
         if self.set_error:
             raise self.set_error
         self.store[key] = value
+
+    def delete(self, key):
+        self.store.pop(key, None)
+
+    def scan_iter(self, match=None):
+        """No archive_search:* records ever exist in these rules/areas
+        tests -- this only needs to satisfy lifespan()'s unconditional
+        startup reconciliation sweep (see _reconcile_stuck_archive_searches),
+        not actually simulate SCAN's cursor-based semantics."""
+        import fnmatch
+        for k in list(self.store.keys()):
+            if match is None or fnmatch.fnmatch(k, match):
+                yield k
 
     def json(self):
         return _FakeJson(self)
