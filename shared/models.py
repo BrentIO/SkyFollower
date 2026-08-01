@@ -96,7 +96,7 @@ class AircraftRecord(BaseModel):
     response.
     """
 
-    icao_hex: str
+    icao_hex: str = Field(title="ICAO Hex")
     registration: Optional[str] = None
     type_designator: Optional[str] = None   # ICAO type code, e.g. "B763"
     type: Optional[str] = None              # aircraft category, e.g. "Airplane"/"Rotorcraft"/"Glider"
@@ -128,14 +128,14 @@ class OperatorRecord(BaseModel):
     name: Optional[str] = None
     callsign: Optional[str] = None
     country: Optional[str] = None
-    iata: Optional[str] = None
+    iata: Optional[str] = Field(default=None, title="IATA")
     source: Optional[str] = None
 
 
 class AirportRecord(BaseModel):
     """Airport metadata. Stored in Redis at airport:{icao_code}."""
 
-    icao_code: str
+    icao_code: str = Field(title="ICAO Code")
     name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None

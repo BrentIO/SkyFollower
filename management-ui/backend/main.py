@@ -1291,7 +1291,7 @@ def delete_area(identifier: str):
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def get_aircraft(
-    icao_hex: Optional[str] = FastAPIQuery(default=None, description="6-character ICAO hex, e.g. A8AE7F"),
+    icao_hex: Optional[str] = FastAPIQuery(default=None, title="ICAO Hex", description="6-character ICAO hex, e.g. A8AE7F"),
     registration: Optional[str] = FastAPIQuery(default=None, description="Aircraft registration, e.g. N659DL"),
 ):
     if icao_hex and registration:
