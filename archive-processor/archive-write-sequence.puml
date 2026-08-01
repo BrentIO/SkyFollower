@@ -7,6 +7,7 @@ box "Archive Processor" $OnPrem
     participant "Archiver\n(RabbitMQ consumer thread)" as Consumer
     participant "Archiver\n(S3 reconnect thread)" as Reconnect
     participant "Archiver\n(telemetry thread)" as Telemetry
+    participant "Archiver\n(draining thread)" as Drainer
     database "s3.db\n(SQLite WAL)" as FallbackDB
 end box
 
@@ -40,6 +41,73 @@ else not s3_available
     FallbackDB --> Consumer-- : OK
 end
 
+== Drain loop (FallbackQueue.drain) — shared by every trigger below ==
+
+loop for each queued row, oldest first
+    Drainer -> FallbackDB++ : **Get next row**\n""SELECT id, payload, retry_count, last_attempted_at FROM {table} ORDER BY id ASC LIMIT 1""
+    FallbackDB --> Drainer-- : Record
+    alt row attempted less than min_retry_interval_seconds ago (default 30s)
+        break
+            Drainer -> Drainer : **Stop draining**\n""still cooling down — a flapping trigger can't rush this row to the poison threshold; drain() returns False""
+        end
+    else row eligible to retry
+        Drainer -> Drainer : **Run this row's write callback**\n""process_fn(payload)""
+        alt callback succeeds
+            Drainer -> FallbackDB++ : **Delete the drained row**\n""DELETE FROM {table} WHERE id = {id}""
+            FallbackDB --> Drainer-- : OK
+        else callback raises
+            Drainer -> Drainer : **Count this failure**\n""new_count = retry_count + 1""
+            alt new_count reaches the retry threshold (5)
+                Drainer -> FallbackDB++ : **Delete the poison row**\n""DELETE FROM {table} WHERE id = {id}""
+                FallbackDB --> Drainer-- : OK
+                Drainer -> Drainer : **Dead-letter the payload**\n""write dead_letters/{table}/{timestamp}_{id}.json""
+                note right of Drainer
+                    Judged permanently unrecoverable, not just a
+                    transient outage — draining continues to the
+                    next row instead of stopping, which is what
+                    keeps one poison row from blocking everything
+                    queued behind it forever.
+                end note
+            else new_count still below the retry threshold
+                Drainer -> FallbackDB++ : **Record the failed attempt**\n""UPDATE {table} SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                FallbackDB --> Drainer-- : OK
+                break
+                    Drainer -> Drainer : **Stop draining — retry next trigger**\n""drain() returns False""
+                end
+            end
+        end
+    end
+end
+
+== Flight-queue write callback (_process_fallback_flight) ==
+
+Drainer -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
+alt flight write succeeds
+    S3 --> Drainer-- : success
+    Drainer -> Drainer : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
+    Drainer -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+    alt index write succeeds
+        S3 --> Drainer-- : success
+    else index write fails
+        S3 --> Drainer-- : error or timeout
+        Drainer -> FallbackDB++ : **Insert index into its own retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
+        FallbackDB --> Drainer-- : OK
+    end
+else flight write fails
+    S3 --> Drainer-- : error or timeout
+    Drainer -> Drainer : **Raise — the drain loop above counts this as a failed attempt**
+end
+
+== Index-queue write callback ==
+
+Drainer -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
+alt write succeeds
+    S3 --> Drainer-- : success
+else write fails
+    S3 --> Drainer-- : error or timeout
+    Drainer -> Drainer : **Raise — the drain loop above counts this as a failed attempt**
+end
+
 == S3 reconnects — flight queue drains synchronously before live writes resume ==
 
 note over Reconnect, Consumer
@@ -49,33 +117,13 @@ end note
 
 par S3 reconnect thread — draining the backlog
     Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.head_bucket(Bucket=bucket)""
-    loop for each queued full flight, oldest first
-        Reconnect -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
-        FallbackDB --> Reconnect-- : Record
-        Reconnect -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-        alt flight write succeeds
-            S3 --> Reconnect-- : success
-            Reconnect -> Reconnect : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-            Reconnect -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-            alt index write succeeds
-                S3 --> Reconnect-- : success
-            else index write fails
-                S3 --> Reconnect-- : error or timeout
-                Reconnect -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-                FallbackDB --> Reconnect-- : OK
-            end
-            Reconnect -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
-            FallbackDB --> Reconnect-- : OK
-        else flight write fails
-            S3 --> Reconnect-- : error or timeout
-            break
-                Reconnect -> Reconnect : **Stop draining — stay disconnected, retry the whole sequence next tick**\n""drain() returns False""
-            end
-        end
-    end
+    Reconnect -> Reconnect : **Drain the flight queue synchronously**\n""self._fallback.drain(self._process_fallback_flight)""
+    note right of Reconnect
+        Refer to "Drain loop" and "Flight-queue write callback" above.
+    end note
     alt queue fully drained
         Reconnect -> Reconnect : **Set S3 connected — now safe to route live flights directly**\n""self._s3_connected = True""
-        Reconnect -\ FallbackDB : **Kick off the index-queue background drain too**\n""threading.Thread(target=drain).start()""
+        Reconnect -\ FallbackDB : **Kick off the index-queue background drain too**\n""self._drain_index_fallback()""
     end
 else RabbitMQ consumer thread — concurrent arrivals during the drain above
     Consumer -> Consumer : **Check whether S3 is currently available for direct writes**\n""s3_available = self._s3_connected""
@@ -84,73 +132,26 @@ else RabbitMQ consumer thread — concurrent arrivals during the drain above
     FallbackDB --> Consumer-- : OK
 end
 
-== Every telemetry_interval_seconds while s3_connected — flight queue background safety sweep ==
-
-note right of Telemetry
-    Only reaches here for a flight re-queued by a single transient write
-    error while otherwise connected -- the reconnect gate above already
-    guarantees this queue is empty by the time s3_connected first becomes
-    True.
-end note
+== Every telemetry_interval_seconds while s3_connected — flight-queue background safety sweep (only matters for a flight re-queued by a single transient error while otherwise connected) ==
 
 Telemetry -> Telemetry : **Attempt to claim the flight-queue drain guard**\n""_fallback._drain_lock.acquire(blocking=False)""
 alt guard acquired
-    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    loop for each queued full flight
-        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
-        FallbackDB --> Telemetry-- : Record
-        Telemetry -> S3++ : **Write the flight object**\n""PutObject flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz""
-        alt flight write succeeds
-            S3 --> Telemetry-- : success
-            Telemetry -> Telemetry : **Build the Parquet index single-row file**\n""build_index_s3_key(flight); build_parquet_index_row(flight, s3_key)""
-            Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-            alt index write succeeds
-                S3 --> Telemetry-- : success
-            else index write fails
-                S3 --> Telemetry-- : error or timeout
-                Telemetry -> FallbackDB++ : **Insert index into retry queue**\n""INSERT INTO index_queue {flight_json, s3_key}""
-                FallbackDB --> Telemetry-- : OK
-            end
-            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM queue WHERE id = {id}""
-            FallbackDB --> Telemetry-- : OK
-        else flight write fails
-            S3 --> Telemetry-- : error or timeout
-            break
-                Telemetry -> Telemetry : **Stop draining — retry next tick**
-            end
-        end
-    end
-    Telemetry -> Telemetry : **Release the flight-queue drain guard**\n""_fallback._drain_lock.release()""
+    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""self._fallback.drain_in_background(self._process_fallback_flight)""
+    note right of Telemetry
+        Refer to "Drain loop" and "Flight-queue write callback" above.
+    end note
 else guard already held
     Telemetry -> Telemetry : **Skip — a flight-queue drain is already in progress**
 end
 
-== S3 reconnects (after the synchronous flight drain succeeds) or every telemetry_interval_seconds — index queue ==
-
-note right of Telemetry
-    Only retries a Parquet index row for a flight object that already
-    wrote successfully -- never participates in the stitch race above.
-end note
+== S3 reconnects (after the synchronous flight drain succeeds) or every telemetry_interval_seconds — index queue (only retries a Parquet index row for a flight object that already wrote successfully) ==
 
 Telemetry -> Telemetry : **Attempt to claim the index-queue drain guard**\n""_index_fallback._drain_lock.acquire(blocking=False)""
 alt guard acquired
-    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    loop for each queued index-only retry
-        Telemetry -> FallbackDB++ : **Get next row**\n""SELECT * FROM index_queue ORDER BY id ASC LIMIT 1""
-        FallbackDB --> Telemetry-- : Record
-        Telemetry -> S3++ : **Write the Parquet index single-row file**\n""PutObject index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet""
-        alt index write succeeds
-            S3 --> Telemetry-- : success
-            Telemetry -> FallbackDB++ : **Delete drained row**\n""DELETE FROM index_queue WHERE id = {id}""
-            FallbackDB --> Telemetry-- : OK
-        else index write fails
-            S3 --> Telemetry-- : error or timeout
-            break
-                Telemetry -> Telemetry : **Stop draining — retry next cycle**
-            end
-        end
-    end
-    Telemetry -> Telemetry : **Release the index-queue drain guard**\n""_index_fallback._drain_lock.release()""
+    Telemetry -\ FallbackDB : **Spawn background drain thread**\n""self._index_fallback.drain_in_background(process)""
+    note right of Telemetry
+        Refer to "Drain loop" and "Index-queue write callback" above.
+    end note
 else guard already held
     Telemetry -> Telemetry : **Skip — an index-queue drain is already in progress**
 end
