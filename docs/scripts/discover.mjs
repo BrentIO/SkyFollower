@@ -16,7 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(__dirname, "..", "..");
 
 const COMPONENT_DIRS = [
-  "receiver", "message-processor", "shared", "archive-processor", "archive-compaction",
+  "receiver", "message-processor", "shared", "archive-processor", "archive-compaction", "management-ui",
 ];
 
 function h1Title(readmePath, fallback) {
