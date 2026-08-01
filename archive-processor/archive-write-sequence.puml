@@ -48,7 +48,7 @@ note over Reconnect, Consumer
 end note
 
 par S3 reconnect thread — draining the backlog
-    Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.list_buckets()""
+    Reconnect -> Reconnect : **Establish a new S3 client, verify reachable**\n""_connect_s3(): client.head_bucket(Bucket=bucket)""
     loop for each queued full flight, oldest first
         Reconnect -> FallbackDB++ : **Get next row**\n""SELECT * FROM queue ORDER BY id ASC LIMIT 1""
         FallbackDB --> Reconnect-- : Record

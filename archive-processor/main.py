@@ -526,8 +526,8 @@ class ArchiveProcessor:
                 region_name=s3_cfg.get("region", "us-east-1"),
             )
             client = session.client("s3")
-            # Quick connectivity check
-            client.list_buckets()
+            # Quick connectivity check, scoped to just this bucket
+            client.head_bucket(Bucket=s3_cfg.get("bucket", ""))
             with self._s3_lock:
                 self._s3_client = client
             logger.info("S3 client connected.")
