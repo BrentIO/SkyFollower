@@ -270,6 +270,20 @@ removes the record between this thread's last read and its next write,
 that write becomes a silent no-op instead of resurrecting a record the
 user already deleted.
 
+### Listing active searches
+
+`GET /api/archive/search` and the startup reconciliation sweep above both
+need every current `archive_search:{uuid}` record. A Redis `SET`
+(`archive_search:index`, holding just each search's `uuid`, no TTL of its
+own) is the source of truth for "what searches currently exist" — `SADD`
+on create, `SREM` on delete, `SMEMBERS` + one `GET` per uuid to list.
+
+A uuid whose backing `archive_search:{uuid}` key has already expired (the
+fixed 7-day TTL) has no way to notify the index that it's gone on its
+own, so the index self-heals opportunistically instead: any list/
+reconcile call that `GET`s a member and finds it already gone `SREM`s
+that stale uuid right there, pruning it the next time anyone asks.
+
 ### Result retrieval and pagination
 
 Redis stores a pointer (the Athena `QueryExecutionId`) to the result set
@@ -313,6 +327,9 @@ deployment model (no horizontal scaling anywhere in its design).
 
 - `archive_search:{uuid}` Redis records: **7 days from creation, fixed** —
   never refreshed on access/viewing, or deleted early via `DELETE`.
+- `archive_search:index`: **no TTL** — it's a small, actively-maintained
+  set of uuids (see [Listing active searches](#listing-active-searches)
+  above), not a data record with its own expiry.
 - Athena query-result files in S3: **8 days**, one day longer than the
   Redis TTL so Redis's own pointer always drops before the file it
   references actually disappears (an S3 lifecycle rule on the

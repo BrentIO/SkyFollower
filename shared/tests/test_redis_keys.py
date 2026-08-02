@@ -8,6 +8,7 @@ from shared.redis_keys import (
     aircraft_registry_key,
     aircraft_type_key,
     archive_last_segment_key,
+    archive_search_index_key,
     config_areas_key,
     config_areas_version_key,
     config_flight_ttl_seconds_key,
@@ -69,6 +70,9 @@ class TestConfigKeys:
 class TestArchiveKeys:
     def test_archive_last_segment_key(self):
         assert archive_last_segment_key("a8ae7f") == "archive:last_segment:A8AE7F"
+
+    def test_archive_search_index_key(self):
+        assert archive_search_index_key() == "archive_search:index"
 
 
 class TestProcessorKeys:
