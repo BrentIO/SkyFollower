@@ -89,7 +89,7 @@ case "$ROLE" in
     ;;
   core)
     COMPOSE_FILES=(docker-compose.core.yaml)
-    CONFIG_FILES=(config/runners/settings.json.example config/ofelia/config.ini.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
+    CONFIG_FILES=(config/runners/settings.json.example config/runners/phonic_overrides.json.example config/ofelia/config.ini.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
     ;;
   management-ui)
     COMPOSE_FILES=(docker-compose.management-ui.yaml)
