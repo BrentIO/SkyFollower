@@ -9,11 +9,13 @@ import {
   getArchiveSearchDetail,
   getArchiveSearchResults,
   listArchiveSearches,
+  type ArchiveSearchResultRow,
   type ArchiveSearchResultsPage,
   type ArchiveSearchSummary,
 } from "../api/archiveSearch";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
+import { downloadTextFile, rowsToCsv } from "../lib/csv";
 
 // A couple of seconds' interval, per the design -- frequent enough that
 // RUNNING -> COMPLETE/FAILED/ABORTED feels live, not so frequent it hammers
@@ -56,6 +58,46 @@ function formatAthenaTimestamp(raw: string): string {
 
 const PAGE_SIZE = 100;
 
+// `token` is deliberately excluded -- it's an ephemeral, per-process
+// download credential (see ArchiveSearchResultRow), not data worth
+// persisting into a file the user keeps after the search itself expires.
+const CSV_HEADERS = [
+  "uuid",
+  "icao_hex",
+  "registration",
+  "type_designator",
+  "military",
+  "operator_designator",
+  "ident",
+  "first_message",
+  "last_message",
+];
+
+function resultRowToCsvRow(row: ArchiveSearchResultRow): string[] {
+  return [
+    row.uuid,
+    row.icao_hex,
+    row.registration,
+    row.type_designator,
+    String(row.military),
+    row.operator_designator,
+    row.ident,
+    row.first_message,
+    row.last_message,
+  ];
+}
+
+// Filesystem-safe stand-in for a search's display name -- falls back to
+// the uuid if the name is empty after stripping (e.g. all-punctuation).
+function csvFilename(search: ArchiveSearchSummary): string {
+  const slug = search.name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${slug || "archive-search"}-${search.uuid}.csv`;
+}
+
 interface SearchResultsPanelProps {
   search: ArchiveSearchSummary;
   results: ArchiveSearchResultsPage | null;
@@ -66,6 +108,8 @@ interface SearchResultsPanelProps {
   whereClause: string | null;
   whereClauseLoading: boolean;
   onResubmit: () => void;
+  onDownloadCsv: () => void;
+  downloadingCsv: boolean;
 }
 
 // Shown for a FAILED or ABORTED search: the reason, the WHERE clause that
@@ -121,6 +165,8 @@ function SearchResultsPanel({
   whereClause,
   whereClauseLoading,
   onResubmit,
+  onDownloadCsv,
+  downloadingCsv,
 }: SearchResultsPanelProps) {
   if (search.status === "RUNNING") {
     return <p className="p-4 text-sm text-slate-400">Search is running&hellip;</p>;
@@ -202,26 +248,38 @@ function SearchResultsPanel({
         </table>
       </div>
 
-      <div className="flex items-center justify-end gap-3 text-sm">
+      <div className="flex items-center justify-between gap-3 text-sm">
         <button
           type="button"
-          disabled={page <= 1}
-          onClick={() => onPageChange(page - 1)}
-          className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          disabled={downloadingCsv}
+          onClick={onDownloadCsv}
+          className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
         >
-          Prev
+          <Download size={14} />
+          {downloadingCsv ? "Downloading…" : "Download CSV"}
         </button>
-        <span className="text-slate-500 dark:text-slate-400">
-          Page {page} of {totalPages}
-        </span>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-          className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-        >
-          Next
-        </button>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
+            className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            Prev
+          </button>
+          <span className="text-slate-500 dark:text-slate-400">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
+            className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -244,6 +302,7 @@ export function HistoryView() {
   // Seeds the New Search modal when resubmitting a failed/aborted search;
   // null for a blank "+ New Search" open.
   const [resubmitSeed, setResubmitSeed] = useState<{ name: string; whereClause: string } | null>(null);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
 
@@ -363,6 +422,33 @@ export function HistoryView() {
     setNewSearchModalOpen(true);
   }
 
+  // Fetches every page sequentially (not in parallel -- matches the design's
+  // intent of reusing the same paginated endpoint the results table already
+  // drives, rather than hammering Athena/the backend with concurrent page
+  // requests for a one-off export) and assembles them into a CSV client-side.
+  // No new backend endpoint: same already-sanitized rows the table renders,
+  // so the s3_key/token protections those rows already have carry over here
+  // for free.
+  async function handleDownloadCsv(search: ArchiveSearchSummary) {
+    setDownloadingCsv(true);
+    try {
+      const firstPage = resultsCache[`${search.uuid}:1`] ?? (await getArchiveSearchResults(search.uuid, 1));
+      const allRows = [...firstPage.rows];
+      const totalPages = Math.max(1, Math.ceil(firstPage.total_rows / PAGE_SIZE));
+      for (let p = 2; p <= totalPages; p++) {
+        const cached = resultsCache[`${search.uuid}:${p}`];
+        const nextPage = cached ?? (await getArchiveSearchResults(search.uuid, p));
+        allRows.push(...nextPage.rows);
+      }
+      const csv = rowsToCsv(CSV_HEADERS, allRows.map(resultRowToCsvRow));
+      downloadTextFile(csvFilename(search), csv, "text/csv;charset=utf-8");
+    } catch (err) {
+      showToast("error", err instanceof ApiError ? err.message : "Failed to download CSV.");
+    } finally {
+      setDownloadingCsv(false);
+    }
+  }
+
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
     try {
@@ -480,6 +566,8 @@ export function HistoryView() {
                       whereClause={whereClauseCache[search.uuid] ?? null}
                       whereClauseLoading={whereClauseLoading}
                       onResubmit={() => handleResubmit(search)}
+                      onDownloadCsv={() => handleDownloadCsv(search)}
+                      downloadingCsv={downloadingCsv}
                     />
                   </div>
                 )}
@@ -504,6 +592,8 @@ export function HistoryView() {
             whereClause={whereClauseCache[selectedSearch.uuid] ?? null}
             whereClauseLoading={whereClauseLoading}
             onResubmit={() => handleResubmit(selectedSearch)}
+            onDownloadCsv={() => handleDownloadCsv(selectedSearch)}
+            downloadingCsv={downloadingCsv}
           />
         ) : (
           <p className="p-4 text-sm text-slate-400">Select a search from the list, or start a new one.</p>
