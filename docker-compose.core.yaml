@@ -420,7 +420,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-      - runner-mictronics
 
   runner-hr-ccaa-registry:
     image: ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:latest
@@ -430,7 +429,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-      - runner-mictronics
 
   runner-cy-dca-registry:
     image: ghcr.io/brentio/skyfollower-runner-cy-dca-registry:latest
@@ -440,7 +438,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-      - runner-mictronics
 
   runner-airportwebcams-special-liveries:
     image: ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:latest
@@ -450,7 +447,6 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-      - runner-mictronics
 
   runner-vrs-standing-data:
     image: ghcr.io/brentio/skyfollower-runner-vrs-standing-data:latest
