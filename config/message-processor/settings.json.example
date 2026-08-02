@@ -1,12 +1,12 @@
 {
     "rabbitmq": {
-        "host": "rabbitmq",
+        "host": "192.168.1.x",
         "port": 5672,
         "username": "skyfollower",
         "password": "change_me"
     },
     "redis": {
-        "host": "redis",
+        "host": "192.168.1.x",
         "port": 6379
     },
     "mqtt": {
