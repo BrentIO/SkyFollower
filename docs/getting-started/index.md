@@ -106,15 +106,17 @@ To bulk-load *every* runner once (e.g. right after install, so Redis isn't
 empty until each runner's first scheduled `ofelia` run — up to a week away
 for weekly runners). `mictronics` goes first since most country runners
 resolve `icao_hex` against its RediSearch index; the rest follow
-alphabetically. The runner list comes from `docker compose config` itself,
-not a separate list, so it's always accurate for whatever's actually
+alphabetically, with `uk-caa-registry` pushed to the end since it takes far
+longer than the others. The runner list comes from `docker compose config`
+itself, not a separate list, so it's always accurate for whatever's actually
 declared in `docker-compose.core.yaml`:
 ```bash
 docker compose -f docker-compose.core.yaml run --rm runner-mictronics
 for svc in $(docker compose -f docker-compose.core.yaml --profile runners config --services \
-    | grep '^runner-' | grep -v '^runner-mictronics$' | sort); do
+    | grep '^runner-' | grep -v -E '^runner-(mictronics|uk-caa-registry)$' | sort); do
   docker compose -f docker-compose.core.yaml run --rm "$svc"
 done
+docker compose -f docker-compose.core.yaml run --rm runner-uk-caa-registry
 ```
 
 ## Next steps
