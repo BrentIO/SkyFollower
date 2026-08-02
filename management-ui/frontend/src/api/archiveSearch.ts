@@ -47,6 +47,10 @@ export function listArchiveSearches(): Promise<ArchiveSearchSummary[]> {
   return apiClient.get<ArchiveSearchSummary[]>("/api/archive/search");
 }
 
+export function getArchiveSearchDetail(uuid: string): Promise<ArchiveSearchDetail> {
+  return apiClient.get<ArchiveSearchDetail>(`/api/archive/search/${encodeURIComponent(uuid)}`);
+}
+
 export function getArchiveSearchResults(uuid: string, page: number): Promise<ArchiveSearchResultsPage> {
   return apiClient.get<ArchiveSearchResultsPage>(
     `/api/archive/search/${encodeURIComponent(uuid)}/results?page=${page}`,

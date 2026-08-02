@@ -4,6 +4,12 @@ interface NewSearchModalProps {
   open: boolean;
   onConfirm: (name: string, whereClause: string) => void;
   onCancel: () => void;
+  // Pre-fills the form -- used to resubmit a failed/aborted search without
+  // retyping its WHERE clause from scratch. Omitted (or "") for a blank
+  // "+ New Search" open.
+  initialName?: string;
+  initialWhereClause?: string;
+  title?: string;
 }
 
 // Queryable columns and their types, from specs/data-dictionary.yaml's
@@ -28,16 +34,23 @@ const COLUMN_REFERENCE: [string, string, string][] = [
 // fields ArchiveSearchCreate requires (see api/archiveSearch.ts): `name`
 // and a raw SQL `where_clause`. Matches AreaNameModal.tsx's structure
 // (open/onConfirm/onCancel, reset-on-close, disabled-until-valid Save).
-export function NewSearchModal({ open, onConfirm, onCancel }: NewSearchModalProps) {
-  const [name, setName] = useState("");
-  const [whereClause, setWhereClause] = useState("");
+export function NewSearchModal({
+  open,
+  onConfirm,
+  onCancel,
+  initialName = "",
+  initialWhereClause = "",
+  title = "New Search",
+}: NewSearchModalProps) {
+  const [name, setName] = useState(initialName);
+  const [whereClause, setWhereClause] = useState(initialWhereClause);
 
   useEffect(() => {
     if (open) {
-      setName("");
-      setWhereClause("");
+      setName(initialName);
+      setWhereClause(initialWhereClause);
     }
-  }, [open]);
+  }, [open, initialName, initialWhereClause]);
 
   if (!open) return null;
 
@@ -48,7 +61,7 @@ export function NewSearchModal({ open, onConfirm, onCancel }: NewSearchModalProp
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">New Search</h2>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
 
         <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">
           Name
