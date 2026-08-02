@@ -364,7 +364,7 @@ location + lifecycle rule, and all three components' IAM identities).
 schema holding user-authored/curated state with no automatic regeneration
 path (every other key is either repopulated by a runner on its next
 scheduled run, or transient operational state that naturally rebuilds from
-live traffic). Redis's own AOF (`docker-compose.server.yaml`'s
+live traffic). Redis's own AOF (`docker-compose.core.yaml`'s
 `redis-data` volume) is the only persistence for them otherwise, so this
 backend keeps a second, independent copy:
 

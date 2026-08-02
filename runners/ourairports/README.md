@@ -95,7 +95,7 @@ Each airport record includes a `phonic` field — a voice-friendly spoken name u
 
 Copy `config/runners/phonic_overrides.json.example` to
 `config/runners/phonic_overrides.json` — the same directory `settings.json`
-already lives in (relative to `docker-compose.server.yaml`) — and edit it.
+already lives in (relative to `docker-compose.core.yaml`) — and edit it.
 That directory is mounted onto `/app/config`; the path defaults to
 `/app/config/phonic_overrides.json` and can be overridden with the
 `OVERRIDES_PATH` environment variable. Mounting the directory (rather than

@@ -19,7 +19,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # RedisJSON + Lua scripting support, matching docker-compose.server.yaml.
+    # RedisJSON + Lua scripting support, matching docker-compose.core.yaml.
     # Exposed on the default port; shared/tests/test_merge_aircraft_lua.py
     # already defaults to localhost:6379, which is where Actions exposes a
     # job-scoped service container. Without the healthcheck, that suite would
