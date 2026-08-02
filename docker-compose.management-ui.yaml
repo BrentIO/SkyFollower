@@ -14,7 +14,7 @@ services:
     # nginx serves the built React frontend at / and proxies /api/* to
     # uvicorn, which listens on 127.0.0.1:8000 inside the container only.
     ports:
-      - "8080:80"
+      - "80:80"
     volumes:
       - ./config/management-ui/settings.json:/app/settings.json:ro
       # config:rules/config:areas are the only Redis keys holding

@@ -54,7 +54,7 @@ appropriate file(s):
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
-| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 8080 |
+| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 80 |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |
 | `ca-transport-canada-registry` runner | Imports Transport Canada detailed registration data into Redis | — |

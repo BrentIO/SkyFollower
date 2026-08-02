@@ -18,7 +18,7 @@ frontend bundle, and the final stage runs both uvicorn (bound to
 `127.0.0.1:8000`, not exposed outside the container) and nginx, started by
 `entrypoint.sh`. nginx serves the built frontend at `/` (with a `try_files`
 fallback to `index.html` for client-side routing) and proxies `/api/*` to
-uvicorn. `docker-compose.management-ui.yaml` maps `8080:80`.
+uvicorn. `docker-compose.management-ui.yaml` maps `80:80`.
 
 ## Endpoints
 
