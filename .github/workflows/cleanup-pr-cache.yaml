@@ -1,0 +1,28 @@
+name: 🧹 Cleanup PR Caches
+run-name: "Cleanup caches for PR #${{ github.event.pull_request.number }}"
+
+# Actions cache entries scoped to a PR's ref (refs/pull/<n>/merge) are never
+# reused after the PR closes — the branch is gone. Left alone they just sit
+# until GitHub's passive 7-day-unused / 10GB LRU eviction reclaims them,
+# which can crowd out longer-lived, more valuable caches (e.g.
+# build-container-images.yaml's Docker layer cache) well before then.
+# Delete them immediately on close instead of waiting.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches for this PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh cache delete --all \
+            --ref "refs/pull/${{ github.event.pull_request.number }}/merge" \
+            --succeed-on-no-caches \
+            --repo "${{ github.repository }}"
