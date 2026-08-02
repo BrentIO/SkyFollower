@@ -485,7 +485,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Austria Austrocontrol Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Austria Austrocontrol Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Austria Austrocontrol Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Austria Austrocontrol Last Run Status", "mdi:check-circle", None, None),
     ]

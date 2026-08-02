@@ -387,7 +387,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Guernsey 2-reg Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Guernsey 2-reg Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Guernsey 2-reg Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Guernsey 2-reg Last Run Status", "mdi:check-circle", None, None),
     ]
