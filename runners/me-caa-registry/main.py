@@ -215,10 +215,15 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     logger.info("Found %d aircraft on list pages.", len(list_rows))
 
     records: list[dict] = []
+    fetched = 0
     for row in list_rows:
         registration = row.get("Registarska oznaka", "").strip()
         if not registration.startswith("4O-"):
             continue
+
+        fetched += 1
+        if fetched > 1 and fetched % 100 == 0:
+            logger.info("Fetched detail for %d records.", fetched)
 
         detail = _fetch_detail_page(session, registration)
         if detail is None:
