@@ -1,6 +1,6 @@
 {
     "redis": {
-        "host": "redis",
+        "host": "192.168.1.x",
         "port": 6379
     },
     "mqtt": {

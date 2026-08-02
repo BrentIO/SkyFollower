@@ -5,7 +5,7 @@
     ],
     "processor_count": 1,
     "rabbitmq": {
-        "host": "rabbitmq",
+        "host": "192.168.1.x",
         "port": 5672,
         "username": "skyfollower",
         "password": "change_me"
