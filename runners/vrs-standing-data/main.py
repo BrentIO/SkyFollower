@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.redis_keys import route_key
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
+from shared.sqlite_staging import open_staging_db
 
 logger = logging.getLogger("vrs-standing-data")
 
@@ -118,10 +119,7 @@ CREATE TABLE routes (
 def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
     """Parse every routes/schema-01/**/*.csv file, stage ident -> route rows."""
     logger.info("Opening staging database at %s", db_path)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
+    conn = open_staging_db(db_path, _SCHEMA)
 
     cur = conn.cursor()
     count = 0

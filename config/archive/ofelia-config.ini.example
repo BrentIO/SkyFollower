@@ -1,6 +1,8 @@
 # Targets "the day before yesterday" (see archive-compaction/README.md), so
 # the exact time of day only needs to be well after midnight UTC -- there's
-# no upstream data source to wait on, unlike the central server's runners.
+# no upstream data source to wait on, unlike the central core's runners.
 [job-run "archive-compaction"]
 schedule = 50 4 * * *
-container = skyfollower-archive-compaction
+image = ghcr.io/brentio/skyfollower-archive-compaction:latest
+volume = ./config/archive/compaction-settings.json:/app/settings.json:ro
+delete = true

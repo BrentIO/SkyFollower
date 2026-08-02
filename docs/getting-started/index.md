@@ -47,8 +47,16 @@ the host up:
 docker compose -f <compose-file> up -d
 ```
 
-On the `core` host specifically, once it's up, see [Loading All
-Data](#loading-all-data) below to do a first-time data import instead of
+On the `core` host specifically, `ofelia` (the runner scheduler) sits
+behind the `runners` Compose profile, so it needs its own explicit start —
+`up -d` alone won't bring it up:
+```bash
+docker compose -f docker-compose.core.yaml --profile runners up -d ofelia
+```
+Naming `ofelia` explicitly (rather than the whole `runners` profile) matters
+here: `ofelia` has no `depends_on` on the runner-\* services, so this starts
+only `ofelia` itself, not every runner container at once. Then see [Loading
+All Data](#loading-all-data) below to do a first-time data import instead of
 waiting on each runner's own scheduled `ofelia` run.
 
 ## Advanced
@@ -73,8 +81,9 @@ docker compose -f docker-compose.receiver-mlat.yaml up -d
 
 # Host B — central core
 docker compose -f docker-compose.core.yaml up -d
-# Create runner containers in stopped state so ofelia can schedule them:
-docker compose -f docker-compose.core.yaml --profile runners up --no-start
+# ofelia sits behind the "runners" Compose profile and has no depends_on,
+# so name it explicitly -- this starts only ofelia, not every runner too:
+docker compose -f docker-compose.core.yaml --profile runners up -d ofelia
 # Host B also runs the management UI, as its own compose file (its only
 # dependency is Redis, already on this host):
 docker compose -f docker-compose.management-ui.yaml up -d
