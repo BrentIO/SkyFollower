@@ -6,6 +6,7 @@ import {
   createArchiveSearch,
   deleteArchiveSearch,
   downloadArchiveFlight,
+  getArchiveSearchDetail,
   getArchiveSearchResults,
   listArchiveSearches,
   type ArchiveSearchResultsPage,
@@ -62,6 +63,50 @@ interface SearchResultsPanelProps {
   page: number;
   onPageChange: (page: number) => void;
   onViewFlight: (token: string) => void;
+  whereClause: string | null;
+  whereClauseLoading: boolean;
+  onResubmit: () => void;
+}
+
+// Shown for a FAILED or ABORTED search: the reason, the WHERE clause that
+// was submitted (fetched lazily -- see HistoryView's details-fetch effect),
+// and a way to try again without retyping it from scratch.
+function FailedSearchDetail({
+  reason,
+  whereClause,
+  whereClauseLoading,
+  onResubmit,
+}: {
+  reason: ReactNode;
+  whereClause: string | null;
+  whereClauseLoading: boolean;
+  onResubmit: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <p className="text-sm text-red-600 dark:text-red-400">{reason}</p>
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+          WHERE clause submitted
+        </p>
+        {whereClauseLoading || whereClause === null ? (
+          <p className="text-sm text-slate-400">Loading&hellip;</p>
+        ) : (
+          <pre className="overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            {whereClause}
+          </pre>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onResubmit}
+        disabled={whereClause === null}
+        className="self-start rounded-md border border-sky-600 px-3 py-1.5 text-sm font-medium text-sky-600 hover:bg-sky-50 disabled:opacity-40 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+      >
+        Edit &amp; Resubmit
+      </button>
+    </div>
+  );
 }
 
 // Shared between the desktop right panel and the mobile accordion -- same
@@ -73,22 +118,31 @@ function SearchResultsPanel({
   page,
   onPageChange,
   onViewFlight,
+  whereClause,
+  whereClauseLoading,
+  onResubmit,
 }: SearchResultsPanelProps) {
   if (search.status === "RUNNING") {
     return <p className="p-4 text-sm text-slate-400">Search is running&hellip;</p>;
   }
   if (search.status === "FAILED") {
     return (
-      <p className="p-4 text-sm text-red-600 dark:text-red-400">
-        {search.error ?? "The search failed."}
-      </p>
+      <FailedSearchDetail
+        reason={search.error ?? "The search failed."}
+        whereClause={whereClause}
+        whereClauseLoading={whereClauseLoading}
+        onResubmit={onResubmit}
+      />
     );
   }
   if (search.status === "ABORTED") {
     return (
-      <p className="p-4 text-sm text-red-600 dark:text-red-400">
-        Search took too long -- try narrowing your filters.
-      </p>
+      <FailedSearchDetail
+        reason="Search took too long -- try narrowing your filters."
+        whereClause={whereClause}
+        whereClauseLoading={whereClauseLoading}
+        onResubmit={onResubmit}
+      />
     );
   }
 
@@ -185,6 +239,11 @@ export function HistoryView() {
   const [newSearchModalOpen, setNewSearchModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
+  const [whereClauseCache, setWhereClauseCache] = useState<Record<string, string>>({});
+  const [whereClauseLoading, setWhereClauseLoading] = useState(false);
+  // Seeds the New Search modal when resubmitting a failed/aborted search;
+  // null for a blank "+ New Search" open.
+  const [resubmitSeed, setResubmitSeed] = useState<{ name: string; whereClause: string } | null>(null);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
 
@@ -250,6 +309,31 @@ export function HistoryView() {
     };
   }, [selectedSearch?.uuid, selectedSearch?.status, resultsPage]);
 
+  // Fetch the submitted WHERE clause for a FAILED/ABORTED search, so it can
+  // be shown and offered back for resubmission instead of forcing the user
+  // to retype it from scratch -- cached per-uuid like results above.
+  useEffect(() => {
+    if (!selectedSearch || (selectedSearch.status !== "FAILED" && selectedSearch.status !== "ABORTED")) return;
+    if (whereClauseCache[selectedSearch.uuid]) return;
+    let cancelled = false;
+    setWhereClauseLoading(true);
+    getArchiveSearchDetail(selectedSearch.uuid)
+      .then((detail) => {
+        if (!cancelled) {
+          setWhereClauseCache((current) => ({ ...current, [detail.uuid]: detail.where_clause }));
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) showToast("error", err instanceof Error ? err.message : "Failed to load the submitted WHERE clause.");
+      })
+      .finally(() => {
+        if (!cancelled) setWhereClauseLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSearch?.uuid, selectedSearch?.status]);
+
   function selectSearch(search: ArchiveSearchSummary) {
     setSelectedUuid((current) => (current === search.uuid ? null : search.uuid));
     setResultsPage(1);
@@ -264,11 +348,19 @@ export function HistoryView() {
       setSelectedUuid(uuid);
       setResultsPage(1);
       setNewSearchModalOpen(false);
+      setResubmitSeed(null);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to start search.");
     } finally {
       setCreating(false);
     }
+  }
+
+  function handleResubmit(search: ArchiveSearchSummary) {
+    const whereClause = whereClauseCache[search.uuid];
+    if (whereClause === undefined) return;
+    setResubmitSeed({ name: search.name, whereClause });
+    setNewSearchModalOpen(true);
   }
 
   async function handleDeleteConfirmed() {
@@ -306,7 +398,10 @@ export function HistoryView() {
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
         <button
           type="button"
-          onClick={() => setNewSearchModalOpen(true)}
+          onClick={() => {
+            setResubmitSeed(null);
+            setNewSearchModalOpen(true);
+          }}
           className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
         >
           + New Search
@@ -382,6 +477,9 @@ export function HistoryView() {
                       page={resultsPage}
                       onPageChange={setResultsPage}
                       onViewFlight={handleViewFlight}
+                      whereClause={whereClauseCache[search.uuid] ?? null}
+                      whereClauseLoading={whereClauseLoading}
+                      onResubmit={() => handleResubmit(search)}
                     />
                   </div>
                 )}
@@ -403,6 +501,9 @@ export function HistoryView() {
             page={resultsPage}
             onPageChange={setResultsPage}
             onViewFlight={handleViewFlight}
+            whereClause={whereClauseCache[selectedSearch.uuid] ?? null}
+            whereClauseLoading={whereClauseLoading}
+            onResubmit={() => handleResubmit(selectedSearch)}
           />
         ) : (
           <p className="p-4 text-sm text-slate-400">Select a search from the list, or start a new one.</p>
@@ -412,7 +513,14 @@ export function HistoryView() {
       <NewSearchModal
         open={newSearchModalOpen}
         onConfirm={handleNewSearchConfirm}
-        onCancel={() => !creating && setNewSearchModalOpen(false)}
+        onCancel={() => {
+          if (creating) return;
+          setNewSearchModalOpen(false);
+          setResubmitSeed(null);
+        }}
+        initialName={resubmitSeed?.name}
+        initialWhereClause={resubmitSeed?.whereClause}
+        title={resubmitSeed ? "Resubmit Search" : "New Search"}
       />
 
       <ConfirmModal
