@@ -14,7 +14,6 @@ uses) rather than via a normal package import, since the hyphen in
 
 from __future__ import annotations
 
-import fnmatch
 import importlib.util
 import json
 import os
@@ -41,13 +40,14 @@ _spec.loader.exec_module(ui_main)
 
 class FakeRedis:
     """Minimal in-memory stand-in supporting exactly what archive search
-    needs (get/set with ex/xx/keepttl, delete, scan_iter) plus no-op stubs
-    for script_load/evalsha, since lifespan() unconditionally loads the
-    rules/areas Lua scripts regardless of which endpoints a given test
-    actually exercises."""
+    needs (get/set with ex/xx/keepttl, delete, sadd/srem/smembers for the
+    archive_search:index set) plus no-op stubs for script_load/evalsha,
+    since lifespan() unconditionally loads the rules/areas Lua scripts
+    regardless of which endpoints a given test actually exercises."""
 
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.sets: dict[str, set[str]] = {}
 
     def get(self, key):
         return self.store.get(key)
@@ -63,10 +63,14 @@ class FakeRedis:
     def delete(self, key):
         self.store.pop(key, None)
 
-    def scan_iter(self, match=None):
-        for k in list(self.store.keys()):
-            if match is None or fnmatch.fnmatch(k, match):
-                yield k
+    def sadd(self, key, *members):
+        self.sets.setdefault(key, set()).update(members)
+
+    def srem(self, key, *members):
+        self.sets.get(key, set()).difference_update(members)
+
+    def smembers(self, key):
+        return set(self.sets.get(key, set()))
 
     def script_load(self, script: str) -> str:
         return "fake-sha"
@@ -321,6 +325,32 @@ class TestCreateAndListSearches:
         resp = client.get("/api/archive/search/does-not-exist")
         assert resp.status_code == 404
 
+    def test_create_adds_uuid_to_archive_search_index(self, client, fake_redis):
+        """Listing goes through archive_search:index (SMEMBERS), not a
+        keyspace SCAN, specifically to stay cheap on a production Redis
+        with hundreds of thousands of unrelated keys -- create must keep
+        that index in sync or every search becomes invisible to list."""
+        create_resp = _create_search(client)
+        uuid = create_resp.json()["uuid"]
+        assert uuid in fake_redis.smembers("archive_search:index")
+
+    def test_delete_removes_uuid_from_archive_search_index(self, client, fake_redis):
+        create_resp = _create_search(client)
+        uuid = create_resp.json()["uuid"]
+        assert client.delete(f"/api/archive/search/{uuid}").status_code == 204
+        assert uuid not in fake_redis.smembers("archive_search:index")
+
+    def test_list_prunes_a_stale_index_entry_for_an_already_expired_record(self, client, fake_redis):
+        """A uuid whose backing archive_search:{uuid} key has already
+        expired (7-day TTL) has no way to notify the index set directly --
+        list must self-heal by pruning it from the index the next time
+        anyone asks, not just silently omit it from the response forever."""
+        fake_redis.sadd("archive_search:index", "long-gone-uuid")
+        resp = client.get("/api/archive/search")
+        assert resp.status_code == 200
+        assert all(e["uuid"] != "long-gone-uuid" for e in resp.json())
+        assert "long-gone-uuid" not in fake_redis.smembers("archive_search:index")
+
     def test_newly_created_search_is_running(self, client, fake_athena):
         """Without the synchronous-thread patch, the poll never runs, so
         the record should stay exactly as POST left it: RUNNING."""
@@ -358,7 +388,9 @@ class TestBackgroundPolling:
         resp = _create_search(client)
         uuid = resp.json()["uuid"]
 
-        assert client.get(f"/api/archive/search/{uuid}").json()["status"] == "COMPLETE"
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        assert detail["status"] == "COMPLETE"
+        assert detail["error"] is None
 
     def test_failed_query_marks_search_failed_with_reason(self, client, fake_athena):
         real_start = fake_athena.start_query_execution
@@ -375,6 +407,7 @@ class TestBackgroundPolling:
 
         detail = client.get(f"/api/archive/search/{uuid}").json()
         assert detail["status"] == "FAILED"
+        assert detail["error"] == "TABLE_NOT_FOUND"
 
     def test_deadline_exceeded_aborts_and_calls_stop_query_execution(self, client, fake_athena):
         # Never reaches a terminal state; force the deadline to have
@@ -387,6 +420,7 @@ class TestBackgroundPolling:
 
         detail = client.get(f"/api/archive/search/{uuid}").json()
         assert detail["status"] == "ABORTED"
+        assert detail["error"] == "Deadline exceeded (2 minutes)"
         assert qid in fake_athena.stopped
 
 
@@ -446,7 +480,9 @@ class TestResultsRetrieval:
 
         resp = client.get(f"/api/archive/search/{uuid}/results")
         assert resp.status_code == 200
-        rows = resp.json()
+        body = resp.json()
+        assert body["total_rows"] == 1
+        rows = body["rows"]
         assert len(rows) == 1
         result_row = rows[0]
         assert "s3_key" not in result_row
@@ -461,7 +497,7 @@ class TestResultsRetrieval:
                "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000", s3_key)
         uuid = self._complete_search(client, fake_athena, fake_s3, [row])
 
-        token = client.get(f"/api/archive/search/{uuid}/results").json()[0]["token"]
+        token = client.get(f"/api/archive/search/{uuid}/results").json()["rows"][0]["token"]
         assert ui_main._decrypt_token(token) == s3_key
 
     def test_pagination_returns_100_rows_per_page(self, client, fake_athena, fake_s3):
@@ -475,8 +511,10 @@ class TestResultsRetrieval:
 
         page1 = client.get(f"/api/archive/search/{uuid}/results?page=1").json()
         page2 = client.get(f"/api/archive/search/{uuid}/results?page=2").json()
-        assert len(page1) == 100
-        assert len(page2) == 50
+        assert len(page1["rows"]) == 100
+        assert len(page2["rows"]) == 50
+        assert page1["total_rows"] == 150
+        assert page2["total_rows"] == 150
 
     def test_second_page_request_reuses_cache_no_second_s3_fetch(self, client, fake_athena, fake_s3):
         rows = [("A1", "N1", "B738", "false", "DAL", "DAL1",
@@ -603,6 +641,12 @@ class TestStartupReconciliation:
             "name": "old search", "where_clause": "1=1", "status": "RUNNING",
             "submitted_at": "2026-01-01T00:00:00+00:00", "query_execution_id": "exec-old",
         })
+        # Mirrors what create_archive_search itself keeps in sync -- the
+        # reconciliation sweep now enumerates archive_search:index rather
+        # than scanning the whole keyspace, so a record injected directly
+        # into .store without also being indexed here would (correctly)
+        # never be found by it.
+        fake_redis.sadd("archive_search:index", "stuck-uuid")
 
         class FakeSession:
             def __init__(self, *a, **k):

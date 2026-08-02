@@ -22,6 +22,8 @@ alt start succeeds
     Athena --> Backend-- : QueryExecutionId
     Backend -> Redis++ : **Write the search record**\n""SET archive_search:{uuid} {...} EX 7d""
     Redis --> Backend-- : OK
+    Backend -> Redis++ : **Add to the search index**\n""SADD archive_search:index {uuid}""
+    Redis --> Backend-- : OK
     Backend -\ Poll : **Spawn the polling thread**\n""threading.Thread(target=_poll_search_execution).start()""
     Backend --> Backend : HTTP 202 {uuid}
 else start fails (e.g. a permissions mismatch)
@@ -63,6 +65,23 @@ note over Poll, Redis
     removed the key, so a poll landing after the user deletes the
     search can never resurrect it (see Delete below).
 end note
+
+== List active searches (also runs at startup, to reconcile any stuck RUNNING record) ==
+
+Backend -> Redis++ : **Get every tracked search uuid**\n""SMEMBERS archive_search:index""
+Redis --> Backend-- : {uuid, ...}
+loop for each uuid
+    Backend -> Redis++ : **Load that search's record**\n""GET archive_search:{uuid}""
+    alt record still exists
+        Redis --> Backend-- : record
+        Backend -> Backend : **Include it in the result**
+    else record already expired (7-day TTL) -- the index couldn't know
+        Redis --> Backend-- : none
+        Backend -> Redis++ : **Prune the stale index entry**\n""SREM archive_search:index {uuid}""
+        Redis --> Backend-- : OK
+    end
+end
+Backend --> Backend : HTTP 200 [summaries]
 
 == Fetch a page of results (first request for this search) ==
 
@@ -122,6 +141,8 @@ opt status == COMPLETE
     S3 --> Backend-- : OK
 end
 Backend -> Redis++ : **Delete the search record**\n""DEL archive_search:{uuid}""
+Redis --> Backend-- : OK
+Backend -> Redis++ : **Remove from the search index**\n""SREM archive_search:index {uuid}""
 Redis --> Backend-- : OK
 Backend -> Backend : **Evict from the in-process LRU, if present**\n""_result_cache.discard(uuid)""
 Backend --> Backend : HTTP 204

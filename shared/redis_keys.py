@@ -171,3 +171,19 @@ def archive_search_key(uuid: str) -> str:
     archive_search:{uuid}
     """
     return f"archive_search:{uuid}"
+
+
+def archive_search_index_key() -> str:
+    """
+    SET of every archive_search:{uuid}'s uuid -- lets the backend list/
+    reconcile active searches in O(active searches) via SMEMBERS, instead
+    of an O(entire keyspace) SCAN MATCH archive_search:*. No TTL on the
+    set itself -- it's small and actively maintained (SADD on create,
+    SREM on delete), not a data record. A uuid whose backing
+    archive_search:{uuid} key has since expired (7-day TTL) has no way to
+    notify this set, so it self-heals opportunistically instead: any
+    SMEMBERS caller that GETs a member and finds it already gone SREMs
+    that stale uuid right there.
+    archive_search:index
+    """
+    return "archive_search:index"

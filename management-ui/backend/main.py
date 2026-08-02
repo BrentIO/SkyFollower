@@ -63,6 +63,7 @@ from shared.redis_keys import (  # noqa: E402
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     AIRPORT_SEARCH_INDEX,
     airport_key,
+    archive_search_index_key,
     archive_search_key,
     config_areas_key,
     config_areas_version_key,
@@ -1445,10 +1446,21 @@ class ArchiveSearchSummary(BaseModel):
     status: Literal["RUNNING", "COMPLETE", "FAILED", "ABORTED"]
     submitted_at: str
     expires_at: str
+    # Only ever set for FAILED (Athena's own StateChangeReason) or ABORTED
+    # (this backend's own deadline/restart message) -- absent otherwise.
+    error: Optional[str] = None
 
 
 class ArchiveSearchDetail(ArchiveSearchSummary):
     where_clause: str
+
+
+class ArchiveSearchResultsPage(BaseModel):
+    rows: list[ArchiveSearchResultRow]
+    # The full match count, not just len(rows) -- rows is only this page's
+    # slice. The backend already has this for free: _fetch_and_cache_results
+    # downloads and fully parses the CSV before any pagination slicing.
+    total_rows: int
 
 
 class ArchiveSearchResultRow(BaseModel):
@@ -1502,14 +1514,39 @@ def _search_summary(uuid: str, record: dict) -> dict:
         "status": record["status"],
         "submitted_at": record["submitted_at"],
         "expires_at": _expires_at(record["submitted_at"]),
+        "error": record.get("error"),
     }
 
 
-def _redis_scan_keys(pattern: str) -> list[str]:
+def _iter_active_searches() -> list[tuple[str, dict]]:
+    """SMEMBERS archive_search:index + a GET per uuid -- O(active
+    searches), not the O(entire keyspace) SCAN MATCH archive_search:*
+    this replaced (see archive_search_index_key's own docstring for why).
+    Self-heals the index: a uuid whose backing archive_search:{uuid} key
+    has already expired (7-day TTL) is SREMed from the index right here,
+    since a plain Redis SET has no way to be notified when TTL expiry
+    removes a member's backing key out from under it."""
+    index_key = archive_search_index_key()
     try:
-        return list(_redis.scan_iter(match=pattern))
+        uuids = _redis.smembers(index_key)
     except redis_lib.RedisError as exc:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+
+    results = []
+    for uuid in uuids:
+        raw = _redis_get(archive_search_key(uuid))
+        if raw is None:
+            try:
+                _redis.srem(index_key, uuid)
+            except redis_lib.RedisError as exc:
+                logger.warning("Failed to prune stale archive search index entry %s: %s", uuid, exc)
+            continue
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        results.append((uuid, record))
+    return results
 
 
 def _get_search_record(uuid: str) -> dict:
@@ -1543,16 +1580,8 @@ def _reconcile_stuck_archive_searches() -> None:
     polling thread die with the previous process -- nothing is left alive
     to ever finish that job, so mark it ABORTED rather than leaving it
     stuck RUNNING forever."""
-    for key in _redis_scan_keys("archive_search:*"):
-        raw = _redis.get(key)
-        if not raw:
-            continue
-        try:
-            record = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
+    for uuid, record in _iter_active_searches():
         if record.get("status") == "RUNNING":
-            uuid = key.split(":", 1)[-1]
             _update_search_record(
                 uuid, status="ABORTED", error="Process restarted while this search was running"
             )
@@ -1737,6 +1766,14 @@ def create_archive_search(body: ArchiveSearchCreate):
         "query_execution_id": query_execution_id,
     }
     _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=_SEARCH_TTL_SECONDS)
+    try:
+        _redis.sadd(archive_search_index_key(), search_uuid)
+    except redis_lib.RedisError as exc:
+        # Not fatal to the search itself -- worst case, this uuid is
+        # missing from list/reconcile until the index is rebuilt some
+        # other way, not a data-loss or correctness issue for the search
+        # record itself (still readable directly by uuid).
+        logger.warning("Failed to add search %s to the archive search index: %s", search_uuid, exc)
 
     threading.Thread(
         target=_poll_search_execution,
@@ -1755,13 +1792,7 @@ def create_archive_search(body: ArchiveSearchCreate):
     responses={**_REDIS_ERROR},
 )
 def list_archive_searches():
-    summaries = []
-    for key in _redis_scan_keys("archive_search:*"):
-        raw = _redis.get(key)
-        if not raw:
-            continue
-        record = json.loads(raw)
-        summaries.append(_search_summary(key.split(":", 1)[-1], record))
+    summaries = [_search_summary(uuid, record) for uuid, record in _iter_active_searches()]
     summaries.sort(key=lambda s: s["submitted_at"], reverse=True)
     return JSONResponse(content=summaries)
 
@@ -1780,7 +1811,7 @@ def get_archive_search(uuid: str):
 @app.get(
     "/api/archive/search/{uuid}/results",
     tags=["archive"],
-    response_model=list[ArchiveSearchResultRow],
+    response_model=ArchiveSearchResultsPage,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
 )
 def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge=1)):
@@ -1792,7 +1823,7 @@ def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge
         )
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
     start = (page - 1) * _PAGE_SIZE
-    return JSONResponse(content=rows[start:start + _PAGE_SIZE])
+    return JSONResponse(content={"rows": rows[start:start + _PAGE_SIZE], "total_rows": len(rows)})
 
 
 @app.delete(
@@ -1825,6 +1856,7 @@ def delete_archive_search(uuid: str):
 
     try:
         _redis.delete(archive_search_key(uuid))
+        _redis.srem(archive_search_index_key(), uuid)
     except redis_lib.RedisError as exc:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
     _result_cache.discard(uuid)

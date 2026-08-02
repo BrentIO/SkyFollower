@@ -126,15 +126,20 @@ class FakeRedis:
     def delete(self, key):
         self.store.pop(key, None)
 
-    def scan_iter(self, match=None):
+    def sadd(self, key, *members):
         """No archive_search:* records ever exist in these rules/areas
-        tests -- this only needs to satisfy lifespan()'s unconditional
-        startup reconciliation sweep (see _reconcile_stuck_archive_searches),
-        not actually simulate SCAN's cursor-based semantics."""
-        import fnmatch
-        for k in list(self.store.keys()):
-            if match is None or fnmatch.fnmatch(k, match):
-                yield k
+        tests -- this only needs to satisfy create_archive_search-style
+        callers, none of which this file's tests actually exercise."""
+
+    def srem(self, key, *members):
+        pass
+
+    def smembers(self, key):
+        """Always empty here -- this only needs to satisfy lifespan()'s
+        unconditional startup reconciliation sweep (see
+        _reconcile_stuck_archive_searches), which no test in this file
+        depends on finding anything."""
+        return set()
 
     def json(self):
         return _FakeJson(self)
