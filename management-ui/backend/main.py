@@ -74,7 +74,13 @@ from shared.redis_keys import (  # noqa: E402
 
 try:
     from message_processor.rules_engine import RulesEngine
-except ModuleNotFoundError:
+except ModuleNotFoundError as exc:
+    if exc.name != "message_processor":
+        # Some other module rules_engine.py imports (e.g. shapely) is
+        # missing -- that's a real dependency problem, not the local-dev
+        # package-name workaround below, so don't mask it.
+        raise
+
     # message-processor/ can't be imported as a normal package here -- the
     # hyphen in the directory name isn't a valid Python identifier -- so
     # register it under the dotted name 'message_processor' via importlib,
