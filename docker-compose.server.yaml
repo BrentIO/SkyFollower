@@ -42,7 +42,7 @@ services:
     # traffic is flowing — these are starting points, not measured values.
     environment:
       REDISEARCH_ARGS: "MAXSEARCHRESULTS 10000 MAXAGGREGATERESULTS 10000 FORK_GC_RUN_INTERVAL 300"
-    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes
+    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --dir /data
 
   # ---------------------------------------------------------------------------
   # Scheduler
