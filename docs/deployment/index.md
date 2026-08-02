@@ -5,7 +5,7 @@ hosts — each one brings up one or more Docker Compose files, either from a
 full repo clone or, for a pre-built-image deployment, just the file(s) it
 needs (see [Getting Started](/getting-started/) for both paths). Every
 host but Host B brings up exactly one; Host B brings up two
-(`docker-compose.server.yaml` and `docker-compose.management-ui.yaml`),
+(`docker-compose.core.yaml` and `docker-compose.management-ui.yaml`),
 since `management-ui`'s only dependency is Redis and there's no reason to
 entangle its lifecycle with the rabbitmq/redis/runner stack's compose
 project. See
@@ -18,7 +18,7 @@ host up once you know which compose file(s) it runs.
 |------|------|------------|
 | Host A — Raspberry Pi | ADS-B reception | `receiver` |
 | Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
-| Host B — Central server | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
+| Host B — Central core | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
 | Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
 | Host D — Archive host | Long-term storage | `archive-processor`, `archive-compaction` (optional, `--profile compaction`), its own `ofelia` instance |
 
@@ -37,8 +37,8 @@ appropriate file(s):
 |------|------|---------|
 | `docker-compose.receiver.yaml` | Host A — Raspberry Pi | `receiver` |
 | `docker-compose.receiver-mlat.yaml` | Host A2 — MLAT receiver (optional) | `receiver` |
-| `docker-compose.server.yaml` | Host B — Central server | `rabbitmq`, `redis`, `ofelia`, all runners |
-| `docker-compose.management-ui.yaml` | Host B — Central server | `management-ui` |
+| `docker-compose.core.yaml` | Host B — Central core | `rabbitmq`, `redis`, `ofelia`, all runners |
+| `docker-compose.management-ui.yaml` | Host B — Central core | `management-ui` |
 | `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
 | `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`; `archive-compaction` + its own `ofelia` instance (behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
 
@@ -62,7 +62,7 @@ appropriate file(s):
 
 ...and 36 more country-specific registration runners — see [Data Runners](/runners/) for the full list.
 
-`redis` in `docker-compose.server.yaml` sets explicit, non-default tuning
+`redis` in `docker-compose.core.yaml` sets explicit, non-default tuning
 (`--save ""`, `--no-appendfsync-on-rewrite yes`, a raised RediSearch fork-GC
 interval) — these are deliberate choices for a constrained host (Raspberry
 Pi CM4008032, 8GB RAM/32GB eMMC), not an oversight.
@@ -81,8 +81,8 @@ on the host. Example files for every component are in `config/`:
 | `config/archive/settings.json.example` | `docker-compose.archive.yaml` (`archive-processor`) |
 | `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
 | `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
-| `config/runners/settings.json.example` | All runners in `docker-compose.server.yaml` |
-| `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.server.yaml` |
+| `config/runners/settings.json.example` | All runners in `docker-compose.core.yaml` |
+| `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.core.yaml` |
 
 See the component pages for the full list of settings fields:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
@@ -105,7 +105,7 @@ receiver instance (Host A2, `docker-compose.receiver-mlat.yaml`) is the
 same container image on its own host with its own `RECEIVER_ID` — maintain
 it identically and independently of Host A's SDR-hosting instance.
 
-**Central server** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
+**Central core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
 let any currently-running runner finish (or stop it). Stopping message
 processors before taking RabbitMQ/Redis down isn't strictly required —

@@ -1,9 +1,9 @@
 name: skyfollower-management-ui
 
-# Runs on Host B (central server) alongside docker-compose.server.yaml, not on
+# Runs on Host B (central core) alongside docker-compose.core.yaml, not on
 # the archive host -- management-ui's only dependency is Redis, which already
 # lives on Host B. Kept as its own compose file (rather than folded into
-# docker-compose.server.yaml) so it can move to a different host later
+# docker-compose.core.yaml) so it can move to a different host later
 # without disturbing the rabbitmq/redis/runner stack.
 
 services:

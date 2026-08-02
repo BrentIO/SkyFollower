@@ -26,10 +26,10 @@ curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/do
   | bash -s -- <role>
 ```
 
-`<role>` is one of `receiver`, `receiver-mlat`, `server`, `management-ui`,
+`<role>` is one of `receiver`, `receiver-mlat`, `core`, `management-ui`,
 `message-processor`, or `archive` — matching the Compose Files table in
 [Deployment](/deployment/#compose-files). Host B runs the script twice
-(`server` and `management-ui`), since it brings up both compose files.
+(`core` and `management-ui`), since it brings up both compose files.
 `[dest-dir]` defaults to the current directory.
 
 Files are fetched from the **latest GitHub release**, not tip of `main` —
@@ -47,7 +47,7 @@ the host up:
 docker compose -f <compose-file> up -d
 ```
 
-On the `server` host specifically, once it's up, see [Loading All
+On the `core` host specifically, once it's up, see [Loading All
 Data](#loading-all-data) below to do a first-time data import instead of
 waiting on each runner's own scheduled `ofelia` run.
 
@@ -71,10 +71,10 @@ docker compose -f docker-compose.receiver.yaml up -d
 # Host A2 — dedicated MLAT receiver (optional)
 docker compose -f docker-compose.receiver-mlat.yaml up -d
 
-# Host B — central server
-docker compose -f docker-compose.server.yaml up -d
+# Host B — central core
+docker compose -f docker-compose.core.yaml up -d
 # Create runner containers in stopped state so ofelia can schedule them:
-docker compose -f docker-compose.server.yaml --profile runners up --no-start
+docker compose -f docker-compose.core.yaml --profile runners up --no-start
 # Host B also runs the management UI, as its own compose file (its only
 # dependency is Redis, already on this host):
 docker compose -f docker-compose.management-ui.yaml up -d
@@ -90,7 +90,7 @@ docker compose -f docker-compose.archive.yaml up -d
 
 To run a single data runner manually (e.g. for a first-time import):
 ```bash
-docker compose -f docker-compose.server.yaml run --rm runner-ourairports
+docker compose -f docker-compose.core.yaml run --rm runner-ourairports
 ```
 
 To bulk-load *every* runner once (e.g. right after install, so Redis isn't
@@ -99,12 +99,12 @@ for weekly runners). `mictronics` goes first since most country runners
 resolve `icao_hex` against its RediSearch index; the rest follow
 alphabetically. The runner list comes from `docker compose config` itself,
 not a separate list, so it's always accurate for whatever's actually
-declared in `docker-compose.server.yaml`:
+declared in `docker-compose.core.yaml`:
 ```bash
-docker compose -f docker-compose.server.yaml run --rm runner-mictronics
-for svc in $(docker compose -f docker-compose.server.yaml config --services \
+docker compose -f docker-compose.core.yaml run --rm runner-mictronics
+for svc in $(docker compose -f docker-compose.core.yaml config --services \
     | grep '^runner-' | grep -v '^runner-mictronics$' | sort); do
-  docker compose -f docker-compose.server.yaml run --rm "$svc"
+  docker compose -f docker-compose.core.yaml run --rm "$svc"
 done
 ```
 

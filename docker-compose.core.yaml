@@ -1,4 +1,4 @@
-name: skyfollower-server
+name: skyfollower-core
 
 services:
 
@@ -103,7 +103,7 @@ services:
   # Data runners — created stopped; started on schedule by ofelia.
   #
   # To initialise before first scheduled run:
-  #   docker compose -f docker-compose.server.yaml --profile runners up --no-start
+  #   docker compose -f docker-compose.core.yaml --profile runners up --no-start
   # To run a runner manually, or bulk-load every runner once on a fresh
   # install (mictronics first, then the rest), see README.md's Quick Start.
   # ---------------------------------------------------------------------------

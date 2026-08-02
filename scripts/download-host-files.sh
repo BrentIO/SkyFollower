@@ -12,7 +12,7 @@
 # Or, without cloning anything first:
 #   curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/download-host-files.sh | bash -s -- <role>
 #
-# <role> is one of: receiver, receiver-mlat, server, management-ui,
+# <role> is one of: receiver, receiver-mlat, core, management-ui,
 # message-processor, archive
 #
 # Files are fetched from the latest GitHub *release tag* by default (REF
@@ -72,7 +72,7 @@ MAIN_BASE="https://raw.githubusercontent.com/BrentIO/SkyFollower/main"
 
 usage() {
   echo "Usage: $0 <role> [dest-dir]" >&2
-  echo "  role: receiver | receiver-mlat | server | management-ui | message-processor | archive" >&2
+  echo "  role: receiver | receiver-mlat | core | management-ui | message-processor | archive" >&2
   exit 1
 }
 
@@ -87,8 +87,8 @@ case "$ROLE" in
     COMPOSE_FILES=(docker-compose.receiver-mlat.yaml)
     CONFIG_FILES=(config/receiver/mlat-settings.json.example)
     ;;
-  server)
-    COMPOSE_FILES=(docker-compose.server.yaml)
+  core)
+    COMPOSE_FILES=(docker-compose.core.yaml)
     CONFIG_FILES=(config/runners/settings.json.example config/ofelia/config.ini.example)
     ;;
   management-ui)
