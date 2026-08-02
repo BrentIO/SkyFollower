@@ -4,4 +4,3 @@ pika==1.4.2
 paho-mqtt==2.1.0
 boto3==1.43.56
 pyarrow==25.0.0
-redis==8.0.1
