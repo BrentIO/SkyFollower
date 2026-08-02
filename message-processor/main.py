@@ -60,6 +60,12 @@ from shared.redis_keys import (
 
 logger = logging.getLogger("message_processor")
 
+# tmpfs-mounted in docker-compose.message-processor.yaml -- these writes must
+# never hit the host's eMMC/SD storage, only /app/data (the SQLite active
+# store) is durable/persistent.
+_HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
+_HEALTHCHECK_INTERVAL_SECONDS = 15
+
 # ---------------------------------------------------------------------------
 # US registration regex (skip operator lookup for tail numbers)
 # ---------------------------------------------------------------------------
@@ -558,6 +564,7 @@ class MessageProcessor:
 
         # Background threads
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat").start()
+        threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
         threading.Thread(target=self._eviction_loop, daemon=True, name="eviction").start()
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
@@ -1311,6 +1318,26 @@ class MessageProcessor:
                 self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Docker healthcheck (heartbeat file, distinct from the Redis
+    # NX-key heartbeat above)
+    # ------------------------------------------------------------------
+
+    def _healthcheck_loop(self) -> None:
+        """Touch a heartbeat file while genuinely connected to RabbitMQ, for
+        Docker's HEALTHCHECK to check the mtime of. A fixed interval
+        independent of telemetry_interval_seconds (which is user-configurable
+        and not tuned for this), so healthcheck timing stays predictable."""
+        heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        while not self._shutdown.is_set():
+            if self._rmq_connected:
+                try:
+                    heartbeat_path.touch()
+                except OSError:
+                    pass
+            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery

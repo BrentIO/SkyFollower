@@ -8,6 +8,17 @@ services:
     volumes:
       - ./config/message-processor/settings.json:/app/settings.json:ro
       - message-processor-0-archive:/app/data
+    # RAM-backed, not the container's writable layer -- the healthcheck
+    # heartbeat file is rewritten every 15s and must never hit the host's
+    # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; p='/app/health/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<40 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       MESSAGE_PROCESSOR_ID: "0"
 
@@ -22,6 +33,14 @@ services:
   #   volumes:
   #     - ./config/message-processor/settings.json:/app/settings.json:ro
   #     - message-processor-1-archive:/app/data
+  #   tmpfs:
+  #     - /app/health
+  #   healthcheck:
+  #     test: ["CMD", "python", "-c", "import os,sys,time; p='/app/health/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<40 else 1)"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
   #   environment:
   #     MESSAGE_PROCESSOR_ID: "1"
 
