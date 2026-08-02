@@ -332,7 +332,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
         "ids": "SkyFollower_runner_airportwebcams_special_liveries",
-        "name": "SkyFollower Airport Webcams Special Liveries Runner",
+        "name": "SkyFollower 🎨 Airport Webcams Special Liveries Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [
