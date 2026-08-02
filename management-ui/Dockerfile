@@ -8,7 +8,6 @@ RUN npm ci
 COPY management-ui/frontend/ ./
 RUN npm run build
 
-
 FROM python:3.14-slim AS base
 
 WORKDIR /app
@@ -36,4 +35,10 @@ ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 
 EXPOSE 80
+
+# VERSION changes every release; placed last so it only busts this
+# cheap final layer, not the pip-install layer above.
+ARG VERSION=dev
+ENV VERSION=$VERSION
+
 CMD ["/entrypoint.sh"]

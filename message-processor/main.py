@@ -37,6 +37,7 @@ import redis as redis_lib
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.fallback_queue import FallbackQueue
+from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import (
     AircraftRecord,
@@ -1347,11 +1348,11 @@ class MessageProcessor:
         if not (self._mqtt and self._mqtt_connected):
             return
         pid = self._id
-        device = {
-            "ids": f"SkyFollower_message_processor_{pid}",
-            "name": f"SkyFollower Message Processor {pid}",
-            "manufacturer": "P5Software, LLC",
-        }
+        device = build_ha_device(
+            identifier=f"SkyFollower_message_processor_{pid}",
+            name=f"SkyFollower Message Processor {pid}",
+            model=f"Message Processor {pid}",
+        )
         availability = {
             "availability_topic": f"SkyFollower/message-processor/{pid}/status",
             "payload_available": "ONLINE",

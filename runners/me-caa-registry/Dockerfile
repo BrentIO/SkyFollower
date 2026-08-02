@@ -8,4 +8,10 @@ COPY runners/me-caa-registry/ ./me-caa-registry/
 ENV PYTHONPATH=/app
 ENV SETTINGS_PATH=/app/settings.json
 RUN touch /app/settings.json
+
+# VERSION changes every release; placed last so it only busts this
+# cheap final layer, not the pip-install layer above.
+ARG VERSION=dev
+ENV VERSION=$VERSION
+
 CMD ["python", "me-caa-registry/main.py"]

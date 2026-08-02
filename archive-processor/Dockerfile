@@ -14,4 +14,9 @@ ENV PYTHONPATH=/app
 
 WORKDIR /app/archive-processor
 
+# VERSION changes every release; placed last so it only busts this
+# cheap final layer, not the pip-install layer above.
+ARG VERSION=dev
+ENV VERSION=$VERSION
+
 CMD ["python", "main.py"]

@@ -53,6 +53,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from redis.commands.search.query import Query
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
     aircraft_livery_key,
@@ -330,11 +331,11 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_airportwebcams_special_liveries",
-        "name": "SkyFollower 🎨 Airport Webcams Special Liveries Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_airportwebcams_special_liveries",
+        name="SkyFollower 🎨 Airport Webcams Special Liveries Runner",
+        model="🎨 Airport Webcams Special Liveries Runner",
+    )
     stats = [
         ("records_imported", "Airport Webcams Special Liveries Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Airport Webcams Special Liveries Last Run At", "mdi:clock", None, None),

@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
 from shared.fallback_queue import FallbackQueue
+from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
 from shared.redis_keys import (
@@ -857,11 +858,11 @@ class ArchiveProcessor:
     def _publish_ha_autodiscovery(self) -> None:
         if not (self._mqtt and self._mqtt_connected):
             return
-        device = {
-            "ids": "SkyFollower_archive",
-            "name": "SkyFollower Archive",
-            "manufacturer": "P5Software, LLC",
-        }
+        device = build_ha_device(
+            identifier="SkyFollower_archive",
+            name="SkyFollower Archive",
+            model="Archive",
+        )
         availability = {
             "availability_topic": "SkyFollower/archive/status",
             "payload_available": "ONLINE",

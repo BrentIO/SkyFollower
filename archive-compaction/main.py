@@ -43,6 +43,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
+from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
 
@@ -484,11 +485,11 @@ def publish_completion_stats(
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_archive_compaction",
-        "name": "SkyFollower Archive Compaction",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_archive_compaction",
+        name="SkyFollower Archive Compaction",
+        model="Archive Compaction",
+    )
     stats = [
         ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None),
         ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None),
