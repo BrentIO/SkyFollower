@@ -18,6 +18,7 @@ import json
 import logging
 import logging.handlers
 import os
+import pathlib
 import signal
 import socket
 import sys
@@ -39,6 +40,12 @@ from shared.mqtt import build_mqtt_client
 from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
+
+# tmpfs-mounted in docker-compose.receiver.yaml/docker-compose.receiver-mlat.yaml
+# -- these writes must never hit the host's eMMC/SD storage, only /app/data
+# (the fallback SQLite queue) is durable/persistent.
+_HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
+_HEALTHCHECK_INTERVAL_SECONDS = 15
 
 # ---------------------------------------------------------------------------
 # Rate tracker — 30-second rolling window (copied from message processor pattern)
@@ -115,6 +122,11 @@ class Receiver:
         # Start telemetry loop
         threading.Thread(
             target=self._telemetry_loop, daemon=True, name="telemetry"
+        ).start()
+
+        # Start healthcheck heartbeat loop
+        threading.Thread(
+            target=self._healthcheck_loop, daemon=True, name="healthcheck"
         ).start()
 
         # One thread per source
@@ -468,6 +480,28 @@ class Receiver:
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )
         self._mqtt.publish(f"{base}/rabbitmq_connected", str(rmq_connected), retain=True)
+
+    # ------------------------------------------------------------------
+    # Docker healthcheck (heartbeat file)
+    # ------------------------------------------------------------------
+
+    def _healthcheck_loop(self) -> None:
+        """Touch a heartbeat file while genuinely connected to both RabbitMQ
+        and MQTT, for Docker's HEALTHCHECK to check the mtime of. A fixed
+        interval independent of telemetry_interval_seconds (which is
+        user-configurable and not tuned for this), so healthcheck timing
+        stays predictable."""
+        heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        while not self._shutdown.is_set():
+            with self._rmq_lock:
+                rmq_connected = self._rmq_connected
+            if rmq_connected and self._mqtt_connected:
+                try:
+                    heartbeat_path.touch()
+                except OSError:
+                    pass
+            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery
