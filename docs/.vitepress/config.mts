@@ -26,6 +26,10 @@ export default defineConfig({
   },
 
   themeConfig: {
+    search: {
+      provider: "local",
+    },
+
     nav: [
       { text: "Getting Started", link: "/getting-started/" },
       { text: "Deployment", link: "/deployment/" },
