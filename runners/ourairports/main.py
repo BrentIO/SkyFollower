@@ -335,7 +335,7 @@ def publish_completion_stats(
         base = MQTT_ROOT + "/statistic"
         client.publish(f"{base}/records_imported", str(records_imported), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
-        client.publish(f"{base}/last_run_status", status, retain=True)
+        client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
 
         _publish_ha_autodiscovery(client)
 
@@ -376,6 +376,8 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             payload["state_class"] = state_class
         if unit:
             payload["unit_of_measurement"] = unit
+        if name == "last_run_at":
+            payload["device_class"] = "timestamp"
         client.publish(
             f"homeassistant/sensor/SkyFollower_runner_ourairports_{name}/config",
             json.dumps(payload),
