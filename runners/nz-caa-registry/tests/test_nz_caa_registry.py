@@ -419,7 +419,7 @@ class TestPublishCompletionStats:
             with patch("time.sleep"):
                 publish_completion_stats(cfg, 0, "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
-        assert calls[f"{MQTT_ROOT}/statistic/last_run_status"] == "failure"
+        assert calls[f"{MQTT_ROOT}/statistic/last_run_status"] == "Failure"
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/nz-caa-registry"

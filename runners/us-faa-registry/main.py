@@ -543,7 +543,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
         base = MQTT_ROOT + "/statistic"
         client.publish(f"{base}/records_imported", str(records_imported), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
-        client.publish(f"{base}/last_run_status", status, retain=True)
+        client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
 
         _publish_ha_autodiscovery(client)
 
