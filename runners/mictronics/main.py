@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
     aircraft_mictronics_key,
@@ -470,11 +471,11 @@ def publish_completion_stats(
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_mictronics",
-        "name": "SkyFollower Mictronics Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_mictronics",
+        name="SkyFollower Mictronics Runner",
+        model="Mictronics Runner",
+    )
     stats = [
         ("records_imported", "Mictronics Records Imported", "mdi:airplane", "total_increasing", None),
         ("operators_imported", "Mictronics Operators Imported", "mdi:account-group", "total_increasing", None),

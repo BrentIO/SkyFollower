@@ -29,6 +29,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import aircraft_registry_key
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
@@ -320,11 +321,11 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_im_ardis_registry",
-        "name": f"SkyFollower {country_flag('IM')} Isle of Man ARDIS Registry Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_im_ardis_registry",
+        name=f"SkyFollower {country_flag('IM')} Isle of Man ARDIS Registry Runner",
+        model=f"{country_flag('IM')} Isle of Man ARDIS Registry Runner",
+    )
     stats = [
         ("records_imported", "Isle of Man ARDIS Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Isle of Man ARDIS Last Run At", "mdi:clock", None, None),

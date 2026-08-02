@@ -123,6 +123,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/arm64,linux/amd64
+          build-args: |
+            VERSION=${{ github.ref_name }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
           # still computed but unused, since push is the gate that matters.
           push: ${{ !inputs.test_mode }}

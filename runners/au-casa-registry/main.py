@@ -37,6 +37,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
@@ -508,11 +509,11 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_au_casa_registry",
-        "name": f"SkyFollower {country_flag('AU')} Australia CASA Registry Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_au_casa_registry",
+        name=f"SkyFollower {country_flag('AU')} Australia CASA Registry Runner",
+        model=f"{country_flag('AU')} Australia CASA Registry Runner",
+    )
     stats = [
         ("records_imported", "Australia CASA Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Australia CASA Last Run At", "mdi:clock", None, None),

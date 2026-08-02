@@ -36,6 +36,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import route_key
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
@@ -234,11 +235,11 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_vrs_standing_data",
-        "name": "SkyFollower Virtual Radar Server Standing Data Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_vrs_standing_data",
+        name="SkyFollower Virtual Radar Server Standing Data Runner",
+        model="Virtual Radar Server Standing Data Runner",
+    )
     stats = [
         ("records_imported", "Virtual Radar Server Standing Data Records Imported", "mdi:routes", "total_increasing", None),
         ("last_run_at", "Virtual Radar Server Standing Data Last Run At", "mdi:clock", None, None),

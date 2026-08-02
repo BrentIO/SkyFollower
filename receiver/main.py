@@ -34,6 +34,7 @@ import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.fallback_queue import FallbackQueue
+from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
@@ -513,11 +514,11 @@ class Receiver:
 
         rid = self._id
         base = f"SkyFollower/receiver/{rid}/statistic"
-        device = {
-            "ids": f"SkyFollower_receiver_{rid}",
-            "name": f"SkyFollower Receiver {rid}",
-            "manufacturer": "P5Software, LLC",
-        }
+        device = build_ha_device(
+            identifier=f"SkyFollower_receiver_{rid}",
+            name=f"SkyFollower Receiver {rid}",
+            model=f"Receiver {rid}",
+        )
         availability = {
             "availability_topic": f"SkyFollower/receiver/{rid}/status",
             "payload_available": "ONLINE",

@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
+from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
     aircraft_registry_key,
@@ -545,11 +546,11 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 
 
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
-    device = {
-        "ids": "SkyFollower_runner_uk_caa_registry",
-        "name": f"SkyFollower {country_flag('GB')} United Kingdom CAA Registry Runner",
-        "manufacturer": "P5Software, LLC",
-    }
+    device = build_ha_device(
+        identifier="SkyFollower_runner_uk_caa_registry",
+        name=f"SkyFollower {country_flag('GB')} United Kingdom CAA Registry Runner",
+        model=f"{country_flag('GB')} United Kingdom CAA Registry Runner",
+    )
     stats = [
         ("records_imported", "United Kingdom CAA Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "United Kingdom CAA Last Run At", "mdi:clock", None, None),
