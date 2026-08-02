@@ -89,21 +89,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # Capped below the matrix size (~48 images). Originally 3, to avoid
-      # bursting QEMU setup's anonymous Docker Hub pull past Docker Hub's
-      # rate limit on every job. That premise mostly no longer holds:
-      # docker/setup-qemu-action caches the binfmt image via actions/cache
-      # independent of the BuildKit layer cache above, and GitHub's cache
-      # fallback rule lets any ref -- including a release tag that's never
-      # run before -- restore a cache saved on the default branch (main),
-      # confirmed empirically by dispatching a throwaway branch and
-      # observing a cache hit with zero prior history of its own. So most
-      # runs never touch Docker Hub for QEMU at all. The residual risk is
-      # a fully cold cache (no run against main in 7+ days, or evicted) --
-      # the first run after that still does a real Docker Hub pull per
-      # job, and a higher cap risks several jobs racing that pull at once
-      # before the cache is repopulated. 8 balances that rare cold-start
-      # case against wall-clock time on the common warm-cache case.
+      # QEMU setup's binfmt image is cached via actions/cache and reachable
+      # from any ref via GitHub's default-branch fallback, so most runs
+      # never hit Docker Hub for it. Kept below the matrix size (~48
+      # images) for the residual case where that cache is cold and several
+      # jobs would otherwise race a real Docker Hub pull at once.
       max-parallel: 8
       matrix: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
