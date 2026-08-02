@@ -516,6 +516,8 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             payload["state_class"] = state_class
         if unit:
             payload["unit_of_measurement"] = unit
+        if name == "last_run_at":
+            payload["device_class"] = "timestamp"
         client.publish(
             f"homeassistant/sensor/SkyFollower_runner_br_anac_registry_{name}/config",
             json.dumps(payload),
