@@ -148,6 +148,9 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
         if i > 0:
             time.sleep(delay)
 
+        if i > 0 and i % 100 == 0:
+            logger.info("Fetched detail for %d/%d records.", i, len(ids))
+
         detail = _fetch_detail(session, record_id)
         if detail is None:
             continue
