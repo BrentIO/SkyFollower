@@ -24,6 +24,12 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: skyfollower
       RABBITMQ_DEFAULT_PASS: change_me
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis/redis-stack-server:latest
@@ -43,6 +49,11 @@ services:
     environment:
       REDISEARCH_ARGS: "MAXSEARCHRESULTS 10000 MAXAGGREGATERESULTS 10000 FORK_GC_RUN_INTERVAL 300"
     command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --dir /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # ---------------------------------------------------------------------------
   # Scheduler
