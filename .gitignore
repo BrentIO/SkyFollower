@@ -23,3 +23,7 @@ CLAUDE.md
 # components/*.md wildcard for the same reason).
 config/*/*
 !config/*/*.example
+
+# rabbitmq/redis bind-mounted runtime data (docker-compose.core.yaml) --
+# host-local persisted state, not something to check in.
+data/

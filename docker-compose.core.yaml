@@ -13,7 +13,7 @@ services:
       - "5672:5672"
       - "15672:15672"
     volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
+      - ./data/rabbitmq:/var/lib/rabbitmq
       # Tuned for a constrained host (Raspberry Pi CM4, 8GB RAM/32GB eMMC)
       # shared with Redis and the rest of Host B -- absolute memory/disk
       # watermarks instead of the relative-to-host-RAM default, and the
@@ -31,7 +31,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - ./data/redis:/data
     # Tuned for a constrained host (Raspberry Pi CM4, 8GB RAM/32GB eMMC):
     # AOF is the sole durability mechanism (--save "" disables the default
     # periodic RDB snapshot, redundant with AOF's own rdb-preamble rewrite);
@@ -460,7 +460,3 @@ services:
       - ./config/runners/settings.json:/app/settings.json:ro
     depends_on:
       - redis
-
-volumes:
-  rabbitmq-data:
-  redis-data:
