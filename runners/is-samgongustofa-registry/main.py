@@ -383,7 +383,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Iceland Samgöngustofa Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Iceland Samgöngustofa Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Iceland Samgöngustofa Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Iceland Samgöngustofa Last Run Status", "mdi:check-circle", None, None),
     ]

@@ -366,7 +366,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Singapore CAAS Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Singapore CAAS Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Singapore CAAS Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Singapore CAAS Last Run Status", "mdi:check-circle", None, None),
     ]

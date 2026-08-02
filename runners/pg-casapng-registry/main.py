@@ -361,7 +361,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Papua New Guinea CASA PNG Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Papua New Guinea CASA PNG Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Papua New Guinea CASA PNG Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Papua New Guinea CASA PNG Last Run Status", "mdi:check-circle", None, None),
     ]

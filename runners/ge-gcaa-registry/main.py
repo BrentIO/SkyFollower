@@ -385,7 +385,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Georgia GCAA Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Georgia GCAA Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Georgia GCAA Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Georgia GCAA Last Run Status", "mdi:check-circle", None, None),
     ]

@@ -344,7 +344,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "South Korea KOCA Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "South Korea KOCA Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "South Korea KOCA Last Run At", "mdi:clock", None, None),
         ("last_run_status", "South Korea KOCA Last Run Status", "mdi:check-circle", None, None),
     ]

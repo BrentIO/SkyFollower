@@ -551,7 +551,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         "manufacturer": "P5Software, LLC",
     }
     stats = [
-        ("records_imported", "Transport Canada Records Imported", "mdi:airplane", "total_increasing", None),
+        ("records_imported", "Transport Canada Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Transport Canada Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Transport Canada Last Run Status", "mdi:check-circle", None, None),
     ]
