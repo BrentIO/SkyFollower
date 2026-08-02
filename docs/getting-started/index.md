@@ -111,7 +111,7 @@ not a separate list, so it's always accurate for whatever's actually
 declared in `docker-compose.core.yaml`:
 ```bash
 docker compose -f docker-compose.core.yaml run --rm runner-mictronics
-for svc in $(docker compose -f docker-compose.core.yaml config --services \
+for svc in $(docker compose -f docker-compose.core.yaml --profile runners config --services \
     | grep '^runner-' | grep -v '^runner-mictronics$' | sort); do
   docker compose -f docker-compose.core.yaml run --rm "$svc"
 done
