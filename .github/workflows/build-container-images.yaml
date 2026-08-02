@@ -112,3 +112,7 @@ jobs:
           tags: |
             ${{ matrix.image }}:${{ github.ref_name }}
             ${{ matrix.image }}:latest
+          # Scoped per image so one component's cache can't evict another's
+          # in the shared GHA cache namespace.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
