@@ -32,7 +32,9 @@ export function useToastState(): ToastContextValue {
     (kind: ToastKind, message: string) => {
       const id = nextId++;
       setToasts((current) => [...current, { id, kind, message }]);
-      setTimeout(() => dismissToast(id), 5000);
+      if (kind === "success") {
+        setTimeout(() => dismissToast(id), 5000);
+      }
     },
     [dismissToast],
   );
