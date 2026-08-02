@@ -24,6 +24,9 @@ services:
       - ./config/archive/compaction-settings.json:/app/settings.json:ro
       - archive-compaction-data:/app/data
 
+  # No depends_on -- its ofelia-config.ini's job-run entry runs in `image =`
+  # mode (a fresh, disposable container per scheduled run), so ofelia needs
+  # no archive-compaction container to exist beforehand.
   ofelia:
     image: mcuadros/ofelia:latest
     restart: unless-stopped
@@ -31,8 +34,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/archive/ofelia-config.ini:/etc/ofelia/config.ini:ro
-    depends_on:
-      - archive-compaction
 
 volumes:
   archive-data:

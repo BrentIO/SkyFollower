@@ -48,6 +48,14 @@ services:
   # Scheduler
   # ---------------------------------------------------------------------------
 
+  # No depends_on -- its config.ini's job-run entries run in `image =` mode
+  # (a fresh, disposable container per scheduled run, not `container =` mode
+  # reusing a pre-existing one), so ofelia itself needs no runner container
+  # to exist beforehand. Listing all 42 runner-* services here as
+  # dependencies would be actively wrong under `up -d ofelia`: Compose starts
+  # a service's depends_on alongside it, which would launch every runner
+  # concurrently and out of the mictronics-first order the bulk-load
+  # sequence (see README.md's Quick Start) depends on.
   ofelia:
     image: mcuadros/ofelia:latest
     restart: unless-stopped
@@ -55,57 +63,15 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/ofelia/config.ini:/etc/ofelia/config.ini:ro
-    depends_on:
-      - runner-mictronics
-      - runner-ourairports
-      - runner-us-faa-registry
-      - runner-ca-transport-canada-registry
-      - runner-nz-caa-registry
-      - runner-no-caa-registry
-      - runner-au-casa-registry
-      - runner-fr-dgac-registry
-      - runner-nl-ilt-registry
-      - runner-bs-caa-registry
-      - runner-ch-bazl-registry
-      - runner-at-austrocontrol-registry
-      - runner-ky-caa-registry
-      - runner-uk-caa-registry
-      - runner-br-anac-registry
-      - runner-is-samgongustofa-registry
-      - runner-lu-dac-registry
-      - runner-bz-bdca-registry
-      - runner-im-ardis-registry
-      - runner-es-aesa-registry
-      - runner-kr-koca-registry
-      - runner-hu-kozhaf-registry
-      - runner-cz-caa-registry
-      - runner-ee-transpordiamet-registry
-      - runner-ge-gcaa-registry
-      - runner-gg-2reg-registry
-      - runner-kg-caa-registry
-      - runner-lv-caa-registry
-      - runner-md-caa-registry
-      - runner-me-caa-registry
-      - runner-mv-caa-registry
-      - runner-mk-caa-registry
-      - runner-pg-casapng-registry
-      - runner-rs-cad-registry
-      - runner-sg-caas-registry
-      - runner-sk-nsat-registry
-      - runner-tc-caa-registry
-      - runner-cy-dca-registry
-      - runner-hr-ccaa-registry
-      - runner-bg-caa-registry
-      - runner-airportwebcams-special-liveries
-      - runner-vrs-standing-data
 
   # ---------------------------------------------------------------------------
-  # Data runners — created stopped; started on schedule by ofelia.
-  #
-  # To initialise before first scheduled run:
-  #   docker compose -f docker-compose.core.yaml --profile runners up --no-start
-  # To run a runner manually, or bulk-load every runner once on a fresh
-  # install (mictronics first, then the rest), see README.md's Quick Start.
+  # Data runners — not started by `up`. Ofelia's config.ini schedules these
+  # by image (see the ofelia service's comment above), creating and
+  # destroying its own container per scheduled run rather than starting one
+  # of these. These service definitions exist solely for the manual/bulk-load
+  # path: `docker compose -f docker-compose.core.yaml run --rm runner-x`, or
+  # to bulk-load every runner once on a fresh install (mictronics first, then
+  # the rest) — see README.md's Quick Start.
   # ---------------------------------------------------------------------------
 
   runner-mictronics:

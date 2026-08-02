@@ -46,6 +46,7 @@ from shared.redis_keys import (
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
+from shared.sqlite_staging import open_staging_db
 
 logger = logging.getLogger("mictronics")
 
@@ -142,10 +143,7 @@ def stage_data(
 ) -> sqlite3.Connection:
     """Parse all JSON files and stage rows into a SQLite database."""
     logger.info("Opening staging database at %s", db_path)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
+    conn = open_staging_db(db_path, _SCHEMA)
 
     # --- operators.json ---
     if "operators.json" in files:
