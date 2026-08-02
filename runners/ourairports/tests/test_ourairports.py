@@ -545,7 +545,7 @@ class TestMqttCompletionStats:
                 publish_completion_stats(cfg, 0, "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
-        assert calls[f"{self._base_topic}/last_run_status"] == "failure"
+        assert calls[f"{self._base_topic}/last_run_status"] == "Failure"
 
     def test_stat_topics_retained(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
