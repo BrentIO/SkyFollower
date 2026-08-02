@@ -76,6 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # Capped well below the matrix size (~48 images) so QEMU setup's
+      # anonymous Docker Hub pull doesn't burst all at once and trip
+      # Docker Hub's rate limiting. Wall-clock time is not a concern here.
+      max-parallel: 3
       matrix: ${{ fromJson(needs.discover-images.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
