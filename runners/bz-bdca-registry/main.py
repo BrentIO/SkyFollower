@@ -44,6 +44,7 @@ from shared.redis_keys import (
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
+from shared.country_flags import country_flag
 
 logger = logging.getLogger("bz-bdca-registry")
 
@@ -338,7 +339,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
         "ids": "SkyFollower_runner_bz_bdca_registry",
-        "name": "SkyFollower Belize BDCA Runner",
+        "name": f"SkyFollower {country_flag('BZ')} Belize BDCA Registry Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [

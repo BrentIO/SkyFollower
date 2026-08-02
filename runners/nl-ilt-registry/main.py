@@ -42,6 +42,7 @@ from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
+from shared.country_flags import country_flag
 
 logger = logging.getLogger("nl-ilt-registry")
 
@@ -413,7 +414,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
         "ids": "SkyFollower_runner_nl_ilt_registry",
-        "name": "SkyFollower Netherlands ILT Runner",
+        "name": f"SkyFollower {country_flag('NL')} Netherlands ILT Registry Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [

@@ -50,6 +50,7 @@ from shared.redis_keys import (
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
+from shared.country_flags import country_flag
 
 logger = logging.getLogger("cy-dca-registry")
 
@@ -318,7 +319,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = {
         "ids": "SkyFollower_runner_cy_dca_registry",
-        "name": "SkyFollower Cyprus DCA Runner",
+        "name": f"SkyFollower {country_flag('CY')} Cyprus DCA Registry Runner",
         "manufacturer": "P5Software, LLC",
     }
     stats = [
