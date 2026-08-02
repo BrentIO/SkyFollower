@@ -121,9 +121,9 @@ each of the eight stats above.
 
 This job needs its own S3 credentials — no Redis, no RabbitMQ — so it's
 scheduled by a dedicated `ofelia` instance on the archive host
-(`docker-compose.archive.yaml`) rather than the central core's `ofelia`
-(which only has Redis-facing data runners in its `depends_on` list, and no
-AWS credentials configured anywhere on that host today). Its own IAM
+(`docker-compose.archive.yaml`) rather than the core's `ofelia`
+(which only schedules Redis-facing data runners, and has no AWS
+credentials configured anywhere on that host today). Its own IAM
 identity is deliberately separate from `archive-processor`'s, not a shared
 or widened one — see [AWS Setup](#aws-setup) above for exactly what it
 needs and why (`Delete` and bucket-level `List`, which `archive-processor`

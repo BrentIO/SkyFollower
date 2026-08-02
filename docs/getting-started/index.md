@@ -79,7 +79,7 @@ docker compose -f docker-compose.receiver.yaml up -d
 # Host A2 — dedicated MLAT receiver (optional)
 docker compose -f docker-compose.receiver-mlat.yaml up -d
 
-# Host B — central core
+# Host B — core
 docker compose -f docker-compose.core.yaml up -d
 # ofelia sits behind the "runners" Compose profile and has no depends_on,
 # so name it explicitly -- this starts only ofelia, not every runner too:
