@@ -9,11 +9,20 @@ run-name: "Build container images ${{ github.ref_name }}"
 #      explicitly once the tag exists.
 #   2. push: tags — fallback for a tag pushed some other way (e.g. a human
 #      pushing with their own credentials).
+#
+# workflow_dispatch also accepts test_mode, for dry-running workflow changes
+# (e.g. cache behavior, matrix concurrency) against an arbitrary ref like
+# `main` without cutting a real release tag or publishing to GHCR.
 on:
   push:
     tags:
       - '[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Test mode: build only, don't push, skip version-tag validation (for dry-running against a branch)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,6 +34,10 @@ jobs:
     steps:
       - name: Validate tag format
         run: |
+          if [[ "${{ inputs.test_mode }}" == "true" ]]; then
+            echo "⚠️ test_mode enabled — skipping version format validation (ref: ${{ github.ref_name }})"
+            exit 0
+          fi
           if [[ ! "${{ github.ref_name }}" =~ ^[0-9]{4}\.(0[1-9]|1[0-2])\.(0[1-9]|[1-9][0-9])$ ]]; then
             echo "❌ Invalid version format: ${{ github.ref_name }}. Expected YYYY.MM.BB"
             exit 1
@@ -108,7 +121,9 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/arm64,linux/amd64
-          push: true
+          # In test_mode, nothing is pushed to GHCR — the tags below are
+          # still computed but unused, since push is the gate that matters.
+          push: ${{ !inputs.test_mode }}
           tags: |
             ${{ matrix.image }}:${{ github.ref_name }}
             ${{ matrix.image }}:latest
