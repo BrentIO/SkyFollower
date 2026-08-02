@@ -10,15 +10,18 @@ interface NewSearchModalProps {
 // archive_parquet_index record -- this is the whole point of the legend:
 // writing SQL against exact column names from memory, so it stays visible
 // the entire time (not a placeholder that vanishes once typing starts).
-const COLUMN_REFERENCE: [string, string][] = [
-  ["icao_hex", "string"],
-  ["registration", "string"],
-  ["type_designator", "string"],
-  ["military", "boolean"],
-  ["operator_designator", "string"],
-  ["ident", "string"],
-  ["first_message", "timestamp"],
-  ["last_message", "timestamp"],
+// Example values are all the same aircraft (N659DL / A8AE7F), matching
+// the example used elsewhere in this app (e.g. LookupView.tsx's
+// placeholder text) rather than a different one per row.
+const COLUMN_REFERENCE: [string, string, string][] = [
+  ["icao_hex", "string", "A8AE7F"],
+  ["registration", "string", "N659DL"],
+  ["type_designator", "string", "B752"],
+  ["military", "boolean", "false"],
+  ["operator_designator", "string", "DAL"],
+  ["ident", "string", "DAL2"],
+  ["first_message", "timestamp", "2026-07-31 12:00:00"],
+  ["last_message", "timestamp", "2026-07-31 13:45:00"],
 ];
 
 // Shown once, when the user clicks "+ New Search" -- collects the two
@@ -44,7 +47,7 @@ export function NewSearchModal({ open, onConfirm, onCancel }: NewSearchModalProp
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
+      <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
         <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">New Search</h2>
 
         <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -71,11 +74,16 @@ export function NewSearchModal({ open, onConfirm, onCancel }: NewSearchModalProp
         </label>
 
         <div className="mt-2 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
-            {COLUMN_REFERENCE.map(([column, type]) => (
+          <p className="mb-2 font-semibold text-slate-600 dark:text-slate-300">Available Fields</p>
+          <div className="grid grid-cols-[auto_auto_auto] gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
+            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Field</span>
+            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Type</span>
+            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Example</span>
+            {COLUMN_REFERENCE.map(([column, type, example]) => (
               <div key={column} className="contents">
-                <span>{column}</span>
-                <span>{type}</span>
+                <span className="whitespace-nowrap">{column}</span>
+                <span className="whitespace-nowrap">{type}</span>
+                <span className="whitespace-nowrap">{example}</span>
               </div>
             ))}
           </div>
