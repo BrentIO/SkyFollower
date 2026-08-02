@@ -11,9 +11,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # Archive Compaction — scheduled by its own ofelia instance, not the
-  # central core's (docker-compose.core.yaml). This job only needs S3
+  # core's (docker-compose.core.yaml). This job only needs S3
   # credentials, which already live on this host via archive-processor;
-  # the central core has no AWS-facing components today.
+  # the core has no AWS-facing components today.
   # ---------------------------------------------------------------------------
 
   archive-compaction:
