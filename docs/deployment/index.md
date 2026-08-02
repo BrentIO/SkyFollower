@@ -83,6 +83,8 @@ on the host. Example files for every component are in `config/`:
 | `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
 | `config/runners/settings.json.example` | All runners in `docker-compose.core.yaml` |
 | `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.core.yaml` |
+| `config/rabbitmq/rabbitmq.conf.example` | `rabbitmq` in `docker-compose.core.yaml` |
+| `config/rabbitmq/enabled_plugins.example` | `rabbitmq` in `docker-compose.core.yaml` |
 
 See the component pages for the full list of settings fields:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),

@@ -89,7 +89,7 @@ case "$ROLE" in
     ;;
   core)
     COMPOSE_FILES=(docker-compose.core.yaml)
-    CONFIG_FILES=(config/runners/settings.json.example config/ofelia/config.ini.example)
+    CONFIG_FILES=(config/runners/settings.json.example config/ofelia/config.ini.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
     ;;
   management-ui)
     COMPOSE_FILES=(docker-compose.management-ui.yaml)
@@ -101,7 +101,7 @@ case "$ROLE" in
     ;;
   archive)
     COMPOSE_FILES=(docker-compose.archive.yaml)
-    CONFIG_FILES=(config/archive/settings.json.example config/archive/compaction-settings.json.example)
+    CONFIG_FILES=(config/archive/settings.json.example config/archive/compaction-settings.json.example config/archive/ofelia-config.ini.example)
     ;;
   *)
     echo "Unknown role: ${ROLE}" >&2

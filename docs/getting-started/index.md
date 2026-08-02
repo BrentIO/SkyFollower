@@ -72,6 +72,8 @@ list) and fill in real values before starting containers.
 cp config/runners/settings.json.example config/runners/settings.json
 cp config/ofelia/config.ini.example config/ofelia/config.ini
 cp config/management-ui/settings.json.example config/management-ui/settings.json
+cp config/rabbitmq/rabbitmq.conf.example config/rabbitmq/rabbitmq.conf
+cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 
 # Host A — receiver
 docker compose -f docker-compose.receiver.yaml up -d
