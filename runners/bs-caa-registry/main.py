@@ -396,8 +396,8 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = build_ha_device(
         identifier="SkyFollower_runner_bs_caa_registry",
-        name=f"SkyFollower {country_flag('BS')} Bahamas CAA Registry Runner",
-        model=f"{country_flag('BS')} Bahamas CAA Registry Runner",
+        name=f"SkyFollower Bahamas {country_flag('BS')} CAA Registry Runner",
+        model=f"Bahamas {country_flag('BS')} CAA Registry Runner",
     )
     stats = [
         ("records_imported", "Bahamas CAA Registry Records Imported", "mdi:airplane", "total_increasing", None),
