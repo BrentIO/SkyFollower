@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `nl-ilt-registry` |
 | **Country** | Netherlands |
 | **Registration prefix** | `PH-` |
 | **Data source** | https://www.ilent.nl/documenten/lijsten/luchtvaart/databestanden/luchtvaartregister-data |

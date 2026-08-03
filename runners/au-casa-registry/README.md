@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `au-casa-registry` |
 | **Country** | Australia |
 | **Registration prefix** | `VH-` |
 | **Data source** | https://services.casa.gov.au/CSV/acrftreg.csv |

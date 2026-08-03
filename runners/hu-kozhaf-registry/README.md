@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `hu-kozhaf-registry` |
 | **Country** | Hungary |
 | **Registration prefix** | `HA-` |
 | **Data source** | https://kozlekedesihatosag.kormany.hu/hu/dokumentum/104604 |

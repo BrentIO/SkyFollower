@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `br-anac-registry` |
 | **Country** | Brazil |
 | **Registration prefix** | `PP-` / `PR-` / `PT-` / `PS-` / `PU-` |
 | **Data source** | https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_aeronaves.json |

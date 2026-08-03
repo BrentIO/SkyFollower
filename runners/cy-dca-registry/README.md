@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `cy-dca-registry` |
 | **Country** | Cyprus |
 | **Registration prefix** | `5B-` |
 | **Data source** | https://www.mcw.gov.cy/mcw/dca/dca.nsf/All/46E79D3B8B2B752AC2258D8D00384715/$file/Aircraft_Register_Extract.pdf |

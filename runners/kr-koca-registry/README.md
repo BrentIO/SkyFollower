@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `kr-koca-registry` |
 | **Country** | South Korea |
 | **Registration prefix** | `HL` |
 | **Data source** | http://atis.koca.go.kr/ATIS/aircraft/statListEn01.do?AIR_GUBUN=all |

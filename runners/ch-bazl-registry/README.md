@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ch-bazl-registry` |
 | **Country** | Switzerland |
 | **Registration prefix** | `HB-` |
 | **Data source** | https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv |

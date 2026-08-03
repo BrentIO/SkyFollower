@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `bs-caa-registry` |
 | **Country** | Bahamas |
 | **Registration prefix** | `C6-` |
 | **Data source** | https://caabahamas.com/registers/ |

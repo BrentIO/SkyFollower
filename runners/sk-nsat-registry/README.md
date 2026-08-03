@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `sk-nsat-registry` |
 | **Country** | Slovakia |
 | **Registration prefix** | `OM-` |
 | **Data source** | https://letectvo.nsat.sk/letova-sposobilost/register-lietadiel-slovenskej-republiky/zoznam-registra/ |

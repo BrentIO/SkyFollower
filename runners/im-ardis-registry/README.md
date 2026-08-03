@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `im-ardis-registry` |
 | **Country** | Isle of Man |
 | **Registration prefix** | `M-` |
 | **Data source** | https://ardis.iomaircraftregistry.com/register/search |

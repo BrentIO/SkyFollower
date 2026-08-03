@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `us-faa-registry` |
 | **Country** | United States |
 | **Registration prefix** | `N` (no dash; N-number, e.g. `N62770`) |
 | **Data source** | https://registry.faa.gov/database/ReleasableAircraft.zip |

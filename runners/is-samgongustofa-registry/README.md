@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `is-samgongustofa-registry` |
 | **Country** | Iceland |
 | **Registration prefix** | `TF-` |
 | **Data source** | https://island.is/api/graphql (Apollo Persisted Query) |

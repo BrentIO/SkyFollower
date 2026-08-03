@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `rs-cad-registry` |
 | **Country** | Serbia |
 | **Registration prefix** | `YU-` |
 | **Data source** | https://apps.cad.gov.rs/ords/dcvws/regvaz/site/listAircraft |

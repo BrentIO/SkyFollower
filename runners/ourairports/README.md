@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ourairports` |
 | **Coverage** | Global — airport metadata, not aircraft (different domain from every other data runner) |
 | **Data source** | https://davidmegginson.github.io/ourairports-data/airports.csv |
 | **Format** | CSV (fixed URL) |

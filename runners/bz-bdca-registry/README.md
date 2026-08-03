@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `bz-bdca-registry` |
 | **Country** | Belize |
 | **Registration prefix** | `V3-` |
 | **Data source** | https://www.civilaviation.gov.bz/index.php/bdca-civil-aircraft-register |

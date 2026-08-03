@@ -4,6 +4,7 @@ Virtual Radar Server Standing Data
 
 | | |
 |---|---|
+| **Name** | `vrs-standing-data` |
 | **Coverage** | Global — flight routes only (not aircraft or airports; see Scope below) |
 | **Data source** | https://github.com/vradarserver/standing-data (`routes/schema-01/**/*.csv`) |
 | **Format** | GitHub repository tarball (fixed URL; no discovery step) |

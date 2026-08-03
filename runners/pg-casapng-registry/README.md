@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `pg-casapng-registry` |
 | **Country** | Papua New Guinea |
 | **Registration prefix** | `P2-` |
 | **Data source** | https://casapng.gov.pg/safety-regulatory/airworthiness/Aircraft-Registers/ |

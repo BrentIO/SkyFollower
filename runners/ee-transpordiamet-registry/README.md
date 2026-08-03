@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ee-transpordiamet-registry` |
 | **Country** | Estonia |
 | **Registration prefix** | `ES-` |
 | **Data source** | https://transpordiamet.ee/ohusoidukite-register |

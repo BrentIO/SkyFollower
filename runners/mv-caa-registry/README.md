@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `mv-caa-registry` |
 | **Country** | Maldives |
 | **Registration prefix** | `8Q-` |
 | **Data source** | https://www.caa.gov.mv/operations/registration-of-aircraft-and-mortgages |

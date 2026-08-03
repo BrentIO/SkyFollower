@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `cz-caa-registry` |
 | **Country** | Czech Republic |
 | **Registration prefix** | `OK-` |
 | **Data source** | https://lr.caa.gov.cz/api/avreg/filtered (list) + https://lr.caa.gov.cz/api/avreg/{id} (detail) |
