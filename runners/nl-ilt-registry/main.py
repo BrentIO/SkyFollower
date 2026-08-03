@@ -417,6 +417,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_nl_ilt_registry",
         name=f"SkyFollower Netherlands {country_flag('NL')} ILT Registry Runner",
         model=f"Netherlands {country_flag('NL')} ILT Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/nl-ilt-registry.html",
     )
     stats = [
         ("records_imported", "Netherlands ILT Registry Records Imported", "mdi:airplane", "total_increasing", None),

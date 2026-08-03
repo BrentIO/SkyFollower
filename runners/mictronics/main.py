@@ -475,6 +475,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_mictronics",
         name="SkyFollower Mictronics Runner",
         model="Mictronics Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/mictronics.html",
     )
     stats = [
         ("records_imported", "Mictronics Records Imported", "mdi:airplane", "total_increasing", None),

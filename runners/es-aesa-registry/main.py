@@ -387,6 +387,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_es_aesa_registry",
         name=f"SkyFollower Spain {country_flag('ES')} AESA Registry Runner",
         model=f"Spain {country_flag('ES')} AESA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/es-aesa-registry.html",
     )
     stats = [
         ("records_imported", "Spain AESA Registry Records Imported", "mdi:airplane", "total_increasing", None),

@@ -18,13 +18,18 @@ MANUFACTURER = "P5Software, LLC"
 CONFIGURATION_URL = "https://github.com/BrentIO/SkyFollower"
 
 
-def build_ha_device(identifier: str, name: str, model: str) -> dict:
+def build_ha_device(
+    identifier: str, name: str, model: str, configuration_url: str = CONFIGURATION_URL
+) -> dict:
     """Build a Home Assistant MQTT discovery `device` block.
 
     sw_version is read from the VERSION environment variable on every call
     (not cached), so a discovery publish always reflects whatever image is
     currently running -- baked in by build-container-images.yaml via a
     Docker build-arg, falling back to "dev" for non-release builds.
+
+    configuration_url defaults to the repo root; callers with their own
+    docs page (e.g. a data runner) can override it to link there instead.
     """
     return {
         "ids": identifier,
@@ -32,5 +37,5 @@ def build_ha_device(identifier: str, name: str, model: str) -> dict:
         "manufacturer": MANUFACTURER,
         "model": model,
         "sw_version": os.environ.get("VERSION", "dev"),
-        "configuration_url": CONFIGURATION_URL,
+        "configuration_url": configuration_url,
     }

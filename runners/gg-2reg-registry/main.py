@@ -387,6 +387,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_gg_2reg_registry",
         name=f"SkyFollower Guernsey {country_flag('GG')} 2-reg Registry Runner",
         model=f"Guernsey {country_flag('GG')} 2-reg Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/gg-2reg-registry.html",
     )
     stats = [
         ("records_imported", "Guernsey 2-reg Registry Records Imported", "mdi:airplane", "total_increasing", None),

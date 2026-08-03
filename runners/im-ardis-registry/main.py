@@ -325,6 +325,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_im_ardis_registry",
         name=f"SkyFollower Isle of Man {country_flag('IM')} ARDIS Registry Runner",
         model=f"Isle of Man {country_flag('IM')} ARDIS Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/im-ardis-registry.html",
     )
     stats = [
         ("records_imported", "Isle of Man ARDIS Registry Records Imported", "mdi:airplane", "total_increasing", None),

@@ -343,6 +343,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_kr_koca_registry",
         name=f"SkyFollower South Korea {country_flag('KR')} KOCA Registry Runner",
         model=f"South Korea {country_flag('KR')} KOCA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/kr-koca-registry.html",
     )
     stats = [
         ("records_imported", "South Korea KOCA Registry Records Imported", "mdi:airplane", "total_increasing", None),

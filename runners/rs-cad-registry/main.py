@@ -319,6 +319,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_rs_cad_registry",
         name=f"SkyFollower Serbia {country_flag('RS')} CAD Registry Runner",
         model=f"Serbia {country_flag('RS')} CAD Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/rs-cad-registry.html",
     )
     stats = [
         ("records_imported", "Serbia CAD Registry Records Imported", "mdi:airplane", "total_increasing", None),

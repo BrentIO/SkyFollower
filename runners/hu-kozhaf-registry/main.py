@@ -382,6 +382,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_hu_kozhaf_registry",
         name=f"SkyFollower Hungary {country_flag('HU')} KoZHAF Registry Runner",
         model=f"Hungary {country_flag('HU')} KoZHAF Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/hu-kozhaf-registry.html",
     )
     stats = [
         ("records_imported", "Hungary KoZHAF Registry Records Imported", "mdi:airplane", "total_increasing", None),

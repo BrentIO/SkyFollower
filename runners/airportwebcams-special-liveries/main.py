@@ -335,6 +335,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_airportwebcams_special_liveries",
         name="SkyFollower 🎨 Airport Webcams Special Liveries Runner",
         model="🎨 Airport Webcams Special Liveries Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/airportwebcams-special-liveries.html",
     )
     stats = [
         ("records_imported", "Airport Webcams Special Liveries Records Imported", "mdi:airplane", "total_increasing", None),

@@ -382,6 +382,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_is_samgongustofa_registry",
         name=f"SkyFollower Iceland {country_flag('IS')} Samgöngustofa Registry Runner",
         model=f"Iceland {country_flag('IS')} Samgöngustofa Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/is-samgongustofa-registry.html",
     )
     stats = [
         ("records_imported", "Iceland Samgöngustofa Registry Records Imported", "mdi:airplane", "total_increasing", None),

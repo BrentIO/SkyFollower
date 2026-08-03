@@ -384,6 +384,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_ge_gcaa_registry",
         name=f"SkyFollower Georgia {country_flag('GE')} GCAA Registry Runner",
         model=f"Georgia {country_flag('GE')} GCAA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/ge-gcaa-registry.html",
     )
     stats = [
         ("records_imported", "Georgia GCAA Registry Records Imported", "mdi:airplane", "total_increasing", None),

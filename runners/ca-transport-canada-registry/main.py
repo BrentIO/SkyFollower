@@ -550,6 +550,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_ca_transport_canada_registry",
         name=f"SkyFollower Canada {country_flag('CA')} Transport Canada Registry Runner",
         model=f"Canada {country_flag('CA')} Transport Canada Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/ca-transport-canada-registry.html",
     )
     stats = [
         ("records_imported", "Transport Canada Registry Records Imported", "mdi:airplane", "total_increasing", None),
