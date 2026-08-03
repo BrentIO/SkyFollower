@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ge-gcaa-registry` |
 | **Country** | Georgia |
 | **Registration prefix** | `4L-` |
 | **Data source** | https://gcaa.ge/civil-aircraft-register/ |

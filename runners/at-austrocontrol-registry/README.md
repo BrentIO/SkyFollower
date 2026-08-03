@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `at-austrocontrol-registry` |
 | **Country** | Austria |
 | **Registration prefix** | `OE-` |
 | **Data source** | https://www.austrocontrol.at/lfa-publish-service/v2/oenfl/luftfahrzeuge |

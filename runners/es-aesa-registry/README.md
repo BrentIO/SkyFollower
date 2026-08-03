@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `es-aesa-registry` |
 | **Country** | Spain |
 | **Registration prefix** | `EC-` |
 | **Data source** | https://www.seguridadaerea.gob.es/sites/default/files/aeronaves_inscritas.pdf |

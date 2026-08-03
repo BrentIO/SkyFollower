@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `nz-caa-registry` |
 | **Country** | New Zealand |
 | **Registration prefix** | `ZK-` |
 | **Data source** | https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv |

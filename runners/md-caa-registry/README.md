@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `md-caa-registry` |
 | **Country** | Moldova |
 | **Registration prefix** | `ER-` |
 | **Data source** | https://www.caa.md/modules/filemanager/files/documentum/Registrul_Aerian_al_Republicii_Moldova.pdf |

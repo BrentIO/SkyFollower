@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `bg-caa-registry` |
 | **Country** | Bulgaria |
 | **Registration prefix** | `LZ-` |
 | **Data source** | https://www.caa.bg/bg/category/300/17238 |

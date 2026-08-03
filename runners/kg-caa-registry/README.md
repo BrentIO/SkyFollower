@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `kg-caa-registry` |
 | **Country** | Kyrgyzstan |
 | **Registration prefix** | `EX-` |
 | **Data source** | https://caa.kg/en/node/46 |

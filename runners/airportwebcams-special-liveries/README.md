@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `airportwebcams-special-liveries` |
 | **Scope** | Global — not country-specific, like `mictronics` / `ourairports` |
 | **Data source** | https://airportwebcams.net/special-liveries/ |
 | **Format** | Static server-rendered HTML table (WordPress TablePress, id `tablepress-8`) |

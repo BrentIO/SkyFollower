@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `no-caa-registry` |
 | **Country** | Norway |
 | **Registration prefix** | `LN-` |
 | **Data source** | https://data.caa.no/nlr/norgesluftfartoyregister.json |

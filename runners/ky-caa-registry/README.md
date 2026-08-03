@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ky-caa-registry` |
 | **Country** | Cayman Islands |
 | **Registration prefix** | `VP-C` |
 | **Data source** | https://www.caacayman.com/wp-content/uploads/Active-Aircraft-Register.pdf |

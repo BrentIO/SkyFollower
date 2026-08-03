@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `tc-caa-registry` |
 | **Country** | Turks and Caicos Islands |
 | **Registration prefix** | `VQ-` |
 | **Data source** | https://tcicaa.tc/operations-safety/aircrafts/aircraft-register |

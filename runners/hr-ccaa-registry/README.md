@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `hr-ccaa-registry` |
 | **Country** | Croatia |
 | **Registration prefix** | `9A-` |
 | **Data source** | https://www.ccaa.hr/en/list-of-registered-aircraft-94674 |

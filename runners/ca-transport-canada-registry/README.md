@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `ca-transport-canada-registry` |
 | **Country** | Canada |
 | **Registration prefix** | `C-` |
 | **Data source** | https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/download/ccarcsdb.zip |

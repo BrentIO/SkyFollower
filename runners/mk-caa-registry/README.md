@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `mk-caa-registry` |
 | **Country** | North Macedonia |
 | **Registration prefix** | `Z3-` |
 | **Data source** | https://www.caa.gov.mk/en/safety/airworthiness-and-aircraft-registration/ |

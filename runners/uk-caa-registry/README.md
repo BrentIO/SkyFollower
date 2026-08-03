@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `uk-caa-registry` |
 | **Country** | United Kingdom |
 | **Registration prefix** | `G-` |
 | **Data source** | https://ginfoapi.caa.co.uk (G-INFO REST API) |

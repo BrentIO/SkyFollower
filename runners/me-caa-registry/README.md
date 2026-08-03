@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `me-caa-registry` |
 | **Country** | Montenegro |
 | **Registration prefix** | `4O-` |
 | **Data source** | https://www.caa.me/en/registri?field_ispisan_iz_registra_tid=157 |

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `fr-dgac-registry` |
 | **Country** | France |
 | **Registration prefix** | `F-` |
 | **Data source** | https://immat.aviation-civile.gouv.fr/immat/servlet/static/upload/export.csv |

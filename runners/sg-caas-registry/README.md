@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `sg-caas-registry` |
 | **Country** | Singapore |
 | **Registration prefix** | `9V-` |
 | **Data source** | https://www.caas.gov.sg/industry/aircraft-operators/certificate-of-registration/ |

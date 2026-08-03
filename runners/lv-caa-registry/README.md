@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `lv-caa-registry` |
 | **Country** | Latvia |
 | **Registration prefix** | `YL-` |
 | **Data source** | https://data.gov.lv/dati/lv/api/action/datastore_search (resource_id `dbde00e6-8616-449a-8cac-ef748c6793f3`) |

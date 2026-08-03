@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `lu-dac-registry` |
 | **Country** | Luxembourg |
 | **Registration prefix** | `LX-` |
 | **Data source** | https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html |

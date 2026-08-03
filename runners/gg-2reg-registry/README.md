@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| **Name** | `gg-2reg-registry` |
 | **Country** | Guernsey (Bailiwick of Guernsey) |
 | **Registration prefix** | `2-` |
 | **Data source** | https://www.2-reg.com/legislation/register/ |
