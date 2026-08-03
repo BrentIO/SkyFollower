@@ -1,4 +1,4 @@
-# 🇸🇬 sg-caas-registry
+# Singapore 🇸🇬 CAAS Registry
 
 | | |
 |---|---|

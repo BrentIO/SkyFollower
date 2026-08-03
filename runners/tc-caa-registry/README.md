@@ -1,4 +1,4 @@
-# 🇹🇨 tc-caa-registry
+# Turks & Caicos 🇹🇨 CAA Registry
 
 | | |
 |---|---|

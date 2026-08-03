@@ -1,4 +1,4 @@
-# 🇳🇴 no-caa-registry
+# Norway 🇳🇴 CAA Registry
 
 | | |
 |---|---|

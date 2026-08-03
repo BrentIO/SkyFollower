@@ -1,4 +1,4 @@
-# 🇰🇷 kr-koca-registry
+# South Korea 🇰🇷 KOCA Registry
 
 | | |
 |---|---|

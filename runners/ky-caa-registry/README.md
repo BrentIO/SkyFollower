@@ -1,4 +1,4 @@
-# 🇰🇾 ky-caa-registry
+# Cayman Islands 🇰🇾 CAA Registry
 
 | | |
 |---|---|

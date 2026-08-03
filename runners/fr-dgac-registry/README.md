@@ -1,4 +1,4 @@
-# 🇫🇷 fr-dgac-registry
+# France 🇫🇷 DGAC Registry
 
 | | |
 |---|---|

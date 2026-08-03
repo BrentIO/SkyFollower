@@ -1,4 +1,4 @@
-# 🇲🇪 me-caa-registry
+# Montenegro 🇲🇪 CAA Registry
 
 | | |
 |---|---|

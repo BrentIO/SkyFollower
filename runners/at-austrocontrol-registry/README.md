@@ -1,4 +1,4 @@
-# 🇦🇹 at-austrocontrol-registry
+# Austria 🇦🇹 Austrocontrol Registry
 
 | | |
 |---|---|

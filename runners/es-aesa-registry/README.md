@@ -1,4 +1,4 @@
-# 🇪🇸 es-aesa-registry
+# Spain 🇪🇸 AESA Registry
 
 | | |
 |---|---|

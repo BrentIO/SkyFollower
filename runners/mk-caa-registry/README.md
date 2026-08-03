@@ -1,4 +1,4 @@
-# 🇲🇰 mk-caa-registry
+# North Macedonia 🇲🇰 CAA Registry
 
 | | |
 |---|---|

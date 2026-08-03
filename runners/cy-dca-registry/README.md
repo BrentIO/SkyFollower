@@ -1,4 +1,4 @@
-# 🇨🇾 cy-dca-registry
+# Cyprus 🇨🇾 DCA Registry
 
 | | |
 |---|---|

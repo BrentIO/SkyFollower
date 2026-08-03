@@ -1,4 +1,4 @@
-# 🇨🇿 cz-caa-registry
+# Czech 🇨🇿 CAA Registry
 
 | | |
 |---|---|

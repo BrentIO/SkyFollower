@@ -1,4 +1,4 @@
-# 🇵🇬 pg-casapng-registry
+# Papua New Guinea 🇵🇬 CASA PNG Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# 🇧🇬 bg-caa-registry
+# Bulgaria 🇧🇬 CAA Registry
 
 | | |
 |---|---|

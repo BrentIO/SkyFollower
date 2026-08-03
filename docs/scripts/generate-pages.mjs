@@ -63,11 +63,19 @@ function rewriteReadmeLinks(content) {
     .replace(DOCS_PAGE_LINK_RE, (match, page) => `](/${page})`);
 }
 
-function writePage(relPath, sourceReadmePath) {
+function writePage(relPath, sourceReadmePath, frontmatterTitle) {
   const target = join(DOCS_ROOT, relPath);
   mkdirSync(dirname(target), { recursive: true });
   const raw = readFileSync(sourceReadmePath, "utf-8");
-  writeFileSync(target, rewriteReadmeLinks(raw));
+  const body = rewriteReadmeLinks(raw);
+  // The sidebar entry and on-page heading (both derived from the README's
+  // H1) stay just the friendly name; only the browser-tab title also gets
+  // the runner's directory name appended, so it needs its own frontmatter
+  // override rather than changing the H1 itself.
+  const content = frontmatterTitle
+    ? `---\ntitle: "${frontmatterTitle.replace(/"/g, '\\"')}"\n---\n\n${body}`
+    : body;
+  writeFileSync(target, content);
 }
 
 for (const component of components) {
@@ -76,7 +84,10 @@ for (const component of components) {
 
 rmSync(join(DOCS_ROOT, "runners"), { recursive: true, force: true });
 for (const runner of runners) {
-  writePage(`runners/${runner.name}.md`, runner.readmePath);
+  // The README H1 (sidebar/heading text) omits the trailing "Runner" word;
+  // the browser-tab title adds it back plus the directory name, since the
+  // longer form reads better as a page title than in a sidebar list.
+  writePage(`runners/${runner.name}.md`, runner.readmePath, `${runner.title} Runner (${runner.name})`);
 }
 writePage("runners/index.md", join(REPO_ROOT, "runners", "README.md"));
 

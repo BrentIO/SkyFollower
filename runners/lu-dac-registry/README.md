@@ -1,4 +1,4 @@
-# 🇱🇺 lu-dac-registry
+# Luxembourg 🇱🇺 DAC Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# 🇰🇬 kg-caa-registry
+# Kyrgyzstan 🇰🇬 CAA Registry
 
 | | |
 |---|---|
