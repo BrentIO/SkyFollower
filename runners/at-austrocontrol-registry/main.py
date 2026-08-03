@@ -485,6 +485,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_at_austrocontrol_registry",
         name=f"SkyFollower Austria {country_flag('AT')} Austrocontrol Registry Runner",
         model=f"Austria {country_flag('AT')} Austrocontrol Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/at-austrocontrol-registry.html",
     )
     stats = [
         ("records_imported", "Austria Austrocontrol Registry Records Imported", "mdi:airplane", "total_increasing", None),

@@ -411,6 +411,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_ch_bazl_registry",
         name=f"SkyFollower Switzerland {country_flag('CH')} BAZL Registry Runner",
         model=f"Switzerland {country_flag('CH')} BAZL Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/ch-bazl-registry.html",
     )
     stats = [
         ("records_imported", "Switzerland BAZL Registry Records Imported", "mdi:airplane", "total_increasing", None),

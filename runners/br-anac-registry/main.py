@@ -498,6 +498,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_br_anac_registry",
         name=f"SkyFollower Brazil {country_flag('BR')} ANAC Registry Runner",
         model=f"Brazil {country_flag('BR')} ANAC Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/br-anac-registry.html",
     )
     stats = [
         ("records_imported", "Brazil ANAC Registry Records Imported", "mdi:airplane", "total_increasing", None),

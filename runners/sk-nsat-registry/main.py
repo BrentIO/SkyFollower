@@ -360,6 +360,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_sk_nsat_registry",
         name=f"SkyFollower Slovakia {country_flag('SK')} NSAT Registry Runner",
         model=f"Slovakia {country_flag('SK')} NSAT Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/sk-nsat-registry.html",
     )
     stats = [
         ("records_imported", "Slovakia NSAT Registry Records Imported", "mdi:airplane", "total_increasing", None),

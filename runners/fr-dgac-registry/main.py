@@ -498,6 +498,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_fr_dgac_registry",
         name=f"SkyFollower France {country_flag('FR')} DGAC Registry Runner",
         model=f"France {country_flag('FR')} DGAC Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/fr-dgac-registry.html",
     )
     stats = [
         ("records_imported", "France DGAC Registry Records Imported", "mdi:airplane", "total_increasing", None),

@@ -513,6 +513,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_au_casa_registry",
         name=f"SkyFollower Australia {country_flag('AU')} CASA Registry Runner",
         model=f"Australia {country_flag('AU')} CASA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/au-casa-registry.html",
     )
     stats = [
         ("records_imported", "Australia CASA Registry Records Imported", "mdi:airplane", "total_increasing", None),

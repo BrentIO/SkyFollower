@@ -239,6 +239,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_vrs_standing_data",
         name="SkyFollower Virtual Radar Server Standing Data Runner",
         model="Virtual Radar Server Standing Data Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/vrs-standing-data.html",
     )
     stats = [
         ("records_imported", "Virtual Radar Server Standing Data Records Imported", "mdi:routes", "total_increasing", None),

@@ -360,6 +360,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_pg_casapng_registry",
         name=f"SkyFollower Papua New Guinea {country_flag('PG')} CASA PNG Registry Runner",
         model=f"Papua New Guinea {country_flag('PG')} CASA PNG Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/pg-casapng-registry.html",
     )
     stats = [
         ("records_imported", "Papua New Guinea CASA PNG Registry Records Imported", "mdi:airplane", "total_increasing", None),

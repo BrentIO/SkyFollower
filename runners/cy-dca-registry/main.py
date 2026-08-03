@@ -322,6 +322,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_cy_dca_registry",
         name=f"SkyFollower Cyprus {country_flag('CY')} DCA Registry Runner",
         model=f"Cyprus {country_flag('CY')} DCA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/cy-dca-registry.html",
     )
     stats = [
         ("records_imported", "Cyprus DCA Registry Records Imported", "mdi:airplane", "total_increasing", None),

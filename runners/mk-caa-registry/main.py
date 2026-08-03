@@ -349,6 +349,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_mk_caa_registry",
         name=f"SkyFollower North Macedonia {country_flag('MK')} CAA Registry Runner",
         model=f"North Macedonia {country_flag('MK')} CAA Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/mk-caa-registry.html",
     )
     stats = [
         ("records_imported", "North Macedonia CAA Registry Records Imported", "mdi:airplane", "total_increasing", None),

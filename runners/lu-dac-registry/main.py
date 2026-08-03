@@ -453,6 +453,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         identifier="SkyFollower_runner_lu_dac_registry",
         name=f"SkyFollower Luxembourg {country_flag('LU')} DAC Registry Runner",
         model=f"Luxembourg {country_flag('LU')} DAC Registry Runner",
+        configuration_url="https://brentio.github.io/SkyFollower/runners/lu-dac-registry.html",
     )
     stats = [
         ("records_imported", "Luxembourg DAC Registry Records Imported", "mdi:airplane", "total_increasing", None),
