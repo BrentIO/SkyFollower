@@ -1,4 +1,4 @@
-# 🇬🇪 ge-gcaa-registry
+# Georgia 🇬🇪 GCAA Registry Runner
 
 | | |
 |---|---|

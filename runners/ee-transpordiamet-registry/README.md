@@ -1,4 +1,4 @@
-# 🇪🇪 ee-transpordiamet-registry
+# Estonia 🇪🇪 Transpordiamet Registry Runner
 
 | | |
 |---|---|

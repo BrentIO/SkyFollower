@@ -1,4 +1,4 @@
-# 🇨🇭 ch-bazl-registry
+# Switzerland 🇨🇭 BAZL Registry Runner
 
 | | |
 |---|---|

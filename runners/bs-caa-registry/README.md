@@ -1,4 +1,4 @@
-# 🇧🇸 bs-caa-registry
+# Bahamas 🇧🇸 CAA Registry Runner
 
 | | |
 |---|---|

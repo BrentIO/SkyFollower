@@ -1,4 +1,4 @@
-# 🇲🇻 mv-caa-registry
+# Maldives 🇲🇻 CAA Registry Runner
 
 | | |
 |---|---|

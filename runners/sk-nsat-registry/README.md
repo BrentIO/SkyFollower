@@ -1,4 +1,4 @@
-# 🇸🇰 sk-nsat-registry
+# Slovakia 🇸🇰 NSAT Registry Runner
 
 | | |
 |---|---|

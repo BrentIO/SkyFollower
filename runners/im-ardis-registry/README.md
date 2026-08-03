@@ -1,4 +1,4 @@
-# 🇮🇲 im-ardis-registry
+# Isle of Man 🇮🇲 ARDIS Registry Runner
 
 | | |
 |---|---|

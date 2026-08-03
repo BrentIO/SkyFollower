@@ -1,4 +1,4 @@
-# 🇲🇩 md-caa-registry
+# Moldova 🇲🇩 CAA Registry Runner
 
 | | |
 |---|---|

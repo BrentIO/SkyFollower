@@ -1,4 +1,4 @@
-# 🇭🇺 hu-kozhaf-registry
+# Hungary 🇭🇺 KoZHAF Registry Runner
 
 | | |
 |---|---|

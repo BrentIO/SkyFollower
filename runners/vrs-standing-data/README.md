@@ -1,4 +1,4 @@
-# vrs-standing-data
+# Virtual Radar Server Standing Data Runner
 
 Virtual Radar Server Standing Data
 
