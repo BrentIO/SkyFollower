@@ -522,7 +522,7 @@ class TestPublishCompletionStats:
         assert calls[f"{self._base_topic}/last_compacted_date"] == "2026-07-23"
         assert calls[f"{self._base_topic}/mismatch_date"] == ""
         assert calls[f"{self._base_topic}/mismatch_uuids"] == ""
-        assert calls[f"{self._base_topic}/last_run_status"] == "success"
+        assert calls[f"{self._base_topic}/last_run_status"] == "Success"
         assert f"{self._base_topic}/last_run_at" in calls
 
     def test_publishes_mismatch_fields(self):
@@ -541,7 +541,7 @@ class TestPublishCompletionStats:
                  if not c.args[0].startswith("homeassistant/")}
         assert calls[f"{self._base_topic}/mismatch_date"] == "2026-07-23"
         assert calls[f"{self._base_topic}/mismatch_uuids"] == "uuid-a,uuid-b"
-        assert calls[f"{self._base_topic}/last_run_status"] == "mismatch"
+        assert calls[f"{self._base_topic}/last_run_status"] == "Mismatch"
 
     def test_stat_topics_retained(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
@@ -563,7 +563,7 @@ class TestPublishCompletionStats:
                 publish_completion_stats(cfg, self._make_result(), "failure")
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
-        assert calls[f"{self._base_topic}/last_run_status"] == "failure"
+        assert calls[f"{self._base_topic}/last_run_status"] == "Failure"
 
 
 # ---------------------------------------------------------------------------
