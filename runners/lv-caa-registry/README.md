@@ -58,10 +58,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Aircraft",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "lv-caa-registry"
+    ],
     "icao_hex": "502C8D",
     "military": false,
-    "registration": "YL-MBL",
-    "source": "lv-caa-registry"
+    "registration": "YL-MBL"
 }
 ```
 
@@ -80,10 +83,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Aircraft",
         "type_designator": "A321"
     },
+    "data_sources": [
+        "mictronics",
+        "lv-caa-registry"
+    ],
     "icao_hex": "502CCC",
     "military": false,
-    "registration": "YL-LCQ",
-    "source": "lv-caa-registry"
+    "registration": "YL-LCQ"
 }
 ```
 

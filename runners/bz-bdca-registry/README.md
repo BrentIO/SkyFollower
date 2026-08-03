@@ -43,6 +43,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "208B5144",
         "type_designator": "C208"
     },
+    "data_sources": [
+        "mictronics",
+        "bz-bdca-registry"
+    ],
     "icao_hex": "0AB014",
     "military": false,
     "registrant": {
@@ -54,8 +58,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Manta Ray Street"
         ]
     },
-    "registration": "V3-HHV",
-    "source": "bz-bdca-registry"
+    "registration": "V3-HHV"
 }
 ```
 
@@ -72,6 +75,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "53048",
         "type_designator": "B407"
     },
+    "data_sources": [
+        "mictronics",
+        "bz-bdca-registry"
+    ],
     "icao_hex": "0AB036",
     "military": false,
     "registrant": {
@@ -80,11 +87,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Astrum TravelInternational Limited"
         ],
         "street": [
-            "Miles 3.5 GeorgePrice Highway"
+            "Miles 3.5 GeorgePrice Highway"
         ]
     },
-    "registration": "V3-AHE",
-    "source": "bz-bdca-registry"
+    "registration": "V3-AHE"
 }
 ```
 

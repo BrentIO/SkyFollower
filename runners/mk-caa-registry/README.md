@@ -58,16 +58,19 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "28R-787120",
         "type_designator": "P28R"
     },
+    "data_sources": [
+        "mictronics",
+        "mk-caa-registry"
+    ],
     "icao_hex": "512031",
     "military": false,
     "registrant": {
         "names": [
             "TRANS INTER DOO / Aeroklub “Skopje” DOO Chucher Sandevo"
         ],
-        "street": "Sportski Aerodrom Stenkovec No. 151a, Chucher Sandevo"
+        "street": "Ivan Kozarov br.15 Skopje / Sportski Aerodrom Stenkovec No. 151a, Chucher Sandevo"
     },
-    "registration": "Z3-DAJ",
-    "source": "mk-caa-registry"
+    "registration": "Z3-DAJ"
 }
 ```
 
@@ -87,6 +90,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "802A-0313",
         "type_designator": "AT8T"
     },
+    "data_sources": [
+        "mictronics",
+        "mk-caa-registry"
+    ],
     "icao_hex": "512029",
     "military": false,
     "registrant": {
@@ -95,8 +102,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "street": "“Vasko Karangeleski“ bb Skopje"
     },
-    "registration": "Z3-BGU",
-    "source": "mk-caa-registry"
+    "registration": "Z3-BGU"
 }
 ```
 

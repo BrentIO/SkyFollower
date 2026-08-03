@@ -67,6 +67,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "172S11318",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "kr-koca-registry"
+    ],
     "icao_hex": "718975",
     "military": false,
     "registrant": {
@@ -74,8 +78,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "한국항공대학교"
         ]
     },
-    "registration": "HL1175",
-    "source": "kr-koca-registry"
+    "registration": "HL1175"
 }
 ```
 
@@ -93,6 +96,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "0198",
         "type_designator": "A359"
     },
+    "data_sources": [
+        "mictronics",
+        "kr-koca-registry"
+    ],
     "icao_hex": "71BF71",
     "military": false,
     "registrant": {
@@ -100,8 +107,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "ASIANA AIRLINES"
         ]
     },
-    "registration": "HL7771",
-    "source": "kr-koca-registry"
+    "registration": "HL7771"
 }
 ```
 

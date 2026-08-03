@@ -45,6 +45,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "T20608513",
         "type_designator": "T206"
     },
+    "data_sources": [
+        "mictronics",
+        "im-ardis-registry"
+    ],
     "icao_hex": "43E76C",
     "military": false,
     "registrant": {
@@ -55,8 +59,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "1 Drumclog Avenue Milngavie Glasgow United Kingdom G62 8NA"
         ]
     },
-    "registration": "M-AXIM",
-    "source": "im-ardis-registry"
+    "registration": "M-AXIM"
 }
 ```
 
@@ -75,6 +78,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "5824",
         "type_designator": "A320"
     },
+    "data_sources": [
+        "mictronics",
+        "im-ardis-registry"
+    ],
     "icao_hex": "424CB8",
     "military": false,
     "registrant": {
@@ -85,8 +92,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Fourth Floor, 3 George's Dock I.F.S.C. Dublin 1 Ireland D01X5X0"
         ]
     },
-    "registration": "M-ABTS",
-    "source": "im-ardis-registry"
+    "registration": "M-ABTS"
 }
 ```
 

@@ -62,6 +62,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "967",
         "type_designator": "DHC6"
     },
+    "data_sources": [
+        "mictronics",
+        "ky-caa-registry"
+    ],
     "icao_hex": "4247DF",
     "military": false,
     "registrant": {
@@ -76,8 +80,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Tortola VG1110"
         ]
     },
-    "registration": "VP-CHO",
-    "source": "ky-caa-registry"
+    "registration": "VP-CHO"
 }
 ```
 
@@ -96,6 +99,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "36714",
         "type_designator": "B737"
     },
+    "data_sources": [
+        "mictronics",
+        "ky-caa-registry"
+    ],
     "icao_hex": "4247A6",
     "military": false,
     "registrant": {
@@ -111,8 +118,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Tortola"
         ]
     },
-    "registration": "VP-CKG",
-    "source": "ky-caa-registry"
+    "registration": "VP-CKG"
 }
 ```
 

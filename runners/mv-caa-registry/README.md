@@ -69,6 +69,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "152-80719",
         "type_designator": "C152"
     },
+    "data_sources": [
+        "mictronics",
+        "mv-caa-registry"
+    ],
     "icao_hex": "05A097",
     "military": false,
     "registrant": {
@@ -81,8 +85,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "S. Gan, 19020"
         ]
     },
-    "registration": "8Q-MFB",
-    "source": "mv-caa-registry"
+    "registration": "8Q-MFB"
 }
 ```
 
@@ -100,6 +103,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "1161",
         "type_designator": "A332"
     },
+    "data_sources": [
+        "mictronics",
+        "mv-caa-registry"
+    ],
     "icao_hex": "05A0AF",
     "military": false,
     "registrant": {
@@ -112,8 +119,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Male’ 20345"
         ]
     },
-    "registration": "8Q-IAB",
-    "source": "mv-caa-registry"
+    "registration": "8Q-IAB"
 }
 ```
 

@@ -44,6 +44,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "28R-8031166",
         "type_designator": "P28U"
     },
+    "data_sources": [
+        "mictronics",
+        "sk-nsat-registry"
+    ],
     "icao_hex": "505C72",
     "military": false,
     "registrant": {
@@ -51,8 +55,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Žilinská univerzita v Žiline"
         ]
     },
-    "registration": "OM-DCR",
-    "source": "sk-nsat-registry"
+    "registration": "OM-DCR"
 }
 ```
 
@@ -69,6 +72,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "35275",
         "type_designator": "B738"
     },
+    "data_sources": [
+        "mictronics",
+        "sk-nsat-registry"
+    ],
     "icao_hex": "505A88",
     "military": false,
     "registrant": {
@@ -76,8 +83,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "AVIATOR IV 30666, DESIGNATED ACTIVITY COMPANY"
         ]
     },
-    "registration": "OM-TVH",
-    "source": "sk-nsat-registry"
+    "registration": "OM-TVH"
 }
 ```
 

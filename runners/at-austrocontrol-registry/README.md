@@ -50,6 +50,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C150"
     },
+    "data_sources": [
+        "mictronics",
+        "at-austrocontrol-registry"
+    ],
     "icao_hex": "44079C",
     "military": false,
     "registrant": {
@@ -63,8 +67,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Döblerhofstraße 10/217"
         ]
     },
-    "registration": "OE-AHG",
-    "source": "at-austrocontrol-registry"
+    "registration": "OE-AHG"
 }
 ```
 
@@ -82,6 +85,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "B744"
     },
+    "data_sources": [
+        "mictronics",
+        "at-austrocontrol-registry"
+    ],
     "icao_hex": "440A8D",
     "military": false,
     "registrant": {
@@ -95,8 +102,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Rue de l´Aéroport 101"
         ]
     },
-    "registration": "OE-IFK",
-    "source": "at-austrocontrol-registry"
+    "registration": "OE-IFK"
 }
 ```
 

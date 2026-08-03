@@ -78,10 +78,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "es-aesa-registry"
+    ],
     "icao_hex": "3471CD",
     "military": false,
-    "registration": "EC-GNS",
-    "source": "es-aesa-registry"
+    "registration": "EC-GNS"
 }
 ```
 
@@ -105,10 +108,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A321"
     },
+    "data_sources": [
+        "mictronics",
+        "es-aesa-registry"
+    ],
     "icao_hex": "342107",
     "military": false,
-    "registration": "EC-JDM",
-    "source": "es-aesa-registry"
+    "registration": "EC-JDM"
 }
 ```
 

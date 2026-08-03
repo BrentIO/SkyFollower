@@ -45,6 +45,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "rs-cad-registry"
+    ],
     "icao_hex": "4C0E4D",
     "military": false,
     "registrant": {
@@ -52,8 +56,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Vazduhoplovna akademija"
         ]
     },
-    "registration": "YU-DSN",
-    "source": "rs-cad-registry"
+    "registration": "YU-DSN"
 }
 ```
 
@@ -71,6 +74,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "B737"
     },
+    "data_sources": [
+        "mictronics",
+        "rs-cad-registry"
+    ],
     "icao_hex": "4C01F1",
     "military": false,
     "registrant": {
@@ -78,8 +85,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Skybridge International Balkan D.O.O."
         ]
     },
-    "registration": "YU-APR",
-    "source": "rs-cad-registry"
+    "registration": "YU-APR"
 }
 ```
 

@@ -53,10 +53,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "345",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "md-caa-registry"
+    ],
     "icao_hex": "504E62",
     "military": false,
-    "registration": "ER-COA",
-    "source": "md-caa-registry"
+    "registration": "ER-COA"
 }
 ```
 
@@ -73,10 +76,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "22545",
         "type_designator": "B742"
     },
+    "data_sources": [
+        "mictronics",
+        "md-caa-registry"
+    ],
     "icao_hex": "504E60",
     "military": false,
-    "registration": "ER-BAR",
-    "source": "md-caa-registry"
+    "registration": "ER-BAR"
 }
 ```
 

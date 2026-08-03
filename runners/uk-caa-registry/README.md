@@ -129,6 +129,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "category": "Land",
         "manufactured_date": "1910-01-01T00:00:00Z",
         "manufacturer": "DEPERDUSSIN CIE",
+        "manufacturer_model": "DEPERDUSSIN CIE DEPERDUSSIN MONOPLANE",
         "model": "DEPERDUSSIN MONOPLANE",
         "powerplant": {
             "count": 1,
@@ -139,7 +140,11 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "ULAC"
     },
+    "data_sources": [
+        "uk-caa-registry"
+    ],
     "icao_hex": "401A48",
+    "military": false,
     "registrant": {
         "city": "BIGGLESWADE",
         "country": "GB",
@@ -152,8 +157,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "OLD WARDEN"
         ]
     },
-    "registration": "G-AANH",
-    "source": "uk-caa-registry"
+    "registration": "G-AANH"
 }
 ```
 
@@ -178,6 +182,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A35K"
     },
+    "data_sources": [
+        "mictronics",
+        "uk-caa-registry"
+    ],
     "icao_hex": "407F19",
     "military": false,
     "registrant": {
@@ -192,8 +200,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "FLEMING WAY"
         ]
     },
-    "registration": "G-VBOB",
-    "source": "uk-caa-registry"
+    "registration": "G-VBOB"
 }
 ```
 

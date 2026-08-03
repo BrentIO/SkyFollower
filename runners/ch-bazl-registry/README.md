@@ -87,6 +87,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "J3"
     },
+    "data_sources": [
+        "mictronics",
+        "ch-bazl-registry"
+    ],
     "icao_hex": "4B012D",
     "military": false,
     "registrant": {
@@ -100,8 +104,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Dorfstrasse 22"
         ]
     },
-    "registration": "HB-ALP",
-    "source": "ch-bazl-registry"
+    "registration": "HB-ALP"
 }
 ```
 
@@ -126,6 +129,11 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A20N"
     },
+    "data_sources": [
+        "mictronics",
+        "ch-bazl-registry",
+        "airportwebcams-special-liveries"
+    ],
     "icao_hex": "4B0280",
     "military": false,
     "registrant": {
@@ -138,7 +146,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ]
     },
     "registration": "HB-AYQ",
-    "source": "ch-bazl-registry"
+    "special_livery": "NEO"
 }
 ```
 

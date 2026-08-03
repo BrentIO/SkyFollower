@@ -46,6 +46,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "42MN003",
         "type_designator": "DA42"
     },
+    "data_sources": [
+        "mictronics",
+        "kg-caa-registry"
+    ],
     "icao_hex": "6010AF",
     "military": false,
     "registrant": {
@@ -53,8 +57,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Sky KG Airlines"
         ]
     },
-    "registration": "EX-11001",
-    "source": "kg-caa-registry"
+    "registration": "EX-11001"
 }
 ```
 
@@ -74,6 +77,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "23737",
         "type_designator": "B742"
     },
+    "data_sources": [
+        "mictronics",
+        "kg-caa-registry"
+    ],
     "icao_hex": "6010E2",
     "military": false,
     "registrant": {
@@ -81,8 +88,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Aerostan"
         ]
     },
-    "registration": "EX-47001",
-    "source": "kg-caa-registry"
+    "registration": "EX-47001"
 }
 ```
 

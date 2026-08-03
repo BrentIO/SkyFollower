@@ -88,6 +88,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "au-casa-registry"
+    ],
     "icao_hex": "7C4F42",
     "military": false,
     "registrant": {
@@ -103,8 +107,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "10 Darcy St"
         ]
     },
-    "registration": "VH-PXW",
-    "source": "au-casa-registry"
+    "registration": "VH-PXW"
 }
 ```
 
@@ -129,6 +132,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A388"
     },
+    "data_sources": [
+        "mictronics",
+        "au-casa-registry"
+    ],
     "icao_hex": "7C4920",
     "military": false,
     "registrant": {
@@ -136,15 +143,14 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "city": "MASCOT",
         "country": "AU",
         "names": [
-            "QF BOC 2008-1 PTY LIMITED"
+            "QANTAS AIRWAYS LIMITED"
         ],
         "postal_code": "2020",
         "street": [
             "10 Bourke Rd"
         ]
     },
-    "registration": "VH-OQA",
-    "source": "au-casa-registry"
+    "registration": "VH-OQA"
 }
 ```
 

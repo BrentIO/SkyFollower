@@ -54,6 +54,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "17262412",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "ee-transpordiamet-registry"
+    ],
     "icao_hex": "51105A",
     "military": false,
     "registrant": {
@@ -61,8 +65,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "AS Tackmer Air"
         ]
     },
-    "registration": "ES-FCC",
-    "source": "ee-transpordiamet-registry"
+    "registration": "ES-FCC"
 }
 ```
 
@@ -79,6 +82,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "2689",
         "type_designator": "A320"
     },
+    "data_sources": [
+        "mictronics",
+        "ee-transpordiamet-registry"
+    ],
     "icao_hex": "511153",
     "military": false,
     "registrant": {
@@ -86,8 +93,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Bank of America, N.A."
         ]
     },
-    "registration": "ES-SAY",
-    "source": "ee-transpordiamet-registry"
+    "registration": "ES-SAY"
 }
 ```
 

@@ -46,6 +46,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "402C-0074",
         "type_designator": "C402"
     },
+    "data_sources": [
+        "mictronics",
+        "tc-caa-registry"
+    ],
     "icao_hex": "40038D",
     "military": false,
     "registrant": {
@@ -53,8 +57,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Caicos Express Airways"
         ]
     },
-    "registration": "VQ-TCE",
-    "source": "tc-caa-registry"
+    "registration": "VQ-TCE"
 }
 ```
 
@@ -71,6 +74,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "702",
         "type_designator": "AT72"
     },
+    "data_sources": [
+        "mictronics",
+        "tc-caa-registry"
+    ],
     "icao_hex": "40039F",
     "military": false,
     "registrant": {
@@ -78,8 +85,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "InterCaribbean Airways"
         ]
     },
-    "registration": "VQ-THW",
-    "source": "tc-caa-registry"
+    "registration": "VQ-THW"
 }
 ```
 
