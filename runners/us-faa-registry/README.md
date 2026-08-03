@@ -123,6 +123,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "us-faa-registry"
+    ],
     "icao_hex": "A833A4",
     "military": false,
     "registrant": {
@@ -138,8 +142,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "type": "LLC"
     },
-    "registration": "N62770",
-    "source": "us-faa-registry"
+    "registration": "N62770"
 }
 ```
 
@@ -157,10 +160,6 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "757-232",
         "powerplant": {
             "count": 2,
-            "manufacturer": null,
-            "model": null,
-            "power_type": null,
-            "power_value": null,
             "type": "Turbo-fan"
         },
         "seats": 178,
@@ -168,6 +167,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "B752"
     },
+    "data_sources": [
+        "mictronics",
+        "us-faa-registry"
+    ],
     "icao_hex": "A8AE7F",
     "military": false,
     "registrant": {
@@ -184,8 +187,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "type": "Corporation"
     },
-    "registration": "N659DL",
-    "source": "us-faa-registry"
+    "registration": "N659DL"
 }
 ```
 

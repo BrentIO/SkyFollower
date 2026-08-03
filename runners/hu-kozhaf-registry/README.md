@@ -50,6 +50,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "R1722578",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "hu-kozhaf-registry"
+    ],
     "icao_hex": "470411",
     "military": false,
     "registrant": {
@@ -58,8 +62,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "street": "H-9025 GYŐR, RÁBA U. 28. / H-9025 GYŐR, RÁBA U. 20-22."
     },
-    "registration": "HA-BOB",
-    "source": "hu-kozhaf-registry"
+    "registration": "HA-BOB"
 }
 ```
 
@@ -77,6 +80,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "10509",
         "type_designator": "A21N"
     },
+    "data_sources": [
+        "mictronics",
+        "hu-kozhaf-registry"
+    ],
     "icao_hex": "471F44",
     "military": false,
     "registrant": {
@@ -85,8 +92,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "street": "77 Robinson Road, #13-00, Robinson 77, SINGAPORE 068896, SINGAPORE"
     },
-    "registration": "HA-LVW",
-    "source": "hu-kozhaf-registry"
+    "registration": "HA-LVW"
 }
 ```
 

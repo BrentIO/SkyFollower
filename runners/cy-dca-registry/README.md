@@ -44,6 +44,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "166",
         "type_designator": "PUP"
     },
+    "data_sources": [
+        "mictronics",
+        "cy-dca-registry"
+    ],
     "icao_hex": "4C8038",
     "military": false,
     "registrant": {
@@ -51,8 +55,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "WALKER AVIATION LTD"
         ]
     },
-    "registration": "5B-CKC",
-    "source": "cy-dca-registry"
+    "registration": "5B-CKC"
 }
 ```
 
@@ -69,6 +72,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "3933 (2009)",
         "type_designator": "A320"
     },
+    "data_sources": [
+        "mictronics",
+        "cy-dca-registry"
+    ],
     "icao_hex": "4C8090",
     "military": false,
     "registrant": {
@@ -77,8 +84,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "OPERATOR CHARLIE AIRLINES LTD"
         ]
     },
-    "registration": "5B-DDR",
-    "source": "cy-dca-registry"
+    "registration": "5B-DDR"
 }
 ```
 

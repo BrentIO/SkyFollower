@@ -124,10 +124,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "P28A"
     },
+    "data_sources": [
+        "mictronics",
+        "nl-ilt-registry"
+    ],
     "icao_hex": "484674",
     "military": false,
-    "registration": "PH-WKB",
-    "source": "nl-ilt-registry"
+    "registration": "PH-WKB"
 }
 ```
 
@@ -152,10 +155,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A333"
     },
+    "data_sources": [
+        "mictronics",
+        "nl-ilt-registry"
+    ],
     "icao_hex": "484F73",
     "military": false,
-    "registration": "PH-AKD",
-    "source": "nl-ilt-registry"
+    "registration": "PH-AKD"
 }
 ```
 

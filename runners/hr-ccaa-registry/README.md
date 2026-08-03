@@ -45,6 +45,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "F17201978",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "hr-ccaa-registry"
+    ],
     "icao_hex": "501C2E",
     "military": false,
     "registrant": {
@@ -56,8 +60,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "42 000 Varaždin"
         ]
     },
-    "registration": "9A-DFK",
-    "source": "hr-ccaa-registry"
+    "registration": "9A-DFK"
 }
 ```
 
@@ -74,6 +77,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "29659",
         "type_designator": "B738"
     },
+    "data_sources": [
+        "mictronics",
+        "hr-ccaa-registry"
+    ],
     "icao_hex": "501C65",
     "military": false,
     "registrant": {
@@ -85,8 +92,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "2 Dublin"
         ]
     },
-    "registration": "9A-ICF",
-    "source": "hr-ccaa-registry"
+    "registration": "9A-ICF"
 }
 ```
 

@@ -55,6 +55,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "R-172-3035",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "is-samgongustofa-registry"
+    ],
     "icao_hex": "4CC289",
     "military": false,
     "registrant": {
@@ -68,8 +72,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Pósthólf 4040"
         ]
     },
-    "registration": "TF-EJG",
-    "source": "is-samgongustofa-registry"
+    "registration": "TF-EJG"
 }
 ```
 
@@ -89,6 +92,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "12503",
         "type_designator": "A21N"
     },
+    "data_sources": [
+        "mictronics",
+        "is-samgongustofa-registry"
+    ],
     "icao_hex": "4CC581",
     "military": false,
     "registrant": {
@@ -101,8 +108,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Fitzwilliam 28 Fitzwilliam Street Lower"
         ]
     },
-    "registration": "TF-IAD",
-    "source": "is-samgongustofa-registry"
+    "registration": "TF-IAD"
 }
 ```
 

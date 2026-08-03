@@ -65,6 +65,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "no-caa-registry"
+    ],
     "icao_hex": "478E11",
     "military": false,
     "registrant": {
@@ -78,8 +82,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Peder Thomassons gate 12"
         ]
     },
-    "registration": "LN-AZE",
-    "source": "no-caa-registry"
+    "registration": "LN-AZE"
 }
 ```
 
@@ -98,6 +101,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "B738"
     },
+    "data_sources": [
+        "mictronics",
+        "no-caa-registry"
+    ],
     "icao_hex": "4791AC",
     "military": false,
     "registrant": {
@@ -111,8 +118,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Aviation House, Shannon"
         ]
     },
-    "registration": "LN-NIQ",
-    "source": "no-caa-registry"
+    "registration": "LN-NIQ"
 }
 ```
 

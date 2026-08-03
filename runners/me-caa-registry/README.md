@@ -94,6 +94,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "me-caa-registry"
+    ],
     "icao_hex": "516038",
     "military": false,
     "registrant": {
@@ -105,8 +109,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "postal_code": "81000",
         "street": "Sportski aerodrom Ćemovsko Polje"
     },
-    "registration": "4O-VUK",
-    "source": "me-caa-registry"
+    "registration": "4O-VUK"
 }
 ```
 
@@ -128,6 +131,11 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "E195"
     },
+    "data_sources": [
+        "mictronics",
+        "me-caa-registry",
+        "airportwebcams-special-liveries"
+    ],
     "icao_hex": "516097",
     "military": false,
     "registrant": {
@@ -140,7 +148,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "street": "Bulevar Džordža Vašingtona broj 98"
     },
     "registration": "4O-AOB",
-    "source": "me-caa-registry"
+    "special_livery": "The Next EU Member 28 by '28"
 }
 ```
 

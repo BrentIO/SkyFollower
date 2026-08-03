@@ -56,19 +56,22 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "aircraft": {
         "manufacturer": "CESSNA AIRCRAFT COMPANY",
         "manufacturer_model": "CESSNA 172 Skyhawk",
-        "model": "172S Skyhawk SP",
-        "serial_number": "172S10739",
+        "model": "172S Skyhawk SP 172S10739",
+        "serial_number": "AÉRO-SPORT DE LUXEMBOURG",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "lu-dac-registry"
+    ],
     "icao_hex": "4D0310",
     "military": false,
     "registrant": {
         "names": [
-            "AÉRO-SPORT DU GRAND-DUCHÉ DE LUXEMBOURG A.S.B.L."
+            "DU GRAND-DUCHÉ AÉRO-SPORT A.S.B.L. LUXEMBOURG"
         ]
     },
-    "registration": "LX-AIE",
-    "source": "lu-dac-registry"
+    "registration": "LX-AIE"
 }
 ```
 
@@ -81,19 +84,22 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "aircraft": {
         "manufacturer": "BOEING COMPANY, THE",
         "manufacturer_model": "BOEING 747-8",
-        "model": "B747-8R7F",
-        "serial_number": "38078",
+        "model": "B747-8R7F 38078",
+        "serial_number": "COPROPRIÉTÉ",
         "type_designator": "B748"
     },
+    "data_sources": [
+        "mictronics",
+        "lu-dac-registry"
+    ],
     "icao_hex": "4D0114",
     "military": false,
     "registrant": {
         "names": [
-            "CARGOLUX AIRLINES INTERNATIONAL S.A."
+            "CARGOLUX"
         ]
     },
-    "registration": "LX-VCK",
-    "source": "lu-dac-registry"
+    "registration": "LX-VCK"
 }
 ```
 

@@ -42,6 +42,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "208",
         "type_designator": "C208"
     },
+    "data_sources": [
+        "mictronics",
+        "pg-casapng-registry"
+    ],
     "icao_hex": "898104",
     "military": false,
     "registrant": {
@@ -51,8 +55,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "street": "PO BOX 273"
     },
-    "registration": "P2-MAI",
-    "source": "pg-casapng-registry"
+    "registration": "P2-MAI"
 }
 ```
 
@@ -68,6 +71,11 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "737",
         "type_designator": "B738"
     },
+    "data_sources": [
+        "mictronics",
+        "pg-casapng-registry",
+        "airportwebcams-special-liveries"
+    ],
     "icao_hex": "898174",
     "military": false,
     "registrant": {
@@ -78,7 +86,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "street": "P.O.BOX 7186, BOROKO NCD"
     },
     "registration": "P2-PXB",
-    "source": "pg-casapng-registry"
+    "special_livery": "50 Years"
 }
 ```
 

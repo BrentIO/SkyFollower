@@ -42,6 +42,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "27-7405407",
         "type_designator": "PA27"
     },
+    "data_sources": [
+        "mictronics",
+        "bs-caa-registry"
+    ],
     "icao_hex": "0A80AD",
     "military": false,
     "registrant": {
@@ -49,8 +53,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "FYLDEN RUSSELL"
         ]
     },
-    "registration": "C6-FJR",
-    "source": "bs-caa-registry"
+    "registration": "C6-FJR"
 }
 ```
 
@@ -67,6 +70,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "30038",
         "type_designator": "B737"
     },
+    "data_sources": [
+        "mictronics",
+        "bs-caa-registry"
+    ],
     "icao_hex": "0A80C2",
     "military": false,
     "registrant": {
@@ -74,8 +81,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "BAHAMASAIR HOLDINGS LTD."
         ]
     },
-    "registration": "C6-BFZ",
-    "source": "bs-caa-registry"
+    "registration": "C6-BFZ"
 }
 ```
 

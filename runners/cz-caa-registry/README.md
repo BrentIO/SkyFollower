@@ -71,6 +71,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C172"
     },
+    "data_sources": [
+        "mictronics",
+        "cz-caa-registry"
+    ],
     "icao_hex": "49D160",
     "military": false,
     "registrant": {
@@ -78,8 +82,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Carnovia Aero s.r.o."
         ]
     },
-    "registration": "OK-EKM",
-    "source": "cz-caa-registry"
+    "registration": "OK-EKM"
 }
 ```
 
@@ -103,6 +106,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "AN2"
     },
+    "data_sources": [
+        "mictronics",
+        "cz-caa-registry"
+    ],
     "icao_hex": "49D166",
     "military": false,
     "registrant": {
@@ -110,8 +117,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Aeroklub Nové Město nad Metují, z. s."
         ]
     },
-    "registration": "OK-GIB",
-    "source": "cz-caa-registry"
+    "registration": "OK-GIB"
 }
 ```
 

@@ -51,6 +51,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "40.1089",
         "type_designator": "DA40"
     },
+    "data_sources": [
+        "mictronics",
+        "sg-caas-registry"
+    ],
     "icao_hex": "76E4C7",
     "military": false,
     "registrant": {
@@ -58,8 +62,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Singapore Youth Flying Club"
         ]
     },
-    "registration": "9V-YFG",
-    "source": "sg-caas-registry"
+    "registration": "9V-YFG"
 }
 ```
 
@@ -80,6 +83,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "247",
         "type_designator": "A388"
     },
+    "data_sources": [
+        "mictronics",
+        "sg-caas-registry"
+    ],
     "icao_hex": "76CD76",
     "military": false,
     "registrant": {
@@ -87,8 +94,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Singapore Airlines Limited"
         ]
     },
-    "registration": "9V-SKV",
-    "source": "sg-caas-registry"
+    "registration": "9V-SKV"
 }
 ```
 

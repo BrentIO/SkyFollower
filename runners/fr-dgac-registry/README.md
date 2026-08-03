@@ -71,6 +71,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "10557",
         "type_designator": "RALL"
     },
+    "data_sources": [
+        "mictronics",
+        "fr-dgac-registry"
+    ],
     "icao_hex": "383433",
     "military": false,
     "registrant": {
@@ -84,8 +88,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "AERODROME DE TOUSSUS LE NOBLE BAT. 232"
         ]
     },
-    "registration": "F-BNBT",
-    "source": "fr-dgac-registry"
+    "registration": "F-BNBT"
 }
 ```
 
@@ -102,6 +105,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "42497",
         "type_designator": "B789"
     },
+    "data_sources": [
+        "mictronics",
+        "fr-dgac-registry"
+    ],
     "icao_hex": "39C429",
     "military": false,
     "registrant": {
@@ -110,8 +117,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "VENTOUX LEASING CO. LTD"
         ]
     },
-    "registration": "F-HRBJ",
-    "source": "fr-dgac-registry"
+    "registration": "F-HRBJ"
 }
 ```
 

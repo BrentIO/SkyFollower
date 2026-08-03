@@ -113,14 +113,16 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "PA-32-260",
         "powerplant": {
             "count": 1,
-            "manufacturer": null,
             "type": "Piston"
         },
-        "seats": null,
         "serial_number": "32-528",
         "type": "Airplane",
         "type_designator": "PA32"
     },
+    "data_sources": [
+        "mictronics",
+        "ca-transport-canada-registry"
+    ],
     "icao_hex": "C00010",
     "military": false,
     "registrant": {
@@ -136,8 +138,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "type": "Individual"
     },
-    "registration": "C-FAAP",
-    "source": "ca-transport-canada-registry"
+    "registration": "C-FAAP"
 }
 ```
 
@@ -154,14 +155,16 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "model": "787-9",
         "powerplant": {
             "count": 2,
-            "manufacturer": null,
             "type": "Turbo-fan"
         },
-        "seats": null,
         "serial_number": "38356",
         "type": "Airplane",
         "type_designator": "B789"
     },
+    "data_sources": [
+        "mictronics",
+        "ca-transport-canada-registry"
+    ],
     "icao_hex": "C038AA",
     "military": false,
     "registrant": {
@@ -177,8 +180,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         ],
         "type": "Entity"
     },
-    "registration": "C-FVLX",
-    "source": "ca-transport-canada-registry"
+    "registration": "C-FVLX"
 }
 ```
 

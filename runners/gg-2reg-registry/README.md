@@ -68,10 +68,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "28-7210009",
         "type_designator": "P28B"
     },
+    "data_sources": [
+        "mictronics",
+        "gg-2reg-registry"
+    ],
     "icao_hex": "43EC60",
     "military": false,
-    "registration": "2-GOLD",
-    "source": "gg-2reg-registry"
+    "registration": "2-GOLD"
 }
 ```
 

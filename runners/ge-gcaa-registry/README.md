@@ -59,15 +59,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "7442",
         "type_designator": "CRJ2"
     },
+    "data_sources": [
+        "mictronics",
+        "ge-gcaa-registry"
+    ],
     "icao_hex": "51404B",
     "military": false,
-    "registrant": {
-        "names": [
-            "შპს აირზენა (Airzena)"
-        ]
-    },
-    "registration": "4L-TGB",
-    "source": "ge-gcaa-registry"
+    "registration": "4L-TGB"
 }
 ```
 
@@ -85,15 +83,13 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "serial_number": "29390",
         "type_designator": "B763"
     },
+    "data_sources": [
+        "mictronics",
+        "ge-gcaa-registry"
+    ],
     "icao_hex": "514D03",
     "military": false,
-    "registrant": {
-        "names": [
-            "შპს ჯორჯიან ეარვეისი (Georgian Airways)"
-        ]
-    },
-    "registration": "4L-GTR",
-    "source": "ge-gcaa-registry"
+    "registration": "4L-GTR"
 }
 ```
 

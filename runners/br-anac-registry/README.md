@@ -58,35 +58,38 @@ See `specs/data-dictionary.yaml` (`br-anac-registry` entry) for full column sema
 Read back the merged record for a given ICAO hex (combines this runner's data with Mictronics and any other sources that have written to the same key):
 
 ```bash
-docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/merge_aircraft.lua)" 0 A4A09D | python3 -m json.tool --sort-keys --no-ensure-ascii
+docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/merge_aircraft.lua)" 0 E48DBF | python3 -m json.tool --sort-keys --no-ensure-ascii
 ```
 
 ```json
 {
     "aircraft": {
         "category": "Land",
-        "manufactured_date": "2014-01-01T00:00:00Z",
-        "manufacturer": "HAWKER BEECHCRAFT",
-        "manufacturer_model": "BEECH 58 Baron",
-        "model": "G58",
+        "manufactured_date": "2006-01-01T00:00:00Z",
+        "manufacturer": "BEECH AIRCRAFT",
+        "manufacturer_model": "BEECH 36 Bonanza",
+        "model": "G36",
         "powerplant": {
-            "count": 2,
+            "count": 1,
             "type": "Piston"
         },
         "seats": 6,
-        "serial_number": "TH-2398",
+        "serial_number": "E3722",
         "type": "Airplane",
-        "type_designator": "BE58"
+        "type_designator": "BE36"
     },
-    "icao_hex": "A4A09D",
+    "data_sources": [
+        "mictronics",
+        "br-anac-registry"
+    ],
+    "icao_hex": "E48DBF",
     "military": false,
     "registrant": {
         "names": [
-            "CEILA SILVA LEMOS"
+            "MARCELO BERNARDINO GUARNIERI"
         ]
     },
-    "registration": "PR-JOK",
-    "source": "br-anac-registry"
+    "registration": "PP-OCC"
 }
 ```
 
@@ -111,6 +114,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "B763"
     },
+    "data_sources": [
+        "mictronics",
+        "br-anac-registry"
+    ],
     "icao_hex": "E47F21",
     "military": false,
     "registrant": {
@@ -118,8 +125,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "LAN CARGO S.A."
         ]
     },
-    "registration": "PR-ABD",
-    "source": "br-anac-registry"
+    "registration": "PR-ABD"
 }
 ```
 

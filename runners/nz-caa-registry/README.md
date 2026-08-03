@@ -51,6 +51,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "C152"
     },
+    "data_sources": [
+        "mictronics",
+        "nz-caa-registry"
+    ],
     "icao_hex": "C804C7",
     "military": false,
     "registrant": {
@@ -65,8 +69,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Strathmore Park"
         ]
     },
-    "registration": "ZK-NPH",
-    "source": "nz-caa-registry"
+    "registration": "ZK-NPH"
 }
 ```
 
@@ -84,6 +87,10 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
         "type": "Airplane",
         "type_designator": "A320"
     },
+    "data_sources": [
+        "mictronics",
+        "nz-caa-registry"
+    ],
     "icao_hex": "C81E2C",
     "military": false,
     "registrant": {
@@ -99,8 +106,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
             "Victoria Street West"
         ]
     },
-    "registration": "ZK-OJS",
-    "source": "nz-caa-registry"
+    "registration": "ZK-OJS"
 }
 ```
 
