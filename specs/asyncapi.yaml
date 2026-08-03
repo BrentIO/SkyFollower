@@ -494,7 +494,8 @@ channels:
     address: SkyFollower/archive-compaction/statistic/last_run_at
     description: >
       UTC ISO-8601 timestamp when this run completed. Published once per
-      run, retained.
+      run, retained. Home Assistant discovery configures this sensor with
+      device_class: timestamp.
     messages:
       ArchiveCompactionLastRunAtMessage:
         $ref: '#/components/messages/ArchiveCompactionLastRunAtMessage'
@@ -502,8 +503,8 @@ channels:
   archiveCompactionLastRunStatus:
     address: SkyFollower/archive-compaction/statistic/last_run_status
     description: >
-      Outcome of this run: success, failure (an exception, e.g. an S3
-      error), or mismatch (completed without error but stopped early on a
+      Outcome of this run: Success, Failure (an exception, e.g. an S3
+      error), or Mismatch (completed without error but stopped early on a
       flight/index parity mismatch -- see mismatch_date/mismatch_uuids).
       Published once per run, retained.
     messages:
@@ -550,7 +551,8 @@ channels:
     address: 'SkyFollower/runner/{runner_name}/statistic/last_run_at'
     description: >
       UTC ISO-8601 timestamp when the run completed. Published once per
-      run, retained.
+      run, retained. Home Assistant discovery configures this sensor with
+      device_class: timestamp.
     parameters:
       runner_name:
         $ref: '#/components/parameters/RunnerName'
@@ -561,7 +563,7 @@ channels:
   runnerLastRunStatus:
     address: 'SkyFollower/runner/{runner_name}/statistic/last_run_status'
     description: >
-      Outcome of the run (success or failure). Published once per run,
+      Outcome of the run (Success or Failure). Published once per run,
       retained.
     parameters:
       runner_name:
@@ -1406,17 +1408,19 @@ components:
     ArchiveCompactionLastRunAt:
       type: string
       format: date-time
-      description: UTC ISO-8601 timestamp when this run completed
+      description: >
+        UTC ISO-8601 timestamp when this run completed. Home Assistant
+        discovery configures this sensor with device_class: timestamp.
       example: "2026-07-25T04:50:03.123456+00:00"
 
     ArchiveCompactionLastRunStatus:
       type: string
-      enum: [success, failure, mismatch]
+      enum: [Success, Failure, Mismatch]
       description: >
-        Outcome of this run. mismatch means the run completed without
+        Outcome of this run. Mismatch means the run completed without
         error but stopped early on a flight/index parity mismatch (see
-        mismatch_date/mismatch_uuids); failure means an actual exception
-      example: success
+        mismatch_date/mismatch_uuids); Failure means an actual exception
+      example: Success
 
     RunnerRecordsImported:
       type: integer
@@ -1429,14 +1433,16 @@ components:
     RunnerLastRunAt:
       type: string
       format: date-time
-      description: UTC ISO-8601 timestamp when the run completed
+      description: >
+        UTC ISO-8601 timestamp when the run completed. Home Assistant
+        discovery configures this sensor with device_class: timestamp.
       example: "2026-01-15T05:12:34+00:00"
 
     RunnerLastRunStatus:
       type: string
-      enum: [success, failure]
+      enum: [Success, Failure]
       description: Outcome of the run
-      example: success
+      example: Success
 
     AirportInfo:
       type: object
