@@ -358,8 +358,8 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
 def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     device = build_ha_device(
         identifier="SkyFollower_runner_pg_casapng_registry",
-        name=f"SkyFollower {country_flag('PG')} Papua New Guinea CASA PNG Registry Runner",
-        model=f"{country_flag('PG')} Papua New Guinea CASA PNG Registry Runner",
+        name=f"SkyFollower Papua New Guinea {country_flag('PG')} CASA PNG Registry Runner",
+        model=f"Papua New Guinea {country_flag('PG')} CASA PNG Registry Runner",
     )
     stats = [
         ("records_imported", "Papua New Guinea CASA PNG Registry Records Imported", "mdi:airplane", "total_increasing", None),
