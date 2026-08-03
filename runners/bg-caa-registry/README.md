@@ -1,4 +1,4 @@
-# Bulgaria 🇧🇬 CAA Registry Runner
+# Bulgaria 🇧🇬 CAA Registry
 
 | | |
 |---|---|

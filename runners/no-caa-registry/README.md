@@ -1,4 +1,4 @@
-# Norway 🇳🇴 CAA Registry Runner
+# Norway 🇳🇴 CAA Registry
 
 | | |
 |---|---|

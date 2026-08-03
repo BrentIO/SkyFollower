@@ -1,4 +1,4 @@
-# OurAirports Runner
+# OurAirports
 
 | | |
 |---|---|

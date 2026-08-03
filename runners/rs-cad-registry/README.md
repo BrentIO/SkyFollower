@@ -1,4 +1,4 @@
-# Serbia 🇷🇸 CAD Registry Runner
+# Serbia 🇷🇸 CAD Registry
 
 | | |
 |---|---|

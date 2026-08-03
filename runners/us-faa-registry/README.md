@@ -1,4 +1,4 @@
-# US 🇺🇸 FAA Registry Runner
+# US 🇺🇸 FAA Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# Turks & Caicos 🇹🇨 CAA Registry Runner
+# Turks & Caicos 🇹🇨 CAA Registry
 
 | | |
 |---|---|

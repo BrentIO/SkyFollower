@@ -1,4 +1,4 @@
-# Cyprus 🇨🇾 DCA Registry Runner
+# Cyprus 🇨🇾 DCA Registry
 
 | | |
 |---|---|

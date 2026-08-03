@@ -1,4 +1,4 @@
-# Virtual Radar Server Standing Data Runner
+# Virtual Radar Server Standing Data
 
 Virtual Radar Server Standing Data
 

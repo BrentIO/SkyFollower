@@ -1,4 +1,4 @@
-# France 🇫🇷 DGAC Registry Runner
+# France 🇫🇷 DGAC Registry
 
 | | |
 |---|---|

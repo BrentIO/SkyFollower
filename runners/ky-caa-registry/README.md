@@ -1,4 +1,4 @@
-# Cayman Islands 🇰🇾 CAA Registry Runner
+# Cayman Islands 🇰🇾 CAA Registry
 
 | | |
 |---|---|

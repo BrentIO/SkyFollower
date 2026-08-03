@@ -1,4 +1,4 @@
-# Austria 🇦🇹 Austrocontrol Registry Runner
+# Austria 🇦🇹 Austrocontrol Registry
 
 | | |
 |---|---|

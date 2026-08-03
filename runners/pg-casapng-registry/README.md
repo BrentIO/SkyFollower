@@ -1,4 +1,4 @@
-# Papua New Guinea 🇵🇬 CASA PNG Registry Runner
+# Papua New Guinea 🇵🇬 CASA PNG Registry
 
 | | |
 |---|---|

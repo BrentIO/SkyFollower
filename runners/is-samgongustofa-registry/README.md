@@ -1,4 +1,4 @@
-# Iceland 🇮🇸 Samgöngustofa Registry Runner
+# Iceland 🇮🇸 Samgöngustofa Registry
 
 | | |
 |---|---|

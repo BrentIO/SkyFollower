@@ -1,4 +1,4 @@
-# Guernsey 🇬🇬 2-reg Registry Runner
+# Guernsey 🇬🇬 2-reg Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# 🎨 Airport Webcams Special Liveries Runner
+# 🎨 Airport Webcams Special Liveries
 
 | | |
 |---|---|

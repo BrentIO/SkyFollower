@@ -1,4 +1,4 @@
-# Czech 🇨🇿 CAA Registry Runner
+# Czech 🇨🇿 CAA Registry
 
 | | |
 |---|---|

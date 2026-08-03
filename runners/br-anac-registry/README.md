@@ -1,4 +1,4 @@
-# Brazil 🇧🇷 ANAC Registry Runner
+# Brazil 🇧🇷 ANAC Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# New Zealand 🇳🇿 CAA Registry Runner
+# New Zealand 🇳🇿 CAA Registry
 
 | | |
 |---|---|

@@ -84,7 +84,10 @@ for (const component of components) {
 
 rmSync(join(DOCS_ROOT, "runners"), { recursive: true, force: true });
 for (const runner of runners) {
-  writePage(`runners/${runner.name}.md`, runner.readmePath, `${runner.title} (${runner.name})`);
+  // The README H1 (sidebar/heading text) omits the trailing "Runner" word;
+  // the browser-tab title adds it back plus the directory name, since the
+  // longer form reads better as a page title than in a sidebar list.
+  writePage(`runners/${runner.name}.md`, runner.readmePath, `${runner.title} Runner (${runner.name})`);
 }
 writePage("runners/index.md", join(REPO_ROOT, "runners", "README.md"));
 

@@ -1,4 +1,4 @@
-# Belize 🇧🇿 BDCA Registry Runner
+# Belize 🇧🇿 BDCA Registry
 
 | | |
 |---|---|

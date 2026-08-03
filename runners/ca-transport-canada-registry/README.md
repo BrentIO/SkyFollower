@@ -1,4 +1,4 @@
-# Canada 🇨🇦 Transport Canada Registry Runner
+# Canada 🇨🇦 Transport Canada Registry
 
 | | |
 |---|---|

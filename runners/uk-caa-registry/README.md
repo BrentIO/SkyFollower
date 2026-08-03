@@ -1,4 +1,4 @@
-# United Kingdom 🇬🇧 CAA Registry Runner
+# United Kingdom 🇬🇧 CAA Registry
 
 | | |
 |---|---|

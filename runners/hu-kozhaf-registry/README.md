@@ -1,4 +1,4 @@
-# Hungary 🇭🇺 KoZHAF Registry Runner
+# Hungary 🇭🇺 KoZHAF Registry
 
 | | |
 |---|---|

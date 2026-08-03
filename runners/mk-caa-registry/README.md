@@ -1,4 +1,4 @@
-# North Macedonia 🇲🇰 CAA Registry Runner
+# North Macedonia 🇲🇰 CAA Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# Singapore 🇸🇬 CAAS Registry Runner
+# Singapore 🇸🇬 CAAS Registry
 
 | | |
 |---|---|

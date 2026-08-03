@@ -1,4 +1,4 @@
-# Kyrgyzstan 🇰🇬 CAA Registry Runner
+# Kyrgyzstan 🇰🇬 CAA Registry
 
 | | |
 |---|---|

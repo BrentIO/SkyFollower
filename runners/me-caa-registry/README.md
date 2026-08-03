@@ -1,4 +1,4 @@
-# Montenegro 🇲🇪 CAA Registry Runner
+# Montenegro 🇲🇪 CAA Registry
 
 | | |
 |---|---|

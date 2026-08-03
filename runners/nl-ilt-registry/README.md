@@ -1,4 +1,4 @@
-# Netherlands 🇳🇱 ILT Registry Runner
+# Netherlands 🇳🇱 ILT Registry
 
 | | |
 |---|---|

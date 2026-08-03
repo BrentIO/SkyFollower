@@ -1,4 +1,4 @@
-# Australia 🇦🇺 CASA Registry Runner
+# Australia 🇦🇺 CASA Registry
 
 | | |
 |---|---|

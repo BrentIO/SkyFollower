@@ -1,4 +1,4 @@
-# Latvia 🇱🇻 CAA Registry Runner
+# Latvia 🇱🇻 CAA Registry
 
 | | |
 |---|---|

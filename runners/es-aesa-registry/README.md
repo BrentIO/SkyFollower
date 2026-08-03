@@ -1,4 +1,4 @@
-# Spain 🇪🇸 AESA Registry Runner
+# Spain 🇪🇸 AESA Registry
 
 | | |
 |---|---|

@@ -1,4 +1,4 @@
-# Croatia 🇭🇷 CCAA Registry Runner
+# Croatia 🇭🇷 CCAA Registry
 
 | | |
 |---|---|

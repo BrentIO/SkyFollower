@@ -1,4 +1,4 @@
-# Luxembourg 🇱🇺 DAC Registry Runner
+# Luxembourg 🇱🇺 DAC Registry
 
 | | |
 |---|---|

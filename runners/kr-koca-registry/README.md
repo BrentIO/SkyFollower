@@ -1,4 +1,4 @@
-# South Korea 🇰🇷 KOCA Registry Runner
+# South Korea 🇰🇷 KOCA Registry
 
 | | |
 |---|---|
