@@ -69,3 +69,29 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 (`aircraft.manufacturer_model` above is illustrative only — whatever Mictronics/registry already has on file for this hex; `icao_hex`, `registration`, and `special_livery` are what this runner actually verifies.)
 
 For comparison, an aircraft with no special livery — e.g. the Delta 757 (`N659DL` / `A8AE7F`) used as an example in `../us-faa-registry/README.md` — merges exactly as it does today, with no `special_livery` key present at all.
+
+## Configuration
+
+Reads `settings.json` (mounted at `/app/settings.json`):
+
+| Parameter | Required | Default | Notes |
+|---|---|---|---|
+| `redis.host` | ✅ | — | Redis connection host |
+| `redis.port` | ❌ | `6379` | |
+| `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
+| `mqtt.port` | ❌ | `1883` | |
+| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
+| `mqtt.password` | ❌ | — | |
+| `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:livery:{icao_hex}` key written by this runner |
+
+## MQTT
+
+Published once, at the end of a run, to `SkyFollower/runner/airportwebcams-special-liveries/statistic/{name}` (all retained):
+
+| Topic suffix | Value | Format |
+|---|---|---|
+| `records_imported` | e.g. `271` | Integer as string |
+| `last_run_at` | e.g. `2026-07-07T14:32:01.123456+00:00` | ISO 8601 UTC |
+| `last_run_status` | `Success` or `Failure` | String |
+
+Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_airportwebcams_special_liveries_{name}/config` for each of the three stats above.
