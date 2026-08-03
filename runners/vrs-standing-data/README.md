@@ -104,6 +104,6 @@ Published once, at the end of a run, to `SkyFollower/runner/vrs-standing-data/st
 |---|---|---|
 | `records_imported` | e.g. `620954` | Integer as string |
 | `last_run_at` | e.g. `2026-07-25T04:50:12.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `success` or `failure` | String |
+| `last_run_status` | `Success` or `Failure` | String |
 
 Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_vrs_standing_data_{name}/config` for each of the three stats above.

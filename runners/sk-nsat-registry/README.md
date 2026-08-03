@@ -102,6 +102,6 @@ Published once, at the end of a run, to `SkyFollower/runner/sk-nsat-registry/sta
 |---|---|---|
 | `records_imported` | e.g. `271` | Integer as string |
 | `last_run_at` | e.g. `2026-07-07T14:32:01.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `success` or `failure` | String |
+| `last_run_status` | `Success` or `Failure` | String |
 
 Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_sk_nsat_registry_{name}/config` for each of the three stats above.

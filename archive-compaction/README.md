@@ -111,7 +111,7 @@ Published once, at the end of a run, to
 | `mismatch_date` | e.g. `2026-07-24`, or empty | The date this run stopped at due to a flight/index parity mismatch; empty when the run wasn't stopped by one |
 | `mismatch_uuids` | e.g. `0198abcd-...,0198abce-...`, or empty | Comma-separated flight UUIDs missing their index row on `mismatch_date` — a starting point for manual investigation. Check `local_index_queue_depth` on the archive processor's own stats: nonzero means the row is likely still draining locally and will resolve on its own; zero means it's genuinely lost from the archive processor's perspective |
 | `last_run_at` | e.g. `2026-07-25T04:50:03.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `success`, `failure`, or `mismatch` | String — `mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`); `failure` means an actual exception (S3 error, etc.) |
+| `last_run_status` | `Success`, `Failure`, or `Mismatch` | String — `Mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`); `Failure` means an actual exception (S3 error, etc.) |
 
 Home Assistant autodiscovery configs are also published (retained) to
 `homeassistant/sensor/SkyFollower_archive_compaction_{name}/config` for
