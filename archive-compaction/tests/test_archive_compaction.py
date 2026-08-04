@@ -67,6 +67,7 @@ read_watermark = _mod.read_watermark
 write_watermark = _mod.write_watermark
 run_compaction = _mod.run_compaction
 publish_completion_stats = _mod.publish_completion_stats
+_publish_ha_autodiscovery = _mod._publish_ha_autodiscovery
 main = _mod.main
 MQTT_ROOT = _mod.MQTT_ROOT
 _PARQUET_INDEX_SCHEMA = _mod._PARQUET_INDEX_SCHEMA
@@ -525,6 +526,29 @@ class TestPublishCompletionStats:
         assert calls[f"{self._base_topic}/last_run_status"] == "Success"
         assert f"{self._base_topic}/last_run_at" in calls
 
+    def test_publishes_version(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
+            with patch("archive_compaction_main.mqtt.Client", return_value=mc):
+                with patch("time.sleep"):
+                    publish_completion_stats(cfg, self._make_result(), "success")
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        assert calls[f"{self._base_topic}/version"] == "2026.08.01"
+
+    def test_publishes_version_dev_fallback_when_unset(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VERSION", None)
+            with patch("archive_compaction_main.mqtt.Client", return_value=mc):
+                with patch("time.sleep"):
+                    publish_completion_stats(cfg, self._make_result(), "success")
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        assert calls[f"{self._base_topic}/version"] == "dev"
+
     def test_publishes_mismatch_fields(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
@@ -551,7 +575,7 @@ class TestPublishCompletionStats:
                 publish_completion_stats(cfg, self._make_result(files_compacted=5), "success")
         stat_calls = [c for c in mc.publish.call_args_list
                       if c.args[0].startswith(self._base_topic)]
-        assert len(stat_calls) == 8
+        assert len(stat_calls) == 9
         for call in stat_calls:
             assert call.kwargs.get("retain") is True
 
@@ -564,6 +588,29 @@ class TestPublishCompletionStats:
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
         assert calls[f"{self._base_topic}/last_run_status"] == "Failure"
+
+
+# ---------------------------------------------------------------------------
+# _publish_ha_autodiscovery
+# ---------------------------------------------------------------------------
+
+class TestPublishHaAutodiscovery:
+    def test_sensor_count_and_version_entry(self):
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mc.publish.call_args_list
+            if c.args[0].startswith("homeassistant/sensor/")
+        }
+        assert len(configs) == 9
+        version_topic = "homeassistant/sensor/SkyFollower_archive_compaction_version/config"
+        assert version_topic in configs
+        version_config = configs[version_topic]
+        assert version_config["name"] == "Archive Compaction Version"
+        assert version_config["state_topic"] == f"{MQTT_ROOT}/statistic/version"
+        assert version_config["icon"] == "mdi:tag"
+        assert version_config["unique_id"] == "SkyFollower_archive_compaction_version"
 
 
 # ---------------------------------------------------------------------------
