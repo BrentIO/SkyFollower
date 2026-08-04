@@ -6,6 +6,11 @@ COPY management-ui/frontend/package*.json ./
 RUN npm ci
 
 COPY management-ui/frontend/ ./
+
+# VITE_VERSION must be a real env var before the build runs -- Vite bakes
+# import.meta.env.VITE_* values into the bundle at build time, not runtime.
+ARG VERSION=dev
+ENV VITE_VERSION=$VERSION
 RUN npm run build
 
 FROM python:3.14-slim AS base
