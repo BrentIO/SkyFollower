@@ -1619,3 +1619,38 @@ class TestDeadLetterQueueDepthTelemetry:
             calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
             assert calls["SkyFollower/archive/statistic/dead_letter_queue_depth"] == "1"
             assert calls["SkyFollower/archive/statistic/dead_letter_index_queue_depth"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Running version telemetry
+# ---------------------------------------------------------------------------
+
+class TestPublishTelemetryVersion:
+    _TOPIC = "SkyFollower/archive/statistic/version"
+
+    def test_reads_version_env_var(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
+                processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert calls[self._TOPIC] == "2026.08.01"
+
+    def test_falls_back_to_dev_when_unset(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("VERSION", None)
+                processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+            assert calls[self._TOPIC] == "dev"
