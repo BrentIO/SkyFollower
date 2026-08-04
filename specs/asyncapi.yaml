@@ -46,43 +46,24 @@ channels:
   # and every data runner already publish -- each stat gets its own
   # channel/message/schema rather than being folded into one object.
 
-  receiverMessages1090PerSecond:
-    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_1090_per_second'
+  receiverMessagesPerSecond:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_per_second'
     description: >
-      Average 1090 MHz message rate since last report. Published every
+      Average message rate for one specific sources[] connection since
+      last report -- one topic per configured connection, not per source
+      tag, so two connections sharing a tag (e.g. two MLAT feeds) get
+      independent rates instead of a single summed value. Published every
       telemetry_interval_seconds, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
     messages:
-      ReceiverMessages1090PerSecondMessage:
-        $ref: '#/components/messages/ReceiverMessages1090PerSecondMessage'
-
-  receiverMessages978PerSecond:
-    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_978_per_second'
-    description: >
-      Average 978 MHz UAT message rate since last report. Only published if
-      a 978 source is configured. Published every telemetry_interval_seconds,
-      retained.
-    parameters:
-      receiver_id:
-        $ref: '#/components/parameters/ReceiverId'
-    messages:
-      ReceiverMessages978PerSecondMessage:
-        $ref: '#/components/messages/ReceiverMessages978PerSecondMessage'
-
-  receiverMessagesMlatPerSecond:
-    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_MLAT_per_second'
-    description: >
-      Average MLAT message rate since last report. Only published if an
-      MLAT source is configured. Published every telemetry_interval_seconds,
-      retained.
-    parameters:
-      receiver_id:
-        $ref: '#/components/parameters/ReceiverId'
-    messages:
-      ReceiverMessagesMlatPerSecondMessage:
-        $ref: '#/components/messages/ReceiverMessagesMlatPerSecondMessage'
+      ReceiverMessagesPerSecondMessage:
+        $ref: '#/components/messages/ReceiverMessagesPerSecondMessage'
 
   receiverLocalQueueDepth:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
@@ -603,23 +584,11 @@ operations:
       $ref: '#/channels/receiverStatus'
     summary: Receiver publishes its online / offline status
 
-  publishReceiverMessages1090PerSecond:
+  publishReceiverMessagesPerSecond:
     action: send
     channel:
-      $ref: '#/channels/receiverMessages1090PerSecond'
-    summary: Receiver publishes the 1090 MHz message rate
-
-  publishReceiverMessages978PerSecond:
-    action: send
-    channel:
-      $ref: '#/channels/receiverMessages978PerSecond'
-    summary: Receiver publishes the 978 MHz UAT message rate
-
-  publishReceiverMessagesMlatPerSecond:
-    action: send
-    channel:
-      $ref: '#/channels/receiverMessagesMlatPerSecond'
-    summary: Receiver publishes the MLAT message rate
+      $ref: '#/channels/receiverMessagesPerSecond'
+    summary: Receiver publishes the message rate for one sources[] connection
 
   publishReceiverLocalQueueDepth:
     action: send
@@ -895,29 +864,13 @@ components:
       payload:
         $ref: '#/components/schemas/StatusPayload'
 
-    ReceiverMessages1090PerSecondMessage:
-      name: ReceiverMessages1090PerSecondMessage
-      title: Receiver 1090 MHz message rate
-      summary: Average 1090 MHz message rate since last report
+    ReceiverMessagesPerSecondMessage:
+      name: ReceiverMessagesPerSecondMessage
+      title: Receiver per-connection message rate
+      summary: Average message rate for one sources[] connection since last report
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/ReceiverMessages1090PerSecond'
-
-    ReceiverMessages978PerSecondMessage:
-      name: ReceiverMessages978PerSecondMessage
-      title: Receiver 978 MHz UAT message rate
-      summary: Average 978 MHz UAT message rate since last report
-      contentType: text/plain
-      payload:
-        $ref: '#/components/schemas/ReceiverMessages978PerSecond'
-
-    ReceiverMessagesMlatPerSecondMessage:
-      name: ReceiverMessagesMlatPerSecondMessage
-      title: Receiver MLAT message rate
-      summary: Average MLAT message rate since last report
-      contentType: text/plain
-      payload:
-        $ref: '#/components/schemas/ReceiverMessagesMlatPerSecond'
+        $ref: '#/components/schemas/ReceiverMessagesPerSecond'
 
     ReceiverLocalQueueDepthMessage:
       name: ReceiverLocalQueueDepthMessage
@@ -1260,20 +1213,10 @@ components:
         Component liveness indicator. ONLINE published on connect (retained);
         OFFLINE sent as LWT when the connection drops (retained).
 
-    ReceiverMessages1090PerSecond:
+    ReceiverMessagesPerSecond:
       type: number
-      description: Average 1090 MHz message rate since last report (messages received ÷ elapsed seconds)
+      description: Average message rate for one sources[] connection since last report (messages received ÷ elapsed seconds)
       example: 12.4
-
-    ReceiverMessages978PerSecond:
-      type: number
-      description: Average 978 MHz UAT message rate since last report. Only published if a 978 source is configured
-      example: 0.0
-
-    ReceiverMessagesMlatPerSecond:
-      type: number
-      description: Average MLAT message rate since last report. Only published if an MLAT source is configured
-      example: 0.0
 
     ReceiverLocalQueueDepth:
       type: integer
@@ -1739,3 +1682,14 @@ components:
       description: >
         Data runner name identifying which import job published statistics.
         One of: mictronics, us-faa-registry, ca-transport-canada-registry, ourairports.
+
+    ConnectionHost:
+      description: >
+        The host (hostname or IP address) of one specific sources[] entry
+        in the receiver's settings.json, as configured -- not resolved or
+        normalized.
+
+    ConnectionPort:
+      description: >
+        The TCP port of one specific sources[] entry in the receiver's
+        settings.json, as configured.
