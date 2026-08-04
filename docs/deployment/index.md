@@ -17,7 +17,7 @@ host up once you know which compose file(s) it runs.
 | Host | Role | Containers |
 |------|------|------------|
 | Host A — Raspberry Pi | ADS-B reception | `receiver` |
-| Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
+| Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (its own auto-generated identity, MLAT-only `sources[]`) |
 | Host B — Core | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
 | Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
 | Host D — Archive host | Long-term storage | `archive-processor`, `archive-compaction` (optional, `--profile compaction`), its own `ofelia` instance |
@@ -47,7 +47,7 @@ appropriate file(s):
 | Container | Description | Default port |
 |-----------|-------------|--------------|
 | `receiver` | Reads raw ADS-B frames from readsb TCP streams; routes to RabbitMQ queues | — |
-| `receiver` (MLAT instance, optional) | Same image, second `RECEIVER_ID`, dedicated to MLAT-only `sources[]` on its own host | — |
+| `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only `sources[]` on its own host | — |
 | `message-processor-0` | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
 | `archive-compaction` | Daily job (its own `ofelia` instance, Host D) consolidating each day's per-flight Parquet index files into one file per partition | — |
@@ -104,8 +104,9 @@ consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
 processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
 receiver instance (Host A2, `docker-compose.receiver-mlat.yaml`) is the
-same container image on its own host with its own `RECEIVER_ID` — maintain
-it identically and independently of Host A's SDR-hosting instance.
+same container image on its own host with its own independently-generated
+identity — maintain it identically and independently of Host A's
+SDR-hosting instance.
 
 **Core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
