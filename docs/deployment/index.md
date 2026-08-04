@@ -1,45 +1,43 @@
 # Deployment
 
-SkyFollower is a single monorepo, but it deploys as four independent
-hosts — each one brings up one or more Docker Compose files, either from a
-full repo clone or, for a pre-built-image deployment, just the file(s) it
-needs (see [Getting Started](/getting-started/) for both paths). Every
-host but Host B brings up exactly one; Host B brings up two
-(`docker-compose.core.yaml` and `docker-compose.management-ui.yaml`),
-since `management-ui`'s only dependency is Redis and there's no reason to
-entangle its lifecycle with the rabbitmq/redis/runner stack's compose
-project. See
+SkyFollower is a single monorepo, but it deploys across several
+independent hosts — each one brings up one or more Docker Compose files,
+either from a full repo clone or, for a pre-built-image deployment, just
+the file(s) it needs (see [Getting Started](/getting-started/) for both
+paths). Every role brings up exactly one compose file except the core
+host, which brings up two (`docker-compose.core.yaml` and
+`docker-compose.management-ui.yaml`), since `management-ui`'s only
+dependency is Redis and there's no reason to entangle its lifecycle with
+the rabbitmq/redis/runner stack's compose project. See
 [Getting Started](/getting-started/) for the commands to actually bring a
 host up once you know which compose file(s) it runs.
 
-## Host Topology
-
-| Host | Role | Containers |
-|------|------|------------|
-| Host A — Raspberry Pi | ADS-B reception | `receiver` |
-| Host A2 — MLAT receiver (optional) | Dedicated MLAT ingestion, separate from Host A's local RTL-SDR hardware | `receiver` (its own auto-generated identity, MLAT-only `sources[]`) |
-| Host B — Core | Message bus + enrichment data + rules/areas API | `rabbitmq`, `redis`, `ofelia`, runners, `management-ui` |
-| Host C — Message Processor host | Flight state + rules | `message-processor-0` (one per host; scale by adding hosts) |
-| Host D — Archive host | Long-term storage | `archive-processor`, `archive-compaction` (optional, `--profile compaction`), its own `ofelia` instance |
-
 ## Compose Files
 
-Every host but Host B runs exactly one compose file; Host B runs two
-(`management-ui` is kept separate from the rest of Host B's stack so it can
-move to a different host later without disturbing rabbitmq/redis/runners
-— its only dependency is Redis). Get the relevant file(s) onto each host —
-clone the repo, or use `scripts/download-host-files.sh` to fetch just
-what a given role needs (see [Getting Started](/getting-started/)) —
-populate the relevant `config/` settings files, then bring up the
-appropriate file(s):
+Each compose file below is meant to run on its own host, with the
+exception of `docker-compose.core.yaml` and
+`docker-compose.management-ui.yaml`, which are typically co-located on
+the same host but kept as separate compose projects (`management-ui`'s
+only dependency is Redis, so it can move to a different host later
+without disturbing rabbitmq/redis/runners). The message processor is
+designed to scale by adding more hosts, each running the same compose
+file. The MLAT receiver is optional, dedicated to MLAT-only `sources[]`,
+and deployed separately from the host running the local RTL-SDR
+hardware. Archive compaction is also optional (behind the `compaction`
+Compose profile) and runs its own `ofelia` instance alongside the
+archive processor. Get the relevant file(s) onto each host — clone the
+repo, or use `scripts/download-host-files.sh` to fetch just what a given
+role needs (see [Getting Started](/getting-started/)) — populate the
+relevant `config/` settings files, then bring up the appropriate
+file(s):
 
-| File | Host | Services |
+| File | Role | Services |
 |------|------|---------|
-| `docker-compose.receiver.yaml` | Host A — Raspberry Pi; also Host A2's optional dedicated MLAT receiver (same file, own `settings.json`) | `receiver` |
-| `docker-compose.core.yaml` | Host B — Core | `rabbitmq`, `redis`, `ofelia`, all runners |
-| `docker-compose.management-ui.yaml` | Host B — Core | `management-ui` |
-| `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
-| `docker-compose.archive.yaml` | Host D — Archive host | `archive-processor`; `archive-compaction` + its own `ofelia` instance (behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
+| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also the optional dedicated MLAT receiver (same file, own `settings.json`, its own auto-generated identity) | `receiver` |
+| `docker-compose.core.yaml` | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, all runners |
+| `docker-compose.management-ui.yaml` | Rules/areas API (co-located with `docker-compose.core.yaml`) | `management-ui` |
+| `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts) | `message-processor-0` (one per host) |
+| `docker-compose.archive.yaml` | Long-term storage | `archive-processor`; `archive-compaction` + its own `ofelia` instance (optional, behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
 
 ## Components
 
@@ -49,7 +47,7 @@ appropriate file(s):
 | `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only `sources[]` on its own host | — |
 | `message-processor-0` | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
-| `archive-compaction` | Daily job (its own `ofelia` instance, Host D) consolidating each day's per-flight Parquet index files into one file per partition | — |
+| `archive-compaction` | Daily job (its own `ofelia` instance, alongside the archive processor) consolidating each day's per-flight Parquet index files into one file per partition | — |
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
@@ -102,10 +100,9 @@ image update — depends on what it is and what depends on it.
 consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
 processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
-receiver instance (Host A2, same `docker-compose.receiver.yaml`, its own
-host and `settings.json`) is maintained identically and independently of
-Host A's SDR-hosting instance, with its own independently-generated
-identity.
+receiver instance (same `docker-compose.receiver.yaml`, its own host and
+`settings.json`) is maintained identically and independently of the
+SDR-hosting instance, with its own independently-generated identity.
 
 **Core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
