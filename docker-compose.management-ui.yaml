@@ -22,6 +22,15 @@ services:
       # backend backs them up here on every write and restores from here
       # at startup if the Redis key is missing (see management-ui/README.md).
       - management-ui-data:/app/data
+    # No curl/wget in the image (only nginx is apt-get installed on top of
+    # python:3.14-slim) -- use Python's built-in urllib instead of adding a
+    # package just for this. Hits nginx's / (a real static file, index.html
+    # via try_files fallback) to confirm nginx is actually serving traffic.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   management-ui-data:
