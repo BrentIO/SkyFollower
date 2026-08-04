@@ -1,10 +1,11 @@
 # Getting Started
 
-SkyFollower runs across up to four hosts (five if you add the optional
-dedicated MLAT receiver), each bringing up exactly one Docker Compose file.
-See [Deployment](/deployment/) for the full host topology and compose-file
-mapping before you start — this page only covers the commands to actually
-bring each host up.
+SkyFollower runs across several hosts (one more if you add the optional
+dedicated MLAT receiver), each bringing up exactly one Docker Compose file
+(except the core host, which brings up two — see below). See
+[Deployment](/deployment/) for the full compose-file mapping before you
+start — this page only covers the commands to actually bring each host
+up.
 
 Every `docker-compose.*.yaml` file already references a pre-built
 `ghcr.io/brentio/skyfollower-*` image — none of them build from source. A
@@ -28,9 +29,9 @@ curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/do
 
 `<role>` is one of `receiver`, `receiver-mlat`, `core`, `management-ui`,
 `message-processor`, or `archive` — matching the Compose Files table in
-[Deployment](/deployment/#compose-files). Host B runs the script twice
-(`core` and `management-ui`), since it brings up both compose files.
-`[dest-dir]` defaults to the current directory.
+[Deployment](/deployment/#compose-files). The core host runs the script
+twice (`core` and `management-ui`), since it brings up both compose
+files. `[dest-dir]` defaults to the current directory.
 
 Files are fetched from the **latest GitHub release**, not tip of `main` —
 this matches whatever the `:latest` container images actually are, since
@@ -68,32 +69,32 @@ list) and fill in real values before starting containers.
 
 ```bash
 # 1. Copy the example settings for each component on this host and fill in values
-#    e.g. for Host B:
+#    e.g. for the core host:
 cp config/runners/settings.json.example config/runners/settings.json
 cp config/ofelia/config.ini.example config/ofelia/config.ini
 cp config/management-ui/settings.json.example config/management-ui/settings.json
 cp config/rabbitmq/rabbitmq.conf.example config/rabbitmq/rabbitmq.conf
 cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 
-# Host A — receiver
+# ADS-B reception — receiver
 docker compose -f docker-compose.receiver.yaml up -d
 
-# Host A2 — dedicated MLAT receiver (optional)
+# Dedicated MLAT receiver (optional, separate host from the SDR-hosting receiver)
 docker compose -f docker-compose.receiver-mlat.yaml up -d
 
-# Host B — core
+# Core — message bus + enrichment data
 docker compose -f docker-compose.core.yaml up -d
 # ofelia sits behind the "runners" Compose profile and has no depends_on,
 # so name it explicitly -- this starts only ofelia, not every runner too:
 docker compose -f docker-compose.core.yaml --profile runners up -d ofelia
-# Host B also runs the management UI, as its own compose file (its only
-# dependency is Redis, already on this host):
+# The core host also runs the management UI, as its own compose file (its
+# only dependency is Redis, already on this host):
 docker compose -f docker-compose.management-ui.yaml up -d
 
-# Host C — message processor
+# Message processor (scale by adding more hosts running this same file)
 docker compose -f docker-compose.message-processor.yaml up -d
 
-# Host D — archive
+# Archive
 docker compose -f docker-compose.archive.yaml up -d
 ```
 
@@ -123,5 +124,5 @@ docker compose -f docker-compose.core.yaml run --rm runner-uk-caa-registry
 
 ## Next steps
 
-- [Deployment](/deployment/) — host topology, compose-file mapping, and full component list
+- [Deployment](/deployment/) — compose-file mapping and full component list
 - Component READMEs for settings fields: [receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md), [message processor](https://github.com/BrentIO/SkyFollower/blob/main/message-processor/README.md), [runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md)
