@@ -115,6 +115,19 @@ channels:
       ReceiverStartedAtMessage:
         $ref: '#/components/messages/ReceiverStartedAtMessage'
 
+  receiverVersion:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/version'
+    description: >
+      Running image version, from the VERSION environment variable ("dev" if
+      unset); never changes after startup. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+    messages:
+      ReceiverVersionMessage:
+        $ref: '#/components/messages/ReceiverVersionMessage'
+
   # ── Message Processor ─────────────────────────────────────────────────────
 
   messageProcessorStatus:
@@ -614,6 +627,12 @@ operations:
       $ref: '#/channels/receiverStartedAt'
     summary: Receiver publishes its process start time
 
+  publishReceiverVersion:
+    action: send
+    channel:
+      $ref: '#/channels/receiverVersion'
+    summary: Receiver publishes its running image version
+
   publishMessageProcessorStatus:
     action: send
     channel:
@@ -903,6 +922,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ReceiverStartedAt'
+
+    ReceiverVersionMessage:
+      name: ReceiverVersionMessage
+      title: Receiver running image version
+      summary: Running image version, from the VERSION environment variable
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverVersion'
 
     MessageProcessorMessagesPerSecondMessage:
       name: MessageProcessorMessagesPerSecondMessage
@@ -1238,6 +1265,11 @@ components:
       format: date-time
       description: UTC ISO-8601 timestamp of process start
       example: "2026-01-15T10:00:00+00:00"
+
+    ReceiverVersion:
+      type: string
+      description: Running image version, from the VERSION environment variable ("dev" if unset)
+      example: "2026.08.01"
 
     MessageProcessorMessagesPerSecond:
       type: number

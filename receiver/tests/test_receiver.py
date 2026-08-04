@@ -626,6 +626,45 @@ class TestTelemetryPayload:
                 )
 
 
+class TestPublishTelemetryVersion:
+    """Tests for the version MQTT statistic published alongside started_at."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_reads_version_env_var(self):
+        with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
+            r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+
+        r._publish_telemetry()
+
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls[f"SkyFollower/receiver/{r._id}/statistic/version"] == "2026.08.01"
+
+    def test_falls_back_to_dev_when_unset(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VERSION", None)
+            r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+
+        r._publish_telemetry()
+
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls[f"SkyFollower/receiver/{r._id}/statistic/version"] == "dev"
+
+
 class TestHaDeviceNameFallback:
     """Tests for the friendly-name vs. auto-generated-id-fallback display
     label used in HA name/model/sensor labels."""

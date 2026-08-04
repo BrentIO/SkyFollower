@@ -124,6 +124,7 @@ class Receiver:
         # self._id (the persisted UUID) stays the stable identifier used for
         # topic paths/unique_id regardless of whether this is set or changes.
         self._name = config.get("name")
+        self._version = os.environ.get("VERSION", "dev")
 
         # RabbitMQ state
         self._rmq_connection: Optional[pika.BlockingConnection] = None
@@ -141,6 +142,7 @@ class Receiver:
 
     def start(self) -> None:
         self._setup_logging()
+        logger.info(f"Starting SkyFollower Receiver {self._id} {self._version}")
         self._connect_mqtt()
 
         # Start RabbitMQ connection in a background thread
@@ -498,6 +500,7 @@ class Receiver:
         base = f"SkyFollower/receiver/{self._id}/statistic"
 
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
+        self._mqtt.publish(f"{base}/version", self._version, retain=True)
         for src in self._cfg.get("sources", []):
             host, port = src["host"], src["port"]
             tracker = self._rates.get((host, port))
