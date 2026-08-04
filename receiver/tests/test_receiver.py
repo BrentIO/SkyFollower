@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import socket
 import tempfile
 import threading
@@ -48,7 +49,7 @@ class TestSourceLoopDispatch:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg, 0)
+        return Receiver(cfg)
 
     def _run_dispatch(self, r, source: str):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -114,7 +115,7 @@ class TestIcaoRoutingIntegration:
     Receiver._handle_message internals (using mocked publishing).
     """
 
-    def _make_receiver(self, processor_count: int = 4, receiver_id: int = 0):
+    def _make_receiver(self, processor_count: int = 4):
         """Build a Receiver with a stub config (no real connections)."""
         from receiver.main import Receiver
         cfg = {
@@ -124,7 +125,7 @@ class TestIcaoRoutingIntegration:
             "telemetry_interval_seconds": 30,
             "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg, receiver_id)
+        return Receiver(cfg)
 
     def test_queue_name_from_icao_modulo(self):
         """Queue is adsb-{int(icao_hex, 16) % processor_count}."""
@@ -303,7 +304,7 @@ def _synchronous_drain_thread():
 
 
 class TestDrainFallback:
-    def _make_receiver(self, receiver_id: int = 0):
+    def _make_receiver(self):
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
@@ -311,7 +312,7 @@ class TestDrainFallback:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg, receiver_id)
+        return Receiver(cfg)
 
     def test_drain_fallback_publishes_queued_items(self):
         r = self._make_receiver()
@@ -455,57 +456,87 @@ class TestRateTracker:
 
 
 # ---------------------------------------------------------------------------
-# RECEIVER_ID and MQTT topic structure
+# Receiver identity: auto-generated, persisted, decoupled from name
 # ---------------------------------------------------------------------------
 
-class TestReceiverIdAndTopics:
-    """Tests for RECEIVER_ID env var and resulting MQTT topic naming."""
+class TestLoadOrCreateReceiverId:
+    """Tests for _load_or_create_receiver_id() in isolation."""
 
-    def _make_receiver(self, receiver_id: int = 0):
-        import tempfile
+    def test_generates_a_uuid_like_id(self):
+        from receiver.main import _load_or_create_receiver_id
+        rid = _load_or_create_receiver_id(tempfile.mkdtemp())
+        assert len(rid) == 36
+        assert rid.count("-") == 4
+
+    def test_persists_across_calls_with_the_same_data_dir(self):
+        from receiver.main import _load_or_create_receiver_id
+        data_dir = tempfile.mkdtemp()
+        first = _load_or_create_receiver_id(data_dir)
+        second = _load_or_create_receiver_id(data_dir)
+        assert first == second
+
+    def test_different_data_dirs_get_different_ids(self):
+        from receiver.main import _load_or_create_receiver_id
+        first = _load_or_create_receiver_id(tempfile.mkdtemp())
+        second = _load_or_create_receiver_id(tempfile.mkdtemp())
+        assert first != second
+
+    def test_writes_id_to_receiver_id_file(self):
+        from receiver.main import _load_or_create_receiver_id
+        data_dir = tempfile.mkdtemp()
+        rid = _load_or_create_receiver_id(data_dir)
+        path = os.path.join(data_dir, "receiver_id")
+        assert os.path.exists(path)
+        assert open(path).read().strip() == rid
+
+
+class TestReceiverIdAndTopics:
+    """Tests for the Receiver-level identity and resulting MQTT topic naming."""
+
+    def _make_receiver(self, data_dir: str | None = None, name: str | None = None):
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
+            "data_dir": data_dir or tempfile.mkdtemp(),
         }
-        return Receiver(cfg, receiver_id)
+        if name is not None:
+            cfg["name"] = name
+        return Receiver(cfg)
 
-    def test_default_receiver_id_is_zero(self):
+    def test_id_is_auto_generated(self):
         r = self._make_receiver()
-        assert r._id == 0
+        assert len(r._id) == 36
 
-    def test_receiver_id_set_correctly(self):
-        r = self._make_receiver(receiver_id=3)
-        assert r._id == 3
+    def test_id_persists_across_restarts_with_same_data_dir(self):
+        data_dir = tempfile.mkdtemp()
+        r1 = self._make_receiver(data_dir=data_dir)
+        r2 = self._make_receiver(data_dir=data_dir)
+        assert r1._id == r2._id
 
-    def test_main_exits_on_non_integer_receiver_id(self):
-        import os
-        with patch.dict(os.environ, {"RECEIVER_ID": "notanint"}):
-            with patch("receiver.main._load_config", return_value={
-                "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
-                "data_dir": tempfile.mkdtemp(),
-            }):
+    def test_name_defaults_to_none_when_unset(self):
+        r = self._make_receiver()
+        assert r._name is None
+
+    def test_name_read_from_config_when_set(self):
+        r = self._make_receiver(name="Attic 1090")
+        assert r._name == "Attic 1090"
+
+    def test_main_constructs_receiver_from_config_only(self):
+        """main() no longer reads any RECEIVER_ID env var -- Receiver is
+        constructed from config alone."""
+        with patch("receiver.main._load_config", return_value={
+            "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }):
+            with patch("receiver.main.Receiver") as mock_cls:
+                mock_cls.return_value.start = MagicMock()
                 import receiver.main as rm
-                with pytest.raises(SystemExit) as exc_info:
-                    rm.main()
-                assert exc_info.value.code == 1
-
-    def test_main_reads_receiver_id_from_env(self):
-        import os
-        from unittest.mock import patch, MagicMock
-        with patch.dict(os.environ, {"RECEIVER_ID": "2"}):
-            with patch("receiver.main._load_config", return_value={
-                "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
-                "data_dir": tempfile.mkdtemp(),
-            }):
-                with patch("receiver.main.Receiver") as mock_cls:
-                    mock_cls.return_value.start = MagicMock()
-                    import receiver.main as rm
-                    rm.main()
-                    args = mock_cls.call_args
-                    assert args[0][1] == 2  # receiver_id positional arg
+                rm.main()
+                mock_cls.assert_called_once()
+                args, kwargs = mock_cls.call_args
+                assert len(args) == 1 and not kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +546,7 @@ class TestReceiverIdAndTopics:
 class TestTelemetryPayload:
     """Tests for _publish_telemetry()'s one-retained-topic-per-stat behaviour."""
 
-    def _make_receiver(self, receiver_id: int = 0):
-        import tempfile
+    def _make_receiver(self):
         from receiver.main import Receiver
         cfg = {
             "sources": [
@@ -528,16 +558,16 @@ class TestTelemetryPayload:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg, receiver_id)
+        return Receiver(cfg)
 
     def test_publish_telemetry_correct_base_topic(self):
-        r = self._make_receiver(receiver_id=2)
+        r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
         topics = [c.args[0] for c in mock_mqtt.publish.call_args_list]
-        assert all(t.startswith("SkyFollower/receiver/2/statistic/") for t in topics)
+        assert all(t.startswith(f"SkyFollower/receiver/{r._id}/statistic/") for t in topics)
 
     def test_publish_telemetry_retained(self):
         r = self._make_receiver()
@@ -554,7 +584,7 @@ class TestTelemetryPayload:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        base = "SkyFollower/receiver/0/statistic"
+        base = f"SkyFollower/receiver/{r._id}/statistic"
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         assert f"{base}/messages_1090_per_second" in topics
         assert f"{base}/messages_978_per_second" in topics
@@ -571,7 +601,7 @@ class TestTelemetryPayload:
         r._rmq_connected = True
         r._publish_telemetry()
         calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-        assert calls["SkyFollower/receiver/0/statistic/rabbitmq_connected"] == "True"
+        assert calls[f"SkyFollower/receiver/{r._id}/statistic/rabbitmq_connected"] == "True"
 
     def test_no_publish_when_mqtt_not_connected(self):
         r = self._make_receiver()
@@ -582,16 +612,63 @@ class TestTelemetryPayload:
         mock_mqtt.publish.assert_not_called()
 
     def test_ha_autodiscovery_uses_direct_state_topic(self):
-        r = self._make_receiver(receiver_id=0)
+        r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
-        import json
         for call in mock_mqtt.publish.call_args_list:
             if call.args[0].startswith("homeassistant/"):
                 cfg_payload = json.loads(call.args[1])
                 assert "value_template" not in cfg_payload
                 assert cfg_payload["state_topic"].startswith(
-                    "SkyFollower/receiver/0/statistic/"
+                    f"SkyFollower/receiver/{r._id}/statistic/"
                 )
+
+
+class TestHaDeviceNameFallback:
+    """Tests for the friendly-name vs. auto-generated-id-fallback display
+    label used in HA name/model/sensor labels."""
+
+    def _make_receiver(self, name: str | None = None):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        if name is not None:
+            cfg["name"] = name
+        return Receiver(cfg)
+
+    def test_uses_friendly_name_when_set(self):
+        r = self._make_receiver(name="Attic 1090")
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
+        assert payload["device"]["name"] == "SkyFollower Attic 1090"
+        assert payload["device"]["model"] == "Attic 1090"
+
+    def test_falls_back_to_short_id_when_name_unset(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
+        assert payload["device"]["model"] == f"Receiver {r._id[:8]}"
+
+    def test_identifier_and_topics_use_full_id_regardless_of_name(self):
+        """The full persisted UUID stays the stable identifier/topic key
+        even when a short friendly name is displayed instead."""
+        r = self._make_receiver(name="Attic 1090")
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
+        assert payload["device"]["ids"] == f"SkyFollower_receiver_{r._id}"
+        assert payload["state_topic"].startswith(f"SkyFollower/receiver/{r._id}/statistic/")
