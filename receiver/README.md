@@ -203,6 +203,7 @@ All topics use the root `SkyFollower`.
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
+| `version` | String | Running image version (`VERSION` env var, `"dev"` if unset) |
 
 A `messages_{host}_{port}_per_second` topic is published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two MLAT feeds) get independent rates instead of being summed together. For example, `{ "host": "adsb.lol", "port": 30105, "source": "MLAT" }` publishes to `messages_adsb.lol_30105_per_second`.
 
