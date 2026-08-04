@@ -83,6 +83,24 @@ channels:
       ReceiverConnectionConnectedMessage:
         $ref: '#/components/messages/ReceiverConnectionConnectedMessage'
 
+  receiverConnectionReconnectCount:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_reconnect_count'
+    description: >
+      Number of times one specific sources[] connection has dropped and
+      been re-established since process start -- distinguishes a
+      rock-solid connection from one that's currently connected but
+      flapping. Published every telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
+    messages:
+      ReceiverConnectionReconnectCountMessage:
+        $ref: '#/components/messages/ReceiverConnectionReconnectCountMessage'
+
   receiverLocalQueueDepth:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
     description: >
@@ -627,6 +645,12 @@ operations:
       $ref: '#/channels/receiverConnectionConnected'
     summary: Receiver publishes the connected state of one sources[] connection
 
+  publishReceiverConnectionReconnectCount:
+    action: send
+    channel:
+      $ref: '#/channels/receiverConnectionReconnectCount'
+    summary: Receiver publishes the reconnect count of one sources[] connection
+
   publishReceiverLocalQueueDepth:
     action: send
     channel:
@@ -922,6 +946,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ReceiverConnectionConnected'
+
+    ReceiverConnectionReconnectCountMessage:
+      name: ReceiverConnectionReconnectCountMessage
+      title: Receiver per-connection reconnect count
+      summary: Number of times one sources[] connection has dropped and been re-established since process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverConnectionReconnectCount'
 
     ReceiverLocalQueueDepthMessage:
       name: ReceiverLocalQueueDepthMessage
@@ -1281,6 +1313,11 @@ components:
       type: boolean
       description: True when the TCP connection to one sources[] entry's readsb instance is currently open
       example: true
+
+    ReceiverConnectionReconnectCount:
+      type: integer
+      description: Number of times one sources[] connection has dropped and been re-established since process start
+      example: 0
 
     ReceiverLocalQueueDepth:
       type: integer

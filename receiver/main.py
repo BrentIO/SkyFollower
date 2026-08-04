@@ -114,10 +114,15 @@ class Receiver:
         # Live up/down state per connection -- True only while the TCP
         # socket to that connection's readsb instance is open.
         self._connected: dict[tuple[str, int], bool] = {}
+        # Count of drop-and-retry cycles per connection -- distinguishes a
+        # rock-solid connection from one that's currently "Connected: True"
+        # but flapping every few minutes.
+        self._reconnect_counts: dict[tuple[str, int], int] = {}
         for src in config.get("sources", []):
             key = (src["host"], src["port"])
             self._rates[key] = _RateTracker()
             self._connected[key] = False
+            self._reconnect_counts[key] = 0
 
         # Fallback SQLite queue
         data_dir = config.get("data_dir", "/app/data")
@@ -222,6 +227,11 @@ class Receiver:
                 )
 
             if not self._shutdown.is_set():
+                # Reaching here always means a drop-and-retry: either the
+                # try block above raised (OSError/other exception) or the
+                # stream reader returned via its closed-connection break --
+                # a clean shutdown skips this entirely via the is_set() check.
+                self._reconnect_counts[key] = self._reconnect_counts.get(key, 0) + 1
                 time.sleep(5)
 
     def _read_1090_stream(
@@ -528,6 +538,11 @@ class Receiver:
                 str(self._connected.get((host, port), False)),
                 retain=True,
             )
+            self._mqtt.publish(
+                f"{base}/{host}_{port}_reconnect_count",
+                str(self._reconnect_counts.get((host, port), 0)),
+                retain=True,
+            )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -590,6 +605,8 @@ class Receiver:
                              "mdi:broadcast", "measurement", "msg/s"))
             sensors.append((f"{host}_{port}_connected", f"{display} — {host}:{port} Connected",
                              "mdi:lan-connect", None, None))
+            sensors.append((f"{host}_{port}_reconnect_count", f"{display} — {host}:{port} Reconnect Count",
+                             "mdi:refresh", "total_increasing", None))
         sensors += [
             ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
