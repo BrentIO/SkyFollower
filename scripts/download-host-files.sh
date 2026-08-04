@@ -84,7 +84,10 @@ case "$ROLE" in
     CONFIG_FILES=(config/receiver/settings.json.example)
     ;;
   receiver-mlat)
-    COMPOSE_FILES=(docker-compose.receiver-mlat.yaml)
+    # Same compose file as "receiver" -- the MLAT instance is the identical
+    # image deployed a second time on its own host, distinguished only by
+    # which settings.json.example it starts from.
+    COMPOSE_FILES=(docker-compose.receiver.yaml)
     CONFIG_FILES=(config/receiver/mlat-settings.json.example)
     ;;
   core)

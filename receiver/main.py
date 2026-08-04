@@ -43,9 +43,9 @@ from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
 
-# tmpfs-mounted in docker-compose.receiver.yaml/docker-compose.receiver-mlat.yaml
-# -- these writes must never hit the host's eMMC/SD storage, only /app/data
-# (the fallback SQLite queue) is durable/persistent.
+# tmpfs-mounted in docker-compose.receiver.yaml -- these writes must never
+# hit the host's eMMC/SD storage, only /app/data (the fallback SQLite
+# queue) is durable/persistent.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
