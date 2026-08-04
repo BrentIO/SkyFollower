@@ -118,11 +118,17 @@ class Receiver:
         # rock-solid connection from one that's currently "Connected: True"
         # but flapping every few minutes.
         self._reconnect_counts: dict[tuple[str, int], int] = {}
+        # UTC ISO-8601 timestamp of the last message processed for each
+        # connection -- None until the first one arrives, so a low-traffic
+        # feed's silence is visible directly instead of only inferred from
+        # its rate having decayed to zero.
+        self._last_message_at: dict[tuple[str, int], Optional[str]] = {}
         for src in config.get("sources", []):
             key = (src["host"], src["port"])
             self._rates[key] = _RateTracker()
             self._connected[key] = False
             self._reconnect_counts[key] = 0
+            self._last_message_at[key] = None
 
         # Fallback SQLite queue
         data_dir = config.get("data_dir", "/app/data")
@@ -250,7 +256,7 @@ class Receiver:
                 break
 
             for raw_hex in parse_tcp_stream(chunk, buf):
-                self._handle_message(raw_hex, source, rate_tracker)
+                self._handle_message(raw_hex, source, rate_tracker, (host, port))
 
     def _read_978_stream(
         self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
@@ -273,12 +279,15 @@ class Receiver:
                 result = parse_978_line(raw_line.decode("ascii", errors="ignore"))
                 if result:
                     raw_hex, icao_hex, received_at = result
-                    self._handle_978_message(raw_hex, icao_hex, received_at, source, rate_tracker)
+                    self._handle_978_message(
+                        raw_hex, icao_hex, received_at, source, rate_tracker, (host, port)
+                    )
 
     def _handle_message(
-        self, raw_hex: str, source: str, rate_tracker: _RateTracker
+        self, raw_hex: str, source: str, rate_tracker: _RateTracker, key: tuple[str, int]
     ) -> None:
         """Extract ICAO from a 1090 Mode S message, then route it."""
+        self._last_message_at[key] = datetime.now(timezone.utc).isoformat()
         try:
             decoded = pms.decode(raw_hex)
             icao_hex = decoded.get("icao") if decoded else None
@@ -302,10 +311,12 @@ class Receiver:
         received_at: float,
         source: str,
         rate_tracker: _RateTracker,
+        key: tuple[str, int],
     ) -> None:
         """Route an already-parsed 978 UAT message (icao_hex/received_at
         extracted by parse_978_line — no pyModeS decode needed, UAT is not
         Mode S)."""
+        self._last_message_at[key] = datetime.now(timezone.utc).isoformat()
         if len(icao_hex) != 6:
             return
 
@@ -543,6 +554,11 @@ class Receiver:
                 str(self._reconnect_counts.get((host, port), 0)),
                 retain=True,
             )
+            last_message_at = self._last_message_at.get((host, port))
+            if last_message_at is not None:
+                self._mqtt.publish(
+                    f"{base}/{host}_{port}_last_message_at", last_message_at, retain=True
+                )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -607,6 +623,8 @@ class Receiver:
                              "mdi:lan-connect", None, None))
             sensors.append((f"{host}_{port}_reconnect_count", f"{display} — {host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None))
+            sensors.append((f"{host}_{port}_last_message_at", f"{display} — {host}:{port} Last Message At",
+                             "mdi:clock", None, None))
         sensors += [
             ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
@@ -630,6 +648,8 @@ class Receiver:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
+            if field.endswith("_last_message_at"):
+                payload["device_class"] = "timestamp"
 
             self._mqtt.publish(
                 f"homeassistant/sensor/SkyFollower_receiver_{rid}_{field}/config",

@@ -201,13 +201,14 @@ All topics use the root `SkyFollower`.
 | `messages_{host}_{port}_per_second` | Float as string | Average message rate for one specific `sources[]` connection since last report |
 | `{host}_{port}_connected` | `True` or `False` | Whether the TCP connection to that specific `sources[]` entry's readsb instance is currently open |
 | `{host}_{port}_reconnect_count` | Integer as string | Number of times that specific `sources[]` connection has dropped and been re-established since process start |
+| `{host}_{port}_last_message_at` | UTC ISO-8601 timestamp | When that specific `sources[]` connection last processed a message; not published at all until the first one arrives |
 | `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) |
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `version` | String | Running image version (`VERSION` env var, `"dev"` if unset) |
 
-A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, and `{host}_{port}_reconnect_count` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two MLAT feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "MLAT" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, and `adsb.lol_30105_reconnect_count`.
+A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_last_message_at` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two MLAT feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "MLAT" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_last_message_at`.
 
 Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`.
 

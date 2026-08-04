@@ -291,7 +291,7 @@ class TestIcaoRoutingIntegration:
         r._publish = lambda q, p: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
-        r._handle_message(raw_hex, "1090", r._rates["1090"])
+        r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
 
         assert len(published) == 1
         queue_name, payload = published[0]
@@ -315,7 +315,7 @@ class TestIcaoRoutingIntegration:
         r._publish = lambda q, p: published.append((q, p))
         r._rates["MLAT"] = _RateTracker()
 
-        r._handle_message(raw_hex, "MLAT", r._rates["MLAT"])
+        r._handle_message(raw_hex, "MLAT", r._rates["MLAT"], ("localhost", 30002))
 
         assert len(published) == 1
         _, payload = published[0]
@@ -337,7 +337,7 @@ class TestIcaoRoutingIntegration:
         r._publish = lambda q, p: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
-        r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"])
+        r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"], ("localhost", 30002))
 
         assert len(published) == 1
         _, payload = published[0]
@@ -355,7 +355,7 @@ class TestIcaoRoutingIntegration:
         r._publish = lambda q, p: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
-        r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"])
+        r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"], ("localhost", 30002))
         assert published == []
 
     def test_handle_message_discards_bad_message(self):
@@ -366,7 +366,7 @@ class TestIcaoRoutingIntegration:
         r._rates["1090"] = _RateTracker()
 
         # Garbage hex — pyModeS.icao returns None
-        r._handle_message("0000000000", "1090", r._rates["1090"])
+        r._handle_message("0000000000", "1090", r._rates["1090"], ("localhost", 30002))
         assert published == []
 
     def test_routing_consistent_for_same_icao(self):
@@ -380,7 +380,7 @@ class TestIcaoRoutingIntegration:
         r._rates["1090"] = _RateTracker()
 
         for _ in range(5):
-            r._handle_message(raw_hex, "1090", r._rates["1090"])
+            r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
         queues = {q for q, _ in published}
         assert len(queues) == 1, "Same ICAO must always route to the same queue"
 
@@ -393,8 +393,44 @@ class TestIcaoRoutingIntegration:
         r._publish = lambda q, p: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
-        r._handle_message(raw_hex, "1090", r._rates["1090"])
+        r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
         assert published[0][0] == "adsb-0"
+
+    def test_handle_message_sets_last_message_at(self):
+        r = self._make_receiver()
+        r._publish = lambda q, p: None
+        key = ("localhost", 30002)
+        r._last_message_at[key] = None
+
+        r._handle_message("8D4840D6202CC371C32CE0576098", "1090", _RateTracker(), key)
+
+        assert r._last_message_at[key] is not None
+
+    def test_handle_message_sets_last_message_at_even_when_discarded(self):
+        """A message that fails ICAO extraction is still evidence the
+        connection is alive and emitting frames -- last_message_at tracks
+        traffic seen, not traffic successfully routed."""
+        r = self._make_receiver()
+        r._publish = lambda q, p: None
+        key = ("localhost", 30002)
+        r._last_message_at[key] = None
+
+        r._handle_message("0000000000", "1090", _RateTracker(), key)
+
+        assert r._last_message_at[key] is not None
+
+    def test_handle_978_message_sets_last_message_at(self):
+        r = self._make_receiver()
+        r._publish = lambda q, p: None
+        key = ("localhost", 30978)
+        r._last_message_at[key] = None
+        raw_hex, icao_hex, received_at = parse_978_line(
+            "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
+        )
+
+        r._handle_978_message(raw_hex, icao_hex, received_at, "978", _RateTracker(), key)
+
+        assert r._last_message_at[key] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +806,28 @@ class TestTelemetryPayload:
         assert calls[f"{base}/localhost_30002_reconnect_count"] == "4"
         assert calls[f"{base}/localhost_30978_reconnect_count"] == "0"
 
+    def test_last_message_at_not_published_before_first_message(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert f"{base}/localhost_30002_last_message_at" not in topics
+
+    def test_last_message_at_published_once_set(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._last_message_at[("localhost", 30002)] = "2026-01-15T10:00:00+00:00"
+        r._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert calls[f"{base}/localhost_30002_last_message_at"] == "2026-01-15T10:00:00+00:00"
+        assert f"{base}/localhost_30978_last_message_at" not in calls
+
     def test_rabbitmq_connected_value(self):
         r = self._make_receiver()
         mock_mqtt = MagicMock()
@@ -814,6 +872,20 @@ class TestTelemetryPayload:
                 assert cfg_payload["device"]["configuration_url"] == (
                     "https://brentio.github.io/SkyFollower/components/receiver.html"
                 )
+
+    def test_last_message_at_sensor_has_timestamp_device_class(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        found = False
+        for call in mock_mqtt.publish.call_args_list:
+            if call.args[0] == f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_last_message_at/config":
+                found = True
+                cfg_payload = json.loads(call.args[1])
+                assert cfg_payload["device_class"] == "timestamp"
+        assert found
 
 
 class TestPublishTelemetryVersion:
