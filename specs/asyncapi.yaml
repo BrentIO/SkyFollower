@@ -521,6 +521,15 @@ channels:
       ArchiveCompactionLastRunStatusMessage:
         $ref: '#/components/messages/ArchiveCompactionLastRunStatusMessage'
 
+  archiveCompactionVersion:
+    address: SkyFollower/archive-compaction/statistic/version
+    description: >
+      Running image version, read from the VERSION environment variable
+      (falls back to "dev" if unset). Published once per run, retained.
+    messages:
+      ArchiveCompactionVersionMessage:
+        $ref: '#/components/messages/ArchiveCompactionVersionMessage'
+
   # ── Rule notifications ────────────────────────────────────────────────────
 
   ruleNotification:
@@ -839,6 +848,12 @@ operations:
     channel:
       $ref: '#/channels/archiveCompactionLastRunStatus'
     summary: Archive compaction publishes the outcome of this run
+
+  publishArchiveCompactionVersion:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionVersion'
+    summary: Archive compaction publishes its running image version
 
   publishRuleNotification:
     action: send
@@ -1192,6 +1207,14 @@ components:
       payload:
         $ref: '#/components/schemas/ArchiveCompactionLastRunStatus'
 
+    ArchiveCompactionVersionMessage:
+      name: ArchiveCompactionVersionMessage
+      title: Archive compaction version
+      summary: Running image version
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionVersion'
+
     FlightRuleNotificationMessage:
       name: FlightRuleNotificationMessage
       title: Rule match notification
@@ -1450,6 +1473,13 @@ components:
         error but stopped early on a flight/index parity mismatch (see
         mismatch_date/mismatch_uuids); Failure means an actual exception
       example: Success
+
+    ArchiveCompactionVersion:
+      type: string
+      description: >
+        Running image version, read from the VERSION environment variable.
+        Falls back to "dev" when unset (e.g. a local, non-release build)
+      example: "2026.08.01"
 
     RunnerRecordsImported:
       type: integer
