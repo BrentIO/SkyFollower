@@ -35,8 +35,7 @@ appropriate file(s):
 
 | File | Host | Services |
 |------|------|---------|
-| `docker-compose.receiver.yaml` | Host A — Raspberry Pi | `receiver` |
-| `docker-compose.receiver-mlat.yaml` | Host A2 — MLAT receiver (optional) | `receiver` |
+| `docker-compose.receiver.yaml` | Host A — Raspberry Pi; also Host A2's optional dedicated MLAT receiver (same file, own `settings.json`) | `receiver` |
 | `docker-compose.core.yaml` | Host B — Core | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Host B — Core | `management-ui` |
 | `docker-compose.message-processor.yaml` | Host C — Message Processor host | `message-processor-0` |
@@ -76,7 +75,7 @@ on the host. Example files for every component are in `config/`:
 | File | Used by |
 |------|---------|
 | `config/receiver/settings.json.example` | `docker-compose.receiver.yaml` |
-| `config/receiver/mlat-settings.json.example` | `docker-compose.receiver-mlat.yaml` |
+| `config/receiver/mlat-settings.json.example` | `docker-compose.receiver.yaml` (deployed a second time, on the MLAT instance's own host) |
 | `config/message-processor/settings.json.example` | `docker-compose.message-processor.yaml` |
 | `config/archive/settings.json.example` | `docker-compose.archive.yaml` (`archive-processor`) |
 | `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
@@ -103,10 +102,10 @@ image update — depends on what it is and what depends on it.
 consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
 processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
-receiver instance (Host A2, `docker-compose.receiver-mlat.yaml`) is the
-same container image on its own host with its own independently-generated
-identity — maintain it identically and independently of Host A's
-SDR-hosting instance.
+receiver instance (Host A2, same `docker-compose.receiver.yaml`, its own
+host and `settings.json`) is maintained identically and independently of
+Host A's SDR-hosting instance, with its own independently-generated
+identity.
 
 **Core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and

@@ -78,8 +78,9 @@ cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 # Host A — receiver
 docker compose -f docker-compose.receiver.yaml up -d
 
-# Host A2 — dedicated MLAT receiver (optional)
-docker compose -f docker-compose.receiver-mlat.yaml up -d
+# Host A2 — dedicated MLAT receiver (optional; same compose file as
+# Host A, deployed on its own host with its own settings.json)
+docker compose -f docker-compose.receiver.yaml up -d
 
 # Host B — core
 docker compose -f docker-compose.core.yaml up -d

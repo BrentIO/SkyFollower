@@ -68,20 +68,24 @@ configured on that instance — each is its own `sources[]` entry with
 ```
 
 These two examples match `config/receiver/settings.json.example` (the
-SDR-hosting instance, wired up in `docker-compose.receiver.yaml`) and
-`config/receiver/mlat-settings.json.example` (a dedicated MLAT instance,
-wired up in `docker-compose.receiver-mlat.yaml`) respectively. Deploying the
-MLAT instance means cloning the repo on its own host, copying
-`config/receiver/mlat-settings.json.example` to
-`config/receiver/mlat-settings.json`, and bringing it up independently:
+SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
+dedicated MLAT instance) respectively. There's no separate compose file for
+the MLAT instance -- it's the exact same `receiver` image and the same
+`docker-compose.receiver.yaml`, just deployed a second time on its own host
+with a different `settings.json`. Deploying it means cloning the repo on
+that host, copying `config/receiver/mlat-settings.json.example` to
+`config/receiver/settings.json`, and bringing it up the same way as any
+other receiver:
 
 ```bash
-docker compose -f docker-compose.receiver-mlat.yaml up -d
+docker compose -f docker-compose.receiver.yaml up -d
 ```
 
 It publishes MQTT topics under its own independently-generated receiver
 identity (see Receiver Identity below) and drains through its own
-`queue.db`, entirely independent of the SDR-hosting instance.
+`queue.db`, entirely independent of the SDR-hosting instance -- nothing
+about it needs to be told it's "the MLAT one" beyond which `sources[]`
+entries its `settings.json` lists.
 
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
