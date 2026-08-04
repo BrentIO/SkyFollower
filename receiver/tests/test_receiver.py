@@ -586,9 +586,9 @@ class TestTelemetryPayload:
         r._publish_telemetry()
         base = f"SkyFollower/receiver/{r._id}/statistic"
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        assert f"{base}/messages_1090_per_second" in topics
-        assert f"{base}/messages_978_per_second" in topics
-        assert f"{base}/messages_MLAT_per_second" in topics
+        assert f"{base}/messages_localhost_30002_per_second" in topics
+        assert f"{base}/messages_localhost_30978_per_second" in topics
+        assert f"{base}/messages_localhost_30105_per_second" in topics
         assert f"{base}/local_queue_depth" in topics
         assert f"{base}/rabbitmq_connected" in topics
         assert f"{base}/started_at" in topics

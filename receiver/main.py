@@ -106,10 +106,13 @@ class Receiver:
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
-        # Per-source rate trackers keyed by source string (e.g. "1090", "978")
-        self._rates: dict[str, _RateTracker] = {}
+        # Per-connection rate trackers keyed by (host, port) -- not the
+        # source tag, since more than one connection can share a tag (e.g.
+        # two MLAT feeds) and needs independent tracking rather than a
+        # summed rate.
+        self._rates: dict[tuple[str, int], _RateTracker] = {}
         for src in config.get("sources", []):
-            self._rates[src["source"]] = _RateTracker()
+            self._rates[(src["host"], src["port"])] = _RateTracker()
 
         # Fallback SQLite queue
         data_dir = config.get("data_dir", "/app/data")
@@ -182,7 +185,7 @@ class Receiver:
         host = src_cfg["host"]
         port = src_cfg["port"]
         source = src_cfg["source"]
-        rate_tracker = self._rates.get(source, _RateTracker())
+        rate_tracker = self._rates.get((host, port), _RateTracker())
 
         while not self._shutdown.is_set():
             try:
@@ -495,9 +498,13 @@ class Receiver:
         base = f"SkyFollower/receiver/{self._id}/statistic"
 
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
-        for source, tracker in self._rates.items():
+        for src in self._cfg.get("sources", []):
+            host, port = src["host"], src["port"]
+            tracker = self._rates.get((host, port))
+            if tracker is None:
+                continue
             self._mqtt.publish(
-                f"{base}/messages_{source}_per_second",
+                f"{base}/messages_{host}_{port}_per_second",
                 str(round(tracker.rate(), 2)),
                 retain=True,
             )
@@ -555,9 +562,10 @@ class Receiver:
         }
 
         sensors = []
-        for source in self._rates:
-            field = f"messages_{source}_per_second"
-            sensors.append((field, f"{display} — {source} Messages/sec",
+        for src in self._cfg.get("sources", []):
+            host, port, source = src["host"], src["port"], src["source"]
+            field = f"messages_{host}_{port}_per_second"
+            sensors.append((field, f"{display} — {host}:{port} {source} Messages/sec",
                              "mdi:broadcast", "measurement", "msg/s"))
         sensors += [
             ("local_queue_depth", f"{display} — Local Queue Depth",
