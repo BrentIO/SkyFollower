@@ -625,6 +625,19 @@ class TestTelemetryPayload:
                     f"SkyFollower/receiver/{r._id}/statistic/"
                 )
 
+    def test_ha_device_configuration_url_points_to_own_docs_page(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        for call in mock_mqtt.publish.call_args_list:
+            if call.args[0].startswith("homeassistant/"):
+                cfg_payload = json.loads(call.args[1])
+                assert cfg_payload["device"]["configuration_url"] == (
+                    "https://brentio.github.io/SkyFollower/components/receiver.html"
+                )
+
 
 class TestPublishTelemetryVersion:
     """Tests for the version MQTT statistic published alongside started_at."""

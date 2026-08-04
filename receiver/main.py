@@ -557,6 +557,7 @@ class Receiver:
             identifier=f"SkyFollower_receiver_{rid}",
             name=f"SkyFollower {display}",
             model=display,
+            configuration_url="https://brentio.github.io/SkyFollower/components/receiver.html",
         )
         availability = {
             "availability_topic": f"SkyFollower/receiver/{rid}/status",
