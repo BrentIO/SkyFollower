@@ -160,6 +160,94 @@ class TestConnectionConnectedState:
         assert r._connected[key] is False
 
 
+class TestReconnectCounter:
+    """Tests for the per-connection reconnect count -- distinguishes a
+    rock-solid connection from one that's currently connected but
+    flapping every few minutes."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_increments_on_repeated_connection_errors(self):
+        r = self._make_receiver()
+        key = ("localhost", 1)
+        attempts = {"n": 0}
+
+        def _fake_sleep(seconds):
+            attempts["n"] += 1
+            if attempts["n"] >= 3:
+                r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": "localhost", "port": 1, "source": "1090"})
+
+        assert r._reconnect_counts[key] == 3
+
+    def test_increments_after_closed_connection_break(self):
+        r = self._make_receiver()
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+        key = (host, port)
+        r._reconnect_counts[key] = 0
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        def _fake_reader(*a, **k):
+            pass  # simulates the closed-connection break -- returns cleanly
+
+        def _fake_sleep(seconds):
+            r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        with patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": host, "port": port, "source": "1090"})
+        acceptor.join(timeout=5)
+        server.close()
+
+        assert r._reconnect_counts[key] == 1
+
+    def test_does_not_increment_on_clean_shutdown_without_drop(self):
+        """If the reader itself requests shutdown (a real stop, not a
+        drop), there's nothing to retry -- must not count as a reconnect."""
+        r = self._make_receiver()
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+        key = (host, port)
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        def _fake_reader(*a, **k):
+            r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        r._source_loop({"host": host, "port": port, "source": "1090"})
+        acceptor.join(timeout=5)
+        server.close()
+
+        assert r._reconnect_counts.get(key, 0) == 0
+
+
 # ---------------------------------------------------------------------------
 # ICAO extraction and queue routing
 #
@@ -651,6 +739,9 @@ class TestTelemetryPayload:
         assert f"{base}/localhost_30002_connected" in topics
         assert f"{base}/localhost_30978_connected" in topics
         assert f"{base}/localhost_30105_connected" in topics
+        assert f"{base}/localhost_30002_reconnect_count" in topics
+        assert f"{base}/localhost_30978_reconnect_count" in topics
+        assert f"{base}/localhost_30105_reconnect_count" in topics
         assert f"{base}/local_queue_depth" in topics
         assert f"{base}/rabbitmq_connected" in topics
         assert f"{base}/started_at" in topics
@@ -666,6 +757,18 @@ class TestTelemetryPayload:
         base = f"SkyFollower/receiver/{r._id}/statistic"
         assert calls[f"{base}/localhost_30002_connected"] == "True"
         assert calls[f"{base}/localhost_30978_connected"] == "False"
+
+    def test_connection_reconnect_count_value(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._reconnect_counts[("localhost", 30002)] = 4
+        r._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert calls[f"{base}/localhost_30002_reconnect_count"] == "4"
+        assert calls[f"{base}/localhost_30978_reconnect_count"] == "0"
 
     def test_rabbitmq_connected_value(self):
         r = self._make_receiver()
