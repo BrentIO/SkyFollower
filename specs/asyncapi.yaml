@@ -422,6 +422,16 @@ channels:
       ArchiveStartedAtMessage:
         $ref: '#/components/messages/ArchiveStartedAtMessage'
 
+  archiveVersion:
+    address: SkyFollower/archive/statistic/version
+    description: >
+      Running image version, from the VERSION environment variable ("dev" if
+      unset); never changes after startup. Published every
+      telemetry_interval_seconds, retained.
+    messages:
+      ArchiveVersionMessage:
+        $ref: '#/components/messages/ArchiveVersionMessage'
+
   # ── Archive compaction ────────────────────────────────────────────────────
   # Unlike receiver/processor/archive-processor's single combined-JSON
   # statistics payload, archive-compaction is a one-shot job (not a
@@ -776,6 +786,12 @@ operations:
       $ref: '#/channels/archiveStartedAt'
     summary: Archive processor publishes its process start time
 
+  publishArchiveVersion:
+    action: send
+    channel:
+      $ref: '#/channels/archiveVersion'
+    summary: Archive processor publishes its running image version
+
   publishArchiveCompactionFilesCompacted:
     action: send
     channel:
@@ -1104,6 +1120,14 @@ components:
       payload:
         $ref: '#/components/schemas/ArchiveStartedAt'
 
+    ArchiveVersionMessage:
+      name: ArchiveVersionMessage
+      title: Archive processor running version
+      summary: Running image version, from the VERSION environment variable
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveVersion'
+
     ArchiveCompactionFilesCompactedMessage:
       name: ArchiveCompactionFilesCompactedMessage
       title: Archive compaction files compacted
@@ -1365,6 +1389,11 @@ components:
       format: date-time
       description: UTC ISO-8601 timestamp of process start
       example: "2026-01-15T10:00:00+00:00"
+
+    ArchiveVersion:
+      type: string
+      description: Running image version, from the VERSION environment variable ("dev" if unset)
+      example: "2026.08.01"
 
     ArchiveCompactionFilesCompacted:
       type: integer
