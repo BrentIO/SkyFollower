@@ -65,6 +65,24 @@ channels:
       ReceiverMessagesPerSecondMessage:
         $ref: '#/components/messages/ReceiverMessagesPerSecondMessage'
 
+  receiverConnectionConnected:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_connected'
+    description: >
+      Whether the TCP connection to one specific sources[] entry's readsb
+      instance is currently open -- True right after connect, False on any
+      connection error or detected closed connection. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
+    messages:
+      ReceiverConnectionConnectedMessage:
+        $ref: '#/components/messages/ReceiverConnectionConnectedMessage'
+
   receiverLocalQueueDepth:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
     description: >
@@ -603,6 +621,12 @@ operations:
       $ref: '#/channels/receiverMessagesPerSecond'
     summary: Receiver publishes the message rate for one sources[] connection
 
+  publishReceiverConnectionConnected:
+    action: send
+    channel:
+      $ref: '#/channels/receiverConnectionConnected'
+    summary: Receiver publishes the connected state of one sources[] connection
+
   publishReceiverLocalQueueDepth:
     action: send
     channel:
@@ -890,6 +914,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ReceiverMessagesPerSecond'
+
+    ReceiverConnectionConnectedMessage:
+      name: ReceiverConnectionConnectedMessage
+      title: Receiver per-connection connected state
+      summary: Whether the TCP connection to one sources[] entry's readsb instance is currently open
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverConnectionConnected'
 
     ReceiverLocalQueueDepthMessage:
       name: ReceiverLocalQueueDepthMessage
@@ -1244,6 +1276,11 @@ components:
       type: number
       description: Average message rate for one sources[] connection since last report (messages received ÷ elapsed seconds)
       example: 12.4
+
+    ReceiverConnectionConnected:
+      type: boolean
+      description: True when the TCP connection to one sources[] entry's readsb instance is currently open
+      example: true
 
     ReceiverLocalQueueDepth:
       type: integer

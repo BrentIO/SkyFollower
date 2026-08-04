@@ -101,6 +101,65 @@ class TestSourceLoopDispatch:
         assert calls == ["1090"]
 
 
+class TestConnectionConnectedState:
+    """Tests for the per-connection live up/down state (_connected dict)
+    _source_loop tracks: True while the TCP socket is open, False on any
+    connection error or detected closed connection."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_connected_true_while_reader_runs_then_false_after(self):
+        r = self._make_receiver()
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+        key = (host, port)
+        r._connected[key] = False
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        seen_connected = []
+
+        def _fake_reader(*a, **k):
+            seen_connected.append(r._connected[key])
+            r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        r._source_loop({"host": host, "port": port, "source": "1090"})
+        acceptor.join(timeout=5)
+        server.close()
+
+        assert seen_connected == [True]
+        assert r._connected[key] is False
+
+    def test_connected_false_after_connection_error(self):
+        r = self._make_receiver()
+        key = ("localhost", 1)
+        r._connected[key] = True  # simulate a prior successful connection
+
+        def _fake_sleep(seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": "localhost", "port": 1, "source": "1090"})
+
+        assert r._connected[key] is False
+
+
 # ---------------------------------------------------------------------------
 # ICAO extraction and queue routing
 #
@@ -589,9 +648,24 @@ class TestTelemetryPayload:
         assert f"{base}/messages_localhost_30002_per_second" in topics
         assert f"{base}/messages_localhost_30978_per_second" in topics
         assert f"{base}/messages_localhost_30105_per_second" in topics
+        assert f"{base}/localhost_30002_connected" in topics
+        assert f"{base}/localhost_30978_connected" in topics
+        assert f"{base}/localhost_30105_connected" in topics
         assert f"{base}/local_queue_depth" in topics
         assert f"{base}/rabbitmq_connected" in topics
         assert f"{base}/started_at" in topics
+
+    def test_connection_connected_value(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._connected[("localhost", 30002)] = True
+        r._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert calls[f"{base}/localhost_30002_connected"] == "True"
+        assert calls[f"{base}/localhost_30978_connected"] == "False"
 
     def test_rabbitmq_connected_value(self):
         r = self._make_receiver()

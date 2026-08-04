@@ -111,8 +111,13 @@ class Receiver:
         # two MLAT feeds) and needs independent tracking rather than a
         # summed rate.
         self._rates: dict[tuple[str, int], _RateTracker] = {}
+        # Live up/down state per connection -- True only while the TCP
+        # socket to that connection's readsb instance is open.
+        self._connected: dict[tuple[str, int], bool] = {}
         for src in config.get("sources", []):
-            self._rates[(src["host"], src["port"])] = _RateTracker()
+            key = (src["host"], src["port"])
+            self._rates[key] = _RateTracker()
+            self._connected[key] = False
 
         # Fallback SQLite queue
         data_dir = config.get("data_dir", "/app/data")
@@ -187,24 +192,31 @@ class Receiver:
         host = src_cfg["host"]
         port = src_cfg["port"]
         source = src_cfg["source"]
-        rate_tracker = self._rates.get((host, port), _RateTracker())
+        key = (host, port)
+        rate_tracker = self._rates.get(key, _RateTracker())
 
         while not self._shutdown.is_set():
             try:
                 logger.info("Connecting to readsb at %s:%s (source=%s)…", host, port, source)
                 with socket.create_connection((host, port), timeout=10) as sock:
                     sock.settimeout(5.0)
+                    self._connected[key] = True
                     logger.info("Connected to %s:%s (source=%s).", host, port, source)
-                    if source == "978":
-                        self._read_978_stream(sock, host, port, source, rate_tracker)
-                    else:
-                        self._read_1090_stream(sock, host, port, source, rate_tracker)
+                    try:
+                        if source == "978":
+                            self._read_978_stream(sock, host, port, source, rate_tracker)
+                        else:
+                            self._read_1090_stream(sock, host, port, source, rate_tracker)
+                    finally:
+                        self._connected[key] = False
 
             except OSError as exc:
+                self._connected[key] = False
                 logger.warning(
                     "Cannot connect to readsb %s:%s: %s — retrying in 5s…", host, port, exc
                 )
             except Exception as exc:
+                self._connected[key] = False
                 logger.error(
                     "Source %s:%s error: %s — retrying in 5s…", host, port, exc
                 )
@@ -511,6 +523,11 @@ class Receiver:
                 str(round(tracker.rate(), 2)),
                 retain=True,
             )
+            self._mqtt.publish(
+                f"{base}/{host}_{port}_connected",
+                str(self._connected.get((host, port), False)),
+                retain=True,
+            )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -571,6 +588,8 @@ class Receiver:
             field = f"messages_{host}_{port}_per_second"
             sensors.append((field, f"{display} — {host}:{port} {source} Messages/sec",
                              "mdi:broadcast", "measurement", "msg/s"))
+            sensors.append((f"{host}_{port}_connected", f"{display} — {host}:{port} Connected",
+                             "mdi:lan-connect", None, None))
         sensors += [
             ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
