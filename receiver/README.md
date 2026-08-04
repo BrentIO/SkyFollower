@@ -16,6 +16,7 @@ reconnect. One receiver container handles all configured sources concurrently
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `name` | string | — | Optional friendly label shown in Home Assistant (device name/model and every sensor label) in place of the generic `Receiver {short-id}` fallback. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what (or whether) this is set. |
 | `sources` | array | — | List of readsb source objects (see below). At least one is required. |
 | `processor_count` | integer | `1` | Total number of message processor containers. Must match the number of active message processor services. Used to compute `queue_name = adsb-{int(icao_hex, 16) % processor_count}`. Increment this when adding a message processor. |
 | `rabbitmq` | object | — | RabbitMQ connection settings (see below). |
@@ -48,8 +49,8 @@ hardware — it's a plain TCP connection like any other source, so `host` can
 point at a remote MLAT-results feed (e.g. a readsb instance receiving results
 from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
 so no separate parsing is required. Nothing prevents adding an `MLAT` entry
-to the same `sources[]` list above, but a **separate receiver container and
-`RECEIVER_ID`** is recommended instead — message routing is keyed on
+to the same `sources[]` list above, but a **separate receiver container**
+is recommended instead — message routing is keyed on
 `icao_hex`, not receiver identity, so a second instance publishes into the
 exact same pipeline with no special handling on the message processor side, while
 keeping internet-facing MLAT ingestion off the resource-constrained device
@@ -67,20 +68,24 @@ configured on that instance — each is its own `sources[]` entry with
 ```
 
 These two examples match `config/receiver/settings.json.example` (the
-SDR-hosting instance, wired up in `docker-compose.receiver.yaml`) and
-`config/receiver/mlat-settings.json.example` (a dedicated MLAT instance,
-wired up in `docker-compose.receiver-mlat.yaml`) respectively. Deploying the
-MLAT instance means cloning the repo on its own host, copying
-`config/receiver/mlat-settings.json.example` to
-`config/receiver/mlat-settings.json`, and bringing it up independently:
+SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
+dedicated MLAT instance) respectively. There's no separate compose file for
+the MLAT instance -- it's the exact same `receiver` image and the same
+`docker-compose.receiver.yaml`, just deployed a second time on its own host
+with a different `settings.json`. Deploying it means cloning the repo on
+that host, copying `config/receiver/mlat-settings.json.example` to
+`config/receiver/settings.json`, and bringing it up the same way as any
+other receiver:
 
 ```bash
-docker compose -f docker-compose.receiver-mlat.yaml up -d
+docker compose -f docker-compose.receiver.yaml up -d
 ```
 
-It publishes MQTT topics under its own `RECEIVER_ID` (`"1"` by default in
-that compose file) and drains through its own `queue.db`, entirely
-independent of the SDR-hosting instance's `RECEIVER_ID` (`"0"`).
+It publishes MQTT topics under its own independently-generated receiver
+identity (see Receiver Identity below) and drains through its own
+`queue.db`, entirely independent of the SDR-hosting instance -- nothing
+about it needs to be told it's "the MLAT one" beyond which `sources[]`
+entries its `settings.json` lists.
 
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
@@ -102,14 +107,11 @@ independent of the SDR-hosting instance's `RECEIVER_ID` (`"0"`).
 | `username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
 | `password` | string | — | MQTT password. |
 
-## `RECEIVER_ID` Environment Variable
+## Receiver Identity
 
-`RECEIVER_ID` is an optional integer environment variable (default `0`). It distinguishes multiple receiver containers publishing to the same MQTT broker and is included in every MQTT topic published by the receiver.
+Each receiver container needs a stable identifier to distinguish it from any other receiver publishing to the same MQTT broker -- included in every MQTT topic it publishes (`SkyFollower/receiver/{id}/...`) and in its HA `identifiers`/`unique_id`. This used to be a manually-set `RECEIVER_ID` environment variable, which had no way to enforce that an operator actually set it, or set it uniquely.
 
-```yaml
-environment:
-  RECEIVER_ID: "0"
-```
+Instead, the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in), reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from the optional `name` field above -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
 
 ## Routing
 

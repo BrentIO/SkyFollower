@@ -24,6 +24,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
@@ -42,9 +43,9 @@ from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
 
-# tmpfs-mounted in docker-compose.receiver.yaml/docker-compose.receiver-mlat.yaml
-# -- these writes must never hit the host's eMMC/SD storage, only /app/data
-# (the fallback SQLite queue) is durable/persistent.
+# tmpfs-mounted in docker-compose.receiver.yaml -- these writes must never
+# hit the host's eMMC/SD storage, only /app/data (the fallback SQLite
+# queue) is durable/persistent.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
@@ -75,15 +76,33 @@ class _RateTracker:
             return len(self._timestamps) / self._window
 
 
+def _load_or_create_receiver_id(data_dir: str) -> str:
+    """Load this receiver's persisted identity, generating one on first run.
+
+    Unlike a manually-set RECEIVER_ID, this needs no operator input and
+    can't collide between instances -- generated once and reused across
+    restarts so MQTT topics/HA identifiers stay stable for this container's
+    whole lifetime regardless of how many times its display name changes.
+    """
+    path = os.path.join(data_dir, "receiver_id")
+    if os.path.exists(path):
+        existing = open(path).read().strip()
+        if existing:
+            return existing
+    new_id = str(uuid.uuid4())
+    with open(path, "w") as f:
+        f.write(new_id)
+    return new_id
+
+
 # ---------------------------------------------------------------------------
 # Receiver
 # ---------------------------------------------------------------------------
 
 class Receiver:
 
-    def __init__(self, config: dict, receiver_id: int = 0) -> None:
+    def __init__(self, config: dict) -> None:
         self._cfg = config
-        self._id = receiver_id
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
@@ -96,6 +115,12 @@ class Receiver:
         data_dir = config.get("data_dir", "/app/data")
         os.makedirs(data_dir, exist_ok=True)
         self._fallback = FallbackQueue(os.path.join(data_dir, "queue.db"))
+
+        self._id = _load_or_create_receiver_id(data_dir)
+        # Optional human-friendly label for HA name/model/sensor labels --
+        # self._id (the persisted UUID) stays the stable identifier used for
+        # topic paths/unique_id regardless of whether this is set or changes.
+        self._name = config.get("name")
 
         # RabbitMQ state
         self._rmq_connection: Optional[pika.BlockingConnection] = None
@@ -513,11 +538,15 @@ class Receiver:
             return
 
         rid = self._id
+        # The friendly name (when set) is what a human actually reads;
+        # rid stays the stable identifier underneath for topic paths/
+        # unique_id regardless of which label is shown here.
+        display = self._name or f"Receiver {rid[:8]}"
         base = f"SkyFollower/receiver/{rid}/statistic"
         device = build_ha_device(
             identifier=f"SkyFollower_receiver_{rid}",
-            name=f"SkyFollower Receiver {rid}",
-            model=f"Receiver {rid}",
+            name=f"SkyFollower {display}",
+            model=display,
         )
         availability = {
             "availability_topic": f"SkyFollower/receiver/{rid}/status",
@@ -528,14 +557,14 @@ class Receiver:
         sensors = []
         for source in self._rates:
             field = f"messages_{source}_per_second"
-            sensors.append((field, f"Receiver {rid} — {source} Messages/sec",
+            sensors.append((field, f"{display} — {source} Messages/sec",
                              "mdi:broadcast", "measurement", "msg/s"))
         sensors += [
-            ("local_queue_depth", f"Receiver {rid} — Local Queue Depth",
+            ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
-            ("dead_letter_queue_depth", f"Receiver {rid} — Dead Letter Queue Depth",
+            ("dead_letter_queue_depth", f"{display} — Dead Letter Queue Depth",
              "mdi:skull-crossbones", "measurement", None),
-            ("rabbitmq_connected", f"Receiver {rid} — RabbitMQ Connected",
+            ("rabbitmq_connected", f"{display} — RabbitMQ Connected",
              "mdi:rabbit", None, None),
         ]
 
@@ -595,14 +624,8 @@ def _load_config() -> dict:
 
 
 def main() -> None:
-    receiver_id_str = os.environ.get("RECEIVER_ID", "0")
-    try:
-        receiver_id = int(receiver_id_str)
-    except ValueError:
-        print(f"RECEIVER_ID must be an integer, got: {receiver_id_str!r}", file=sys.stderr)
-        sys.exit(1)
     config = _load_config()
-    receiver = Receiver(config, receiver_id)
+    receiver = Receiver(config)
 
     def _handle_signal(sig, frame):
         receiver.shutdown()

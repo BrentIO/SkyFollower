@@ -422,6 +422,16 @@ channels:
       ArchiveStartedAtMessage:
         $ref: '#/components/messages/ArchiveStartedAtMessage'
 
+  archiveVersion:
+    address: SkyFollower/archive/statistic/version
+    description: >
+      Running image version, from the VERSION environment variable ("dev" if
+      unset); never changes after startup. Published every
+      telemetry_interval_seconds, retained.
+    messages:
+      ArchiveVersionMessage:
+        $ref: '#/components/messages/ArchiveVersionMessage'
+
   # ── Archive compaction ────────────────────────────────────────────────────
   # Unlike receiver/processor/archive-processor's single combined-JSON
   # statistics payload, archive-compaction is a one-shot job (not a
@@ -510,6 +520,15 @@ channels:
     messages:
       ArchiveCompactionLastRunStatusMessage:
         $ref: '#/components/messages/ArchiveCompactionLastRunStatusMessage'
+
+  archiveCompactionVersion:
+    address: SkyFollower/archive-compaction/statistic/version
+    description: >
+      Running image version, read from the VERSION environment variable
+      (falls back to "dev" if unset). Published once per run, retained.
+    messages:
+      ArchiveCompactionVersionMessage:
+        $ref: '#/components/messages/ArchiveCompactionVersionMessage'
 
   # ── Rule notifications ────────────────────────────────────────────────────
 
@@ -776,6 +795,12 @@ operations:
       $ref: '#/channels/archiveStartedAt'
     summary: Archive processor publishes its process start time
 
+  publishArchiveVersion:
+    action: send
+    channel:
+      $ref: '#/channels/archiveVersion'
+    summary: Archive processor publishes its running image version
+
   publishArchiveCompactionFilesCompacted:
     action: send
     channel:
@@ -823,6 +848,12 @@ operations:
     channel:
       $ref: '#/channels/archiveCompactionLastRunStatus'
     summary: Archive compaction publishes the outcome of this run
+
+  publishArchiveCompactionVersion:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionVersion'
+    summary: Archive compaction publishes its running image version
 
   publishRuleNotification:
     action: send
@@ -1104,6 +1135,14 @@ components:
       payload:
         $ref: '#/components/schemas/ArchiveStartedAt'
 
+    ArchiveVersionMessage:
+      name: ArchiveVersionMessage
+      title: Archive processor running version
+      summary: Running image version, from the VERSION environment variable
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveVersion'
+
     ArchiveCompactionFilesCompactedMessage:
       name: ArchiveCompactionFilesCompactedMessage
       title: Archive compaction files compacted
@@ -1167,6 +1206,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveCompactionLastRunStatus'
+
+    ArchiveCompactionVersionMessage:
+      name: ArchiveCompactionVersionMessage
+      title: Archive compaction version
+      summary: Running image version
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionVersion'
 
     FlightRuleNotificationMessage:
       name: FlightRuleNotificationMessage
@@ -1366,6 +1413,11 @@ components:
       description: UTC ISO-8601 timestamp of process start
       example: "2026-01-15T10:00:00+00:00"
 
+    ArchiveVersion:
+      type: string
+      description: Running image version, from the VERSION environment variable ("dev" if unset)
+      example: "2026.08.01"
+
     ArchiveCompactionFilesCompacted:
       type: integer
       description: Count of per-flight Parquet index files merged into this run's compacted output
@@ -1421,6 +1473,13 @@ components:
         error but stopped early on a flight/index parity mismatch (see
         mismatch_date/mismatch_uuids); Failure means an actual exception
       example: Success
+
+    ArchiveCompactionVersion:
+      type: string
+      description: >
+        Running image version, read from the VERSION environment variable.
+        Falls back to "dev" when unset (e.g. a local, non-release build)
+      example: "2026.08.01"
 
     RunnerRecordsImported:
       type: integer
@@ -1661,9 +1720,9 @@ components:
 
     ReceiverId:
       description: >
-        Integer receiver instance identifier. Set via the RECEIVER_ID
-        environment variable (default 0). Allows multiple receiver
-        containers to coexist on the same broker.
+        UUID receiver instance identifier, generated on first startup and
+        persisted to {data_dir}/receiver_id -- not operator-set. Allows
+        multiple receiver containers to coexist on the same broker.
 
     MessageProcessorId:
       description: >

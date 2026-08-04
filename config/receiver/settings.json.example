@@ -1,4 +1,5 @@
 {
+    "name": "Attic 1090",
     "sources": [
         { "host": "192.168.1.x", "port": 30002, "source": "1090" },
         { "host": "192.168.1.x", "port": 30978, "source": "978" }

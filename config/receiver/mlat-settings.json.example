@@ -1,4 +1,5 @@
 {
+    "name": "MLAT Feeder",
     "sources": [
         { "host": "mlat-server-a.example.com", "port": 30105, "source": "MLAT" },
         { "host": "mlat-server-b.example.com", "port": 30105, "source": "MLAT" }

@@ -79,8 +79,9 @@ cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 # ADS-B reception — receiver
 docker compose -f docker-compose.receiver.yaml up -d
 
-# Dedicated MLAT receiver (optional, separate host from the SDR-hosting receiver)
-docker compose -f docker-compose.receiver-mlat.yaml up -d
+# Dedicated MLAT receiver (optional; same compose file as above,
+# deployed on its own host with its own settings.json)
+docker compose -f docker-compose.receiver.yaml up -d
 
 # Core — message bus + enrichment data
 docker compose -f docker-compose.core.yaml up -d

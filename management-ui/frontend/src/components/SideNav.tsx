@@ -42,6 +42,9 @@ export function SideNav({ onNavigate }: SideNavProps) {
           </li>
         ))}
       </ul>
+      <div className="mt-auto pt-4 text-[10px] text-slate-400 dark:text-slate-600">
+        {import.meta.env.VITE_VERSION || "dev"}
+      </div>
     </nav>
   );
 }

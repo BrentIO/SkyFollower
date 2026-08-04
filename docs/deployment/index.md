@@ -33,8 +33,7 @@ file(s):
 
 | File | Role | Services |
 |------|------|---------|
-| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi) | `receiver` |
-| `docker-compose.receiver-mlat.yaml` | Dedicated MLAT ingestion (optional) | `receiver` (`RECEIVER_ID=1`, MLAT-only `sources[]`) |
+| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also the optional dedicated MLAT receiver (same file, own `settings.json`, its own auto-generated identity) | `receiver` |
 | `docker-compose.core.yaml` | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Rules/areas API (co-located with `docker-compose.core.yaml`) | `management-ui` |
 | `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts) | `message-processor-0` (one per host) |
@@ -45,7 +44,7 @@ file(s):
 | Container | Description | Default port |
 |-----------|-------------|--------------|
 | `receiver` | Reads raw ADS-B frames from readsb TCP streams; routes to RabbitMQ queues | — |
-| `receiver` (MLAT instance, optional) | Same image, second `RECEIVER_ID`, dedicated to MLAT-only `sources[]` on its own host | — |
+| `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only `sources[]` on its own host | — |
 | `message-processor-0` | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
 | `archive-compaction` | Daily job (its own `ofelia` instance, alongside the archive processor) consolidating each day's per-flight Parquet index files into one file per partition | — |
@@ -74,7 +73,7 @@ on the host. Example files for every component are in `config/`:
 | File | Used by |
 |------|---------|
 | `config/receiver/settings.json.example` | `docker-compose.receiver.yaml` |
-| `config/receiver/mlat-settings.json.example` | `docker-compose.receiver-mlat.yaml` |
+| `config/receiver/mlat-settings.json.example` | `docker-compose.receiver.yaml` (deployed a second time, on the MLAT instance's own host) |
 | `config/message-processor/settings.json.example` | `docker-compose.message-processor.yaml` |
 | `config/archive/settings.json.example` | `docker-compose.archive.yaml` (`archive-processor`) |
 | `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
@@ -101,9 +100,9 @@ image update — depends on what it is and what depends on it.
 consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
 processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
-receiver instance (`docker-compose.receiver-mlat.yaml`) is the
-same container image on its own host with its own `RECEIVER_ID` — maintain
-it identically and independently of the SDR-hosting instance.
+receiver instance (same `docker-compose.receiver.yaml`, its own host and
+`settings.json`) is maintained identically and independently of the
+SDR-hosting instance, with its own independently-generated identity.
 
 **Core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and

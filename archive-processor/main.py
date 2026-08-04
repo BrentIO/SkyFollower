@@ -346,6 +346,7 @@ class ArchiveProcessor:
     def __init__(self, config: dict) -> None:
         self._cfg = config
         self._started_at = datetime.now(timezone.utc).isoformat()
+        self._version = os.environ.get("VERSION", "dev")
         self._shutdown = threading.Event()
 
         # Paths
@@ -394,6 +395,7 @@ class ArchiveProcessor:
 
     def start(self) -> None:
         self._setup_logging()
+        logger.info(f"Starting SkyFollower Archive {self._version}")
         self._connect_mqtt()
         if self._connect_s3():
             self._finish_s3_connect()
@@ -881,6 +883,7 @@ class ArchiveProcessor:
             ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None),
             ("rabbitmq_archive_queue_depth_hwm", "RabbitMQ Archive Queue Depth HWM", "mdi:tray-full", "measurement", None),
             ("started_at", "Archive Started At", "mdi:clock", None, None),
+            ("version", "Archive Version", "mdi:tag", None, None),
         ]
         for name, desc, icon, state_class, unit in sensors:
             payload: dict = {
@@ -973,6 +976,7 @@ class ArchiveProcessor:
             retain=True,
         )
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
+        self._mqtt.publish(f"{base}/version", self._version, retain=True)
 
     def _redis_counter(self, key: str) -> int:
         try:
