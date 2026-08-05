@@ -2,8 +2,8 @@
 schedule = 10 5 * * 1
 image = ghcr.io/brentio/skyfollower-runner-ourairports:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
-volume = ./config/runners:/app/config:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners:/app/config:ro
 delete = true
 
 # uk-caa-registry makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
@@ -12,280 +12,280 @@ delete = true
 schedule = 10 6 * * 1
 image = ghcr.io/brentio/skyfollower-runner-uk-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-mictronics"]
 schedule = 10 5 * * 2
 image = ghcr.io/brentio/skyfollower-runner-mictronics:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-nz-caa-registry"]
 schedule = 10 5 * * 3
 image = ghcr.io/brentio/skyfollower-runner-nz-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-no-caa-registry"]
 schedule = 10 6 * * 3
 image = ghcr.io/brentio/skyfollower-runner-no-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-fr-dgac-registry"]
 schedule = 10 7 * * 3
 image = ghcr.io/brentio/skyfollower-runner-fr-dgac-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-br-anac-registry"]
 schedule = 10 8 * * 3
 image = ghcr.io/brentio/skyfollower-runner-br-anac-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-is-samgongustofa-registry"]
 schedule = 10 9 * * 3
 image = ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-lu-dac-registry"]
 schedule = 10 10 * * 3
 image = ghcr.io/brentio/skyfollower-runner-lu-dac-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-bz-bdca-registry"]
 schedule = 10 11 * * 3
 image = ghcr.io/brentio/skyfollower-runner-bz-bdca-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-at-austrocontrol-registry"]
 schedule = 10 12 * * 3
 image = ghcr.io/brentio/skyfollower-runner-at-austrocontrol-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-ch-bazl-registry"]
 schedule = 10 13 * * 3
 image = ghcr.io/brentio/skyfollower-runner-ch-bazl-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-au-casa-registry"]
 schedule = 10 7 * * 2
 image = ghcr.io/brentio/skyfollower-runner-au-casa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-kr-koca-registry"]
 schedule = 10 8 * * 2
 image = ghcr.io/brentio/skyfollower-runner-kr-koca-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-bg-caa-registry"]
 schedule = 10 0 * * 3
 image = ghcr.io/brentio/skyfollower-runner-bg-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-hr-ccaa-registry"]
 schedule = 10 23 * * 2
 image = ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-cy-dca-registry"]
 schedule = 10 22 * * 2
 image = ghcr.io/brentio/skyfollower-runner-cy-dca-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-cz-caa-registry"]
 schedule = 10 21 * * 2
 image = ghcr.io/brentio/skyfollower-runner-cz-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-ee-transpordiamet-registry"]
 schedule = 10 20 * * 2
 image = ghcr.io/brentio/skyfollower-runner-ee-transpordiamet-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-ge-gcaa-registry"]
 schedule = 10 19 * * 2
 image = ghcr.io/brentio/skyfollower-runner-ge-gcaa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-gg-2reg-registry"]
 schedule = 10 18 * * 2
 image = ghcr.io/brentio/skyfollower-runner-gg-2reg-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-kg-caa-registry"]
 schedule = 10 17 * * 2
 image = ghcr.io/brentio/skyfollower-runner-kg-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-lv-caa-registry"]
 schedule = 10 16 * * 2
 image = ghcr.io/brentio/skyfollower-runner-lv-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-md-caa-registry"]
 schedule = 10 14 * * 2
 image = ghcr.io/brentio/skyfollower-runner-md-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-mv-caa-registry"]
 schedule = 10 15 * * 2
 image = ghcr.io/brentio/skyfollower-runner-mv-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-me-caa-registry"]
 schedule = 10 13 * * 2
 image = ghcr.io/brentio/skyfollower-runner-me-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-hu-kozhaf-registry"]
 schedule = 10 12 * * 2
 image = ghcr.io/brentio/skyfollower-runner-hu-kozhaf-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-mk-caa-registry"]
 schedule = 10 11 * * 2
 image = ghcr.io/brentio/skyfollower-runner-mk-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-rs-cad-registry"]
 schedule = 10 10 * * 2
 image = ghcr.io/brentio/skyfollower-runner-rs-cad-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-pg-casapng-registry"]
 schedule = 10 11 1 * *
 image = ghcr.io/brentio/skyfollower-runner-pg-casapng-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-sg-caas-registry"]
 schedule = 10 10 1 * *
 image = ghcr.io/brentio/skyfollower-runner-sg-caas-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-sk-nsat-registry"]
 schedule = 10 9 * * 2
 image = ghcr.io/brentio/skyfollower-runner-sk-nsat-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-nl-ilt-registry"]
 schedule = 10 5 * * 4
 image = ghcr.io/brentio/skyfollower-runner-nl-ilt-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-ky-caa-registry"]
 schedule = 10 6 * * 4
 image = ghcr.io/brentio/skyfollower-runner-ky-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-im-ardis-registry"]
 schedule = 10 7 * * 4
 image = ghcr.io/brentio/skyfollower-runner-im-ardis-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-es-aesa-registry"]
 schedule = 10 8 * * 4
 image = ghcr.io/brentio/skyfollower-runner-es-aesa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-tc-caa-registry"]
 schedule = 10 9 * * 4
 image = ghcr.io/brentio/skyfollower-runner-tc-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-bs-caa-registry"]
 schedule = 10 5 * * 5
 image = ghcr.io/brentio/skyfollower-runner-bs-caa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-us-faa-registry"]
 schedule = 10 5 * * 6
 image = ghcr.io/brentio/skyfollower-runner-us-faa-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-ca-transport-canada-registry"]
 schedule = 10 5 * * 7
 image = ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 [job-run "runner-airportwebcams-special-liveries"]
 schedule = 10 6 * * 5
 image = ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true
 
 # Upstream repo's daily commit lands ~03:49-03:51 UTC; run an hour after.
@@ -293,5 +293,5 @@ delete = true
 schedule = 50 4 * * *
 image = ghcr.io/brentio/skyfollower-runner-vrs-standing-data:latest
 network = skyfollower-core_default
-volume = ./config/runners/settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/runners/settings.json:/app/settings.json:ro
 delete = true

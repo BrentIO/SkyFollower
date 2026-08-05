@@ -4,5 +4,5 @@
 [job-run "archive-compaction"]
 schedule = 50 4 * * *
 image = ghcr.io/brentio/skyfollower-archive-compaction:latest
-volume = ./config/archive/compaction-settings.json:/app/settings.json:ro
+volume = __ROOT_DIRECTORY__/config/archive/compaction-settings.json:/app/settings.json:ro
 delete = true

@@ -170,6 +170,26 @@ if [ -d "${DEST}/config" ]; then
 fi
 
 echo
+echo "Resolving __ROOT_DIRECTORY__ placeholders..."
+# Ofelia's job-run calls the Docker Engine API directly to create each
+# job's container and, unlike docker compose, never resolves a relative
+# volume path against a working directory -- only an absolute host path
+# (or a named volume) is a valid bind-mount source. Only the core and
+# archive roles' ofelia config ships this placeholder; the loop below is
+# a no-op for every other role since neither file exists yet.
+# Resolved against DEST itself, not a separate flag -- this assumes the
+# operator brings the stack up from the same directory they downloaded
+# into, which is already the workflow this script's own instructions
+# describe.
+ABS_ROOT="$(cd "${DEST}" && pwd)"
+for ofelia_ini in "${DEST}/config/ofelia/config.ini" "${DEST}/config/archive/ofelia-config.ini"; do
+  [ -f "$ofelia_ini" ] || continue
+  sed -i.bak "s#__ROOT_DIRECTORY__#${ABS_ROOT}#g" "$ofelia_ini"
+  rm -f "${ofelia_ini}.bak"
+  echo "  Resolved in ${ofelia_ini}."
+done
+
+echo
 echo "Done. Downloaded to ${DEST}:"
 for rel_path in "${ALL_FILES[@]}"; do
   echo "  ${DEST}/${rel_path}"

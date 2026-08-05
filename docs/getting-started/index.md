@@ -74,6 +74,11 @@ list) and fill in real values before starting containers.
 #    e.g. for the core host:
 cp config/runners/settings.json.example config/runners/settings.json
 cp config/ofelia/config.ini.example config/ofelia/config.ini
+# Ofelia's job-run bind-mounts require an absolute host path, not a
+# relative one -- resolve the __ROOT_DIRECTORY__ placeholder to this
+# repo's absolute path (the archive host's config/archive/ofelia-config.ini
+# needs the same substitution, once copied from its own .example):
+sed -i "s#__ROOT_DIRECTORY__#$(pwd)#g" config/ofelia/config.ini
 cp config/management-ui/settings.json.example config/management-ui/settings.json
 cp config/rabbitmq/rabbitmq.conf.example config/rabbitmq/rabbitmq.conf
 cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
