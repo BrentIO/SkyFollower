@@ -34,6 +34,20 @@
 
 set -euo pipefail
 
+# jq isn't used for the tag_name parsing below (see the "No jq assumption"
+# comment further down -- that stays grep/sed on purpose), but it's a
+# reasonable baseline dependency to require up front and fail fast on,
+# rather than midway through a partially-completed download.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required but not installed." >&2
+  echo "Install it, then re-run this script:" >&2
+  echo "  Debian/Ubuntu/Raspberry Pi OS: sudo apt-get install -y jq" >&2
+  echo "  Fedora/RHEL:                   sudo dnf install -y jq" >&2
+  echo "  Alpine:                        apk add jq" >&2
+  echo "  macOS (Homebrew):              brew install jq" >&2
+  exit 1
+fi
+
 ROLE="${1:-}"
 DEST="${2:-.}"
 
