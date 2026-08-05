@@ -17,7 +17,10 @@ contributors, or anyone who wants the full source.
 ## Quick Start
 
 `scripts/download-host-files.sh` fetches just the compose file(s) and
-`config/*/*.example` files a given host role needs, without a `git clone`:
+`config/*/*.example` files a given host role needs, without a `git clone`,
+and creates a real config file from each `.example` template (skipping any
+that already exist, so a re-run into the same directory never overwrites
+values you've already filled in):
 
 ```bash
 ./scripts/download-host-files.sh <role> [dest-dir]
@@ -41,9 +44,8 @@ something else instead). A file that doesn't exist yet at the latest
 release (e.g. a component added since the last one shipped) falls back to
 `main` for that one file, with a printed warning.
 
-Once the files are downloaded, copy each `config/*/*.example` file to the
-same path without the `.example` suffix, fill in real values, then bring
-the host up:
+Once the files are downloaded, fill in real values in each generated
+`config/*/*` file, then bring the host up:
 ```bash
 docker compose -f <compose-file> up -d
 ```

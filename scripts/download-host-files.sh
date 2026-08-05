@@ -136,13 +136,33 @@ for rel_path in "${ALL_FILES[@]}"; do
 done
 
 echo
+echo "Creating config files from *.example templates..."
+# No-clobber: skips any real file that already exists, so a re-run into
+# the same dest-dir (e.g. running this script once for "core" and again
+# for "management-ui" into the same directory, or re-fetching after an
+# update) can never silently overwrite values already filled in.
+if [ -d "${DEST}/config" ]; then
+  find "${DEST}/config" -name "*.example" -exec bash -c '
+    for example; do
+      target="${example%.example}"
+      if [ -e "$target" ]; then
+        echo "  Skipping ${target} (already exists)."
+      else
+        cp "$example" "$target"
+        echo "  Created ${target}."
+      fi
+    done
+  ' _ {} +
+fi
+
+echo
 echo "Done. Downloaded to ${DEST}:"
 for rel_path in "${ALL_FILES[@]}"; do
   echo "  ${DEST}/${rel_path}"
 done
 echo
-echo "Next: copy each config/*/*.example file to the same path without the"
-echo ".example suffix, fill in real values, then bring the host up:"
+echo "Next: fill in real values in each config file above, then bring the"
+echo "host up:"
 for rel_path in "${COMPOSE_FILES[@]}"; do
   echo "  docker compose -f ${rel_path} up -d"
 done
