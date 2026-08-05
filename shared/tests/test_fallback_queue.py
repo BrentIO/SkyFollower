@@ -239,26 +239,38 @@ class TestMinRetryInterval:
     def test_flapping_bursts_cannot_reach_threshold_faster_than_the_interval_allows(self):
         """Simulates a flapping connection retrying every 10ms (far faster
         than min_retry_interval_seconds) -- the row should still only
-        accumulate roughly one retry per interval, not one per call."""
+        accumulate roughly one retry per interval, not one per call.
+
+        Uses a fake clock instead of real time.sleep(): a real-sleep
+        version of this test was flaky under CPU contention from parallel
+        pytest-xdist workers, where scheduling delays let more actual
+        wall-clock time elapse per loop iteration than the nominal 0.01s
+        sleep implied, pushing more calls through the 0.1s cooldown gate
+        than expected. A fake clock advanced by a fixed amount per
+        iteration is deterministic regardless of real scheduling."""
         with tempfile.TemporaryDirectory() as td:
             # retry_threshold set high enough that reaching it would require
-            # ~1s of real elapsed time at one attempt per 0.1s interval --
-            # the 20-call burst below spans well under that (~0.2s wall
-            # time), so if the cooldown weren't working it would dead-letter
-            # almost immediately (call 1 already reaches a low threshold).
+            # ~1s of simulated elapsed time at one attempt per 0.1s interval
+            # -- the 20-call burst below spans well under that (~0.2s
+            # simulated time), so if the cooldown weren't working it would
+            # dead-letter almost immediately (call 1 already reaches a low
+            # threshold).
             q = _make_queue(td, retry_threshold=10, min_retry_interval_seconds=0.1)
-            q.put("poison")
 
             def fail(_payload):
                 raise RuntimeError("still broken")
 
-            for _ in range(20):  # far more calls than retry_threshold
-                q.drain(fail)
-                time.sleep(0.01)  # much shorter than the 0.1s interval
+            fake_now = [1_000_000.0]
+            with patch("shared.fallback_queue.time.time", lambda: fake_now[0]):
+                q.put("poison")
+                for _ in range(20):  # far more calls than retry_threshold
+                    q.drain(fail)
+                    fake_now[0] += 0.01  # much shorter than the 0.1s interval
 
-            # Real elapsed time (~0.2s) only allows a couple of real
-            # attempts through the cooldown gate -- nowhere near 20 calls'
-            # worth, and nowhere near retry_threshold.
+            # 20 calls * 0.01s advance = ~0.2s of simulated elapsed time,
+            # which only allows a couple of real attempts through the
+            # cooldown gate -- nowhere near 20 calls' worth, and nowhere
+            # near retry_threshold.
             assert q.dead_letter_depth() == 0
             conn = sqlite3.connect(os.path.join(td, "queue.db"))
             row = conn.execute("SELECT retry_count FROM queue").fetchone()

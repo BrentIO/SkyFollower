@@ -63,4 +63,10 @@ jobs:
           python -m pip install -r /tmp/combined-requirements.txt
 
       - name: Run tests
-        run: python -m pytest -q -n auto
+        # --dist=loadgroup (not the plain -n auto default of --dist=load) is
+        # required for the @pytest.mark.xdist_group markers used by tests
+        # that share live, mutable state (e.g. shared/tests/test_route_airports_lua.py's
+        # seeded Redis keys) to actually pin those tests onto one worker --
+        # otherwise the marker is silently ignored and every worker's own
+        # module-scoped fixture instance can race the others.
+        run: python -m pytest -q -n auto --dist=loadgroup
