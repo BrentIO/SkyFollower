@@ -48,13 +48,19 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # pytest + pyyaml are test-only — kept out of shared/requirements.txt
-          # so they don't get pulled into every runner's Docker image. httpx2
-          # is FastAPI TestClient's HTTP transport for management-ui/backend/tests/, also
-          # test-only — the ui backend image itself never makes outbound calls.
-          python -m pip install pytest pyyaml httpx2
+          # pytest + pytest-xdist + pyyaml are test-only — kept out of
+          # shared/requirements.txt so they don't get pulled into every
+          # runner's Docker image. httpx2 is FastAPI TestClient's HTTP
+          # transport for management-ui/backend/tests/, also test-only —
+          # the ui backend image itself never makes outbound calls.
+          python -m pip install pytest pytest-xdist pyyaml httpx2
+          # One combined pip install, not one per file: every requirements.txt
+          # in the repo resolves to only ~19 distinct packages with no
+          # conflicting version pins between components, so installing them
+          # separately (50 files today) was 50 redundant resolver passes.
           find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0 \
-            | xargs -0 -I{} python -m pip install -r {}
+            | xargs -0 cat > /tmp/combined-requirements.txt
+          python -m pip install -r /tmp/combined-requirements.txt
 
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto
