@@ -99,8 +99,10 @@ case "$ROLE" in
     ;;
   receiver-mlat)
     # Same compose file as "receiver" -- the MLAT instance is the identical
-    # image deployed a second time on its own host, distinguished only by
-    # which settings.json.example it starts from.
+    # image deployed a second time (on its own host, or alongside the
+    # SDR-hosting instance on the same host -- see the __INSTANCE_SUFFIX__
+    # resolution below), distinguished by which settings.json.example it
+    # starts from and by its own destination folder.
     COMPOSE_FILES=(docker-compose.receiver.yaml)
     CONFIG_FILES=(config/receiver/mlat-settings.json.example)
     ;;
@@ -188,6 +190,51 @@ for ofelia_ini in "${DEST}/config/ofelia/config.ini" "${DEST}/config/archive/ofe
   rm -f "${ofelia_ini}.bak"
   echo "  Resolved in ${ofelia_ini}."
 done
+
+echo
+echo "Resolving __INSTANCE_SUFFIX__ placeholders..."
+# docker-compose.receiver.yaml's project name (the "name:" line) is
+# derived from the destination folder's own name, not hardcoded -- this
+# is what lets more than one receiver run on the same host: deploy each
+# into its own folder (e.g. "receiver", "mlat-adsb.lol") and each gets an
+# independent Compose project namespace (independent container name,
+# independent volume) instead of colliding on a fixed shared name.
+# Docker Compose project names only accept lowercase letters, digits, -,
+# and _ -- silently stripping anything else rather than erroring -- so
+# the folder name is sanitized here instead of leaving that to chance.
+# Only the receiver and receiver-mlat roles ship this placeholder; the
+# check below is a no-op for every other role since the file doesn't
+# exist there.
+receiver_compose="${DEST}/docker-compose.receiver.yaml"
+if [ -f "$receiver_compose" ]; then
+  RAW_INSTANCE_NAME="$(basename "$ABS_ROOT")"
+  INSTANCE_NAME="$(printf '%s' "$RAW_INSTANCE_NAME" | tr 'A-Z' 'a-z' | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//')"
+  if [ -z "$INSTANCE_NAME" ]; then
+    echo "  Could not derive a valid instance name from the destination folder (\"${RAW_INSTANCE_NAME}\") -- pass a differently-named [dest-dir]." >&2
+    exit 1
+  fi
+  # Compose always appends the service name ("receiver") itself when it
+  # builds the final container/volume name (project-service-index) -- if
+  # the instance name is exactly "receiver" or ends with "-receiver",
+  # also putting it in the project name would double it up (folder
+  # "receiver" would otherwise produce skyfollower-receiver-receiver-1).
+  # Stripping that redundant trailing segment here, before it ever
+  # reaches sed, means every instance name -- including the common
+  # default of just calling the folder "receiver" -- produces a clean
+  # container name.
+  case "$INSTANCE_NAME" in
+    receiver) INSTANCE_NAME="" ;;
+    *-receiver) INSTANCE_NAME="${INSTANCE_NAME%-receiver}" ;;
+  esac
+  if [ -z "$INSTANCE_NAME" ]; then
+    INSTANCE_SUFFIX=""
+  else
+    INSTANCE_SUFFIX="-${INSTANCE_NAME}"
+  fi
+  sed -i.bak "s#__INSTANCE_SUFFIX__#${INSTANCE_SUFFIX}#g" "$receiver_compose"
+  rm -f "${receiver_compose}.bak"
+  echo "  Resolved in ${receiver_compose} (project name: skyfollower${INSTANCE_SUFFIX})."
+fi
 
 echo
 echo "Done. Downloaded to ${DEST}:"

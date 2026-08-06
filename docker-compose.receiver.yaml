@@ -1,4 +1,4 @@
-name: skyfollower-receiver
+name: skyfollower__INSTANCE_SUFFIX__
 
 services:
 
@@ -20,39 +20,5 @@ services:
       retries: 3
       start_period: 30s
 
-  # To run a second receiver on this host (e.g. a dedicated MLAT feed
-  # alongside the SDR-hosting instance above): unlike message-processor,
-  # this can't just copy the block above with a new ID -- each receiver's
-  # sources[] genuinely differs, so it needs its own settings.json, not
-  # just its own identity (identity is already auto-generated per
-  # instance, keyed off its own data volume -- see receiver/README.md's
-  # Receiver Identity section).
-  #
-  #   1. Uncomment the block below (and its receiver-1-queue volume entry).
-  #   2. Create config/receiver-1/settings.json (copy from
-  #      config/receiver/settings.json.example, or
-  #      config/receiver/mlat-settings.json.example for an MLAT feed) and
-  #      fill in that instance's own sources[].
-  #   3. docker compose -f docker-compose.receiver.yaml up -d receiver-1
-  #
-  # See receiver/README.md's "Running Multiple Receivers on One Host"
-  # section for the full walkthrough.
-  #
-  # receiver-1:
-  #   image: ghcr.io/brentio/skyfollower-receiver:latest
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./config/receiver-1/settings.json:/app/settings.json:ro
-  #     - receiver-1-queue:/app/data
-  #   tmpfs:
-  #     - /app/health
-  #   healthcheck:
-  #     test: ["CMD", "python", "-c", "import os,sys,time; p='/app/health/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<40 else 1)"]
-  #     interval: 15s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 30s
-
 volumes:
   receiver-queue:
-  # receiver-1-queue:

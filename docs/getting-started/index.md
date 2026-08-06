@@ -84,11 +84,27 @@ cp config/rabbitmq/rabbitmq.conf.example config/rabbitmq/rabbitmq.conf
 cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 
 # ADS-B reception — receiver
-docker compose -f docker-compose.receiver.yaml up -d
+# docker-compose.receiver.yaml is a tracked file, so never sed it in
+# place (that would leave your clone permanently dirty and conflict on
+# the next `git pull`) -- copy it to a local, untracked name per
+# instance first, matching how Quick Start resolves the same
+# __INSTANCE_SUFFIX__ placeholder automatically from the destination
+# folder's name (see receiver/README.md's "Running Multiple Receiver
+# Instances"). Leave the suffix empty for your first/only receiver:
+cp docker-compose.receiver.yaml docker-compose.receiver.local.yaml
+sed -i "s#__INSTANCE_SUFFIX__##g" docker-compose.receiver.local.yaml
+docker compose -f docker-compose.receiver.local.yaml up -d
 
-# Dedicated MLAT receiver (optional; same compose file as above,
-# deployed on its own host with its own settings.json)
-docker compose -f docker-compose.receiver.yaml up -d
+# Dedicated MLAT receiver (optional; same image, either on its own host,
+# or alongside the first on this host -- give it its own copy and its
+# own suffix, e.g. -mlat, so it never collides with the first instance's
+# project name):
+cp docker-compose.receiver.yaml docker-compose.receiver-mlat.local.yaml
+sed -i "s#__INSTANCE_SUFFIX__#-mlat#g" docker-compose.receiver-mlat.local.yaml
+cp config/receiver/mlat-settings.json.example config/receiver/mlat-settings.json
+# then point docker-compose.receiver-mlat.local.yaml's settings.json volume
+# line at config/receiver/mlat-settings.json instead of config/receiver/settings.json
+docker compose -f docker-compose.receiver-mlat.local.yaml up -d
 
 # Core — message bus + enrichment data
 docker compose -f docker-compose.core.yaml up -d
