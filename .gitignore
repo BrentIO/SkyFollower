@@ -14,6 +14,7 @@ build/
 *.svg
 CLAUDE.md
 *.local.json
+*.local.yaml
 
 # Every real, deployed config/{component}/* file (settings.json,
 # ofelia-config.ini, rabbitmq.conf, etc.) carries live credentials or

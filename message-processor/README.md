@@ -7,7 +7,10 @@ registration and operator data from Redis, evaluates
 the configured rules engine, publishes MQTT notifications when rules match, and
 routes completed flights to the archive queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one message processor instance;
-scale horizontally by adding message processor containers on separate hosts.
+scale horizontally by adding message processor containers, whether on the
+same host (see `docker-compose.message-processor.yaml`'s commented-out
+second-instance block, and `MESSAGE_PROCESSOR_ID` below) or on separate
+hosts.
 
 ![Message Processor architecture](./message-processor.svg)
 
@@ -43,6 +46,16 @@ On startup the message processor attempts to claim a Redis key
 `message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat` using `SET NX`. If the
 key already exists (i.e., another instance with the same ID is running), the
 process exits immediately to prevent duplicate-ID conflicts.
+
+Unlike `receiver` (see its README's "Running Multiple Receivers on One
+Host"), every message processor instance shares the identical
+`settings.json` -- only the ID differs -- so scaling out on the same host
+is just: uncomment the next instance's block in
+`docker-compose.message-processor.yaml` (it already ships with a
+commented-out `message-processor-1` template, its own named volume, and
+`MESSAGE_PROCESSOR_ID: "1"`), bump `processor_count` in the receiver's
+`settings.json` to match the new total instance count, and restart the
+receiver so its routing picks up the new queue.
 
 Example:
 

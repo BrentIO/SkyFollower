@@ -49,12 +49,15 @@ hardware — it's a plain TCP connection like any other source, so `host` can
 point at a remote MLAT-results feed (e.g. a readsb instance receiving results
 from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
 so no separate parsing is required. Nothing prevents adding an `MLAT` entry
-to the same `sources[]` list above, but a **separate receiver container**
+to the same `sources[]` list above, but a **separate receiver instance**
 is recommended instead — message routing is keyed on
 `icao_hex`, not receiver identity, so a second instance publishes into the
 exact same pipeline with no special handling on the message processor side, while
 keeping internet-facing MLAT ingestion off the resource-constrained device
-handling the local RTL-SDR hardware. Any number of MLAT providers can be
+handling the local RTL-SDR hardware. That second instance can run on its
+own host, or alongside the first on the same host (see [Running Multiple
+Receiver Instances](#running-multiple-receiver-instances) below) — both
+are the exact same mechanism. Any number of MLAT providers can be
 configured on that instance — each is its own `sources[]` entry with
 `source: "MLAT"`:
 
@@ -69,23 +72,16 @@ configured on that instance — each is its own `sources[]` entry with
 
 These two examples match `config/receiver/settings.json.example` (the
 SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
-dedicated MLAT instance) respectively. There's no separate compose file for
-the MLAT instance -- it's the exact same `receiver` image and the same
-`docker-compose.receiver.yaml`, just deployed a second time on its own host
-with a different `settings.json`. Deploying it means cloning the repo on
-that host, copying `config/receiver/mlat-settings.json.example` to
-`config/receiver/settings.json`, and bringing it up the same way as any
-other receiver:
-
-```bash
-docker compose -f docker-compose.receiver.yaml up -d
-```
-
-It publishes MQTT topics under its own independently-generated receiver
-identity (see Receiver Identity below) and drains through its own
-`queue.db`, entirely independent of the SDR-hosting instance -- nothing
-about it needs to be told it's "the MLAT one" beyond which `sources[]`
-entries its `settings.json` lists.
+dedicated MLAT instance) respectively -- there's no separate compose file
+for the MLAT instance, it's the exact same `receiver` image and the same
+`docker-compose.receiver.yaml`, deployed a second time into its own folder
+per [Running Multiple Receiver
+Instances](#running-multiple-receiver-instances) below. It publishes MQTT
+topics under its own independently-generated receiver identity (see
+Receiver Identity below) and drains through its own `queue.db`, entirely
+independent of the SDR-hosting instance -- nothing about it needs to be
+told it's "the MLAT one" beyond which `sources[]` entries its
+`settings.json` lists.
 
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
 
@@ -112,6 +108,36 @@ entries its `settings.json` lists.
 Each receiver container needs a stable identifier to distinguish it from any other receiver publishing to the same MQTT broker -- included in every MQTT topic it publishes (`SkyFollower/receiver/{id}/...`) and in its HA `identifiers`/`unique_id`. This used to be a manually-set `RECEIVER_ID` environment variable, which had no way to enforce that an operator actually set it, or set it uniquely.
 
 Instead, the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in), reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from the optional `name` field above -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
+
+Because identity is generated per instance (keyed off that instance's own `data_dir` volume) rather than assigned centrally, two or more receivers sharing the same MQTT broker or RabbitMQ never risk a collision -- including two running on the same host, below.
+
+## Running Multiple Receiver Instances
+
+Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and `config/receiver/settings.json`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
+
+`docker-compose.receiver.yaml`'s project name (the `name:` line at the top of the file) is a placeholder, `skyfollower__INSTANCE_SUFFIX__`, resolved from the destination folder's own name -- not hardcoded. `scripts/download-host-files.sh` resolves it automatically: it sanitizes the folder name (lowercased, anything outside `[a-z0-9_-]` replaced with `-`) and substitutes it in, so two different folders always get two independent Compose project namespaces -- independent container name, independent volume -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` resolves to project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` resolves to project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.)
+
+To run a second receiver on the same host as the first:
+
+```bash
+./scripts/download-host-files.sh receiver ./mlat-adsb.lol
+# or, without cloning anything first:
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/download-host-files.sh \
+  | bash -s -- receiver ./mlat-adsb.lol
+```
+
+Fill in `./mlat-adsb.lol/config/receiver/settings.json` with that instance's own `sources[]`, then bring it up from within that folder:
+
+```bash
+cd mlat-adsb.lol
+docker compose -f docker-compose.receiver.yaml up -d
+```
+
+Each instance's Compose project is fully independent, so its named volume, fallback queue, and auto-generated identity (`receiver_id`, see above) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another folder, following the same steps.
+
+For the Advanced (full-clone) deployment path, resolve `__INSTANCE_SUFFIX__` manually the same way `__ROOT_DIRECTORY__` is resolved for `core`/`archive` (see [Getting Started](https://brentio.github.io/SkyFollower/getting-started/)'s Advanced section) -- an empty string for the primary/default instance, or `-{sanitized-folder-name}` for any other.
+
+Keep in mind each instance is a full copy of the container -- one thread per `sources[]` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
 
 ## Routing
 

@@ -1,4 +1,4 @@
-name: skyfollower-receiver
+name: skyfollower__INSTANCE_SUFFIX__
 
 services:
 
