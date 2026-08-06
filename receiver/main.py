@@ -27,7 +27,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import paho.mqtt.client as mqtt
 import pika
@@ -405,20 +405,77 @@ class Receiver:
             if not self._shutdown.is_set():
                 time.sleep(10)
 
+    def _pika_invoke(self, fn: Callable[[], None], timeout: float = 5.0) -> None:
+        """Run fn() on the "rabbitmq" thread via pika's own thread-safe
+        callback hand-off, blocking the calling thread until fn() completes
+        or raises.
+
+        pika.BlockingConnection (and the async transport underneath it) is
+        not safe to call concurrently from multiple threads -- every actual
+        channel/connection call (basic_publish, process_data_events,
+        queue_declare, ...) must happen from a single thread. _rmq_loop
+        already owns the connection and drives process_data_events() from
+        the dedicated "rabbitmq" thread; every *other* thread (a source
+        thread publishing a live message, the fallback-drain thread
+        replaying a backlog) must route its pika calls through here instead
+        of touching the channel directly, or two threads can end up inside
+        pika's transport internals at the same moment, corrupting its
+        buffers and crashing the connection.
+
+        Raises RuntimeError if there's no live connection to schedule
+        against, TimeoutError if the rabbitmq thread doesn't run fn()
+        within `timeout` seconds (e.g. the connection died between being
+        captured here and the callback actually running), or whatever fn()
+        itself raised, re-raised in the calling thread.
+        """
+        with self._rmq_lock:
+            conn = self._rmq_connection
+
+        if conn is None:
+            raise RuntimeError("No RabbitMQ connection")
+
+        done = threading.Event()
+        outcome: dict = {}
+
+        def _runner() -> None:
+            try:
+                fn()
+            except Exception as exc:
+                outcome["exc"] = exc
+            finally:
+                done.set()
+
+        conn.add_callback_threadsafe(_runner)
+
+        if not done.wait(timeout=timeout):
+            raise TimeoutError("Timed out waiting for the rabbitmq thread to run a pika call")
+
+        if "exc" in outcome:
+            raise outcome["exc"]
+
+    def _do_publish(self, queue_name: str, payload: str) -> None:
+        """The only place that actually calls channel.basic_publish().
+        Must only ever run on the rabbitmq thread -- callers reach this via
+        _pika_invoke(), never directly."""
+        with self._rmq_lock:
+            channel = self._rmq_channel
+        if channel is None:
+            raise RuntimeError("RabbitMQ channel gone")
+        channel.basic_publish(
+            exchange="",
+            routing_key=queue_name,
+            body=payload.encode(),
+            properties=pika.BasicProperties(delivery_mode=2),
+        )
+
     def _publish(self, queue_name: str, payload: str) -> None:
         """Publish to RabbitMQ; fall back to SQLite on failure."""
         with self._rmq_lock:
             connected = self._rmq_connected
-            channel = self._rmq_channel
 
-        if connected and channel:
+        if connected:
             try:
-                channel.basic_publish(
-                    exchange="",
-                    routing_key=queue_name,
-                    body=payload.encode(),
-                    properties=pika.BasicProperties(delivery_mode=2),
-                )
+                self._pika_invoke(lambda: self._do_publish(queue_name, payload))
                 return
             except Exception as exc:
                 logger.debug("RabbitMQ publish failed: %s — writing to fallback.", exc)
@@ -444,17 +501,8 @@ class Receiver:
             queue_name = item["queue_name"]
             payload = item["payload"]
 
-            with self._rmq_lock:
-                channel = self._rmq_channel
-            if channel is None:
-                raise RuntimeError("RabbitMQ channel gone")
             try:
-                channel.basic_publish(
-                    exchange="",
-                    routing_key=queue_name,
-                    body=payload.encode(),
-                    properties=pika.BasicProperties(delivery_mode=2),
-                )
+                self._pika_invoke(lambda: self._do_publish(queue_name, payload))
             except Exception:
                 with self._rmq_lock:
                     self._rmq_connected = False

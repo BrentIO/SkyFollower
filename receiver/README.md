@@ -127,6 +127,26 @@ preserving per-aircraft flight state without coordination between message proces
 On RabbitMQ connect the receiver pre-declares all queues (`adsb-0` through
 `adsb-{processor_count - 1}`).
 
+## RabbitMQ Thread Safety
+
+`pika.BlockingConnection` (and the async transport underneath it) is not
+safe to call concurrently from more than one thread. The receiver has
+several threads that need to publish -- one per configured `sources[]`
+connection, plus the fallback-drain background thread -- but only one
+thread, `rabbitmq` (running `_rmq_loop`), actually owns the connection and
+drives `process_data_events()`.
+
+Every other thread reaches the connection only through `_pika_invoke()`,
+which uses pika's own thread-safe hand-off (`add_callback_threadsafe`) to
+run the real `channel.basic_publish()` call on the `rabbitmq` thread,
+while still blocking the calling thread for a synchronous success/failure
+result -- so `_publish()`'s fallback-on-failure behavior works exactly as
+if the call had been made directly. **No code should ever call a pika
+channel or connection method directly from any thread other than
+`rabbitmq`** -- doing so reintroduces the exact bug this exists to
+prevent: two threads simultaneously inside pika's transport internals,
+corrupting its buffers and crashing the connection.
+
 ## Fault Tolerance
 
 When RabbitMQ is unavailable (at startup or after a disconnect), messages are
