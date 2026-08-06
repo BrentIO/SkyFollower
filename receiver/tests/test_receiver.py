@@ -437,6 +437,152 @@ class TestIcaoRoutingIntegration:
 # SQLite fallback queue
 # ---------------------------------------------------------------------------
 
+class TestPikaInvoke:
+    """_pika_invoke is the only sanctioned way any thread other than
+    "rabbitmq" itself may reach into pika's connection/channel -- every
+    actual channel.basic_publish() call must be scheduled through it via
+    pika's own add_callback_threadsafe, never called directly, or
+    concurrent threads can corrupt pika's transport buffers (see #844)."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_raises_when_no_connection(self):
+        r = self._make_receiver()
+        r._rmq_connection = None
+        with pytest.raises(RuntimeError, match="No RabbitMQ connection"):
+            r._pika_invoke(lambda: None)
+
+    def test_runs_fn_via_add_callback_threadsafe(self):
+        r = self._make_receiver()
+        r._rmq_connection = _synchronous_rmq_connection()
+        calls = []
+        r._pika_invoke(lambda: calls.append("ran"))
+        assert calls == ["ran"]
+        r._rmq_connection.add_callback_threadsafe.assert_called_once()
+
+    def test_reraises_fns_exception_in_caller(self):
+        r = self._make_receiver()
+        r._rmq_connection = _synchronous_rmq_connection()
+
+        def fail():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError, match="boom"):
+            r._pika_invoke(fail)
+
+    def test_times_out_if_callback_never_fires(self):
+        """Simulates the connection dying between being captured and the
+        scheduled callback actually running -- add_callback_threadsafe is
+        called but never invokes the callback."""
+        r = self._make_receiver()
+        conn = MagicMock()
+        conn.add_callback_threadsafe.side_effect = lambda fn: None  # never runs fn
+        r._rmq_connection = conn
+        with pytest.raises(TimeoutError):
+            r._pika_invoke(lambda: None, timeout=0.05)
+
+
+class TestDoPublish:
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_raises_when_channel_gone(self):
+        r = self._make_receiver()
+        r._rmq_channel = None
+        with pytest.raises(RuntimeError, match="RabbitMQ channel gone"):
+            r._do_publish("adsb-0", '{"raw": "AA"}')
+
+    def test_calls_basic_publish_with_expected_args(self):
+        r = self._make_receiver()
+        mock_channel = MagicMock()
+        r._rmq_channel = mock_channel
+        r._do_publish("adsb-0", '{"raw": "AA"}')
+        mock_channel.basic_publish.assert_called_once()
+        kwargs = mock_channel.basic_publish.call_args.kwargs
+        assert kwargs["routing_key"] == "adsb-0"
+        assert kwargs["body"] == b'{"raw": "AA"}'
+
+
+class TestPublishRoutesThroughPikaInvoke:
+    """_publish() (the live per-message publish path, as opposed to the
+    fallback-drain path covered by TestDrainFallback) must go through
+    _pika_invoke rather than touching the channel directly -- confirms the
+    thread-safety fix actually wires the real call path, not just that
+    _pika_invoke/_do_publish work in isolation."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "processor_count": 1,
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "data_dir": tempfile.mkdtemp(),
+        }
+        return Receiver(cfg)
+
+    def test_publish_success_does_not_fall_back(self):
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._rmq_channel = MagicMock()
+        r._rmq_connection = _synchronous_rmq_connection()
+
+        r._publish("adsb-0", '{"raw": "AA"}')
+
+        assert r._fallback.depth() == 0
+        r._rmq_channel.basic_publish.assert_called_once()
+
+    def test_publish_falls_back_and_marks_disconnected_on_pika_invoke_failure(self):
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._rmq_channel = MagicMock()
+        r._rmq_channel.basic_publish.side_effect = RuntimeError("boom")
+        r._rmq_connection = _synchronous_rmq_connection()
+
+        r._publish("adsb-0", '{"raw": "AA"}')
+
+        assert r._fallback.depth() == 1
+        assert r._rmq_connected is False
+
+    def test_publish_goes_straight_to_fallback_when_not_connected(self):
+        r = self._make_receiver()
+        r._rmq_connected = False
+        r._rmq_connection = None
+
+        r._publish("adsb-0", '{"raw": "AA"}')
+
+        assert r._fallback.depth() == 1
+
+    def test_publish_never_calls_basic_publish_directly_bypassing_pika_invoke(self):
+        """A regression guard for the exact bug in #844: _publish must
+        route through _pika_invoke (which pika's add_callback_threadsafe
+        marshals onto the rabbitmq thread), never call channel methods
+        from the calling thread directly."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._rmq_channel = MagicMock()
+        r._rmq_connection = _synchronous_rmq_connection()
+
+        with patch.object(r, "_pika_invoke", wraps=r._pika_invoke) as mock_invoke:
+            r._publish("adsb-0", '{"raw": "AA"}')
+
+        mock_invoke.assert_called_once()
+
+
 class TestFallbackPutWrapsQueueName:
     """FallbackQueue (shared/fallback_queue.py) is payload-only -- Receiver
     wraps queue_name into the JSON payload it puts, since queue_name is the
@@ -486,6 +632,19 @@ def _synchronous_drain_thread():
     return patch("receiver.main.threading.Thread", _ImmediateThread)
 
 
+def _synchronous_rmq_connection() -> MagicMock:
+    """A mock pika connection whose add_callback_threadsafe runs the given
+    callback immediately in the calling thread, instead of actually
+    marshalling it onto a separate thread the way pika really does --
+    mirrors how _synchronous_drain_thread() collapses the real background
+    thread for test determinism. _pika_invoke() (receiver/main.py) requires
+    a non-None self._rmq_connection to schedule against; production code
+    always has one whenever self._rmq_connected is True."""
+    conn = MagicMock()
+    conn.add_callback_threadsafe.side_effect = lambda fn: fn()
+    return conn
+
+
 class TestDrainFallback:
     def _make_receiver(self):
         from receiver.main import Receiver
@@ -502,6 +661,7 @@ class TestDrainFallback:
         r._fallback_put("adsb-0", '{"raw": "AA"}')
         mock_channel = MagicMock()
         r._rmq_channel = mock_channel
+        r._rmq_connection = _synchronous_rmq_connection()
 
         with _synchronous_drain_thread():
             r._drain_fallback()
@@ -529,6 +689,7 @@ class TestDrainFallback:
         mock_channel = MagicMock()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
         r._rmq_channel = mock_channel
+        r._rmq_connection = _synchronous_rmq_connection()
         r._rmq_connected = True
 
         with _synchronous_drain_thread():
@@ -556,6 +717,7 @@ class TestDrainFallback:
         r = self._make_receiver()
         r._fallback_put("adsb-0", '{"raw": "AA"}')
         r._rmq_channel = MagicMock()
+        r._rmq_connection = _synchronous_rmq_connection()
         r._rmq_connected = True
 
         with _synchronous_drain_thread():
