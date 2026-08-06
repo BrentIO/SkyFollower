@@ -49,14 +49,16 @@ hardware — it's a plain TCP connection like any other source, so `host` can
 point at a remote MLAT-results feed (e.g. a readsb instance receiving results
 from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
 so no separate parsing is required. Nothing prevents adding an `MLAT` entry
-to the same `sources[]` list above, but a **separate receiver container**
+to the same `sources[]` list above, but a **separate receiver instance**
 is recommended instead — message routing is keyed on
 `icao_hex`, not receiver identity, so a second instance publishes into the
 exact same pipeline with no special handling on the message processor side, while
 keeping internet-facing MLAT ingestion off the resource-constrained device
-handling the local RTL-SDR hardware. Any number of MLAT providers can be
-configured on that instance — each is its own `sources[]` entry with
-`source: "MLAT"`:
+handling the local RTL-SDR hardware. That second instance can run on its
+own host, or alongside the first on the same host (see [Running Multiple
+Receivers on One Host](#running-multiple-receivers-on-one-host) below).
+Any number of MLAT providers can be configured on that instance — each is
+its own `sources[]` entry with `source: "MLAT"`:
 
 ```json
 {
@@ -71,9 +73,9 @@ These two examples match `config/receiver/settings.json.example` (the
 SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
 dedicated MLAT instance) respectively. There's no separate compose file for
 the MLAT instance -- it's the exact same `receiver` image and the same
-`docker-compose.receiver.yaml`, just deployed a second time on its own host
-with a different `settings.json`. Deploying it means cloning the repo on
-that host, copying `config/receiver/mlat-settings.json.example` to
+`docker-compose.receiver.yaml`. On its own **separate host**, that means
+deploying a second time with a different `settings.json`: cloning the repo
+on that host, copying `config/receiver/mlat-settings.json.example` to
 `config/receiver/settings.json`, and bringing it up the same way as any
 other receiver:
 
@@ -112,6 +114,25 @@ entries its `settings.json` lists.
 Each receiver container needs a stable identifier to distinguish it from any other receiver publishing to the same MQTT broker -- included in every MQTT topic it publishes (`SkyFollower/receiver/{id}/...`) and in its HA `identifiers`/`unique_id`. This used to be a manually-set `RECEIVER_ID` environment variable, which had no way to enforce that an operator actually set it, or set it uniquely.
 
 Instead, the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in), reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from the optional `name` field above -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
+
+Because identity is generated per instance (keyed off that instance's own `data_dir` volume) rather than assigned centrally, two or more receivers sharing the same MQTT broker or RabbitMQ never risk a collision -- including two running on the same host, below.
+
+## Running Multiple Receivers on One Host
+
+Unlike `message-processor` (whose instances are interchangeable copies of the same config, differentiated only by an ID), receiver instances genuinely need different `sources[]` -- so `docker-compose.receiver.yaml` gives each one its own settings file, not just its own environment variable.
+
+The compose file ships with one instance (`receiver`) uncommented, matching every existing single-receiver deployment with zero changes needed. To add a second:
+
+1. Uncomment the `receiver-1` service block and its `receiver-1-queue` volume entry in `docker-compose.receiver.yaml`.
+2. Create `config/receiver-1/settings.json` -- copy it from `config/receiver/settings.json.example` (another SDR-hosting instance) or `config/receiver/mlat-settings.json.example` (an MLAT feed), then fill in that instance's own `sources[]`. This is a new folder, not a new filename in the existing `config/receiver/` folder -- each instance's settings live in their own directory so the first instance's `config/receiver/settings.json` never needs to change.
+3. Bring up just the new instance (the first one is presumably already running):
+   ```bash
+   docker compose -f docker-compose.receiver.yaml up -d receiver-1
+   ```
+
+Each instance gets its own named volume (`receiver-1-queue`, distinct from the first instance's `receiver-queue`), so its fallback queue and auto-generated identity (`receiver_id`, see above) are fully independent -- stopping, restarting, or upgrading one never touches the other. A third instance follows the same pattern (`receiver-2`, `config/receiver-2/settings.json`, `receiver-2-queue`).
+
+For more than two receivers on one host, keep in mind each is a full instance of the container -- one thread per `sources[]` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits (not anything in this compose file) become the real ceiling.
 
 ## Routing
 
