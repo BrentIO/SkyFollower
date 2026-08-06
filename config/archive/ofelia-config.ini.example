@@ -1,8 +1,16 @@
+# docker-compose.archive.yaml pins the ofelia image to mcuadros/ofelia:latest,
+# which currently resolves to the 0.3.x release line (0.4.x has never left
+# beta -- no stable tag exists to pin to instead). 0.3.x's cron parser
+# REQUIRES 6 fields with a leading seconds value: "sec min hour dom month
+# dow" -- standard 5-field cron (no seconds) is only auto-detected starting
+# in Ofelia 0.4.x. Keep the leading "0" below (or whatever second you
+# actually want) if this schedule ever changes.
+#
 # Targets "the day before yesterday" (see archive-compaction/README.md), so
 # the exact time of day only needs to be well after midnight UTC -- there's
 # no upstream data source to wait on, unlike the core's runners.
 [job-run "archive-compaction"]
-schedule = 50 4 * * *
+schedule = 0 50 4 * * *
 image = ghcr.io/brentio/skyfollower-archive-compaction:latest
 volume = __ROOT_DIRECTORY__/config/archive/compaction-settings.json:/app/settings.json:ro
 delete = true
