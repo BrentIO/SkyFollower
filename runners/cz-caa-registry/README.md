@@ -125,17 +125,7 @@ Note: `OK-GIB` (an Antonov An-2) is used here in place of the more typical "big 
 
 ## Configuration
 
-Reads `settings.json` (mounted at `/app/settings.json`):
-
-| Parameter | Required | Default | Notes |
-|---|---|---|---|
-| `redis.host` | ✅ | — | Redis connection host |
-| `redis.port` | ❌ | `6379` | |
-| `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
-| `mqtt.port` | ❌ | `1883` | |
-| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
-| `mqtt.password` | ❌ | — | |
-| `redis_ttl_days` | ❌ | `14` | TTL applied to each `aircraft:registry:{icao_hex}` key written by this runner |
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` applies to each `aircraft:registry:{icao_hex}` key written by this runner.
 
 ## MQTT
 

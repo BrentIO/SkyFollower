@@ -8,39 +8,51 @@ the configured rules engine, publishes MQTT notifications when rules match, and
 routes completed flights to the archive queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one message processor instance;
 scale horizontally by adding message processor containers, whether on the
-same host (see `docker-compose.message-processor.yaml`'s commented-out
-second-instance block, and `MESSAGE_PROCESSOR_ID` below) or on separate
-hosts.
+same host (see `docker-compose.message-processor.yaml`'s profile-gated
+`message-processor-2`..`message-processor-8` service definitions, and
+`MESSAGE_PROCESSOR_ID` below) or on separate hosts.
 
 ![Message Processor architecture](./message-processor.svg)
 
-## Configuration (`settings.json`)
+## Configuration
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `rabbitmq.host` | string | — | RabbitMQ hostname or IP |
-| `rabbitmq.port` | integer | `5672` | RabbitMQ AMQP port |
-| `rabbitmq.username` | string | — | RabbitMQ username |
-| `rabbitmq.password` | string | — | RabbitMQ password |
-| `redis.host` | string | — | Redis hostname or IP |
-| `redis.port` | integer | `6379` | Redis port |
-| `mqtt.host` | string | — | MQTT broker hostname (omit key to disable MQTT) |
-| `mqtt.port` | integer | `1883` | MQTT broker port |
-| `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
-| `mqtt.password` | string | — | MQTT password |
-| `rule_notification_max_lag_seconds` | integer | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a message processor reconnects. |
-| `telemetry_interval_seconds` | integer | `30` | How often (seconds) the message processor publishes MQTT statistic messages and refreshes its Redis heartbeat key. |
-| `latitude` | float | — | Receiver location latitude (decimal degrees). Required for single-message CPR airborne position decoding. Omit if position decoding is not needed. |
-| `longitude` | float | — | Receiver location longitude (decimal degrees). |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `active_flights.db` (the durable active flight store) and `completed_flights.db` (the RabbitMQ offline fallback) are written. |
-| `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
+Reads its configuration from environment variables via `shared/config.py`'s
+`load_config("rabbitmq", "redis", "mqtt", "telemetry", "message_processor")`,
+interpolated by Compose from this host's `.env` (written by
+`scripts/install.sh`).
 
-### `MESSAGE_PROCESSOR_ID` Environment Variable
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RABBITMQ_HOST` | ✅ | — | |
+| `RABBITMQ_PORT` | ❌ | `5672` | |
+| `RABBITMQ_USERNAME` | ✅ | — | |
+| `RABBITMQ_PASSWORD` | ✅ | — | |
+| `REDIS_HOST` | ✅ | — | |
+| `REDIS_PORT` | ❌ | `6379` | |
+| `REDIS_PASSWORD` | ✅ | — | Redis requires authentication; see `shared/redis_client.py`'s `build_redis_client()` |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
+| `RULE_NOTIFICATION_MAX_LAG_SECONDS` | ❌ | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a message processor reconnects. |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the message processor publishes MQTT statistic messages and refreshes its Redis heartbeat key |
+| `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
+| `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
-`MESSAGE_PROCESSOR_ID` is a required environment variable set in the Docker
-Compose service definition. It can be any string; it only has to be unique
-across the whole deployment. A host-derived prefix plus an index (e.g.
-`turing-node-3-1`) makes that uniqueness structural rather than something
+`active_flights.db` (the durable active flight store) and
+`completed_flights.db` (the RabbitMQ offline fallback) are always written
+to `/app/data`, a fixed, non-configurable bind mount -- see
+`docker-compose.message-processor.yaml`.
+
+### `MESSAGE_PROCESSOR_ID` and `MESSAGE_PROCESSOR_PREFIX`
+
+`MESSAGE_PROCESSOR_ID` is set per-service in `docker-compose.message-processor.yaml`
+as `${MESSAGE_PROCESSOR_PREFIX:-mp}-{n}` (e.g. `turing-node-3-1`) rather than
+read directly from `.env` -- it can be any string, it only has to be unique
+across the whole deployment, and deriving it from `MESSAGE_PROCESSOR_PREFIX`
+(a `.env` value, defaulting to the node's own hostname) plus a fixed
+per-service index makes that uniqueness structural rather than something
 tracked on paper.
 
 The message processor declares and consumes from `adsb-{MESSAGE_PROCESSOR_ID}`,
@@ -57,21 +69,16 @@ On startup the message processor attempts to claim a Redis key
 key already exists (i.e., another instance with the same ID is running), the
 process exits immediately to prevent duplicate-ID conflicts.
 
-Unlike `receiver` (see its README's "Running Multiple Receivers on One
-Host"), every message processor instance shares the identical
-`settings.json` -- only the ID differs -- so scaling out on the same host
-is just: uncomment the next instance's block in
-`docker-compose.message-processor.yaml` (it already ships with a
-commented-out `message-processor-1` template, its own named volume, and
-`MESSAGE_PROCESSOR_ID: "1"`) and bring it up. No receiver is touched, and
-none has to be restarted.
-
-Example:
-
-```yaml
-environment:
-  MESSAGE_PROCESSOR_ID: "0"
-```
+Every message processor instance on a host shares the identical `.env` --
+only the numeric suffix of `MESSAGE_PROCESSOR_ID` differs, and that comes
+from which fixed service definition it is (`message-processor-1` through
+`-8`), not a separate value anyone sets. Scaling out on the same host is
+just: add the next number to `COMPOSE_PROFILES` in `.env` (e.g.
+`COMPOSE_PROFILES=mp-2,mp-3` for three processors total) and bring it up.
+No receiver is touched, and none has to be restarted. See
+`docker-compose.message-processor.yaml`'s own comments for why
+`deploy.replicas` can't substitute for this (each replica would need its
+own volume and its own derivable ID, and Compose doesn't provide either).
 
 ## Decoding
 

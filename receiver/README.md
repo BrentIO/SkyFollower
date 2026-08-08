@@ -10,46 +10,50 @@ reconnect. One receiver container handles all configured sources concurrently
 
 ![Receiver architecture](./receiver.svg)
 
-## Configuration (`settings.json`)
+## Configuration
 
-### Top-level fields
+Reads its configuration from environment variables via `shared/config.py`'s
+`load_config("receiver", "rabbitmq", "mqtt", "telemetry")`, interpolated by
+Compose from this host's `.env` (written by `scripts/install.sh`).
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | — | Optional friendly label shown in Home Assistant (device name/model and every sensor label) in place of the generic `Receiver {short-id}` fallback. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what (or whether) this is set. |
-| `sources` | array | — | List of readsb source objects (see below). At least one is required. |
-| `rabbitmq` | object | — | RabbitMQ connection settings (see below). |
-| `mqtt` | object | — | MQTT broker settings (see below). Omit the key entirely to disable MQTT. |
-| `telemetry_interval_seconds` | integer | `30` | How often (seconds) the receiver publishes MQTT statistic messages. |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `queue.db` (the RabbitMQ offline fallback) is written. |
-| `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RECEIVER_NAME` | ✅ | — | Friendly label shown in Home Assistant (device name/model and every sensor label) in place of the generic `Receiver {short-id}` fallback. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what this is set to. |
+| `RECEIVER_SOURCES` | ✅ | — | Comma-separated `host:port:source` triples (see below). At least one is required. |
+| `RABBITMQ_HOST` | ✅ | — | |
+| `RABBITMQ_PORT` | ❌ | `5672` | |
+| `RABBITMQ_USERNAME` | ✅ | — | |
+| `RABBITMQ_PASSWORD` | ✅ | — | |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver publishes MQTT statistic messages |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
-### `sources[]` object
+`queue.db` (the RabbitMQ offline fallback) is always written to `/app/data`,
+a fixed, non-configurable bind mount -- see `docker-compose.receiver.yaml`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `host` | string | Hostname or IP of the readsb instance. |
-| `port` | integer | TCP port of the readsb raw output (e.g. `30002` for 1090 MHz, `30978` for 978 MHz UAT). |
-| `source` | string | Tag applied to every message from this stream. One of `"1090"`, `"978"`, or `"MLAT"`. |
+### `RECEIVER_SOURCES`
+
+Comma-separated `host:port:source` triples, parsed by `shared/config.py`'s
+`parse_receiver_sources()`. Each triple's `source` is the tag applied to
+every message from that stream: one of `1090`, `978`, or `MLAT`
+(case-insensitive).
 
 Example, the SDR-hosting receiver (e.g. on the Raspberry Pi):
 
-```json
-{
-  "sources": [
-    { "host": "192.168.1.10", "port": 30002, "source": "1090" },
-    { "host": "192.168.1.10", "port": 30978, "source": "978" }
-  ]
-}
+```
+RECEIVER_SOURCES=192.168.1.10:30002:1090,192.168.1.10:30978:978
 ```
 
 An `MLAT` source does not need to be co-located with the receiver's SDR
-hardware — it's a plain TCP connection like any other source, so `host` can
-point at a remote MLAT-results feed (e.g. a readsb instance receiving results
-from an `mlat-client`). MLAT frames use the same raw Mode S format as `1090`,
-so no separate parsing is required. Nothing prevents adding an `MLAT` entry
-to the same `sources[]` list above, but a **separate receiver instance**
-is recommended instead — message routing is keyed on
+hardware — it's a plain TCP connection like any other source, so its host
+can point at a remote MLAT-results feed (e.g. a readsb instance receiving
+results from an `mlat-client`). MLAT frames use the same raw Mode S format
+as `1090`, so no separate parsing is required. Nothing prevents adding an
+`MLAT` triple to the same `RECEIVER_SOURCES` list above, but a **separate
+receiver instance** is recommended instead — message routing is keyed on
 `icao_hex`, not receiver identity, so a second instance publishes into the
 exact same pipeline with no special handling on the message processor side, while
 keeping internet-facing MLAT ingestion off the resource-constrained device
@@ -57,50 +61,23 @@ handling the local RTL-SDR hardware. That second instance can run on its
 own host, or alongside the first on the same host (see [Running Multiple
 Receiver Instances](#running-multiple-receiver-instances) below) — both
 are the exact same mechanism. Any number of MLAT providers can be
-configured on that instance — each is its own `sources[]` entry with
-`source: "MLAT"`:
+configured on that instance — each is its own triple with source `MLAT`:
 
-```json
-{
-  "sources": [
-    { "host": "mlat-server-a.example.com", "port": 30105, "source": "MLAT" },
-    { "host": "mlat-server-b.example.com", "port": 30105, "source": "MLAT" }
-  ]
-}
+```
+RECEIVER_SOURCES=mlat-server-a.example.com:30105:MLAT,mlat-server-b.example.com:30105:MLAT
 ```
 
-These two examples match `config/receiver/settings.json.example` (the
-SDR-hosting instance) and `config/receiver/mlat-settings.json.example` (a
-dedicated MLAT instance) respectively -- there's no separate compose file
-for the MLAT instance, it's the exact same `receiver` image and the same
-`docker-compose.receiver.yaml`, deployed a second time into its own folder
-per [Running Multiple Receiver
-Instances](#running-multiple-receiver-instances) below. It publishes MQTT
-topics under its own independently-generated receiver identity (see
-Receiver Identity below) and drains through its own `queue.db`, entirely
-independent of the SDR-hosting instance -- nothing about it needs to be
-told it's "the MLAT one" beyond which `sources[]` entries its
-`settings.json` lists.
+There's no separate compose file for the MLAT instance -- it's the exact
+same `receiver` image and the same `docker-compose.receiver.yaml`, deployed
+a second time into its own folder per [Running Multiple Receiver
+Instances](#running-multiple-receiver-instances) below, with its own
+`RECEIVER_SOURCES`. It publishes MQTT topics under its own
+independently-generated receiver identity (see Receiver Identity below) and
+drains through its own `queue.db`, entirely independent of the SDR-hosting
+instance -- nothing about it needs to be told it's "the MLAT one" beyond
+which triples its `RECEIVER_SOURCES` lists.
 
 ![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
-
-### `rabbitmq` object
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `host` | string | — | RabbitMQ hostname or IP. |
-| `port` | integer | `5672` | RabbitMQ AMQP port. |
-| `username` | string | — | RabbitMQ username. |
-| `password` | string | — | RabbitMQ password. |
-
-### `mqtt` object
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `host` | string | — | MQTT broker hostname or IP. |
-| `port` | integer | `1883` | MQTT broker port. |
-| `username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
-| `password` | string | — | MQTT password. |
 
 ## Receiver Identity
 
@@ -112,31 +89,27 @@ Because identity is generated per instance (keyed off that instance's own `data_
 
 ## Running Multiple Receiver Instances
 
-Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and `config/receiver/settings.json`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
+Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and its own `.env`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
 
-`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/download-host-files.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` gets project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
+`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/install.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` gets project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
 
-To run a second receiver on the same host as the first:
-
-```bash
-./scripts/download-host-files.sh receiver ./mlat-adsb.lol
-# or, without cloning anything first:
-curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/download-host-files.sh \
-  | bash -s -- receiver ./mlat-adsb.lol
-```
-
-Fill in `./mlat-adsb.lol/config/receiver/settings.json` with that instance's own `sources[]`, then bring it up from within that folder:
+To run a second receiver on the same host as the first, run the installer again for the `receiver` role -- it prompts for a folder name each time one is selected:
 
 ```bash
-cd mlat-adsb.lol
-docker compose up -d
+./scripts/install.sh --role receiver
+# Folder name for this receiver instance [receiver]: mlat-adsb.lol
+# ...then RECEIVER_NAME, RECEIVER_SOURCES, RabbitMQ/MQTT credentials for this instance
 ```
 
-Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and auto-generated identity (`receiver_id`, see above) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another folder, following the same steps.
+or, without cloning anything first:
 
-For the Advanced (full-clone) deployment path, write the `.env` by hand instead (see [Getting Started](https://brentio.github.io/SkyFollower/getting-started/)'s Advanced section) -- set `COMPOSE_PROJECT_NAME=skyfollower` for the primary/default instance, or `skyfollower-{sanitized-folder-name}` for any other.
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
+```
 
-Keep in mind each instance is a full copy of the container -- one thread per `sources[]` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
+Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and auto-generated identity (`receiver_id`, see above) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another `--role receiver` run with a different folder name.
+
+Keep in mind each instance is a full copy of the container -- one thread per `RECEIVER_SOURCES` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
 
 ## Routing
 
@@ -329,8 +302,8 @@ Each sensor's `state_topic` points directly at its own
 
 ## Adding or Changing readsb Sources
 
-1. Update the `sources` array in `settings.json` — add, remove, or edit entries.
-2. Restart the receiver container.
+1. Update `RECEIVER_SOURCES` in `.env` — add, remove, or edit `host:port:source` triples.
+2. Restart the receiver container (`docker compose up -d` picks up the new `.env`).
 
 Each source runs in its own thread; adding a source does not affect others.
 The `source` tag you choose is stamped on every message and carried through to

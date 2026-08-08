@@ -15,21 +15,46 @@ hitting the same country's civil aviation authority don't collide. That file
 is the single source of truth for exact schedules.
 
 Most runners write registration/airport data to Redis with a 14-day TTL
-(`redis_ttl_days` in each runner's `settings.json`, default 14). `vrs-standing-data`
+(`REDIS_TTL_DAYS`, default 14). `vrs-standing-data`
 is the one exception: its source updates daily rather than weekly, so it
-writes with a fixed 3-day TTL instead of reading `redis_ttl_days`.
+writes with a fixed 3-day TTL instead of reading `REDIS_TTL_DAYS`.
 
 Each runner publishes a single MQTT message on completion with `records_imported`,
 `last_run_at`, and `last_run_status`.
 
+## Configuration
+
+Every runner reads the same three config blocks via `shared/config.py`'s
+`load_config("redis", "mqtt", "runner")` — one call, so a runner started
+with something missing reports every missing variable together rather than
+one per restart. Each runner's own README documents only what's specific
+to it (which Redis key(s) `REDIS_TTL_DAYS` applies to, if anything);
+the variables themselves are always these:
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `REDIS_HOST` | ✅ | — | Redis connection host |
+| `REDIS_PORT` | ❌ | `6379` | |
+| `REDIS_PASSWORD` | ✅ | — | Redis now requires authentication; every runner authenticates through `shared/redis_client.py`'s `build_redis_client()` |
+| `MQTT_HOST` | ❌ | — | Leave unset to skip completion-stats publishing entirely — `MQTT_HOST`/`USERNAME`/`PASSWORD` are optional everywhere, not just for runners |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
+| `REDIS_TTL_DAYS` | ❌ | `14` | TTL applied to the enrichment key(s) this runner writes — see the runner's own README for exactly which key(s) |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` or `"info"` |
+
+In `docker-compose.core.yaml`, every runner service (and the `ofelia`
+job-run labels that schedule them) sources these from the same
+`x-runner-environment` anchor, so a host states each value once regardless
+of how many runners it runs.
+
 ## Logging
 
 Every runner calls `configure_logging(cfg.get("log_level"))` from
-`shared/logging_setup.py` right after loading `settings.json`, wiring the
-`log_level` config field (`"debug"` or `"info"`, see
-`config/runners/settings.json.example`) to the root logger — `receiver` and
+`shared/logging_setup.py` right after loading its configuration, wiring
+`LOG_LEVEL` to the root logger — `receiver` and
 `message-processor` use the same helper. `configure_logging()` is called once more,
-with no argument, if `settings.json` itself can't be loaded, so that failure
+with no argument, if configuration loading itself fails, so that failure
 still logs formatted instead of falling back to Python's default handler.
 
 ### Level convention
@@ -39,7 +64,7 @@ still logs formatted instead of falling back to Python's default handler.
 | `DEBUG` | Per-request detail: the exact URL of every outbound call, retry attempts, per-record skip reasons. Anything you'd otherwise add a temporary `print()` for while debugging a stuck or blocked run. |
 | `INFO` | Lifecycle milestones: run started, source URL for the primary download, record counts staged/written, run completed. One line per meaningful step, not per record. |
 | `WARNING` | A single record/request failed but the run continues (a detail fetch that exhausted retries, a row that didn't parse) — something worth surfacing without failing the run. |
-| `ERROR` / `CRITICAL` | The run cannot produce useful output (settings file missing, primary download failed, no records parsed). Runner exits non-zero. |
+| `ERROR` / `CRITICAL` | The run cannot produce useful output (required configuration missing, primary download failed, no records parsed). Runner exits non-zero. |
 
 **Rule**: any runner that makes more than one HTTP request per run — whether
 paginated (a fixed request per page) or per-entity (one request per record,

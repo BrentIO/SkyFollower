@@ -81,19 +81,7 @@ TTL: fixed at 3 days, not the runner-wide `redis_ttl_days` default (14 days) use
 
 ## Configuration
 
-Reads `settings.json` (mounted at `/app/settings.json`):
-
-| Parameter | Required | Default | Notes |
-|---|---|---|---|
-| `redis.host` | ✅ | — | Redis connection host |
-| `redis.port` | ❌ | `6379` | |
-| `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
-| `mqtt.port` | ❌ | `1883` | |
-| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
-| `mqtt.password` | ❌ | — | |
-
-`redis_ttl_days` is intentionally not read from `settings.json` by this
-runner — see TTL note above.
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` is not read by this runner -- see the TTL note above.
 
 ## MQTT
 

@@ -62,17 +62,7 @@ TTL: `redis_ttl_days × 86400` seconds (default 14 days).
 
 ## Configuration
 
-Reads `settings.json` (mounted at `/app/settings.json`):
-
-| Parameter | Required | Default | Notes |
-|---|---|---|---|
-| `redis.host` | ✅ | — | Redis connection host |
-| `redis.port` | ❌ | `6379` | |
-| `mqtt.host` | ❌ | — | Omit the whole `mqtt` block to skip completion-stats publishing entirely |
-| `mqtt.port` | ❌ | `1883` | |
-| `mqtt.username` | ❌ | — | Optional MQTT auth; omit for an anonymous broker |
-| `mqtt.password` | ❌ | — | |
-| `redis_ttl_days` | ❌ | `14` | TTL applied to each `airport:{icao_code}` key written by this runner |
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` applies to each `airport:{icao_code}` key written by this runner.
 
 ## MQTT
 
@@ -93,9 +83,8 @@ Each airport record includes a `phonic` field — a voice-friendly spoken name u
 ### Override file
 
 Copy `config/runners/phonic_overrides.json.example` to
-`config/runners/phonic_overrides.json` — the same directory `settings.json`
-already lives in (relative to `docker-compose.core.yaml`) — and edit it.
-That directory is mounted onto `/app/config`; the path defaults to
+`config/runners/phonic_overrides.json` (relative to `docker-compose.core.yaml`)
+and edit it. That directory is mounted onto `/app/config`; the path defaults to
 `/app/config/phonic_overrides.json` and can be overridden with the
 `OVERRIDES_PATH` environment variable. Mounting the directory (rather than
 the file directly) means the override file can be added, edited, or removed
