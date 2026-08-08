@@ -51,6 +51,9 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
+    _confirm_after_repeated_sightings,
+    _PARITY_ERROR_CONFIRM_COUNT,
+    _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     main as processor_main,
 )
 from shared.models import InboundMessage, Position, Velocity
@@ -256,11 +259,11 @@ class TestDecode1090:
     # straight through. These are 19 real captured messages reported as
     # legacy "parity errors"; each one decodes without raising, but several
     # produce fabricated reserved/emergency squawks (7500/7600/7700/7777)
-    # from corrupted bits. This documents *today's* actual behavior, not
-    # the desired one — see the tracking issue for the real fix (deferring
-    # trust on a reserved squawk until seen on multiple messages, matching
-    # SkyFollower-legacy's mitigation) and update these expectations once
-    # that lands.
+    # from corrupted bits. _decode_1090 still surfaces the (possibly
+    # fabricated) value here -- deciding whether to trust it belongs to
+    # _update_flight, which needs the raw value plus the `verified` flag
+    # below to run the confirmation logic (see #900 and
+    # TestSquawkConfirmation/TestIdentConfirmation).
     @pytest.mark.parametrize("raw,expected_squawk", [
         ("A8AE2ACA7DB5CA4AC22FCE4A0F04", "7600"),
         ("2CFB4A8ABA3544", "7600"),
@@ -290,6 +293,56 @@ class TestDecode1090:
         data = p._decode_1090(msg)
         assert data is not None
         assert data["squawk"] == expected_squawk
+        # None of these 19 are DF17/18 -- pyModeS can't verify them, so
+        # _update_flight must not trust this squawk on a single message.
+        assert data["verified"] is False
+
+    def test_verified_squawk_from_df17_aircraft_status_broadcast(self):
+        # DF17 TC=28 subtype 1 ("Aircraft status") re-encodes the same
+        # squawk inside a real extended-squitter message, which always
+        # carries genuine CRC (unlike DF5/21's ICAO-derived kind) --
+        # hand-crafted with pyModeS's own CRC function
+        # (pyModeS._bits.crc_remainder) the same way the module docstring
+        # above describes, encoding idcode 2730 (-> squawk "7700") at
+        # TC=28/subtype=1/emergency_state=1, ICAO A8AE7F, independently
+        # verified against pms.decode() directly: {'df': 17, 'icao':
+        # 'A8AE7F', 'crc_valid': True, 'typecode': 28, 'bds': '6,1',
+        # 'subtype': 1, 'emergency_state': 1, 'squawk': '7700'}.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7FE12AAA0000000060E34A",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["squawk"] == "7700"
+        assert data["verified"] is True
+
+    def test_verified_ident_from_extended_squitter(self):
+        # DF17 TC=4 ident broadcast -- real CRC, unlike DF20/21's BDS 2,0
+        # Comm-B register. Same message as
+        # test_ident_and_wake_turbulence_category above.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F255054D42166710A1432",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["ident"] == "TESTHVY1"
+        assert data["verified"] is True
+
+    def test_unverified_ident_from_comm_b_bds20(self):
+        # DF21 Comm-B BDS 2,0 -- one of the 19 captured parity-error
+        # messages, which decodes both a fabricated squawk *and* a
+        # fabricated callsign ("N30GD") from the same corrupted, CRC-
+        # unverifiable message.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="AA000A8A203B3C0712082019F93B",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["ident"] == "N30GD"
+        assert data["verified"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1814,6 +1867,221 @@ class TestReceiverSourcesAccumulation:
         f2 = Flight(p._db)
         f2.load("A8AE7F")
         assert f2.receiver_sources == ["MLAT", "978"]
+
+
+class TestConfirmAfterRepeatedSightings:
+    """Pure-function tests for the #900 debounce helper, independent of
+    Flight/SQLite -- TestSquawkConfirmation/TestIdentConfirmation below
+    cover its integration into _update_flight."""
+
+    def test_first_sighting_not_confirmed(self):
+        pending, confirmed = _confirm_after_repeated_sightings(None, "7700", 100.0)
+        assert confirmed is False
+        assert pending == {"value": "7700", "sightings": [100.0]}
+
+    def test_confirms_on_the_configured_count(self):
+        pending, confirmed = None, False
+        for i in range(_PARITY_ERROR_CONFIRM_COUNT):
+            pending, confirmed = _confirm_after_repeated_sightings(pending, "7700", 100.0 + i)
+        assert confirmed is True
+
+    def test_not_confirmed_one_short_of_the_count(self):
+        pending, confirmed = None, False
+        for i in range(_PARITY_ERROR_CONFIRM_COUNT - 1):
+            pending, confirmed = _confirm_after_repeated_sightings(pending, "7700", 100.0 + i)
+        assert confirmed is False
+        assert len(pending["sightings"]) == _PARITY_ERROR_CONFIRM_COUNT - 1
+
+    def test_sightings_outside_window_are_pruned(self):
+        pending = {"value": "7700", "sightings": [0.0, 1.0, 2.0, 3.0]}
+        new_received_at = _PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 10
+        pending, confirmed = _confirm_after_repeated_sightings(
+            pending, "7700", new_received_at,
+        )
+        # All 4 prior sightings are now outside the trailing window --
+        # only this new one remains, nowhere near the confirm threshold.
+        assert pending["sightings"] == [new_received_at]
+        assert confirmed is False
+
+    def test_differing_value_resets_the_candidate(self):
+        # Mirrors real usage: flight.pending_squawk/pending_ident is a
+        # single slot, reassigned on every call -- a differing value
+        # discards the previous candidate's progress rather than tracking
+        # multiple candidates in parallel (range-boundary noise producing
+        # two different fabricated values in a row still shouldn't confirm
+        # either one quickly).
+        pending, _ = _confirm_after_repeated_sightings(None, "7700", 0.0)
+        pending, _ = _confirm_after_repeated_sightings(pending, "7700", 1.0)
+        pending, confirmed = _confirm_after_repeated_sightings(pending, "7600", 2.0)
+        assert pending == {"value": "7600", "sightings": [2.0]}
+        assert confirmed is False
+
+
+class TestSquawkConfirmation:
+    """_update_flight's #900 two-tier squawk trust: verified source or an
+    ordinary value trusts immediately; a reserved code from an unverified
+    source needs _PARITY_ERROR_CONFIRM_COUNT sightings of the same value
+    within _PARITY_ERROR_CONFIRM_WINDOW_SECONDS."""
+
+    def test_ordinary_squawk_from_unverified_source_trusts_immediately(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "1200", "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == "1200"
+        assert f.pending_squawk is None
+
+    def test_reserved_squawk_from_verified_source_trusts_immediately(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": True}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == "7700"
+
+    def test_reserved_squawk_from_unverified_source_requires_confirmation(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        for i in range(_PARITY_ERROR_CONFIRM_COUNT - 1):
+            msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
+            with p._db_lock:
+                p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == ""
+        assert f.pending_squawk["value"] == "7700"
+        assert len(f.pending_squawk["sightings"]) == _PARITY_ERROR_CONFIRM_COUNT - 1
+
+        msg = InboundMessage(
+            raw="00" * 14, icao_hex="A8AE7F",
+            received_at=float(_PARITY_ERROR_CONFIRM_COUNT - 1), source="1090",
+        )
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": False}, msg)
+
+        f2 = Flight(p._db)
+        f2.load("A8AE7F")
+        assert f2.squawk == "7700"
+        assert f2.pending_squawk is None
+
+    def test_sightings_outside_window_never_confirm(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        # Same reserved value, but each sighting is spaced further apart
+        # than the confirmation window -- every call effectively restarts
+        # the count at 1.
+        for i in range(_PARITY_ERROR_CONFIRM_COUNT + 5):
+            t = i * (_PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 1)
+            msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(t), source="1090")
+            with p._db_lock:
+                p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == ""
+
+    def test_alternating_reserved_values_never_confirm(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        values = ["7700", "7600"] * _PARITY_ERROR_CONFIRM_COUNT
+
+        for i, value in enumerate(values):
+            msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
+            with p._db_lock:
+                p._update_flight({"icao_hex": "A8AE7F", "squawk": value, "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == ""
+
+    def test_pending_state_does_not_block_a_later_ordinary_squawk(self):
+        # An in-progress (unconfirmed) reserved-squawk candidate must not
+        # itself count as "already set" -- flight.squawk is still "",
+        # so a later ordinary reading should still commit immediately.
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": False}, msg1)
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "2646", "verified": False}, msg2)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.squawk == "2646"
+
+
+class TestIdentConfirmation:
+    """_update_flight's #900 ident extension: verified source (DF17/18)
+    trusts immediately; unverified source (DF20/21 Comm-B BDS 2,0) needs
+    the same confirmation treatment as reserved squawks, but for every
+    value -- there's no "safe" ident subset the way ordinary squawks are."""
+
+    def test_verified_ident_trusts_immediately(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "ident": "DAL123", "verified": True}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.ident == "DAL123"
+        assert f.pending_ident is None
+
+    def test_unverified_ident_requires_confirmation(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        for i in range(_PARITY_ERROR_CONFIRM_COUNT - 1):
+            msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
+            with p._db_lock:
+                p._update_flight({"icao_hex": "A8AE7F", "ident": "N30GD", "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.ident == ""
+        assert f.pending_ident["value"] == "N30GD"
+
+        msg = InboundMessage(
+            raw="00" * 14, icao_hex="A8AE7F",
+            received_at=float(_PARITY_ERROR_CONFIRM_COUNT - 1), source="1090",
+        )
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "ident": "N30GD", "verified": False}, msg)
+
+        f2 = Flight(p._db)
+        f2.load("A8AE7F")
+        assert f2.ident == "N30GD"
+        assert f2.pending_ident is None
+
+    def test_alternating_unverified_idents_never_confirm(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        values = ["N30GD", "ABCDEF"] * _PARITY_ERROR_CONFIRM_COUNT
+
+        for i, value in enumerate(values):
+            msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
+            with p._db_lock:
+                p._update_flight({"icao_hex": "A8AE7F", "ident": value, "verified": False}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.ident == ""
 
 
 class TestForceArchiveFromRules:
