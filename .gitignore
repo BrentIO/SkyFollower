@@ -25,6 +25,6 @@ CLAUDE.md
 config/*/*
 !config/*/*.example
 
-# rabbitmq/redis bind-mounted runtime data (docker-compose.core.yaml) --
+# Bind-mounted runtime data for every stateful service, on every host role --
 # host-local persisted state, not something to check in.
 data/

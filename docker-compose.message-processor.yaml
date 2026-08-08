@@ -7,14 +7,16 @@ services:
     restart: unless-stopped
     volumes:
       - ./config/message-processor/settings.json:/app/settings.json:ro
-      - message-processor-0-archive:/app/data
+      # Bind mount, matching rabbitmq/redis on the core host -- the data
+      # directory stays directly readable by the operator on the host.
+      - ./data/message-processor-0:/app/data
     # RAM-backed, not the container's writable layer -- the healthcheck
     # heartbeat file is rewritten every 15s and must never hit the host's
     # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
     tmpfs:
       - /app/health
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,sys,time; p='/app/health/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<40 else 1)"]
+      test: ["CMD", "python", "/app/healthcheck.py"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -23,7 +25,7 @@ services:
       MESSAGE_PROCESSOR_ID: "0"
 
   # To add a second message processor on this host:
-  #   1. Uncomment the block below and add a message-processor-1-archive volume entry.
+  #   1. Uncomment the block below.
   #   2. Set PROCESSOR_COUNT=2 in the receiver's settings.json.
   #   3. Restart the receiver for new routing to take effect.
   #
@@ -32,18 +34,14 @@ services:
   #   restart: unless-stopped
   #   volumes:
   #     - ./config/message-processor/settings.json:/app/settings.json:ro
-  #     - message-processor-1-archive:/app/data
+  #     - ./data/message-processor-1:/app/data
   #   tmpfs:
   #     - /app/health
   #   healthcheck:
-  #     test: ["CMD", "python", "-c", "import os,sys,time; p='/app/health/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<40 else 1)"]
+  #     test: ["CMD", "python", "/app/healthcheck.py"]
   #     interval: 15s
   #     timeout: 5s
   #     retries: 3
   #     start_period: 30s
   #   environment:
   #     MESSAGE_PROCESSOR_ID: "1"
-
-volumes:
-  message-processor-0-archive:
-  # message-processor-1-archive:

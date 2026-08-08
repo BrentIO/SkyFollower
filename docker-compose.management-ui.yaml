@@ -21,7 +21,9 @@ services:
       # user-authored state with no automatic regeneration path -- this
       # backend backs them up here on every write and restores from here
       # at startup if the Redis key is missing (see management-ui/README.md).
-      - management-ui-data:/app/data
+      # Bind mount, matching rabbitmq/redis on the core host -- the data
+      # directory stays directly readable by the operator on the host.
+      - ./data/management-ui:/app/data
     # No curl/wget in the image (only nginx is apt-get installed on top of
     # python:3.14-slim) -- use Python's built-in urllib instead of adding a
     # package just for this. Hits nginx's / (a real static file, index.html
@@ -31,6 +33,3 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-volumes:
-  management-ui-data:
