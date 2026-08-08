@@ -9,7 +9,7 @@ name: skyfollower-management-ui
 services:
 
   management-ui:
-    image: ghcr.io/brentio/skyfollower-management-ui:latest
+    image: ghcr.io/brentio/skyfollower-management-ui:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     # nginx serves the built React frontend at / and proxies /api/* to
     # uvicorn, which listens on 127.0.0.1:8000 inside the container only.

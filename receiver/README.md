@@ -115,7 +115,7 @@ Because identity is generated per instance (keyed off that instance's own `data_
 
 Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and `config/receiver/settings.json`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
 
-`docker-compose.receiver.yaml`'s project name (the `name:` line at the top of the file) is a placeholder, `skyfollower__INSTANCE_SUFFIX__`, resolved from the destination folder's own name -- not hardcoded. `scripts/download-host-files.sh` resolves it automatically: it sanitizes the folder name (lowercased, anything outside `[a-z0-9_-]` replaced with `-`) and substitutes it in, so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` resolves to project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` resolves to project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.)
+`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/download-host-files.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` gets project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
 
 To run a second receiver on the same host as the first:
 
@@ -130,12 +130,12 @@ Fill in `./mlat-adsb.lol/config/receiver/settings.json` with that instance's own
 
 ```bash
 cd mlat-adsb.lol
-docker compose -f docker-compose.receiver.yaml up -d
+docker compose up -d
 ```
 
 Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and auto-generated identity (`receiver_id`, see above) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another folder, following the same steps.
 
-For the Advanced (full-clone) deployment path, resolve `__INSTANCE_SUFFIX__` manually the same way `__ROOT_DIRECTORY__` is resolved for `core`/`archive` (see [Getting Started](https://brentio.github.io/SkyFollower/getting-started/)'s Advanced section) -- an empty string for the primary/default instance, or `-{sanitized-folder-name}` for any other.
+For the Advanced (full-clone) deployment path, write the `.env` by hand instead (see [Getting Started](https://brentio.github.io/SkyFollower/getting-started/)'s Advanced section) -- set `COMPOSE_PROJECT_NAME=skyfollower` for the primary/default instance, or `skyfollower-{sanitized-folder-name}` for any other.
 
 Keep in mind each instance is a full copy of the container -- one thread per `sources[]` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
 

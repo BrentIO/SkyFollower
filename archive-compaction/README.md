@@ -127,5 +127,5 @@ credentials configured anywhere on that host today). Its own IAM
 identity is deliberately separate from `archive-processor`'s, not a shared
 or widened one — see [AWS Setup](#aws-setup) above for exactly what it
 needs and why (`Delete` and bucket-level `List`, which `archive-processor`
-doesn't need; no access to `flights/*` content at all). See
-`config/archive/ofelia-config.ini.example` for the schedule.
+doesn't need; no access to `flights/*` content at all). See the `ofelia`
+service's labels in `docker-compose.archive.yaml` for the schedule.

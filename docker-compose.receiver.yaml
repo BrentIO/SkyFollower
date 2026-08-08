@@ -1,9 +1,12 @@
-name: skyfollower__INSTANCE_SUFFIX__
+# No name: -- the Compose project name comes from COMPOSE_PROJECT_NAME in
+# this host's .env, falling back to the deployment directory's own basename.
+# That is what lets more than one receiver run on a single host: each gets
+# its own folder, and therefore its own project namespace.
 
 services:
 
   receiver:
-    image: ghcr.io/brentio/skyfollower-receiver:latest
+    image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     volumes:
       - ./config/receiver/settings.json:/app/settings.json:ro

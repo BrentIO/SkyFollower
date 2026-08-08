@@ -3,7 +3,7 @@ name: skyfollower-message-processor
 services:
 
   message-processor-0:
-    image: ghcr.io/brentio/skyfollower-message-processor:latest
+    image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     volumes:
       - ./config/message-processor/settings.json:/app/settings.json:ro
@@ -30,7 +30,7 @@ services:
   #   3. Restart the receiver for new routing to take effect.
   #
   # message-processor-1:
-  #   image: ghcr.io/brentio/skyfollower-message-processor:latest
+  #   image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
   #   restart: unless-stopped
   #   volumes:
   #     - ./config/message-processor/settings.json:/app/settings.json:ro

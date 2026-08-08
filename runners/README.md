@@ -2,16 +2,17 @@
 
 Each subdirectory is a self-contained data runner: download → normalize →
 write to Redis with TTL → exit. Runners are scheduled on their own cadence
-via the `ofelia` cron container (see `config/ofelia/config.ini`). See the
+via the `ofelia` cron container (see `docker-compose.core.yaml`'s
+`ofelia` service labels). See the
 [Getting Started](https://brentio.github.io/SkyFollower/getting-started/)
 docs for how to run one manually or bulk-load all of them.
 
 ## Schedule
 
-Each of the 42 data runners has its own entry in `config/ofelia/config.ini`
-(see `config/ofelia/config.ini.example`), staggered across the week so
-runners hitting the same country's civil aviation authority don't collide.
-That file is the single source of truth for exact schedules.
+Each data runner has its own `ofelia.job-run.*` label block on the `ofelia`
+service in `docker-compose.core.yaml`, staggered across the week so runners
+hitting the same country's civil aviation authority don't collide. That file
+is the single source of truth for exact schedules.
 
 Most runners write registration/airport data to Redis with a 14-day TTL
 (`redis_ttl_days` in each runner's `settings.json`, default 14). `vrs-standing-data`
