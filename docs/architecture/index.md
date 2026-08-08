@@ -50,10 +50,14 @@ preserved before decommissioning — any flights it was still tracking are
 simply abandoned; surviving message processors will start fresh flights for
 those aircraft under the new routing the next time they're seen.
 
-*Future enhancement (not built): the archive-processor could eventually
-detect and stitch together adjacent split-flight records (same `icao_hex`,
-contiguous time ranges, matching aircraft/operator) produced by a
-resize-down event.*
+The archive-processor detects and merges these adjacent split-flight
+records after the fact, keyed on a short-lived Redis pointer
+(`archive:last_segment:{icao_hex}`, 1-day TTL). Stitching fails soft: if
+Redis is unreachable, the pointer lookup/update is skipped and the
+segments are simply left unmerged rather than blocking the archive write.
+See
+[Split-Flight Stitching](https://github.com/BrentIO/SkyFollower/blob/main/archive-processor/README.md#split-flight-stitching)
+in the archive processor's README for the full behavior.
 
 ## Crash Recovery & Backlog Replay
 
