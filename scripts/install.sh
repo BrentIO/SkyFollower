@@ -665,6 +665,20 @@ collect_core_env() {
   else
     RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$existing_rmq_pw")"
   fi
+  local existing_redis_pw
+  existing_redis_pw="$(existing_env_value "$env_file" REDIS_PASSWORD)"
+  if [ "$NON_INTERACTIVE" -eq 0 ] && [ -z "$existing_redis_pw" ]; then
+    local gen_redis
+    read -r -p "  Generate a strong Redis password? [Y/n]: " gen_redis </dev/tty
+    if [ -z "$gen_redis" ] || [[ "$gen_redis" =~ ^[Yy] ]]; then
+      REDIS_PASSWORD="$(generate_password)"
+      echo "  Generated (not shown -- it's written straight to .env, no reason for a human to see it)."
+    else
+      REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "")"
+    fi
+  else
+    REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$existing_redis_pw")"
+  fi
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -683,6 +697,7 @@ RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 # since they share this project's network.
 REDIS_HOST=redis
 REDIS_PORT=6379
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # TTL applied to the enrichment keys the runners write.
 REDIS_TTL_DAYS=14
@@ -711,6 +726,7 @@ collect_management_ui_env() {
   fi
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$redis_default")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
+  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
   S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
   AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)")"
@@ -722,6 +738,7 @@ collect_management_ui_env() {
 
 REDIS_HOST=${REDIS_HOST}
 REDIS_PORT=${REDIS_PORT}
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # The archive bucket, read for flight objects and queried through Athena.
 S3_BUCKET=${S3_BUCKET}
@@ -780,6 +797,7 @@ collect_message_processor_env() {
   RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$(existing_env_value "$env_file" RABBITMQ_PASSWORD)")"
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(existing_env_value "$env_file" REDIS_HOST)")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
+  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -813,6 +831,7 @@ RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 
 REDIS_HOST=${REDIS_HOST}
 REDIS_PORT=${REDIS_PORT}
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}
@@ -843,6 +862,7 @@ collect_archive_env() {
   RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$(existing_env_value "$env_file" RABBITMQ_PASSWORD)")"
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(existing_env_value "$env_file" REDIS_HOST)")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
+  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -869,6 +889,7 @@ RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 
 REDIS_HOST=${REDIS_HOST}
 REDIS_PORT=${REDIS_PORT}
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}

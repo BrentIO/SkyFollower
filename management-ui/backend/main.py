@@ -57,6 +57,7 @@ if _REPO_ROOT not in sys.path:
 
 from shared.aws_setup import write_aws_setup_files  # noqa: E402
 from shared.config import load_config  # noqa: E402
+from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
@@ -752,11 +753,7 @@ async def lifespan(app: FastAPI):
     configure_logging(config.get("log_level"))
 
     redis_config = config.get("redis", {})
-    _redis = redis_lib.Redis(
-        host=redis_config.get("host", "localhost"),
-        port=redis_config.get("port", 6379),
-        decode_responses=True,
-    )
+    _redis = build_redis_client(redis_config)
     _engine = RulesEngine(_redis)
     _merge_aircraft_sha = _redis.script_load((_LUA_DIR / "merge_aircraft.lua").read_text())
     _route_airports_sha = _redis.script_load((_LUA_DIR / "route_airports.lua").read_text())
