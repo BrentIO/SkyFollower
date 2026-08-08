@@ -1,7 +1,7 @@
 name: skyfollower-archive
 
 # Interpolated from this host's .env (written by
-# scripts/download-host-files.sh). Named one variable at a time rather than
+# scripts/install.sh). Named one variable at a time rather than
 # `env_file: .env`, so a container only ever holds the values it reads --
 # the AWS credentials below in particular.
 x-archive-environment: &archive-environment
