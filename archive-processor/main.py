@@ -39,6 +39,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
+from shared.config import DATA_DIR, ConfigError, load_config
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
@@ -53,7 +54,7 @@ from shared.redis_keys import (
 logger = logging.getLogger("archive-processor")
 
 # Templates resolved (__BUCKET_NAME__ substitution only, no AWS API calls)
-# and written to {data_dir}/aws-setup/ on every startup -- see
+# and written to {DATA_DIR}/aws-setup/ on every startup -- see
 # shared/aws_setup.py and docs/aws-setup.md.
 _AWS_SETUP_DIR = os.path.join(os.path.dirname(__file__), "..", "specs", "aws")
 _AWS_SETUP_TEMPLATES = {
@@ -357,16 +358,15 @@ class ArchiveProcessor:
         self._shutdown = threading.Event()
 
         # Paths
-        data_dir = config.get("data_dir", "/app/data")
-        os.makedirs(data_dir, exist_ok=True)
-        s3_db_path = os.path.join(data_dir, "s3.db")
+        os.makedirs(DATA_DIR, exist_ok=True)
+        s3_db_path = os.path.join(DATA_DIR, "s3.db")
         self._fallback = FallbackQueue(s3_db_path)
         # Separate table, same file: retries for flights whose object write
         # already succeeded but whose Parquet index row failed to write.
         self._index_fallback = FallbackQueue(s3_db_path, table_name="index_queue")
 
         write_aws_setup_files(
-            data_dir, config.get("s3", {}).get("bucket", ""), _AWS_SETUP_TEMPLATES
+            DATA_DIR, config.get("s3", {}).get("bucket", ""), _AWS_SETUP_TEMPLATES
         )
 
         # S3
@@ -436,12 +436,11 @@ class ArchiveProcessor:
         route live flights directly to S3, via _finish_s3_connect."""
         s3_cfg = self._cfg.get("s3", {})
         try:
-            session = boto3.Session(
-                aws_access_key_id=s3_cfg.get("access_key_id"),
-                aws_secret_access_key=s3_cfg.get("secret_access_key"),
-                region_name=s3_cfg.get("region", "us-east-1"),
-            )
-            client = session.client("s3")
+            # No credential arguments: boto3 reads AWS_ACCESS_KEY_ID,
+            # AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION from its own
+            # default credential chain, which an instance role can also
+            # satisfy.
+            client = boto3.Session().client("s3")
             # Quick connectivity check, scoped to just this bucket
             client.head_bucket(Bucket=s3_cfg.get("bucket", ""))
             with self._s3_lock:
@@ -1051,14 +1050,15 @@ class ArchiveProcessor:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
 def main() -> None:
-    config = _load_config()
+    try:
+        config = load_config("rabbitmq", "redis", "mqtt", "s3", "telemetry")
+    except ConfigError as exc:
+        # Logging isn't configured until ArchiveProcessor is constructed,
+        # which is exactly what failed here.
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     processor = ArchiveProcessor(config)
 
     def _handle_signal(sig, frame):

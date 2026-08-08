@@ -1,12 +1,35 @@
 name: skyfollower-archive
 
+# Interpolated from this host's .env (written by
+# scripts/download-host-files.sh). Named one variable at a time rather than
+# `env_file: .env`, so a container only ever holds the values it reads --
+# the AWS credentials below in particular.
+x-archive-environment: &archive-environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  S3_BUCKET: ${S3_BUCKET}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  MQTT_HOST: ${MQTT_HOST}
+  MQTT_PORT: ${MQTT_PORT:-1883}
+  MQTT_USERNAME: ${MQTT_USERNAME}
+  MQTT_PASSWORD: ${MQTT_PASSWORD}
+
 services:
 
   archive-processor:
     image: ghcr.io/brentio/skyfollower-archive:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
+    environment:
+      <<: *archive-environment
+      TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
     volumes:
-      - ./config/archive/settings.json:/app/settings.json:ro
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/archive-processor:/app/data
@@ -38,8 +61,8 @@ services:
     image: ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-archive-compaction
     profiles: ["compaction"]
+    environment: *archive-environment
     volumes:
-      - ./config/archive/compaction-settings.json:/app/settings.json:ro
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/archive-compaction:/app/data
@@ -77,5 +100,5 @@ services:
       ofelia.enabled: "true"
       ofelia.job-run.archive-compaction.schedule: "0 50 4 * * *"
       ofelia.job-run.archive-compaction.image: "ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}"
-      ofelia.job-run.archive-compaction.volume: '["${SKYFOLLOWER_ROOT}/config/archive/compaction-settings.json:/app/settings.json:ro"]'
+      ofelia.job-run.archive-compaction.environment: '["LOG_LEVEL=${LOG_LEVEL:-info}", "S3_BUCKET=${S3_BUCKET}", "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}", "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}", "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
       ofelia.job-run.archive-compaction.delete: "true"

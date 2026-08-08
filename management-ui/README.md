@@ -191,9 +191,6 @@ npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
 | `athena.table` | string | — | Glue table name (`archive_flights` by default in `specs/aws/glue-table-definition.json`, but this is operator-configured, not assumed) |
 | `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
 
-The settings file path defaults to `/app/settings.json` and can be
-overridden with the `SETTINGS_PATH` environment variable.
-
 ## Archive Search
 
 Athena/Glue query layer over the archive's Parquet index (see
@@ -403,8 +400,8 @@ print(yaml.dump(main.app.openapi(), sort_keys=False, allow_unicode=True))
 ```
 
 (`app.openapi()` only builds the schema from route declarations — it doesn't
-touch Redis or need `settings.json`, so no running Redis or `SETTINGS_PATH`
-is required to regenerate the spec.)
+touch Redis or read any configuration, so neither a running Redis nor a
+configured environment is required to regenerate the spec.)
 
 `info.version` in the generated document is always `9999.99.99` on `main`
 — the release workflow substitutes the real version at build time, matching

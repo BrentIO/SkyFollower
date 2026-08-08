@@ -15,7 +15,6 @@ COPY receiver/ ./receiver/
 COPY shared/healthcheck.py ./healthcheck.py
 
 ENV PYTHONPATH=/app
-ENV SETTINGS_PATH=/app/settings.json
 
 # VERSION changes every release; placed last so it only busts this
 # cheap final layer, not the pip-install layer above.

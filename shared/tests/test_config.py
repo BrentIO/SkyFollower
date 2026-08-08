@@ -1,0 +1,393 @@
+"""
+Tests for shared/config.py -- the environment-variable configuration loader
+every component uses in place of a bind-mounted settings file.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from shared.config import (
+    DATA_DIR,
+    ConfigError,
+    ConfigLoader,
+    athena_config,
+    load_config,
+    message_processor_config,
+    mqtt_config,
+    parse_receiver_sources,
+    rabbitmq_config,
+    receiver_config,
+    redis_config,
+    runner_config,
+    s3_config,
+    telemetry_config,
+)
+
+_MQTT = {
+    "MQTT_HOST": "broker.example.com",
+    "MQTT_USERNAME": "user",
+    "MQTT_PASSWORD": "secret",
+}
+_RABBITMQ = {
+    "RABBITMQ_HOST": "rmq.example.com",
+    "RABBITMQ_USERNAME": "skyfollower",
+    "RABBITMQ_PASSWORD": "secret",
+}
+_REDIS = {"REDIS_HOST": "redis.example.com"}
+_S3 = {
+    "S3_BUCKET": "flights",
+    "AWS_DEFAULT_REGION": "us-east-1",
+    "AWS_ACCESS_KEY_ID": "AKIA",
+    "AWS_SECRET_ACCESS_KEY": "shh",
+}
+_RECEIVER = {
+    "RECEIVER_NAME": "Attic 1090",
+    "RECEIVER_SOURCES": "192.168.10.5:30002:1090",
+}
+_MESSAGE_PROCESSOR = {
+    "MESSAGE_PROCESSOR_ID": "turing-node-3-1",
+    "LATITUDE": "40.7",
+    "LONGITUDE": "-73.9",
+}
+
+
+def _env(*groups: dict, **overrides: str) -> dict:
+    env: dict = {}
+    for group in groups:
+        env.update(group)
+    env.update(overrides)
+    return env
+
+
+# ---------------------------------------------------------------------------
+# Required variables
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredVariables:
+    def test_every_missing_variable_is_reported_in_one_error(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("rabbitmq", "mqtt", "telemetry", "receiver", environ={})
+
+        assert set(excinfo.value.problems) == {
+            "RABBITMQ_HOST is required but is not set",
+            "RABBITMQ_USERNAME is required but is not set",
+            "RABBITMQ_PASSWORD is required but is not set",
+            "MQTT_HOST is required but is not set",
+            "MQTT_USERNAME is required but is not set",
+            "MQTT_PASSWORD is required but is not set",
+            "RECEIVER_NAME is required but is not set",
+            "RECEIVER_SOURCES is required but is not set",
+        }
+
+    def test_error_message_lists_every_problem(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("redis", "mqtt", environ={})
+
+        message = str(excinfo.value)
+        for name in ("REDIS_HOST", "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD"):
+            assert name in message
+
+    def test_blank_value_counts_as_missing(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("redis", environ={"REDIS_HOST": "   "})
+
+        assert excinfo.value.problems == ["REDIS_HOST is required but is not set"]
+
+    def test_aws_credentials_are_required_but_not_returned(self):
+        cfg = load_config("s3", environ=_env(_S3))
+        assert cfg["s3"] == {"bucket": "flights"}
+
+    def test_missing_aws_credentials_named_individually(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("s3", environ={"S3_BUCKET": "flights"})
+
+        assert set(excinfo.value.problems) == {
+            "AWS_DEFAULT_REGION is required but is not set",
+            "AWS_ACCESS_KEY_ID is required but is not set",
+            "AWS_SECRET_ACCESS_KEY is required but is not set",
+        }
+
+    def test_unknown_block_is_a_programming_error(self):
+        with pytest.raises(ValueError, match="Unknown config block"):
+            load_config("nonsense", environ={})
+
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+
+class TestDefaults:
+    def test_every_documented_default_is_applied_when_unset(self):
+        cfg = load_config(
+            "mqtt", "rabbitmq", "redis", "athena", "telemetry",
+            "message_processor", "runner",
+            environ=_env(_MQTT, _RABBITMQ, _REDIS, _MESSAGE_PROCESSOR),
+        )
+
+        assert cfg["log_level"] == "info"
+        assert cfg["mqtt"]["port"] == 1883
+        assert cfg["rabbitmq"]["port"] == 5672
+        assert cfg["redis"]["port"] == 6379
+        assert cfg["athena"] == {
+            "workgroup": "skyfollower",
+            "database": "skyfollower",
+            "table": "archive_flights",
+        }
+        assert cfg["telemetry_interval_seconds"] == 30
+        assert cfg["rule_notification_max_lag_seconds"] == 30
+        assert cfg["redis_ttl_days"] == 14
+
+    def test_set_values_override_defaults(self):
+        cfg = load_config(
+            "mqtt", "redis", "telemetry", "runner",
+            environ=_env(
+                _MQTT, _REDIS,
+                LOG_LEVEL="debug",
+                MQTT_PORT="8883",
+                REDIS_PORT="6380",
+                TELEMETRY_INTERVAL_SECONDS="15",
+                REDIS_TTL_DAYS="7",
+            ),
+        )
+
+        assert cfg["log_level"] == "debug"
+        assert cfg["mqtt"]["port"] == 8883
+        assert cfg["redis"]["port"] == 6380
+        assert cfg["telemetry_interval_seconds"] == 15
+        assert cfg["redis_ttl_days"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Numeric coercion
+# ---------------------------------------------------------------------------
+
+
+class TestNumericCoercion:
+    def test_non_numeric_port_fails_at_load_not_at_connect(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("redis", environ=_env(_REDIS, REDIS_PORT="six-thousand"))
+
+        assert excinfo.value.problems == [
+            "REDIS_PORT must be a whole number (got 'six-thousand')"
+        ]
+
+    def test_non_numeric_latitude_is_reported(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(
+                "message_processor",
+                environ=_env(_MESSAGE_PROCESSOR, LATITUDE="north"),
+            )
+
+        assert excinfo.value.problems == ["LATITUDE must be a number (got 'north')"]
+
+    def test_numeric_problems_accumulate_with_missing_ones(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("redis", "mqtt", environ={"REDIS_PORT": "abc"})
+
+        assert "REDIS_HOST is required but is not set" in excinfo.value.problems
+        assert "REDIS_PORT must be a whole number (got 'abc')" in excinfo.value.problems
+
+    def test_float_latitude_is_parsed(self):
+        cfg = load_config("message_processor", environ=_env(_MESSAGE_PROCESSOR))
+        assert cfg["latitude"] == pytest.approx(40.7)
+        assert cfg["longitude"] == pytest.approx(-73.9)
+
+
+# ---------------------------------------------------------------------------
+# MESSAGE_PROCESSOR_ID
+# ---------------------------------------------------------------------------
+
+
+class TestMessageProcessorId:
+    def test_id_stays_a_string(self):
+        cfg = load_config(
+            "message_processor",
+            environ=_env(_MESSAGE_PROCESSOR, MESSAGE_PROCESSOR_ID="7"),
+        )
+        assert cfg["message_processor_id"] == "7"
+
+    def test_non_numeric_id_is_accepted(self):
+        cfg = load_config("message_processor", environ=_env(_MESSAGE_PROCESSOR))
+        assert cfg["message_processor_id"] == "turing-node-3-1"
+
+    def test_missing_id_is_reported(self):
+        env = _env(_MESSAGE_PROCESSOR)
+        del env["MESSAGE_PROCESSOR_ID"]
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("message_processor", environ=env)
+
+        assert "MESSAGE_PROCESSOR_ID is required but is not set" in excinfo.value.problems
+
+
+# ---------------------------------------------------------------------------
+# RECEIVER_SOURCES
+# ---------------------------------------------------------------------------
+
+
+class TestReceiverSources:
+    def test_single_triple(self):
+        assert parse_receiver_sources("out.adsb.lol:1366:MLAT") == [
+            {"host": "out.adsb.lol", "port": 1366, "source": "MLAT"}
+        ]
+
+    def test_multiple_triples(self):
+        parsed = parse_receiver_sources(
+            "192.168.10.5:30002:1090,192.168.10.5:30978:978"
+        )
+        assert parsed == [
+            {"host": "192.168.10.5", "port": 30002, "source": "1090"},
+            {"host": "192.168.10.5", "port": 30978, "source": "978"},
+        ]
+
+    def test_surrounding_whitespace_is_tolerated(self):
+        parsed = parse_receiver_sources(" 192.168.10.5 : 30002 : 1090 , host2:30002:978 ")
+        assert [s["host"] for s in parsed] == ["192.168.10.5", "host2"]
+
+    def test_lowercase_mlat_is_canonicalised(self):
+        assert parse_receiver_sources("h:1:mlat")[0]["source"] == "MLAT"
+
+    def test_empty_value_is_rejected(self):
+        with pytest.raises(ValueError, match="at least one host:port:source triple"):
+            parse_receiver_sources("")
+
+    def test_comma_only_value_is_rejected(self):
+        with pytest.raises(ValueError, match="at least one host:port:source triple"):
+            parse_receiver_sources(" , ")
+
+    def test_too_few_fields_names_the_triple(self):
+        with pytest.raises(ValueError, match="'192.168.10.5:30002'"):
+            parse_receiver_sources("192.168.10.5:30002")
+
+    def test_too_many_fields_names_the_triple(self):
+        with pytest.raises(ValueError, match="'a:1:1090:extra'"):
+            parse_receiver_sources("a:1:1090:extra")
+
+    def test_empty_host_names_the_triple(self):
+        with pytest.raises(ValueError, match="empty host"):
+            parse_receiver_sources(":30002:1090")
+
+    def test_non_numeric_port_names_the_triple(self):
+        with pytest.raises(ValueError, match="invalid port 'thirty'"):
+            parse_receiver_sources("host:thirty:1090")
+
+    def test_out_of_range_port_names_the_triple(self):
+        with pytest.raises(ValueError, match="invalid port '70000'"):
+            parse_receiver_sources("host:70000:1090")
+
+    def test_unknown_source_tag_names_the_triple_and_lists_valid_tags(self):
+        with pytest.raises(ValueError) as excinfo:
+            parse_receiver_sources("host:30002:1091")
+
+        message = str(excinfo.value)
+        assert "'host:30002:1091'" in message
+        assert "invalid source '1091'" in message
+        assert "1090, 978, MLAT" in message
+
+    def test_only_the_offending_triple_of_several_is_named(self):
+        with pytest.raises(ValueError) as excinfo:
+            parse_receiver_sources("good:30002:1090,bad:30978:AAA")
+
+        assert "'bad:30978:AAA'" in str(excinfo.value)
+        assert "good:30002:1090" not in str(excinfo.value)
+
+    def test_malformed_sources_surface_as_a_config_problem(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(
+                "receiver",
+                environ=_env(_RECEIVER, RECEIVER_SOURCES="host:30002:1091"),
+            )
+
+        assert any("invalid source" in p for p in excinfo.value.problems)
+
+    def test_sources_parse_into_the_receiver_block(self):
+        cfg = load_config("receiver", environ=_env(_RECEIVER))
+        assert cfg["name"] == "Attic 1090"
+        assert cfg["sources"] == [
+            {"host": "192.168.10.5", "port": 30002, "source": "1090"}
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Shape
+# ---------------------------------------------------------------------------
+
+
+class TestShape:
+    def test_receiver_shape(self):
+        cfg = load_config(
+            "rabbitmq", "mqtt", "telemetry", "receiver",
+            environ=_env(_RABBITMQ, _MQTT, _RECEIVER),
+        )
+        assert cfg["rabbitmq"] == {
+            "host": "rmq.example.com",
+            "port": 5672,
+            "username": "skyfollower",
+            "password": "secret",
+        }
+        assert cfg["mqtt"] == {
+            "host": "broker.example.com",
+            "port": 1883,
+            "username": "user",
+            "password": "secret",
+        }
+        assert "sources" in cfg and "name" in cfg
+
+    def test_archive_processor_shape(self):
+        cfg = load_config(
+            "rabbitmq", "redis", "mqtt", "s3", "telemetry",
+            environ=_env(_RABBITMQ, _REDIS, _MQTT, _S3),
+        )
+        assert set(cfg) == {
+            "log_level", "rabbitmq", "redis", "mqtt", "s3",
+            "telemetry_interval_seconds",
+        }
+
+    def test_runner_shape(self):
+        cfg = load_config("redis", "mqtt", "runner", environ=_env(_REDIS, _MQTT))
+        assert set(cfg) == {"log_level", "redis", "mqtt", "redis_ttl_days"}
+
+    def test_data_dir_is_a_constant_not_a_config_field(self):
+        cfg = load_config("redis", environ=_env(_REDIS))
+        assert "data_dir" not in cfg
+        assert DATA_DIR == "/app/data"
+
+
+# ---------------------------------------------------------------------------
+# Standalone block helpers
+# ---------------------------------------------------------------------------
+
+
+class TestBlockHelpers:
+    def test_helpers_validate_on_their_own(self, monkeypatch):
+        monkeypatch.delenv("MQTT_HOST", raising=False)
+        monkeypatch.delenv("MQTT_USERNAME", raising=False)
+        monkeypatch.delenv("MQTT_PASSWORD", raising=False)
+        with pytest.raises(ConfigError):
+            mqtt_config()
+
+    def test_helpers_share_a_loader_when_given_one(self):
+        loader = ConfigLoader({})
+        mqtt_config(loader)
+        redis_config(loader)
+        rabbitmq_config(loader)
+        s3_config(loader)
+        athena_config(loader)
+        receiver_config(loader)
+        message_processor_config(loader)
+        runner_config(loader)
+        telemetry_config(loader)
+
+        with pytest.raises(ConfigError) as excinfo:
+            loader.raise_for_problems()
+
+        # One accumulated report rather than nine separate failures.
+        assert len(excinfo.value.problems) > 8
+
+    def test_helpers_read_the_process_environment_by_default(self, monkeypatch):
+        for name, value in _REDIS.items():
+            monkeypatch.setenv(name, value)
+        monkeypatch.setenv("REDIS_PORT", "6380")
+        assert redis_config() == {"host": "redis.example.com", "port": 6380}

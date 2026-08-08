@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Downloads only the docker-compose.*.yaml file and config/*/*.example
+# Downloads only the docker-compose.*.yaml file and any config/*/*.example
 # file(s) a given host role needs, without a full `git clone` of the
-# monorepo. Mirrors the host/file mapping documented in
+# monorepo, and writes that role's .env with every environment variable its
+# components read. Mirrors the host/file mapping documented in
 # docs/deployment/index.md's Compose Files and Configuration tables --
 # update both places together if that mapping ever changes.
 #
@@ -112,41 +113,41 @@ usage() {
 case "$ROLE" in
   receiver)
     COMPOSE_FILES=(docker-compose.receiver.yaml)
-    CONFIG_FILES=(config/receiver/settings.json.example)
+    CONFIG_FILES=()
     DATA_DIRS=(data/receiver)
     PROJECT_NAME=""
     ;;
   receiver-mlat)
     # Same compose file as "receiver" -- the MLAT instance is the identical
     # image deployed a second time (on its own host, or alongside the
-    # SDR-hosting instance on the same host), distinguished by which
-    # settings.json.example it starts from and by its own destination folder.
+    # SDR-hosting instance on the same host), distinguished by the
+    # RECEIVER_SOURCES it is given and by its own destination folder.
     COMPOSE_FILES=(docker-compose.receiver.yaml)
-    CONFIG_FILES=(config/receiver/mlat-settings.json.example)
+    CONFIG_FILES=()
     DATA_DIRS=(data/receiver)
     PROJECT_NAME=""
     ;;
   core)
     COMPOSE_FILES=(docker-compose.core.yaml)
-    CONFIG_FILES=(config/runners/settings.json.example config/runners/phonic_overrides.json.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
+    CONFIG_FILES=(config/runners/phonic_overrides.json.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
     DATA_DIRS=(data/rabbitmq data/redis)
     PROJECT_NAME="skyfollower-core"
     ;;
   management-ui)
     COMPOSE_FILES=(docker-compose.management-ui.yaml)
-    CONFIG_FILES=(config/management-ui/settings.json.example)
+    CONFIG_FILES=()
     DATA_DIRS=(data/management-ui)
     PROJECT_NAME="skyfollower-management-ui"
     ;;
   message-processor)
     COMPOSE_FILES=(docker-compose.message-processor.yaml)
-    CONFIG_FILES=(config/message-processor/settings.json.example)
+    CONFIG_FILES=()
     DATA_DIRS=(data/message-processor-0)
     PROJECT_NAME="skyfollower-message-processor"
     ;;
   archive)
     COMPOSE_FILES=(docker-compose.archive.yaml)
-    CONFIG_FILES=(config/archive/settings.json.example config/archive/compaction-settings.json.example)
+    CONFIG_FILES=()
     DATA_DIRS=(data/archive-processor data/archive-compaction)
     PROJECT_NAME="skyfollower-archive"
     ;;
@@ -156,7 +157,7 @@ case "$ROLE" in
     ;;
 esac
 
-ALL_FILES=("${COMPOSE_FILES[@]}" "${CONFIG_FILES[@]}")
+ALL_FILES=("${COMPOSE_FILES[@]}" ${CONFIG_FILES[@]+"${CONFIG_FILES[@]}"})
 
 # A file missing at the resolved release tag doesn't necessarily mean the
 # whole release is unusable for this role -- it means this one file is
@@ -246,6 +247,173 @@ if [ -z "$PROJECT_NAME" ]; then
   fi
 fi
 
+# Every component now reads its whole configuration from environment
+# variables, so each role's block below is appended to .env with example
+# values and a comment naming what to replace. Values marked CHANGE_ME must
+# be edited before the stack will start -- a component reports every one it
+# is still missing in a single startup error rather than one per restart.
+write_role_env() {
+  case "$ROLE" in
+    receiver|receiver-mlat)
+      cat <<'ENV_EOF'
+
+# Free-text label for this receiver, shown in Home Assistant. The receiver's
+# stable identity is a UUID it generates into data/receiver/receiver_id --
+# renaming here never renames its MQTT topics.
+RECEIVER_NAME=CHANGE_ME
+
+# Comma-separated host:port:source triples, one per readsb connection.
+# source is one of 1090, 978, MLAT.
+#   SDR host:  192.168.1.x:30002:1090,192.168.1.x:30978:978
+#   MLAT-only: out.adsb.lol:1366:MLAT
+RECEIVER_SOURCES=CHANGE_ME:30002:1090
+
+RABBITMQ_HOST=CHANGE_ME
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=skyfollower
+RABBITMQ_PASSWORD=CHANGE_ME
+
+MQTT_HOST=CHANGE_ME
+MQTT_PORT=1883
+MQTT_USERNAME=CHANGE_ME
+MQTT_PASSWORD=CHANGE_ME
+
+# Seconds between telemetry publishes.
+TELEMETRY_INTERVAL_SECONDS=30
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+      ;;
+    core)
+      cat <<'ENV_EOF'
+
+# The broker container is started with these and every client authenticates
+# with them -- one pair, one file, so the two can no longer drift apart.
+RABBITMQ_USERNAME=skyfollower
+RABBITMQ_PASSWORD=CHANGE_ME
+
+# Redis as the runners on this host reach it: the compose service name,
+# since they share this project's network.
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# TTL applied to the enrichment keys the runners write.
+REDIS_TTL_DAYS=14
+
+MQTT_HOST=CHANGE_ME
+MQTT_PORT=1883
+MQTT_USERNAME=CHANGE_ME
+MQTT_PASSWORD=CHANGE_ME
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+      ;;
+    management-ui)
+      cat <<'ENV_EOF'
+
+REDIS_HOST=CHANGE_ME
+REDIS_PORT=6379
+
+# The archive bucket, read for flight objects and queried through Athena.
+S3_BUCKET=CHANGE_ME
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=CHANGE_ME
+AWS_SECRET_ACCESS_KEY=CHANGE_ME
+
+# Athena workgroup plus the Glue database/table holding the Parquet index.
+ATHENA_WORKGROUP=skyfollower
+ATHENA_DATABASE=skyfollower
+ATHENA_TABLE=archive_flights
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+      ;;
+    message-processor)
+      cat <<ENV_EOF
+
+# Prefix for every processor ID on this node -- each instance appends its
+# own number. Defaulted to this node's hostname so two nodes never collide
+# on an ID without anyone having to coordinate the numbering.
+MESSAGE_PROCESSOR_PREFIX=${MESSAGE_PROCESSOR_PREFIX}
+
+# Receiver's reference position, used to decode locally-referenced CPR
+# positions. Decimal degrees.
+LATITUDE=CHANGE_ME
+LONGITUDE=CHANGE_ME
+
+RABBITMQ_HOST=CHANGE_ME
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=skyfollower
+RABBITMQ_PASSWORD=CHANGE_ME
+
+REDIS_HOST=CHANGE_ME
+REDIS_PORT=6379
+
+MQTT_HOST=CHANGE_ME
+MQTT_PORT=1883
+MQTT_USERNAME=CHANGE_ME
+MQTT_PASSWORD=CHANGE_ME
+
+# How far behind live a message may be and still raise a rule notification.
+RULE_NOTIFICATION_MAX_LAG_SECONDS=30
+
+# Seconds between telemetry publishes.
+TELEMETRY_INTERVAL_SECONDS=30
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+      ;;
+    archive)
+      cat <<'ENV_EOF'
+
+# The archive bucket. AWS_* are boto3's own variable names: no credentials
+# are passed in code, so an instance role can replace the key pair later
+# by leaving these unset.
+S3_BUCKET=CHANGE_ME
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=CHANGE_ME
+AWS_SECRET_ACCESS_KEY=CHANGE_ME
+
+RABBITMQ_HOST=CHANGE_ME
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=skyfollower
+RABBITMQ_PASSWORD=CHANGE_ME
+
+REDIS_HOST=CHANGE_ME
+REDIS_PORT=6379
+
+MQTT_HOST=CHANGE_ME
+MQTT_PORT=1883
+MQTT_USERNAME=CHANGE_ME
+MQTT_PASSWORD=CHANGE_ME
+
+# Seconds between telemetry publishes.
+TELEMETRY_INTERVAL_SECONDS=30
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+      ;;
+  esac
+}
+
+# Derived the same way COMPOSE_PROJECT_NAME is derived from the destination
+# folder above: sanitized to what a container-visible identifier can hold,
+# and written into .env where it can be seen and changed.
+if [ "$ROLE" = "message-processor" ]; then
+  RAW_HOSTNAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || uname -n)"
+  MESSAGE_PROCESSOR_PREFIX="$(printf '%s' "$RAW_HOSTNAME" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')"
+  while [ "${MESSAGE_PROCESSOR_PREFIX#-}" != "$MESSAGE_PROCESSOR_PREFIX" ]; do MESSAGE_PROCESSOR_PREFIX="${MESSAGE_PROCESSOR_PREFIX#-}"; done
+  while [ "${MESSAGE_PROCESSOR_PREFIX%-}" != "$MESSAGE_PROCESSOR_PREFIX" ]; do MESSAGE_PROCESSOR_PREFIX="${MESSAGE_PROCESSOR_PREFIX%-}"; done
+  if [ -z "$MESSAGE_PROCESSOR_PREFIX" ]; then
+    MESSAGE_PROCESSOR_PREFIX="mp"
+  fi
+fi
+
 ENV_FILE="${DEST}/.env"
 if [ -e "$ENV_FILE" ]; then
   echo "  Skipping ${ENV_FILE} (already exists)."
@@ -277,6 +445,7 @@ COMPOSE_FILE=${COMPOSE_FILES[0]}
 # resolve a relative path against.
 SKYFOLLOWER_ROOT=${ABS_ROOT}
 ENV_EOF
+    write_role_env >> "$ENV_FILE"
   )
   echo "  Created ${ENV_FILE}."
 fi
@@ -287,6 +456,6 @@ for rel_path in "${ALL_FILES[@]}"; do
   echo "  ${DEST}/${rel_path}"
 done
 echo
-echo "Next: fill in real values in each config file above, then bring the"
-echo "host up from ${DEST}:"
+echo "Next: replace every CHANGE_ME in ${DEST}/.env, then bring the host up"
+echo "from ${DEST}:"
 echo "  docker compose up -d"

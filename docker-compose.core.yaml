@@ -8,8 +8,22 @@ name: skyfollower-core
 # default for "wherever this host was deployed to".
 x-ofelia-runner-defaults:
   network: &ofelia-runner-network "${COMPOSE_PROJECT_NAME:-skyfollower-core}_default"
-  volume: &ofelia-runner-volume '["${SKYFOLLOWER_ROOT}/config/runners/settings.json:/app/settings.json:ro"]'
+  environment: &ofelia-runner-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_TTL_DAYS=${REDIS_TTL_DAYS:-14}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
   delete: &ofelia-runner-delete "true"
+
+# Every runner reads the same set, so the services below alias this block
+# rather than merging into it. Deliberately not `env_file: .env`: that would
+# hand this host's whole file -- AWS credentials included -- to rabbitmq and
+# redis, the two most exposed services here, neither of which reads any of it.
+x-runner-environment: &runner-environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_TTL_DAYS: ${REDIS_TTL_DAYS:-14}
+  MQTT_HOST: ${MQTT_HOST}
+  MQTT_PORT: ${MQTT_PORT:-1883}
+  MQTT_USERNAME: ${MQTT_USERNAME}
+  MQTT_PASSWORD: ${MQTT_PASSWORD}
 
 services:
 
@@ -32,9 +46,11 @@ services:
       # entirely MQTT-based) dropped from the stock enabled-plugins set.
       - ./config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-skyfollower.conf:ro
       - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    # The same two variables every client authenticates with, so the broker
+    # and its clients can no longer be started from different credentials.
     environment:
-      RABBITMQ_DEFAULT_USER: skyfollower
-      RABBITMQ_DEFAULT_PASS: change_me
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 30s
@@ -106,13 +122,14 @@ services:
     labels:
       ofelia.enabled: "true"
 
-      # The only job with two volumes: the second is the runners config
-      # directory, mounted whole so an optional phonic_overrides.json can be
-      # added or removed without recreating the container.
+      # The only job with a volume at all: the runners config directory,
+      # mounted whole so an optional phonic_overrides.json can be added or
+      # removed without recreating the container.
       ofelia.job-run.runner-ourairports.schedule: "0 10 5 * * 1"
       ofelia.job-run.runner-ourairports.image: "ghcr.io/brentio/skyfollower-runner-ourairports:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ourairports.network: *ofelia-runner-network
-      ofelia.job-run.runner-ourairports.volume: '["${SKYFOLLOWER_ROOT}/config/runners/settings.json:/app/settings.json:ro", "${SKYFOLLOWER_ROOT}/config/runners:/app/config:ro"]'
+      ofelia.job-run.runner-ourairports.volume: '["${SKYFOLLOWER_ROOT}/config/runners:/app/config:ro"]'
+      ofelia.job-run.runner-ourairports.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ourairports.delete: *ofelia-runner-delete
 
       # uk-caa-registry makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
@@ -120,248 +137,248 @@ services:
       ofelia.job-run.runner-uk-caa-registry.schedule: "0 10 6 * * 1"
       ofelia.job-run.runner-uk-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-uk-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-uk-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-uk-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-uk-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-mictronics.schedule: "0 10 5 * * 2"
       ofelia.job-run.runner-mictronics.image: "ghcr.io/brentio/skyfollower-runner-mictronics:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-mictronics.network: *ofelia-runner-network
-      ofelia.job-run.runner-mictronics.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-mictronics.environment: *ofelia-runner-environment
       ofelia.job-run.runner-mictronics.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-nz-caa-registry.schedule: "0 10 5 * * 3"
       ofelia.job-run.runner-nz-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-nz-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-nz-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-nz-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-nz-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-nz-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-no-caa-registry.schedule: "0 10 6 * * 3"
       ofelia.job-run.runner-no-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-no-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-no-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-no-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-no-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-no-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-fr-dgac-registry.schedule: "0 10 7 * * 3"
       ofelia.job-run.runner-fr-dgac-registry.image: "ghcr.io/brentio/skyfollower-runner-fr-dgac-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-fr-dgac-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-fr-dgac-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-fr-dgac-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-fr-dgac-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-br-anac-registry.schedule: "0 10 8 * * 3"
       ofelia.job-run.runner-br-anac-registry.image: "ghcr.io/brentio/skyfollower-runner-br-anac-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-br-anac-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-br-anac-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-br-anac-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-br-anac-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-is-samgongustofa-registry.schedule: "0 10 9 * * 3"
       ofelia.job-run.runner-is-samgongustofa-registry.image: "ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-is-samgongustofa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-is-samgongustofa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-is-samgongustofa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-is-samgongustofa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-lu-dac-registry.schedule: "0 10 10 * * 3"
       ofelia.job-run.runner-lu-dac-registry.image: "ghcr.io/brentio/skyfollower-runner-lu-dac-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-lu-dac-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-lu-dac-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-lu-dac-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-lu-dac-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-bz-bdca-registry.schedule: "0 10 11 * * 3"
       ofelia.job-run.runner-bz-bdca-registry.image: "ghcr.io/brentio/skyfollower-runner-bz-bdca-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-bz-bdca-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-bz-bdca-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-bz-bdca-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-bz-bdca-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-at-austrocontrol-registry.schedule: "0 10 12 * * 3"
       ofelia.job-run.runner-at-austrocontrol-registry.image: "ghcr.io/brentio/skyfollower-runner-at-austrocontrol-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-at-austrocontrol-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-at-austrocontrol-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-at-austrocontrol-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-at-austrocontrol-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-ch-bazl-registry.schedule: "0 10 13 * * 3"
       ofelia.job-run.runner-ch-bazl-registry.image: "ghcr.io/brentio/skyfollower-runner-ch-bazl-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ch-bazl-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-ch-bazl-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-ch-bazl-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ch-bazl-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-au-casa-registry.schedule: "0 10 7 * * 2"
       ofelia.job-run.runner-au-casa-registry.image: "ghcr.io/brentio/skyfollower-runner-au-casa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-au-casa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-au-casa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-au-casa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-au-casa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-kr-koca-registry.schedule: "0 10 8 * * 2"
       ofelia.job-run.runner-kr-koca-registry.image: "ghcr.io/brentio/skyfollower-runner-kr-koca-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-kr-koca-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-kr-koca-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-kr-koca-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-kr-koca-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-bg-caa-registry.schedule: "0 10 0 * * 3"
       ofelia.job-run.runner-bg-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-bg-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-bg-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-bg-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-bg-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-bg-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-hr-ccaa-registry.schedule: "0 10 23 * * 2"
       ofelia.job-run.runner-hr-ccaa-registry.image: "ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-hr-ccaa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-hr-ccaa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-hr-ccaa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-hr-ccaa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-cy-dca-registry.schedule: "0 10 22 * * 2"
       ofelia.job-run.runner-cy-dca-registry.image: "ghcr.io/brentio/skyfollower-runner-cy-dca-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-cy-dca-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-cy-dca-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-cy-dca-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-cy-dca-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-cz-caa-registry.schedule: "0 10 21 * * 2"
       ofelia.job-run.runner-cz-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-cz-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-cz-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-cz-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-cz-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-cz-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-ee-transpordiamet-registry.schedule: "0 10 20 * * 2"
       ofelia.job-run.runner-ee-transpordiamet-registry.image: "ghcr.io/brentio/skyfollower-runner-ee-transpordiamet-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ee-transpordiamet-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-ee-transpordiamet-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-ee-transpordiamet-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ee-transpordiamet-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-ge-gcaa-registry.schedule: "0 10 19 * * 2"
       ofelia.job-run.runner-ge-gcaa-registry.image: "ghcr.io/brentio/skyfollower-runner-ge-gcaa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ge-gcaa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-ge-gcaa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-ge-gcaa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ge-gcaa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-gg-2reg-registry.schedule: "0 10 18 * * 2"
       ofelia.job-run.runner-gg-2reg-registry.image: "ghcr.io/brentio/skyfollower-runner-gg-2reg-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-gg-2reg-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-gg-2reg-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-gg-2reg-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-gg-2reg-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-kg-caa-registry.schedule: "0 10 17 * * 2"
       ofelia.job-run.runner-kg-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-kg-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-kg-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-kg-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-kg-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-kg-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-lv-caa-registry.schedule: "0 10 16 * * 2"
       ofelia.job-run.runner-lv-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-lv-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-lv-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-lv-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-lv-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-lv-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-md-caa-registry.schedule: "0 10 14 * * 2"
       ofelia.job-run.runner-md-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-md-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-md-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-md-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-md-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-md-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-mv-caa-registry.schedule: "0 10 15 * * 2"
       ofelia.job-run.runner-mv-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-mv-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-mv-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-mv-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-mv-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-mv-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-me-caa-registry.schedule: "0 10 13 * * 2"
       ofelia.job-run.runner-me-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-me-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-me-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-me-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-me-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-me-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-hu-kozhaf-registry.schedule: "0 10 12 * * 2"
       ofelia.job-run.runner-hu-kozhaf-registry.image: "ghcr.io/brentio/skyfollower-runner-hu-kozhaf-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-hu-kozhaf-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-hu-kozhaf-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-hu-kozhaf-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-hu-kozhaf-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-mk-caa-registry.schedule: "0 10 11 * * 2"
       ofelia.job-run.runner-mk-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-mk-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-mk-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-mk-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-mk-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-mk-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-rs-cad-registry.schedule: "0 10 10 * * 2"
       ofelia.job-run.runner-rs-cad-registry.image: "ghcr.io/brentio/skyfollower-runner-rs-cad-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-rs-cad-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-rs-cad-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-rs-cad-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-rs-cad-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-pg-casapng-registry.schedule: "0 10 11 1 * *"
       ofelia.job-run.runner-pg-casapng-registry.image: "ghcr.io/brentio/skyfollower-runner-pg-casapng-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-pg-casapng-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-pg-casapng-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-pg-casapng-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-pg-casapng-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-sg-caas-registry.schedule: "0 10 10 1 * *"
       ofelia.job-run.runner-sg-caas-registry.image: "ghcr.io/brentio/skyfollower-runner-sg-caas-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-sg-caas-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-sg-caas-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-sg-caas-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-sg-caas-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-sk-nsat-registry.schedule: "0 10 9 * * 2"
       ofelia.job-run.runner-sk-nsat-registry.image: "ghcr.io/brentio/skyfollower-runner-sk-nsat-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-sk-nsat-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-sk-nsat-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-sk-nsat-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-sk-nsat-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-nl-ilt-registry.schedule: "0 10 5 * * 4"
       ofelia.job-run.runner-nl-ilt-registry.image: "ghcr.io/brentio/skyfollower-runner-nl-ilt-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-nl-ilt-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-nl-ilt-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-nl-ilt-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-nl-ilt-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-ky-caa-registry.schedule: "0 10 6 * * 4"
       ofelia.job-run.runner-ky-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-ky-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ky-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-ky-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-ky-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ky-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-im-ardis-registry.schedule: "0 10 7 * * 4"
       ofelia.job-run.runner-im-ardis-registry.image: "ghcr.io/brentio/skyfollower-runner-im-ardis-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-im-ardis-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-im-ardis-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-im-ardis-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-im-ardis-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-es-aesa-registry.schedule: "0 10 8 * * 4"
       ofelia.job-run.runner-es-aesa-registry.image: "ghcr.io/brentio/skyfollower-runner-es-aesa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-es-aesa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-es-aesa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-es-aesa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-es-aesa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-tc-caa-registry.schedule: "0 10 9 * * 4"
       ofelia.job-run.runner-tc-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-tc-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-tc-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-tc-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-tc-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-tc-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-bs-caa-registry.schedule: "0 10 5 * * 5"
       ofelia.job-run.runner-bs-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-bs-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-bs-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-bs-caa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-bs-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-bs-caa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-us-faa-registry.schedule: "0 10 5 * * 6"
       ofelia.job-run.runner-us-faa-registry.image: "ghcr.io/brentio/skyfollower-runner-us-faa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-us-faa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-us-faa-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-us-faa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-us-faa-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-ca-transport-canada-registry.schedule: "0 10 5 * * 7"
       ofelia.job-run.runner-ca-transport-canada-registry.image: "ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ca-transport-canada-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-ca-transport-canada-registry.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-ca-transport-canada-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ca-transport-canada-registry.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-airportwebcams-special-liveries.schedule: "0 10 6 * * 5"
       ofelia.job-run.runner-airportwebcams-special-liveries.image: "ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-airportwebcams-special-liveries.network: *ofelia-runner-network
-      ofelia.job-run.runner-airportwebcams-special-liveries.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-airportwebcams-special-liveries.environment: *ofelia-runner-environment
       ofelia.job-run.runner-airportwebcams-special-liveries.delete: *ofelia-runner-delete
 
       # Upstream repo's daily commit lands ~03:49-03:51 UTC; run an hour after.
       ofelia.job-run.runner-vrs-standing-data.schedule: "0 50 4 * * *"
       ofelia.job-run.runner-vrs-standing-data.image: "ghcr.io/brentio/skyfollower-runner-vrs-standing-data:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-vrs-standing-data.network: *ofelia-runner-network
-      ofelia.job-run.runner-vrs-standing-data.volume: *ofelia-runner-volume
+      ofelia.job-run.runner-vrs-standing-data.environment: *ofelia-runner-environment
       ofelia.job-run.runner-vrs-standing-data.delete: *ofelia-runner-delete
 
   # ---------------------------------------------------------------------------
@@ -378,8 +395,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-mictronics:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-mictronics
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -387,12 +403,12 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ourairports:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ourairports
     profiles: ["runners"]
+    environment: *runner-environment
     volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
       # Mounted as a directory (not a single file) so an optional
-      # phonic_overrides.json placed alongside settings.json here can be
-      # added, edited, or removed without needing to recreate the container --
-      # a single-file mount would fail to start if its source were deleted.
+      # phonic_overrides.json placed here can be added, edited, or removed
+      # without needing to recreate the container -- a single-file mount
+      # would fail to start if its source were deleted.
       - ./config/runners:/app/config:ro
     depends_on:
       - redis
@@ -401,8 +417,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-us-faa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-us-faa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -410,8 +425,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ca-transport-canada-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -419,8 +433,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-nz-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-nz-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -428,8 +441,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-no-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-no-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -437,8 +449,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-au-casa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-au-casa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -446,8 +457,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-fr-dgac-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-fr-dgac-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -455,8 +465,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-br-anac-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-br-anac-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -464,8 +473,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-nl-ilt-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-nl-ilt-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -473,8 +481,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-bs-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-bs-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -482,8 +489,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ch-bazl-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ch-bazl-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -491,8 +497,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-at-austrocontrol-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-at-austrocontrol-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -500,8 +505,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ky-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ky-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -509,8 +513,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-uk-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -518,8 +521,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-is-samgongustofa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -527,8 +529,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-lu-dac-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-lu-dac-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -536,8 +537,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-bz-bdca-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-bz-bdca-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -545,8 +545,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-im-ardis-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-im-ardis-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -554,8 +553,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-es-aesa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-es-aesa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -563,8 +561,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-kr-koca-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-kr-koca-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -572,8 +569,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-cz-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-cz-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -581,8 +577,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ee-transpordiamet-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ee-transpordiamet-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -590,8 +585,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-ge-gcaa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ge-gcaa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -599,8 +593,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-gg-2reg-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-gg-2reg-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -608,8 +601,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-kg-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-kg-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -617,8 +609,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-lv-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-lv-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -626,8 +617,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-md-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-md-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -635,8 +625,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-mv-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-mv-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -644,8 +633,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-me-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-me-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -653,8 +641,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-hu-kozhaf-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-hu-kozhaf-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -662,8 +649,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-mk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-mk-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -671,8 +657,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-pg-casapng-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-pg-casapng-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -680,8 +665,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-rs-cad-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-rs-cad-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -689,8 +673,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-sg-caas-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-sg-caas-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -698,8 +681,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-sk-nsat-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-sk-nsat-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -707,8 +689,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-tc-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-tc-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -716,8 +697,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-bg-caa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-bg-caa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -725,8 +705,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-hr-ccaa-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -734,8 +713,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-cy-dca-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-cy-dca-registry
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -743,8 +721,7 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-airportwebcams-special-liveries
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis
 
@@ -752,7 +729,6 @@ services:
     image: ghcr.io/brentio/skyfollower-runner-vrs-standing-data:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-vrs-standing-data
     profiles: ["runners"]
-    volumes:
-      - ./config/runners/settings.json:/app/settings.json:ro
+    environment: *runner-environment
     depends_on:
       - redis

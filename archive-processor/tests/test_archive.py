@@ -81,10 +81,10 @@ def _make_processor(tmp_dir: str, flight_ttl_seconds: int = 300):
         "redis": {"host": "localhost"},
         "mqtt": None,
         "telemetry_interval_seconds": 30,
-        "data_dir": tmp_dir,
     }
 
-    with patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
+    with patch("archive_processor.main.DATA_DIR", tmp_dir), \
+         patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
          patch("archive_processor.main.boto3.Session"):
         mock_redis = MagicMock()
         MockRedis.return_value = mock_redis
@@ -159,9 +159,9 @@ class TestAwsSetupFilesWrittenOnStartup:
                 "redis": {"host": "localhost"},
                 "mqtt": None,
                 "telemetry_interval_seconds": 30,
-                "data_dir": tmp_dir,
             }
-            with patch("archive_processor.main.redis_lib.Redis"), \
+            with patch("archive_processor.main.DATA_DIR", tmp_dir), \
+                 patch("archive_processor.main.redis_lib.Redis"), \
                  patch("archive_processor.main.boto3.Session"):
                 ArchiveProcessor(config)
 
@@ -474,10 +474,10 @@ class TestRedisCounterIncrements:
             "redis": {"host": "localhost"},
             "mqtt": None,
             "telemetry_interval_seconds": 30,
-            "data_dir": tmp_dir,
         }
 
-        with patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
+        with patch("archive_processor.main.DATA_DIR", tmp_dir), \
+             patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
              patch("archive_processor.main.boto3.Session"):
             mock_redis = MagicMock()
             MockRedis.return_value = mock_redis
@@ -529,10 +529,10 @@ class TestMlatOnlySkip:
             "redis": {"host": "localhost"},
             "mqtt": None,
             "telemetry_interval_seconds": 30,
-            "data_dir": tmp_dir,
         }
 
-        with patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
+        with patch("archive_processor.main.DATA_DIR", tmp_dir), \
+             patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
              patch("archive_processor.main.boto3.Session"):
             mock_redis = MagicMock()
             MockRedis.return_value = mock_redis
@@ -1399,8 +1399,8 @@ class TestFlightTtlLoad:
             assert processor._flight_ttl_seconds == 300
 
     def test_stitch_uses_loaded_value_not_config(self):
-        """_try_stitch must read the cached attribute, not settings.json —
-        config no longer carries flight_ttl_seconds at all."""
+        """_try_stitch must read the cached attribute — config no longer
+        carries flight_ttl_seconds at all."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=10)
             assert "flight_ttl_seconds" not in processor._cfg

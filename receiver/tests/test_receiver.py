@@ -46,9 +46,9 @@ class TestSourceLoopDispatch:
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": source}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def _run_dispatch(self, r, source: str):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -110,9 +110,9 @@ class TestConnectionConnectedState:
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_connected_true_while_reader_runs_then_false_after(self):
         r = self._make_receiver()
@@ -168,9 +168,9 @@ class TestReconnectCounter:
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_increments_on_repeated_connection_errors(self):
         r = self._make_receiver()
@@ -267,9 +267,9 @@ class TestIcaoRoutingIntegration:
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "telemetry_interval_seconds": 30,
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_handle_message_routes_by_icao_hex(self):
         """_handle_message calls _publish with the ICAO hex as routing key —
@@ -450,9 +450,9 @@ class TestPikaInvoke:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_raises_when_no_connection(self):
         r = self._make_receiver()
@@ -496,9 +496,9 @@ class TestDoPublish:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_raises_when_channel_gone(self):
         r = self._make_receiver()
@@ -530,9 +530,9 @@ class TestPublishRoutesThroughPikaInvoke:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_publish_success_does_not_fall_back(self):
         r = self._make_receiver()
@@ -593,9 +593,9 @@ class TestFallbackPutWrapsRoutingKey:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_fallback_put_wraps_routing_key_and_payload(self):
         r = self._make_receiver()
@@ -648,9 +648,9 @@ class TestDrainFallback:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_drain_fallback_publishes_queued_items(self):
         r = self._make_receiver()
@@ -839,11 +839,11 @@ class TestReceiverIdAndTopics:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": data_dir or tempfile.mkdtemp(),
         }
         if name is not None:
             cfg["name"] = name
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", data_dir or tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_id_is_auto_generated(self):
         r = self._make_receiver()
@@ -866,9 +866,8 @@ class TestReceiverIdAndTopics:
     def test_main_constructs_receiver_from_config_only(self):
         """main() no longer reads any RECEIVER_ID env var -- Receiver is
         constructed from config alone."""
-        with patch("receiver.main._load_config", return_value={
+        with patch("receiver.main.load_config", return_value={
             "sources": [], "rabbitmq": {"host": "x", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }):
             with patch("receiver.main.Receiver") as mock_cls:
                 mock_cls.return_value.start = MagicMock()
@@ -895,9 +894,9 @@ class TestTelemetryPayload:
                 {"host": "localhost", "port": 30105, "source": "MLAT"},
             ],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_publish_telemetry_correct_base_topic(self):
         r = self._make_receiver()
@@ -1052,9 +1051,9 @@ class TestPublishTelemetryVersion:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_reads_version_env_var(self):
         with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
@@ -1091,11 +1090,11 @@ class TestHaDeviceNameFallback:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "data_dir": tempfile.mkdtemp(),
         }
         if name is not None:
             cfg["name"] = name
-        return Receiver(cfg)
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
 
     def test_uses_friendly_name_when_set(self):
         r = self._make_receiver(name="Attic 1090")

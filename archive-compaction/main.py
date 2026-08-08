@@ -43,6 +43,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
+from shared.config import DATA_DIR, ConfigError, load_config
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
@@ -52,7 +53,7 @@ logger = logging.getLogger("archive-compaction")
 MQTT_ROOT = "SkyFollower/archive-compaction"
 
 # Template resolved (__BUCKET_NAME__ substitution only, no AWS API calls)
-# and written to {data_dir}/aws-setup/ on every run -- see
+# and written to {DATA_DIR}/aws-setup/ on every run -- see
 # shared/aws_setup.py and docs/aws-setup.md.
 _IAM_POLICY_TEMPLATE = os.path.join(
     os.path.dirname(__file__), "..", "specs", "aws", "iam-policies", "archive-compaction.json"
@@ -139,13 +140,11 @@ def is_per_flight_file(key: str) -> bool:
 # S3
 # ---------------------------------------------------------------------------
 
-def connect_s3(s3_cfg: dict):
-    session = boto3.Session(
-        aws_access_key_id=s3_cfg.get("access_key_id"),
-        aws_secret_access_key=s3_cfg.get("secret_access_key"),
-        region_name=s3_cfg.get("region", "us-east-1"),
-    )
-    return session.client("s3")
+def connect_s3():
+    """No credential arguments: boto3 reads AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION from its own default
+    credential chain, which an instance role can also satisfy."""
+    return boto3.Session().client("s3")
 
 
 def list_partition_objects(s3_client, bucket: str, prefix: str) -> list[str]:
@@ -525,21 +524,15 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Config / entry point
+# Entry point
 # ---------------------------------------------------------------------------
-
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
 
 def main() -> None:
     try:
-        cfg = _load_config()
-    except FileNotFoundError as exc:
+        cfg = load_config("mqtt", "s3")
+    except ConfigError as exc:
         configure_logging()
-        logger.critical("Settings file not found: %s", exc)
+        logger.critical("%s", exc)
         sys.exit(1)
 
     configure_logging(cfg.get("log_level"))
@@ -558,15 +551,14 @@ def main() -> None:
     }
 
     try:
-        s3_cfg = cfg["s3"]
-        bucket = s3_cfg["bucket"]
+        bucket = cfg["s3"]["bucket"]
 
         write_aws_setup_files(
-            cfg.get("data_dir", "/app/data"), bucket,
+            DATA_DIR, bucket,
             {_IAM_POLICY_TEMPLATE: "iam-policy.json"},
         )
 
-        s3_client = connect_s3(s3_cfg)
+        s3_client = connect_s3()
 
         result = run_compaction(s3_client, bucket)
 

@@ -95,8 +95,6 @@ Reads `settings.json` (mounted at `/app/settings.json`):
 `redis_ttl_days` is intentionally not read from `settings.json` by this
 runner — see TTL note above.
 
-The settings file path defaults to `/app/settings.json` and can be overridden with the `SETTINGS_PATH` environment variable.
-
 ## MQTT
 
 Published once, at the end of a run, to `SkyFollower/runner/vrs-standing-data/statistic/{name}` (all retained):

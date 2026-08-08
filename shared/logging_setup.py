@@ -2,7 +2,7 @@
 Shared logging configuration for data runners.
 
 Every runner's `main()` used to call `logging.basicConfig(level=logging.INFO,
-...)` before loading settings.json, so the documented `log_level` config field
+...)` before loading its configuration, so the documented `log_level` field
 had no way to actually reach the logger. Runners should load config first,
 then call `configure_logging(cfg.get("log_level"))`.
 """

@@ -17,6 +17,17 @@ time via a relative path reference in their `requirements.txt`.
   (`CompletedFlight`). Also exports `generate_flight_id()` which returns
   a UUID-v7 string used as the `_id` of each archived flight.
 
+- **`config.py`** — `load_config()`, which builds a component's configuration
+  from environment variables and returns the nested dictionary shape every
+  component already consumed. A component names the blocks it reads
+  (`load_config("redis", "mqtt", "runner")`), so no container is handed
+  credentials it never uses, and a startup failure reports every missing or
+  malformed variable at once rather than one per restart. Per-block helpers
+  (`mqtt_config()`, `redis_config()`, `rabbitmq_config()`, `s3_config()`, …)
+  define each block's shape once. `DATA_DIR` lives here too, as a constant:
+  every compose file fixes the data directory at `/app/data` via its bind
+  mount, so it was never a per-deployment value.
+
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.

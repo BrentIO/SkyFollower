@@ -15,8 +15,20 @@ services:
     # uvicorn, which listens on 127.0.0.1:8000 inside the container only.
     ports:
       - "80:80"
+    # Named one by one from this host's .env rather than `env_file: .env`,
+    # so a container only ever holds the values it actually reads.
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      S3_BUCKET: ${S3_BUCKET}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      ATHENA_WORKGROUP: ${ATHENA_WORKGROUP:-skyfollower}
+      ATHENA_DATABASE: ${ATHENA_DATABASE:-skyfollower}
+      ATHENA_TABLE: ${ATHENA_TABLE:-archive_flights}
     volumes:
-      - ./config/management-ui/settings.json:/app/settings.json:ro
       # config:rules/config:areas are the only Redis keys holding
       # user-authored state with no automatic regeneration path -- this
       # backend backs them up here on every write and restores from here

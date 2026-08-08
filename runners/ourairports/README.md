@@ -74,8 +74,6 @@ Reads `settings.json` (mounted at `/app/settings.json`):
 | `mqtt.password` | ❌ | — | |
 | `redis_ttl_days` | ❌ | `14` | TTL applied to each `airport:{icao_code}` key written by this runner |
 
-The settings file path defaults to `/app/settings.json` and can be overridden with the `SETTINGS_PATH` environment variable.
-
 ## MQTT
 
 Published once, at the end of a run, to `SkyFollower/runner/ourairports/statistic/{name}` (all retained):

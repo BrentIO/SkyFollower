@@ -35,6 +35,7 @@ import pika
 import pyModeS as pms
 
 from shared.adsb_1090 import parse_tcp_stream
+from shared.config import DATA_DIR, ConfigError, load_config
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
@@ -133,11 +134,10 @@ class Receiver:
             self._last_message_at[key] = None
 
         # Fallback SQLite queue
-        data_dir = config.get("data_dir", "/app/data")
-        os.makedirs(data_dir, exist_ok=True)
-        self._fallback = FallbackQueue(os.path.join(data_dir, "queue.db"))
+        os.makedirs(DATA_DIR, exist_ok=True)
+        self._fallback = FallbackQueue(os.path.join(DATA_DIR, "queue.db"))
 
-        self._id = _load_or_create_receiver_id(data_dir)
+        self._id = _load_or_create_receiver_id(DATA_DIR)
         # Optional human-friendly label for HA name/model/sensor labels --
         # self._id (the persisted UUID) stays the stable identifier used for
         # topic paths/unique_id regardless of whether this is set or changes.
@@ -728,14 +728,14 @@ class Receiver:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
 def main() -> None:
-    config = _load_config()
+    try:
+        config = load_config("rabbitmq", "mqtt", "telemetry", "receiver")
+    except ConfigError as exc:
+        configure_logging()
+        logger.critical("%s", exc)
+        sys.exit(1)
+
     receiver = Receiver(config)
 
     def _handle_signal(sig, frame):

@@ -1,12 +1,33 @@
 name: skyfollower-message-processor
 
+# Interpolated from this host's .env (written by
+# scripts/download-host-files.sh). Named one variable at a time rather than
+# `env_file: .env`, so a container only ever holds the values it reads.
+# MESSAGE_PROCESSOR_ID is not here: it's the one value that differs per
+# instance, so each service sets it alongside this block.
+x-message-processor-environment: &message-processor-environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
+  RULE_NOTIFICATION_MAX_LAG_SECONDS: ${RULE_NOTIFICATION_MAX_LAG_SECONDS:-30}
+  LATITUDE: ${LATITUDE}
+  LONGITUDE: ${LONGITUDE}
+  RABBITMQ_HOST: ${RABBITMQ_HOST}
+  RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+  RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  MQTT_HOST: ${MQTT_HOST}
+  MQTT_PORT: ${MQTT_PORT:-1883}
+  MQTT_USERNAME: ${MQTT_USERNAME}
+  MQTT_PASSWORD: ${MQTT_PASSWORD}
+
 services:
 
   message-processor-0:
     image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     volumes:
-      - ./config/message-processor/settings.json:/app/settings.json:ro
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/message-processor-0:/app/data
@@ -21,8 +42,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    # The prefix defaults to this node's hostname, written into .env by
+    # scripts/download-host-files.sh, so two nodes each running several
+    # processors never collide on an ID without anyone coordinating.
     environment:
-      MESSAGE_PROCESSOR_ID: "0"
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-0
 
   # To add a second message processor on this host, uncomment the block
   # below. No receiver is touched: a processor declares and binds its own
@@ -33,7 +58,6 @@ services:
   #   image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
   #   restart: unless-stopped
   #   volumes:
-  #     - ./config/message-processor/settings.json:/app/settings.json:ro
   #     - ./data/message-processor-1:/app/data
   #   tmpfs:
   #     - /app/health
@@ -44,4 +68,5 @@ services:
   #     retries: 3
   #     start_period: 30s
   #   environment:
-  #     MESSAGE_PROCESSOR_ID: "1"
+  #     <<: *message-processor-environment
+  #     MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-1
