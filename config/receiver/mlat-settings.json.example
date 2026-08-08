@@ -4,7 +4,6 @@
         { "host": "mlat-server-a.example.com", "port": 30105, "source": "MLAT" },
         { "host": "mlat-server-b.example.com", "port": 30105, "source": "MLAT" }
     ],
-    "processor_count": 1,
     "rabbitmq": {
         "host": "192.168.1.x",
         "port": 5672,

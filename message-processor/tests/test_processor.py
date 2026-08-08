@@ -51,9 +51,10 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
+    main as processor_main,
 )
 from shared.models import InboundMessage, Position, Velocity
-from shared.redis_keys import operator_key
+from shared.redis_keys import message_processor_heartbeat_key, operator_key
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,9 @@ def _minimal_config() -> dict:
     }
 
 
-def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMock]:
+def _make_processor(
+    cfg: dict | None = None, message_processor_id: str = "0"
+) -> tuple[MessageProcessor, MagicMock]:
     """Construct a real MessageProcessor (file-backed active store) with Redis/rules/
     processor-ID-claim mocked out, matching TestProcessorEnrichment's pattern
     but keeping the real on-disk DB instead of swapping in an in-memory one —
@@ -95,7 +98,7 @@ def _make_processor(cfg: dict | None = None) -> tuple[MessageProcessor, MagicMoc
         # caring about it.
         mock_redis.json.return_value.get.return_value = None
         MockRedis.return_value = mock_redis
-        p = MessageProcessor(cfg, message_processor_id=0)
+        p = MessageProcessor(cfg, message_processor_id=message_processor_id)
         p._redis = mock_redis
         p._merge_sha = "abc123sha"
         p._route_sha = "routesha123"
@@ -807,6 +810,89 @@ class TestDepthHWM:
 
 
 # ---------------------------------------------------------------------------
+# MESSAGE_PROCESSOR_ID and the consistent-hash exchange binding
+# ---------------------------------------------------------------------------
+
+class TestMessageProcessorIdentity:
+    """MESSAGE_PROCESSOR_ID is any string unique across the deployment, and
+    it names both the input queue and the Redis duplicate-ID guard key."""
+
+    def test_queue_name_uses_the_id_verbatim(self):
+        p, _ = _make_processor(message_processor_id="turing-node-3-1")
+        assert p._queue_name == "adsb-turing-node-3-1"
+
+    def test_heartbeat_key_uses_the_id_verbatim(self):
+        p, mock_redis = _make_processor(message_processor_id="turing-node-3-1")
+        mock_redis.set.return_value = True
+
+        p._claim_message_processor_id()
+
+        assert mock_redis.set.call_args.args[0] == message_processor_heartbeat_key(
+            "turing-node-3-1"
+        )
+
+    def test_duplicate_id_still_exits(self):
+        p, mock_redis = _make_processor(message_processor_id="turing-node-3-1")
+        mock_redis.set.return_value = None
+
+        with pytest.raises(SystemExit):
+            p._claim_message_processor_id()
+
+    def test_main_passes_the_id_through_without_coercion(self):
+        with patch.dict(os.environ, {"MESSAGE_PROCESSOR_ID": "turing-node-3-1"}), \
+             patch("message_processor.main._load_config", return_value=_minimal_config()), \
+             patch("message_processor.main.MessageProcessor") as MockProcessor, \
+             patch("message_processor.main.signal.signal"):
+            processor_main()
+
+        assert MockProcessor.call_args.args[1] == "turing-node-3-1"
+
+    def test_main_requires_the_id(self):
+        with patch.dict(os.environ, {"MESSAGE_PROCESSOR_ID": ""}), \
+             pytest.raises(SystemExit):
+            processor_main()
+
+
+class TestConsumeLoopExchangeBinding:
+    """Each processor owns its queue: it declares the shared exchange
+    topology and binds its own queue to it, rather than consuming from a
+    queue some receiver pre-declared."""
+
+    def _run_one_connect(self, p) -> MagicMock:
+        channel = MagicMock()
+        channel.start_consuming.side_effect = lambda: p._shutdown.set()
+        with patch("message_processor.main.pika.BlockingConnection") as MockConnection:
+            MockConnection.return_value.channel.return_value = channel
+            p._consume_loop()
+        return channel
+
+    def test_declares_the_hash_exchange_with_its_alternate_exchange(self):
+        p, _ = _make_processor()
+        channel = self._run_one_connect(p)
+
+        channel.exchange_declare.assert_any_call(
+            exchange="adsb",
+            exchange_type="x-consistent-hash",
+            durable=True,
+            arguments={"alternate-exchange": "adsb-unroutable"},
+        )
+
+    def test_binds_its_own_queue_with_weight_one(self):
+        p, _ = _make_processor(message_processor_id="turing-node-3-1")
+        channel = self._run_one_connect(p)
+
+        channel.queue_declare.assert_any_call(
+            queue="adsb-turing-node-3-1", durable=True
+        )
+        channel.queue_bind.assert_any_call(
+            queue="adsb-turing-node-3-1", exchange="adsb", routing_key="1"
+        )
+        channel.basic_consume.assert_called_once_with(
+            queue="adsb-turing-node-3-1", on_message_callback=p._on_message
+        )
+
+
+# ---------------------------------------------------------------------------
 # MessageProcessor._rmq_queue_depth — passive queue_declare on this processor's own
 # input queue, reusing the existing consumer channel
 # ---------------------------------------------------------------------------
@@ -899,7 +985,7 @@ class TestProcessorEnrichment:
             mock_redis = MagicMock()
             mock_redis.script_load.return_value = "abc123sha"
             MockRedis.return_value = mock_redis
-            p = MessageProcessor(cfg, message_processor_id=0)
+            p = MessageProcessor(cfg, message_processor_id="0")
             p._redis = mock_redis
             p._merge_sha = "abc123sha"
             p._db = _make_db()
@@ -1388,7 +1474,7 @@ class TestTelemetryPayload:
 
     def _make_processor(self) -> MessageProcessor:
         with patch("message_processor.main.redis_lib.Redis"):
-            p = MessageProcessor(_minimal_config(), message_processor_id=0)
+            p = MessageProcessor(_minimal_config(), message_processor_id="0")
         return p
 
     def test_correct_base_topic(self):

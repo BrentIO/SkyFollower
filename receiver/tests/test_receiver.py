@@ -3,8 +3,8 @@ Tests for receiver/main.py components that don't require live infrastructure.
 
 Covers:
 - TCP stream parsing (bytes → hex messages)
-- ICAO hex extraction and routing (modulo)
-- The receiver-specific queue_name wrap/unwrap around shared.FallbackQueue
+- ICAO hex extraction and the routing key handed to the consistent-hash exchange
+- The receiver-specific routing_key wrap/unwrap around shared.FallbackQueue
   (the queue itself -- put/drain/depth/dead-lettering -- is covered in
   shared/tests/test_fallback_queue.py)
 - Rate tracker
@@ -45,7 +45,6 @@ class TestSourceLoopDispatch:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": source}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -110,7 +109,6 @@ class TestConnectionConnectedState:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -169,7 +167,6 @@ class TestReconnectCounter:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -249,7 +246,7 @@ class TestReconnectCounter:
 
 
 # ---------------------------------------------------------------------------
-# ICAO extraction and queue routing
+# ICAO extraction and exchange routing
 #
 # parse_tcp_stream's own parsing correctness is covered in
 # shared/tests/test_adsb_1090.py, since receiver/main.py imports it from
@@ -258,32 +255,26 @@ class TestReconnectCounter:
 
 class TestIcaoRoutingIntegration:
     """
-    Tests that verify ICAO extraction and modulo-routing behaviour via the
-    Receiver._handle_message internals (using mocked publishing).
+    Tests that verify ICAO extraction and the routing key handed to the
+    consistent-hash exchange, via the Receiver._handle_message internals
+    (using mocked publishing).
     """
 
-    def _make_receiver(self, processor_count: int = 4):
+    def _make_receiver(self):
         """Build a Receiver with a stub config (no real connections)."""
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": processor_count,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "telemetry_interval_seconds": 30,
             "data_dir": tempfile.mkdtemp(),
         }
         return Receiver(cfg)
 
-    def test_queue_name_from_icao_modulo(self):
-        """Queue is adsb-{int(icao_hex, 16) % processor_count}."""
-        icao_hex = "4B1900"
-        processor_count = 4
-        expected_queue = f"adsb-{int(icao_hex, 16) % processor_count}"
-        assert expected_queue == f"adsb-{0x4B1900 % 4}"
-
-    def test_handle_message_routes_to_correct_queue(self):
-        """_handle_message calls _publish with the right queue_name."""
-        r = self._make_receiver(processor_count=4)
+    def test_handle_message_routes_by_icao_hex(self):
+        """_handle_message calls _publish with the ICAO hex as routing key —
+        the exchange, not the receiver, decides which processor gets it."""
+        r = self._make_receiver()
 
         # A real DF17 ADS-B message — pyModeS should extract ICAO from it
         raw_hex = "8D4840D6202CC371C32CE0576098"
@@ -294,13 +285,11 @@ class TestIcaoRoutingIntegration:
         r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
 
         assert len(published) == 1
-        queue_name, payload = published[0]
-        assert queue_name.startswith("adsb-")
-        idx = int(queue_name.split("-")[1])
-        assert 0 <= idx < 4
+        routing_key, payload = published[0]
 
         import json
         msg_dict = json.loads(payload)
+        assert routing_key == msg_dict["icao_hex"]
         assert msg_dict["source"] == "1090"
         assert len(msg_dict["icao_hex"]) == 6
         assert msg_dict["raw"] == raw_hex.upper() or msg_dict["raw"] == raw_hex
@@ -308,7 +297,7 @@ class TestIcaoRoutingIntegration:
     def test_handle_message_routes_mlat_same_as_1090(self):
         """MLAT frames use the same raw Mode S format as 1090 — no special
         handling is needed; the source tag is simply carried through."""
-        r = self._make_receiver(processor_count=4)
+        r = self._make_receiver()
 
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
@@ -328,7 +317,7 @@ class TestIcaoRoutingIntegration:
     def test_handle_978_message_routes_correctly(self):
         """978 UAT messages skip pyModeS entirely -- icao_hex/received_at come
         from parse_978_line, not from decoding raw as Mode S."""
-        r = self._make_receiver(processor_count=4)
+        r = self._make_receiver()
 
         raw_hex, icao_hex, received_at = parse_978_line(
             "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
@@ -340,7 +329,8 @@ class TestIcaoRoutingIntegration:
         r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"], ("localhost", 30002))
 
         assert len(published) == 1
-        _, payload = published[0]
+        routing_key, payload = published[0]
+        assert routing_key == "A3D3E3"
 
         import json
         msg_dict = json.loads(payload)
@@ -369,11 +359,11 @@ class TestIcaoRoutingIntegration:
         r._handle_message("0000000000", "1090", r._rates["1090"], ("localhost", 30002))
         assert published == []
 
-    def test_routing_consistent_for_same_icao(self):
-        """Same ICAO always maps to the same queue for a given processor_count."""
-        r = self._make_receiver(processor_count=8)
+    def test_routing_key_consistent_for_same_icao(self):
+        """Same ICAO always yields the same routing key, which is what pins
+        an aircraft to one queue on the exchange's side."""
+        r = self._make_receiver()
         raw_hex = "8D4840D6202CC371C32CE0576098"
-        queues: set[str] = set()
 
         published: list[tuple] = []
         r._publish = lambda q, p: published.append((q, p))
@@ -381,20 +371,31 @@ class TestIcaoRoutingIntegration:
 
         for _ in range(5):
             r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
-        queues = {q for q, _ in published}
-        assert len(queues) == 1, "Same ICAO must always route to the same queue"
+        routing_keys = {q for q, _ in published}
+        assert len(routing_keys) == 1, "Same ICAO must always route the same way"
 
-    def test_single_processor_always_queue_zero(self):
-        """With processor_count=1, every message goes to adsb-0."""
-        r = self._make_receiver(processor_count=1)
-        raw_hex = "8D4840D6202CC371C32CE0576098"
+    def test_receiver_declares_no_processor_queues(self):
+        """The receiver knows nothing about how many processors exist: it
+        declares only the exchange topology, never an adsb-{id} queue."""
+        r = self._make_receiver()
+        ch = MagicMock()
 
-        published: list[tuple] = []
-        r._publish = lambda q, p: published.append((q, p))
-        r._rates["1090"] = _RateTracker()
+        with patch("receiver.main.pika.BlockingConnection") as MockConn, \
+             patch("receiver.main.time.sleep", side_effect=lambda _s: r._shutdown.set()):
+            MockConn.return_value.channel.return_value = ch
+            MockConn.return_value.process_data_events.side_effect = (
+                lambda **_kw: r._shutdown.set()
+            )
+            r._rmq_loop()
 
-        r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
-        assert published[0][0] == "adsb-0"
+        declared_queues = [c.kwargs.get("queue") for c in ch.queue_declare.call_args_list]
+        assert declared_queues == ["adsb-unroutable"]
+        ch.exchange_declare.assert_any_call(
+            exchange="adsb",
+            exchange_type="x-consistent-hash",
+            durable=True,
+            arguments={"alternate-exchange": "adsb-unroutable"},
+        )
 
     def test_handle_message_sets_last_message_at(self):
         r = self._make_receiver()
@@ -448,7 +449,6 @@ class TestPikaInvoke:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -495,7 +495,6 @@ class TestDoPublish:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -505,16 +504,17 @@ class TestDoPublish:
         r = self._make_receiver()
         r._rmq_channel = None
         with pytest.raises(RuntimeError, match="RabbitMQ channel gone"):
-            r._do_publish("adsb-0", '{"raw": "AA"}')
+            r._do_publish("4B1900", '{"raw": "AA"}')
 
     def test_calls_basic_publish_with_expected_args(self):
         r = self._make_receiver()
         mock_channel = MagicMock()
         r._rmq_channel = mock_channel
-        r._do_publish("adsb-0", '{"raw": "AA"}')
+        r._do_publish("4B1900", '{"raw": "AA"}')
         mock_channel.basic_publish.assert_called_once()
         kwargs = mock_channel.basic_publish.call_args.kwargs
-        assert kwargs["routing_key"] == "adsb-0"
+        assert kwargs["exchange"] == "adsb"
+        assert kwargs["routing_key"] == "4B1900"
         assert kwargs["body"] == b'{"raw": "AA"}'
 
 
@@ -529,7 +529,6 @@ class TestPublishRoutesThroughPikaInvoke:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -541,7 +540,7 @@ class TestPublishRoutesThroughPikaInvoke:
         r._rmq_channel = MagicMock()
         r._rmq_connection = _synchronous_rmq_connection()
 
-        r._publish("adsb-0", '{"raw": "AA"}')
+        r._publish("4B1900", '{"raw": "AA"}')
 
         assert r._fallback.depth() == 0
         r._rmq_channel.basic_publish.assert_called_once()
@@ -553,7 +552,7 @@ class TestPublishRoutesThroughPikaInvoke:
         r._rmq_channel.basic_publish.side_effect = RuntimeError("boom")
         r._rmq_connection = _synchronous_rmq_connection()
 
-        r._publish("adsb-0", '{"raw": "AA"}')
+        r._publish("4B1900", '{"raw": "AA"}')
 
         assert r._fallback.depth() == 1
         assert r._rmq_connected is False
@@ -563,7 +562,7 @@ class TestPublishRoutesThroughPikaInvoke:
         r._rmq_connected = False
         r._rmq_connection = None
 
-        r._publish("adsb-0", '{"raw": "AA"}')
+        r._publish("4B1900", '{"raw": "AA"}')
 
         assert r._fallback.depth() == 1
 
@@ -578,37 +577,35 @@ class TestPublishRoutesThroughPikaInvoke:
         r._rmq_connection = _synchronous_rmq_connection()
 
         with patch.object(r, "_pika_invoke", wraps=r._pika_invoke) as mock_invoke:
-            r._publish("adsb-0", '{"raw": "AA"}')
+            r._publish("4B1900", '{"raw": "AA"}')
 
         mock_invoke.assert_called_once()
 
 
-class TestFallbackPutWrapsQueueName:
+class TestFallbackPutWrapsRoutingKey:
     """FallbackQueue (shared/fallback_queue.py) is payload-only -- Receiver
-    wraps queue_name into the JSON payload it puts, since queue_name is the
-    target RabbitMQ routing key computed once at insert time and has to
-    survive being persisted alongside the payload rather than recomputed
-    on drain."""
+    wraps the routing key into the JSON payload it puts, so the drain path
+    is identical to the live publish path and never has to re-parse a
+    stored message body to work out where it was going."""
 
     def _make_receiver(self):
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
         return Receiver(cfg)
 
-    def test_fallback_put_wraps_queue_name_and_payload(self):
+    def test_fallback_put_wraps_routing_key_and_payload(self):
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         assert r._fallback.depth() == 1
 
         captured = []
         r._fallback.drain(captured.append)
         item = json.loads(captured[0])
-        assert item == {"queue_name": "adsb-0", "payload": '{"raw": "AA"}'}
+        assert item == {"routing_key": "4B1900", "payload": '{"raw": "AA"}'}
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +647,6 @@ class TestDrainFallback:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -658,7 +654,7 @@ class TestDrainFallback:
 
     def test_drain_fallback_publishes_queued_items(self):
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         mock_channel = MagicMock()
         r._rmq_channel = mock_channel
         r._rmq_connection = _synchronous_rmq_connection()
@@ -668,11 +664,11 @@ class TestDrainFallback:
 
         assert r._fallback.depth() == 0
         mock_channel.basic_publish.assert_called_once()
-        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "adsb-0"
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "4B1900"
 
     def test_drain_fallback_leaves_items_queued_if_channel_gone(self):
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         r._rmq_channel = None
 
         with _synchronous_drain_thread():
@@ -685,7 +681,7 @@ class TestDrainFallback:
         the connection is broken as a failed live-path publish — mirror
         _publish()'s handling."""
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         mock_channel = MagicMock()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
         r._rmq_channel = mock_channel
@@ -715,7 +711,7 @@ class TestDrainFallback:
         connected — this is what lets a stuck/missed reconnect-triggered
         drain still recover on the next tick."""
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         r._rmq_channel = MagicMock()
         r._rmq_connection = _synchronous_rmq_connection()
         r._rmq_connected = True
@@ -727,7 +723,7 @@ class TestDrainFallback:
 
     def test_telemetry_tick_does_not_drain_when_disconnected(self):
         r = self._make_receiver()
-        r._fallback_put("adsb-0", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}')
         r._rmq_connected = False
 
         self._run_one_telemetry_tick(r)
@@ -842,7 +838,6 @@ class TestReceiverIdAndTopics:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": data_dir or tempfile.mkdtemp(),
         }
@@ -899,7 +894,6 @@ class TestTelemetryPayload:
                 {"host": "localhost", "port": 30978, "source": "978"},
                 {"host": "localhost", "port": 30105, "source": "MLAT"},
             ],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -1057,7 +1051,6 @@ class TestPublishTelemetryVersion:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }
@@ -1097,7 +1090,6 @@ class TestHaDeviceNameFallback:
         from receiver.main import Receiver
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "processor_count": 1,
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "data_dir": tempfile.mkdtemp(),
         }

@@ -2,12 +2,12 @@
 
 A standalone command-line tool that reads an NDJSON capture file produced by
 `tools/traffic-recorder` and republishes its messages to RabbitMQ, using the
-same `{raw, icao_hex, received_at, source}` envelope and
-`adsb-{int(icao_hex, 16) % processor_count}` routing scheme the receiver
-uses. It lets the rest of the pipeline (message processor, rules engine,
-archive processor) be exercised repeatedly against a known, recorded set of
-traffic — without live ADS-B reception or SDR hardware, and byte-for-byte
-identical on every run.
+same `{raw, icao_hex, received_at, source}` envelope and the same routing the
+receiver uses — one publish to the `adsb` consistent-hash exchange per
+message, keyed by ICAO hex. It lets the rest of the pipeline (message
+processor, rules engine, archive processor) be exercised repeatedly against a
+known, recorded set of traffic — without live ADS-B reception or SDR
+hardware, and byte-for-byte identical on every run.
 
 It is a plain Python script, not a container — there is no Dockerfile or
 Compose service for it. Run it from any host that can reach the target
@@ -19,10 +19,10 @@ RabbitMQ broker.
 pip install -r requirements.txt
 
 python main.py --input capture.ndjson --mode relative \
-    --processor-count 1 --rabbitmq-host 192.168.1.10
+    --rabbitmq-host 192.168.1.10
 
 python main.py --input capture.ndjson --mode stress \
-    --processor-count 4 --rabbitmq-host 192.168.1.10 \
+    --rabbitmq-host 192.168.1.10 \
     --rabbitmq-user skyfollower --rabbitmq-password secret
 ```
 
@@ -34,12 +34,13 @@ published`, rate, and — in `relative` mode — estimated time remaining) is
 printed every 5 seconds. Stop early at any time with `Ctrl+C` (or
 `SIGTERM`); messages already published are not affected.
 
-`--processor-count` must match the target environment's actual message
-processor count (or the count you want to simulate) — it determines which
-queue (`adsb-0`, `adsb-1`, …) each message routes to, exactly as the
-receiver's own `processor_count` setting does. All target queues are
+The replayer has no notion of how many message processors exist — the
+exchange decides which one receives each aircraft, exactly as it does for a
+live receiver. The exchange and its `adsb-unroutable` alternate exchange are
 declared (durable) on connect, so the replayer works against a freshly
-created RabbitMQ vhost with no message processors running yet.
+created RabbitMQ vhost. With no message processors bound yet, every replayed
+message lands in `adsb-unroutable` rather than being discarded, which is
+itself a useful check that the capture is being published at all.
 
 ## Modes
 
@@ -70,7 +71,6 @@ it also never waits longer than necessary once it's behind.
 |------|----------|---------|-------------|
 | `--input` | Yes | — | Path to the NDJSON capture file to replay (see `tools/traffic-recorder`'s README for the file format). |
 | `--mode` | Yes | — | `relative` or `stress` (see [Modes](#modes) above). |
-| `--processor-count` | Yes | — | Number of processor queues to route across; must match the receiver/message-processor configuration being tested against. |
 | `--rabbitmq-host` | Yes | — | RabbitMQ hostname or IP. |
 | `--rabbitmq-port` | No | `5672` | RabbitMQ AMQP port. |
 | `--rabbitmq-user` | No | `guest` | RabbitMQ username. |
@@ -86,12 +86,12 @@ python -m pytest tools/traffic-replayer/tests/
 ```
 
 `replay()` — the function that decides, per message, whether to sleep and
-which queue to route to — is covered directly with a fake RabbitMQ channel
-and a fake clock, for both modes: that a `stress`-mode replay never sleeps,
-that a `relative`-mode replay sleeps for exactly the gap between each
-message's original `received_at`, that it stops sleeping (without erroring)
-once it has fallen behind schedule, that queue routing matches the same
-`icao_hex % processor_count` scheme as the receiver, and that setting
+what to publish — is covered directly with a fake RabbitMQ channel and a
+fake clock, for both modes: that a `stress`-mode replay never sleeps, that a
+`relative`-mode replay sleeps for exactly the gap between each message's
+original `received_at`, that it stops sleeping (without erroring) once it has
+fallen behind schedule, that every message goes to the `adsb` exchange keyed
+by its own ICAO hex (never to the default exchange), and that setting
 `stop_event` before starting halts replay immediately.
 
 `main()` itself — argument parsing, opening the real `pika` connection, and

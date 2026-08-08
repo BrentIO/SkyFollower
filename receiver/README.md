@@ -2,8 +2,8 @@
 
 The receiver connects to one or more readsb TCP streams (raw ADS-B format),
 parses each frame to extract the ICAO hex identifier, wraps the message in a
-typed `InboundMessage` envelope, and routes it to the appropriate RabbitMQ
-queue based on a modulo-bucketing scheme. When RabbitMQ is unavailable the
+typed `InboundMessage` envelope, and publishes it to RabbitMQ's consistent-hash
+exchange keyed by that hex. When RabbitMQ is unavailable the
 receiver writes to a local SQLite fallback queue and drains it automatically on
 reconnect. One receiver container handles all configured sources concurrently
 (one thread per source).
@@ -18,7 +18,6 @@ reconnect. One receiver container handles all configured sources concurrently
 |-------|------|---------|-------------|
 | `name` | string | — | Optional friendly label shown in Home Assistant (device name/model and every sensor label) in place of the generic `Receiver {short-id}` fallback. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what (or whether) this is set. |
 | `sources` | array | — | List of readsb source objects (see below). At least one is required. |
-| `processor_count` | integer | `1` | Total number of message processor containers. Must match the number of active message processor services. Used to compute `queue_name = adsb-{int(icao_hex, 16) % processor_count}`. Increment this when adding a message processor. |
 | `rabbitmq` | object | — | RabbitMQ connection settings (see below). |
 | `mqtt` | object | — | MQTT broker settings (see below). Omit the key entirely to disable MQTT. |
 | `telemetry_interval_seconds` | integer | `30` | How often (seconds) the receiver publishes MQTT statistic messages. |
@@ -141,17 +140,81 @@ Keep in mind each instance is a full copy of the container -- one thread per `so
 
 ## Routing
 
-Each incoming message is routed to a durable RabbitMQ queue named
-`adsb-{n}` where:
+Every message is published to the durable `adsb` exchange with the aircraft's
+ICAO hex as the routing key. The exchange is of type `x-consistent-hash`
+(RabbitMQ's `rabbitmq_consistent_hash_exchange` plugin), which hashes that key
+and delivers the message to exactly one of the queues bound to it — one queue
+per message processor, each bound with a weight of `1`. The same hex always
+lands on the same queue, so all messages for an aircraft reach the same
+message processor and its per-aircraft flight state, with no coordination
+between message processors.
 
-```
-n = int(icao_hex, 16) % processor_count
-```
+The receiver has no idea how many message processors exist and never needs to
+be reconfigured or restarted when that number changes. Each message processor
+declares and binds its own queue; the exchange starts routing to it the moment
+the binding exists. The exchange name, type and arguments are defined once in
+[`shared/rabbitmq_topology.py`](../shared/rabbitmq_topology.py) and declared
+idempotently by both components on every connect.
 
-This ensures all messages for a given aircraft always go to the same message processor,
-preserving per-aircraft flight state without coordination between message processors.
-On RabbitMQ connect the receiver pre-declares all queues (`adsb-0` through
-`adsb-{processor_count - 1}`).
+The exchange carries an `alternate-exchange` argument pointing at the
+`adsb-unroutable` fanout exchange, which feeds the durable `adsb-unroutable`
+queue. Anything the hash exchange cannot route — which is everything published
+while no message processor queue is bound — ends up there. Without it those
+messages would be discarded silently, because the receiver publishes without
+publisher confirms and without the `mandatory` flag. A non-zero depth on
+`adsb-unroutable` means messages arrived with nothing bound to receive them.
+
+### Cutover to consistent-hash routing
+
+An existing deployment's `adsb-0`, `adsb-1`, … queues are bound to the default
+exchange and do not migrate themselves. This is a one-time operational
+sequence with a single brief ingest gap. (The full operational runbook will
+live in the deployment documentation; this is the minimum needed to perform
+the cutover.)
+
+1. Stop the receiver(s). If a receiver's `local_queue_depth` is non-zero, let
+   it drain to zero before stopping — entries queued under the old routing
+   carry an old-format target and are dead-lettered rather than published
+   after the cutover.
+2. Let the running message processors drain `adsb-0` … `adsb-{n-1}` to zero.
+3. Stop the message processors.
+4. Add `rabbitmq_consistent_hash_exchange` to `enabled_plugins` and recreate
+   the RabbitMQ container.
+5. **Start the message processors one at a time, in the intended slot order.**
+   Binding order establishes slot order permanently; this is the only moment
+   it can be chosen deliberately.
+6. Start the receiver(s).
+7. Delete the now-empty `adsb-0` … `adsb-{n-1}` queues.
+
+Flights in progress at cutover split and are stitched back together by the
+archive processor, as with any resize.
+
+### Restarting, stopping and removing a message processor
+
+**Restarting is free.** A binding is durable state held by RabbitMQ. A
+restarting message processor redeclares its queue and rebinds; the binding
+already exists, so the call is a no-op, slot order is untouched, and no
+aircraft moves. Host reboots, container recreation and rolling upgrades all
+cost nothing.
+
+**Stopping is not unbinding.** Stopping a message processor leaves its queue
+and binding intact: its share of traffic accumulates in its queue and drains
+when it comes back — the existing, desirable behaviour. Unbinding (deleting
+the queue) removes its slot and renumbers every slot after it. The two look
+like the same action from the operator's side and are not.
+
+**Remove from the end, never the middle.** Slots are positional. Removing the
+last-bound message processor moves about 20% of aircraft, redistributed evenly
+over the survivors; removing one from the middle moves about 68%, because the
+plugin uses Jump Consistent Hash over positional slots. Treat message
+processors as a stack: add and remove at the end.
+
+None of that is data loss. Nothing is dropped and every message still routes
+and processes. In-progress flights for the reshuffled aircraft split — the old
+message processor's partial state ages out after `flight_ttl_seconds` and
+archives as one segment, the new one starts another — and the archive
+processor's split-flight stitching merges the adjacent segments. The cost is
+degraded archive quality for a few minutes.
 
 ## RabbitMQ Thread Safety
 
@@ -178,11 +241,11 @@ corrupting its buffers and crashing the connection.
 When RabbitMQ is unavailable (at startup or after a disconnect), messages are
 written to `queue.db` (SQLite WAL mode) in `data_dir` via the shared
 `FallbackQueue` (see [shared/README.md](../shared/README.md)). Since that
-class is payload-only, the receiver wraps `{queue_name, payload}` into one
-JSON string before queueing it, and unwraps it again on drain — `queue_name`
-(the target RabbitMQ routing key) is computed once at insert time and has
-to survive being persisted alongside the payload, not recomputed against a
-possibly-since-changed `processor_count`. When the RabbitMQ connection is
+class is payload-only, the receiver wraps `{routing_key, payload}` into one
+JSON string before queueing it, and unwraps it again on drain — persisting
+the routing key alongside the payload keeps the drain path identical to the
+live publish path, with no need to re-parse a stored message body to work
+out where it was going. When the RabbitMQ connection is
 re-established, the fallback queue is drained oldest-first before new
 messages are forwarded. If RabbitMQ drops mid-drain, draining stops cleanly
 and resumes on the next reconnect.

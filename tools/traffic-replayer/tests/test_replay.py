@@ -37,7 +37,6 @@ def _load_main():
 
 _mod = _load_main()
 replay = _mod.replay
-_queue_name = _mod._queue_name
 
 
 class FakeChannel:
@@ -84,12 +83,31 @@ def _messages(*received_ats: float) -> list[dict]:
     ]
 
 
-class TestQueueName:
-    def test_matches_icao_hex_modulo_processor_count(self):
-        assert _queue_name("A8AE7F", 4) == f"adsb-{int('A8AE7F', 16) % 4}"
+class TestExchangeRouting:
+    """The replayer routes exactly as the receiver does: one publish to the
+    consistent-hash exchange per message, keyed by ICAO hex, leaving the
+    broker to pick which message processor receives it."""
 
-    def test_single_processor_always_queue_zero(self):
-        assert _queue_name("FFFFFF", 1) == "adsb-0"
+    def test_publishes_to_the_hash_exchange_keyed_by_icao_hex(self):
+        channel = FakeChannel()
+        messages = _messages(100.0, 100.5)
+
+        replay(messages, channel, mode="stress", stop_event=threading.Event())
+
+        assert [(e, k) for e, k, _ in channel.published] == [
+            ("adsb", "A8AE7F"),
+            ("adsb", "A00001"),
+        ]
+
+    def test_never_publishes_to_the_default_exchange(self):
+        """Publishing with exchange="" would address a queue by name, which
+        is the routing scheme this tool no longer uses."""
+        channel = FakeChannel()
+        messages = _messages(1.0, 2.0, 3.0, 4.0)
+
+        replay(messages, channel, mode="stress", stop_event=threading.Event())
+
+        assert [e for e, _k, _b in channel.published] == ["adsb"] * 4
 
 
 class TestReplayStressMode:
@@ -105,20 +123,20 @@ class TestReplayStressMode:
         messages = _messages(100.0, 100.5, 101.0)
 
         count = replay(
-            messages, channel, processor_count=2, mode="stress", stop_event=threading.Event()
+            messages, channel, mode="stress", stop_event=threading.Event()
         )
 
         assert count == 3
         assert len(channel.published) == 3
         for (exchange, routing_key, body), msg in zip(channel.published, messages):
-            assert exchange == ""
-            assert routing_key == _queue_name(msg["icao_hex"], 2)
+            assert exchange == "adsb"
+            assert routing_key == msg["icao_hex"]
             assert msg["raw"] in body
 
     def test_empty_message_list_returns_zero(self):
         channel = FakeChannel()
         count = replay(
-            [], channel, processor_count=1, mode="stress", stop_event=threading.Event()
+            [], channel, mode="stress", stop_event=threading.Event()
         )
         assert count == 0
         assert channel.published == []
@@ -139,7 +157,7 @@ class TestReplayRelativeMode:
         messages = _messages(500.0, 502.0, 505.0)
 
         count = replay(
-            messages, channel, processor_count=1, mode="relative", stop_event=threading.Event()
+            messages, channel, mode="relative", stop_event=threading.Event()
         )
 
         assert count == 3
@@ -160,7 +178,7 @@ class TestReplayRelativeMode:
         messages = _messages(500.0, 501.0, 502.0)
 
         count = replay(
-            messages, channel, processor_count=1, mode="relative", stop_event=threading.Event()
+            messages, channel, mode="relative", stop_event=threading.Event()
         )
 
         assert count == 3
@@ -175,7 +193,7 @@ class TestReplayStopEvent:
         messages = _messages(1.0, 2.0, 3.0)
 
         count = replay(
-            messages, channel, processor_count=1, mode="stress", stop_event=stop_event
+            messages, channel, mode="stress", stop_event=stop_event
         )
 
         assert count == 0

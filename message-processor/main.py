@@ -2,13 +2,15 @@
 """
 SkyFollower Message Processor
 
-Consumes raw ADS-B/UAT messages from a RabbitMQ queue, maintains per-aircraft
+Consumes raw ADS-B/UAT messages from its own RabbitMQ queue, bound to the
+consistent-hash exchange the receivers publish to, maintains per-aircraft
 flight state in a file-backed SQLite database (survives a process restart),
 enriches with Redis lookups, runs the rules engine, publishes MQTT
 notifications, and hands completed flights to the archive queue.
 
 One container = one message processor instance.  MESSAGE_PROCESSOR_ID is set
-via the environment variable of the same name.
+via the environment variable of the same name, and can be any string unique
+across the whole deployment.
 """
 
 from __future__ import annotations
@@ -49,6 +51,11 @@ from shared.models import (
     generate_flight_id,
 )
 from shared.mqtt import build_mqtt_client
+from shared.rabbitmq_topology import (
+    adsb_queue_name,
+    bind_adsb_queue,
+    declare_adsb_topology,
+)
 from shared.redis_keys import (
     config_areas_version_key,
     config_flight_ttl_seconds_key,
@@ -480,10 +487,10 @@ class Flight:
 
 class MessageProcessor:
 
-    def __init__(self, config: dict, message_processor_id: int) -> None:
+    def __init__(self, config: dict, message_processor_id: str) -> None:
         self._cfg = config
         self._id = message_processor_id
-        self._queue_name = f"adsb-{message_processor_id}"
+        self._queue_name = adsb_queue_name(message_processor_id)
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
@@ -585,10 +592,10 @@ class MessageProcessor:
         claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
         if not claimed:
             logger.critical(
-                "MESSAGE_PROCESSOR_ID %d is already running on another instance. Exiting.", self._id
+                "MESSAGE_PROCESSOR_ID %s is already running on another instance. Exiting.", self._id
             )
             sys.exit(1)
-        logger.info("Message processor %d claimed.", self._id)
+        logger.info("Message processor %s claimed.", self._id)
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -609,7 +616,8 @@ class MessageProcessor:
                 logger.info("Connecting to RabbitMQ (queue: %s)…", self._queue_name)
                 self._rmq_connection = pika.BlockingConnection(self._rmq_params())
                 self._rmq_channel = self._rmq_connection.channel()
-                self._rmq_channel.queue_declare(queue=self._queue_name, durable=True)
+                declare_adsb_topology(self._rmq_channel)
+                bind_adsb_queue(self._rmq_channel, self._id)
                 self._rmq_channel.basic_qos(prefetch_count=1)
                 self._rmq_channel.basic_consume(
                     queue=self._queue_name,
@@ -1426,14 +1434,9 @@ def _load_config() -> dict:
 
 
 def main() -> None:
-    message_processor_id_str = os.environ.get("MESSAGE_PROCESSOR_ID")
-    if message_processor_id_str is None:
+    message_processor_id = os.environ.get("MESSAGE_PROCESSOR_ID", "").strip()
+    if not message_processor_id:
         print("MESSAGE_PROCESSOR_ID environment variable is required.", file=sys.stderr)
-        sys.exit(1)
-    try:
-        message_processor_id = int(message_processor_id_str)
-    except ValueError:
-        print(f"MESSAGE_PROCESSOR_ID must be an integer, got: {message_processor_id_str!r}", file=sys.stderr)
         sys.exit(1)
 
     config = _load_config()

@@ -12,8 +12,8 @@ title Message Pipeline
 !includesub ../../../archive-compaction/archive-compaction.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
-ReceiverMlat -> adsbq : Publisher
-Receiver -> adsbq : Publisher
+ReceiverMlat -> adsbx : Publisher
+Receiver -> adsbx : Publisher
 ProcessorC ----> adsbq : Consumer
 ProcessorC -down--> Redis : Enrichment lookups
 ProcessorC --> archiveq : Publisher

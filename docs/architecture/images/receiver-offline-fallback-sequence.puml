@@ -9,48 +9,48 @@ box "Receiver" $OnPrem
 end box
 
 box "RabbitMQ" $OnPrem
-    queue "adsb-{n}" as AdsbQ
+    entity "adsb exchange\n(x-consistent-hash)" as AdsbX
 end box
 
 == Normal operation ==
 
-Receiver -> AdsbQ++ : **Connect**
-AdsbQ --> Receiver-- : Connected
+Receiver -> AdsbX++ : **Connect**
+AdsbX --> Receiver-- : Connected
 Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
 Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
 alt connected
-    Receiver -\ AdsbQ : **Publish**
+    Receiver -\ AdsbX : **Publish**
     opt channel already closed locally
         Receiver -> Receiver : **Local publish failure**\n""basic_publish() raises""
         Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
         ReceiverDB --> Receiver-- : OK
     end
 else not connected
-    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
+    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
     ReceiverDB --> Receiver-- : OK
 end
 
 == RabbitMQ connection drops ==
 
-AdsbQ ->x Receiver : **Connection lost**
+AdsbX ->x Receiver : **Connection lost**
 Receiver -> Receiver : **Connection monitoring detects the drop**\n""conn.process_data_events() raises""
 Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
 
 loop Until reconnected
     alt Connection fails
-        Receiver ->x AdsbQ : **Connect**
+        Receiver ->x AdsbX : **Connect**
         Receiver -> Receiver : **Sleep 10 seconds**
     else Connection succeeds
-        Receiver -> AdsbQ++ : **Connect**
-        AdsbQ --> Receiver-- : Connected
+        Receiver -> AdsbX++ : **Connect**
+        AdsbX --> Receiver-- : Connected
         Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
     end
 end
 
 opt Message arrives while disconnected from RabbitMQ
     loop For each message
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {queue_name, message_json}""
+        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
         ReceiverDB --> Receiver-- : OK
     end
 end
@@ -68,7 +68,7 @@ alt guard acquired
                 Receiver -> Receiver : **Stop draining**\n""still cooling down — a flapping reconnect can't rush this row to the poison threshold""
             end
         else row eligible to retry
-            Receiver -\ AdsbQ : **Publish**
+            Receiver -\ AdsbX : **Publish**
             alt basic_publish succeeds
                 Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
                 ReceiverDB --> Receiver-- : OK
