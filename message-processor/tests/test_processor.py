@@ -249,6 +249,48 @@ class TestDecode1090:
         )
         assert p._decode_1090(msg) is None
 
+    # DF5/DF21 (squawk-only replies) carry no explicit ICAO field, so
+    # pyModeS can't compute a real crc_valid for them without an
+    # independently-verified ICAO hint (which _decode_1090 doesn't supply)
+    # — it reports crc_valid=None, which the `is False` check above lets
+    # straight through. These are 19 real captured messages reported as
+    # legacy "parity errors"; each one decodes without raising, but several
+    # produce fabricated reserved/emergency squawks (7500/7600/7700/7777)
+    # from corrupted bits. This documents *today's* actual behavior, not
+    # the desired one — see the tracking issue for the real fix (deferring
+    # trust on a reserved squawk until seen on multiple messages, matching
+    # SkyFollower-legacy's mitigation) and update these expectations once
+    # that lands.
+    @pytest.mark.parametrize("raw,expected_squawk", [
+        ("A8AE2ACA7DB5CA4AC22FCE4A0F04", "7600"),
+        ("2CFB4A8ABA3544", "7600"),
+        ("2D374A8AA103FF", "7600"),
+        ("2E3FFFFF34D379", "7777"),
+        ("AEE18AAAF390D1B076038A62D1A2", "7700"),
+        ("2A000A8ABF824C", "7600"),
+        ("AA000A8A0009F9327E6FC482913F", "7600"),
+        ("AA000A8A00179B3C4004E841CAF5", "7600"),
+        ("AA000A8A0009F7323E77D48A5561", "7600"),
+        ("AA000A8A0009F731FE9FCE5D92FB", "7600"),
+        ("AA000A8A203B3C0712082019F93B", "7600"),
+        ("AA000A8A00179F3C0004E738B9D7", "7600"),
+        ("AA000A8A0009F9323E4FD036F58A", "7600"),
+        ("A9B16AE2248F41F8F8A505674BD4", "7500"),
+        ("2FC26A8AE10854", "7600"),
+        ("287A8ACA7DD46A", "7600"),
+        ("AA3AEAAAE875E55C985DAB8B392E", "7700"),
+        ("AC9B2AAA61141677E2DBD5ED6DFF", "7700"),
+        ("2F3FFFFF73537B", "7777"),
+    ])
+    def test_captured_parity_error_messages_dont_crash(self, raw, expected_squawk):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw=raw, icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data is not None
+        assert data["squawk"] == expected_squawk
+
 
 # ---------------------------------------------------------------------------
 # _decode_978 (pyModeS978 UAT decoding)
