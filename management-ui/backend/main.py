@@ -56,6 +56,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from shared.aws_setup import write_aws_setup_files  # noqa: E402
+from shared.config import load_config  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
@@ -628,19 +629,13 @@ _route_airports_sha: Optional[str] = None
 
 # Archive search -- Athena/Glue query layer over the archive's Parquet
 # index. _fernet is generated fresh at every process startup, held only in
-# memory, never written to settings.json/env/disk -- see "Flight fetch" in
+# memory, never written to the environment or disk -- see "Flight fetch" in
 # _encrypt_s3_key/_decrypt_token below for why.
 _s3_client: Optional[object] = None
 _athena_client: Optional[object] = None
 _s3_bucket: str = ""
 _athena_cfg: dict = {}
 _fernet: Optional[Fernet] = None
-
-
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -651,8 +646,7 @@ def _load_config() -> dict:
 # persistence for them today; these two functions add a second, independent
 # copy on a host-mounted volume, so a lost/corrupted Redis volume doesn't
 # mean losing every rule and area a user has authored. Read at call time
-# (not cached at import time) so DATA_DIR can be overridden per-test the
-# same way SETTINGS_PATH already is above.
+# (not cached at import time) so DATA_DIR can be overridden per-test.
 # ---------------------------------------------------------------------------
 
 def _data_dir() -> str:
@@ -754,7 +748,7 @@ _AWS_SETUP_TEMPLATES = {
 async def lifespan(app: FastAPI):
     global _redis, _engine, _merge_aircraft_sha, _route_airports_sha
     global _s3_client, _athena_client, _s3_bucket, _athena_cfg, _fernet
-    config = _load_config()
+    config = load_config("redis", "s3", "athena")
     configure_logging(config.get("log_level"))
 
     redis_config = config.get("redis", {})
@@ -771,14 +765,12 @@ async def lifespan(app: FastAPI):
     _reconcile_backup_with_redis(config_areas_key(), config_areas_version_key(), _areas_backup_path(), "areas")
     _engine.reload_if_changed()
 
-    s3_cfg = config.get("s3", {})
-    _s3_bucket = s3_cfg.get("bucket", "")
+    _s3_bucket = config.get("s3", {}).get("bucket", "")
     _athena_cfg = config.get("athena", {})
-    session = boto3.Session(
-        aws_access_key_id=s3_cfg.get("access_key_id"),
-        aws_secret_access_key=s3_cfg.get("secret_access_key"),
-        region_name=s3_cfg.get("region", "us-east-1"),
-    )
+    # No credential arguments: boto3 reads AWS_ACCESS_KEY_ID,
+    # AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION from its own default
+    # credential chain, which an instance role can also satisfy.
+    session = boto3.Session()
     _s3_client = session.client("s3")
     _athena_client = session.client("athena")
     _fernet = Fernet(Fernet.generate_key())

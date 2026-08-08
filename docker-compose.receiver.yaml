@@ -8,8 +8,22 @@ services:
   receiver:
     image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
+    # Named one by one from this host's .env rather than `env_file: .env`,
+    # so a container only ever holds the values it actually reads.
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
+      RECEIVER_NAME: ${RECEIVER_NAME}
+      RECEIVER_SOURCES: ${RECEIVER_SOURCES}
+      RABBITMQ_HOST: ${RABBITMQ_HOST}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
     volumes:
-      - ./config/receiver/settings.json:/app/settings.json:ro
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/receiver:/app/data

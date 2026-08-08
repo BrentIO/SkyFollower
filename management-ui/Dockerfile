@@ -37,7 +37,6 @@ COPY management-ui/entrypoint.sh /entrypoint.sh
 RUN rm -f /etc/nginx/sites-enabled/default && chmod +x /entrypoint.sh
 
 ENV PYTHONPATH=/app
-ENV SETTINGS_PATH=/app/settings.json
 
 EXPOSE 80
 

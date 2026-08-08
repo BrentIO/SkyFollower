@@ -38,6 +38,7 @@ import redis as redis_lib
 
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
+from shared.config import DATA_DIR, ConfigError, load_config
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
@@ -499,10 +500,9 @@ class MessageProcessor:
         # recovers whatever flights were active when the previous process
         # ended, whether that was a crash or a deliberate stop — there's no
         # distinction, see shutdown().
-        data_dir = config.get("data_dir", "/app/data")
-        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(DATA_DIR, exist_ok=True)
         self._db = sqlite3.connect(
-            os.path.join(data_dir, "active_flights.db"), check_same_thread=False
+            os.path.join(DATA_DIR, "active_flights.db"), check_same_thread=False
         )
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -520,7 +520,7 @@ class MessageProcessor:
         self._message_clock: float = row[0] if row and row[0] is not None else time.time()
 
         # Archive fallback
-        self._fallback = FallbackQueue(os.path.join(data_dir, "completed_flights.db"))
+        self._fallback = FallbackQueue(os.path.join(DATA_DIR, "completed_flights.db"))
 
         # Metrics
         self._rate = _RateTracker()
@@ -1427,20 +1427,17 @@ class MessageProcessor:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
 def main() -> None:
-    message_processor_id = os.environ.get("MESSAGE_PROCESSOR_ID", "").strip()
-    if not message_processor_id:
-        print("MESSAGE_PROCESSOR_ID environment variable is required.", file=sys.stderr)
+    try:
+        config = load_config(
+            "rabbitmq", "redis", "mqtt", "telemetry", "message_processor"
+        )
+    except ConfigError as exc:
+        configure_logging()
+        logger.critical("%s", exc)
         sys.exit(1)
 
-    config = _load_config()
-    processor = MessageProcessor(config, message_processor_id)
+    processor = MessageProcessor(config, config["message_processor_id"])
 
     def _handle_signal(sig, frame):
         processor.shutdown()

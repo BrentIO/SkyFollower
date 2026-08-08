@@ -38,6 +38,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
+from shared.config import ConfigError, load_config
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
@@ -417,25 +418,15 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     try:
-        cfg = _load_config()
-    except FileNotFoundError as exc:
+        cfg = load_config("redis", "mqtt", "runner")
+    except ConfigError as exc:
         configure_logging()
-        logger.critical("Settings file not found: %s", exc)
+        logger.critical("%s", exc)
         sys.exit(1)
 
     configure_logging(cfg.get("log_level"))

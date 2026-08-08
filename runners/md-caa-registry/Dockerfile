@@ -6,9 +6,6 @@ RUN pip install --no-cache-dir -r shared_requirements.txt -r requirements.txt
 COPY shared/ ./shared/
 COPY runners/md-caa-registry/ ./md-caa-registry/
 ENV PYTHONPATH=/app
-ENV SETTINGS_PATH=/app/settings.json
-RUN touch /app/settings.json
-
 # VERSION changes every release; placed last so it only busts this
 # cheap final layer, not the pip-install layer above.
 ARG VERSION=dev

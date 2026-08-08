@@ -237,13 +237,19 @@ def _area(identifier="LI", **overrides) -> dict:
 
 
 def _configure_env(tmp_path, monkeypatch, data_dir=None) -> None:
-    """SETTINGS_PATH/DATA_DIR setup shared by the `client` fixture and the
+    """Environment setup shared by the `client` fixture and the
     TestConfigBackup tests below, which need to control DATA_DIR's content
     *before* the TestClient context manager triggers lifespan()'s restore
     check -- too early for the `client` fixture's own fixed setup order."""
-    settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps({"redis": {"host": "localhost", "port": 6379}}))
-    monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
+    for name, value in {
+        "REDIS_HOST": "localhost",
+        "REDIS_PORT": "6379",
+        "S3_BUCKET": "test-bucket",
+        "AWS_DEFAULT_REGION": "us-east-1",
+        "AWS_ACCESS_KEY_ID": "x",
+        "AWS_SECRET_ACCESS_KEY": "x",
+    }.items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("DATA_DIR", str(data_dir if data_dir is not None else tmp_path / "data"))
 
 

@@ -36,6 +36,7 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.config import ConfigError, load_config
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import route_key
 from shared.mqtt import build_mqtt_client
@@ -50,10 +51,9 @@ DOWNLOAD_URL = "https://codeload.github.com/vradarserver/standing-data/tar.gz/re
 # 03:49-03:51 UTC (verified against 30 days of commit history when this
 # runner was built), unlike the weekly cadence of the registration sources
 # this runner used to also cover. A 3-day TTL -- not the 14-day default
-# every other (weekly) runner uses via redis_ttl_days in settings.json --
-# keeps route data from silently going stale for over a week if a run or
-# two is missed, without needing a runner-specific settings.json block for
-# a single value.
+# every other (weekly) runner uses via REDIS_TTL_DAYS -- keeps route data
+# from silently going stale for over a week if a run or two is missed,
+# without needing a runner-specific variable for a single value.
 REDIS_TTL = 3 * 86400  # 3 days in seconds
 
 MQTT_ROOT = "SkyFollower/runner/vrs-standing-data"
@@ -269,25 +269,15 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     try:
-        cfg = _load_config()
-    except FileNotFoundError as exc:
+        cfg = load_config("redis", "mqtt", "runner")
+    except ConfigError as exc:
         configure_logging()
-        logger.critical("Settings file not found: %s", exc)
+        logger.critical("%s", exc)
         sys.exit(1)
 
     configure_logging(cfg.get("log_level"))

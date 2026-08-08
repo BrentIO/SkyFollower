@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
+from shared.config import ConfigError, load_config
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import AIRPORT_SEARCH_INDEX, airport_key
 from shared.redis_json import set_json
@@ -75,7 +76,7 @@ CREATE TABLE airports (
 #       ...
 #   }
 #
-# Lives in the same host directory as settings.json (mounted as a directory,
+# Lives in the host's config/runners directory (mounted as a directory,
 # not a single file -- a single-file bind mount fails to even start the
 # container if the host file is later deleted without recreating the
 # container; a directory mount degrades gracefully to a plain
@@ -388,25 +389,15 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def _load_config() -> dict:
-    path = os.environ.get("SETTINGS_PATH", "/app/settings.json")
-    with open(path) as f:
-        return json.load(f)
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     try:
-        cfg = _load_config()
-    except FileNotFoundError as exc:
+        cfg = load_config("redis", "mqtt", "runner")
+    except ConfigError as exc:
         configure_logging()
-        logger.critical("Settings file not found: %s", exc)
+        logger.critical("%s", exc)
         sys.exit(1)
 
     configure_logging(cfg.get("log_level"))

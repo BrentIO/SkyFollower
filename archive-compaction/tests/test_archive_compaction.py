@@ -618,15 +618,22 @@ class TestPublishHaAutodiscovery:
 # ---------------------------------------------------------------------------
 
 class TestAwsSetupFileWrittenOnRun:
-    def test_iam_policy_written_with_bucket_resolved(self):
+    def test_iam_policy_written_with_bucket_resolved(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            settings_path = os.path.join(tmp_dir, "settings.json")
             data_dir = os.path.join(tmp_dir, "data")
-            with open(settings_path, "w") as f:
-                json.dump({"s3": {"bucket": "test-bucket"}, "data_dir": data_dir}, f)
+            for name, value in {
+                "S3_BUCKET": "test-bucket",
+                "AWS_DEFAULT_REGION": "us-east-1",
+                "AWS_ACCESS_KEY_ID": "x",
+                "AWS_SECRET_ACCESS_KEY": "x",
+                "MQTT_HOST": "localhost",
+                "MQTT_USERNAME": "u",
+                "MQTT_PASSWORD": "p",
+            }.items():
+                monkeypatch.setenv(name, value)
+            monkeypatch.setattr(_mod, "DATA_DIR", data_dir)
 
-            with patch.dict(os.environ, {"SETTINGS_PATH": settings_path}), \
-                 patch("archive_compaction_main.connect_s3", return_value=_FakeS3()), \
+            with patch("archive_compaction_main.connect_s3", return_value=_FakeS3()), \
                  patch("archive_compaction_main.run_compaction",
                        return_value={"files_compacted": 0, "files_delete_failed": 0,
                                      "days_compacted": 0, "last_compacted_date": None,

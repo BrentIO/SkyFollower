@@ -188,6 +188,22 @@ def _synchronous_thread():
         yield
 
 
+def _configure_env(monkeypatch, tmp_path) -> None:
+    for name, value in {
+        "REDIS_HOST": "localhost",
+        "REDIS_PORT": "6379",
+        "S3_BUCKET": "test-bucket",
+        "AWS_DEFAULT_REGION": "us-east-1",
+        "AWS_ACCESS_KEY_ID": "x",
+        "AWS_SECRET_ACCESS_KEY": "x",
+        "ATHENA_WORKGROUP": "skyfollower",
+        "ATHENA_DATABASE": "skyfollower",
+        "ATHENA_TABLE": "archive_flights",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+
+
 @pytest.fixture
 def fake_redis():
     return FakeRedis()
@@ -205,17 +221,7 @@ def fake_s3():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, fake_redis, fake_athena, fake_s3):
-    settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps({
-        "redis": {"host": "localhost", "port": 6379},
-        "s3": {
-            "bucket": "test-bucket", "region": "us-east-1",
-            "access_key_id": "x", "secret_access_key": "x",
-        },
-        "athena": {"workgroup": "skyfollower", "database": "skyfollower", "table": "archive_flights"},
-    }))
-    monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    _configure_env(monkeypatch, tmp_path)
 
     class FakeSession:
         def __init__(self, *a, **k):
@@ -627,15 +633,7 @@ class TestFlightFetch:
 
 class TestStartupReconciliation:
     def test_running_record_at_startup_becomes_aborted(self, tmp_path, monkeypatch, fake_redis, fake_athena, fake_s3):
-        settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps({
-            "redis": {"host": "localhost", "port": 6379},
-            "s3": {"bucket": "test-bucket", "region": "us-east-1",
-                   "access_key_id": "x", "secret_access_key": "x"},
-            "athena": {"workgroup": "skyfollower", "database": "skyfollower", "table": "archive_flights"},
-        }))
-        monkeypatch.setenv("SETTINGS_PATH", str(settings_path))
-        monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+        _configure_env(monkeypatch, tmp_path)
 
         fake_redis.store["archive_search:stuck-uuid"] = json.dumps({
             "name": "old search", "where_clause": "1=1", "status": "RUNNING",

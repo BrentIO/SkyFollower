@@ -73,19 +73,21 @@ def _minimal_config() -> dict:
         "redis": {"host": "localhost"},
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
         "telemetry_interval_seconds": 30,
-        "data_dir": tempfile.mkdtemp(),
     }
 
 
 def _make_processor(
-    cfg: dict | None = None, message_processor_id: str = "0"
+    cfg: dict | None = None,
+    message_processor_id: str = "0",
+    data_dir: str | None = None,
 ) -> tuple[MessageProcessor, MagicMock]:
     """Construct a real MessageProcessor (file-backed active store) with Redis/rules/
     processor-ID-claim mocked out, matching TestProcessorEnrichment's pattern
     but keeping the real on-disk DB instead of swapping in an in-memory one —
     needed for the crash-recovery/message-clock tests below."""
     cfg = cfg or _minimal_config()
-    with patch("message_processor.main.redis_lib.Redis") as MockRedis, \
+    with patch("message_processor.main.DATA_DIR", data_dir or tempfile.mkdtemp()), \
+         patch("message_processor.main.redis_lib.Redis") as MockRedis, \
          patch("message_processor.main.RulesEngine"), \
          patch("message_processor.main.pathlib.Path"), \
          patch.object(MessageProcessor, "_claim_message_processor_id"):
@@ -839,8 +841,9 @@ class TestMessageProcessorIdentity:
             p._claim_message_processor_id()
 
     def test_main_passes_the_id_through_without_coercion(self):
-        with patch.dict(os.environ, {"MESSAGE_PROCESSOR_ID": "turing-node-3-1"}), \
-             patch("message_processor.main._load_config", return_value=_minimal_config()), \
+        cfg = _minimal_config()
+        cfg["message_processor_id"] = "turing-node-3-1"
+        with patch("message_processor.main.load_config", return_value=cfg), \
              patch("message_processor.main.MessageProcessor") as MockProcessor, \
              patch("message_processor.main.signal.signal"):
             processor_main()
@@ -848,8 +851,20 @@ class TestMessageProcessorIdentity:
         assert MockProcessor.call_args.args[1] == "turing-node-3-1"
 
     def test_main_requires_the_id(self):
-        with patch.dict(os.environ, {"MESSAGE_PROCESSOR_ID": ""}), \
-             pytest.raises(SystemExit):
+        # Everything else present, so the exit can only be about the ID.
+        env = {
+            "RABBITMQ_HOST": "localhost",
+            "RABBITMQ_USERNAME": "u",
+            "RABBITMQ_PASSWORD": "p",
+            "REDIS_HOST": "localhost",
+            "MQTT_HOST": "localhost",
+            "MQTT_USERNAME": "u",
+            "MQTT_PASSWORD": "p",
+            "LATITUDE": "0",
+            "LONGITUDE": "0",
+            "MESSAGE_PROCESSOR_ID": "",
+        }
+        with patch.dict(os.environ, env), pytest.raises(SystemExit):
             processor_main()
 
 
@@ -978,7 +993,8 @@ class TestRmqQueueDepthSamplerLoop:
 class TestProcessorEnrichment:
     def _make_processor(self):
         cfg = _minimal_config()
-        with patch("message_processor.main.redis_lib.Redis") as MockRedis, \
+        with patch("message_processor.main.DATA_DIR", tempfile.mkdtemp()), \
+             patch("message_processor.main.redis_lib.Redis") as MockRedis, \
              patch("message_processor.main.RulesEngine"), \
              patch("message_processor.main.pathlib.Path"), \
              patch.object(MessageProcessor, "_claim_message_processor_id"):
@@ -1473,7 +1489,8 @@ class TestTelemetryPayload:
     """Tests for _publish_telemetry()'s one-retained-topic-per-stat behaviour."""
 
     def _make_processor(self) -> MessageProcessor:
-        with patch("message_processor.main.redis_lib.Redis"):
+        with patch("message_processor.main.DATA_DIR", tempfile.mkdtemp()), \
+             patch("message_processor.main.redis_lib.Redis"):
             p = MessageProcessor(_minimal_config(), message_processor_id="0")
         return p
 
@@ -1605,9 +1622,7 @@ class TestCrashRecovery:
         old_last_message = time.time() - 600
         self._write_active_flights_db(data_dir, "A8AE7F", old_last_message)
 
-        cfg = _minimal_config()
-        cfg["data_dir"] = data_dir
-        p, _ = _make_processor(cfg)
+        p, _ = _make_processor(_minimal_config(), data_dir=data_dir)
 
         # message_clock floors at the recovered flight's last_message, not
         # at wall-clock "now" — see MessageProcessor.__init__.
@@ -1960,8 +1975,8 @@ class TestFlightTtlLoad:
         assert p._flight_ttl_seconds == 300
 
     def test_gap_check_uses_loaded_value_not_config(self):
-        """The per-message gap check must read the cached attribute, not
-        settings.json — config no longer carries flight_ttl_seconds at all."""
+        """The per-message gap check must read the cached attribute —
+        config no longer carries flight_ttl_seconds at all."""
         p, mock_redis = _make_processor()
         mock_redis.get.return_value = "10"
         mock_redis.evalsha.return_value = None

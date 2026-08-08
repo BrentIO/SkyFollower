@@ -75,9 +75,6 @@ logged clearly via `files_delete_failed` when it happens.
 | `data_dir` | string | `"/app/data"` | Host-mounted directory where `aws-setup/iam-policy.json` (resolved AWS reference file — see [AWS Setup](#aws-setup)) is written |
 | `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
 
-The settings file path defaults to `/app/settings.json` and can be
-overridden with the `SETTINGS_PATH` environment variable.
-
 ## AWS Setup
 
 **No IAM identity for this job exists yet in AWS.** It only ever prepares

@@ -1829,11 +1829,10 @@ components:
 
     ConnectionHost:
       description: >
-        The host (hostname or IP address) of one specific sources[] entry
-        in the receiver's settings.json, as configured -- not resolved or
-        normalized.
+        The host (hostname or IP address) of one specific RECEIVER_SOURCES
+        entry, as configured -- not resolved or normalized.
 
     ConnectionPort:
       description: >
-        The TCP port of one specific sources[] entry in the receiver's
-        settings.json, as configured.
+        The TCP port of one specific RECEIVER_SOURCES entry, as
+        configured.

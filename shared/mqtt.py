@@ -22,7 +22,7 @@ def build_mqtt_client(
     will_retain: bool = True,
 ) -> Optional[mqtt.Client]:
     """
-    Build an mqtt.Client from a component's `mqtt` settings.json block.
+    Build an mqtt.Client from a component's `mqtt` config block.
 
     Returns None if mqtt_config is falsy -- the mqtt block is optional
     everywhere, and every caller already skips MQTT entirely in that case,

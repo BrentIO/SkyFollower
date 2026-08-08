@@ -10,10 +10,7 @@ COPY shared/ ./shared/
 COPY runners/ourairports/ ./ourairports/
 
 ENV PYTHONPATH=/app
-ENV SETTINGS_PATH=/app/settings.json
 ENV OVERRIDES_PATH=/app/config/phonic_overrides.json
-
-RUN touch /app/settings.json
 
 # VERSION changes every release; placed last so it only busts this
 # cheap final layer, not the pip-install layer above.

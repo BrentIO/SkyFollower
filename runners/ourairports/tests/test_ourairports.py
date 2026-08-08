@@ -146,8 +146,8 @@ class TestIsValidIcao:
 
 class TestOverridesPath:
     def test_defaults_to_config_dir(self):
-        # Lives alongside settings.json in a mounted *directory*, not a
-        # single-file mount -- see docker-compose.core.yaml for why.
+        # Lives in a mounted *directory*, not a single-file mount --
+        # see docker-compose.core.yaml for why.
         assert _mod._OVERRIDES_PATH == "/app/config/phonic_overrides.json"
 
     def test_respects_overrides_path_env_var(self, tmp_path):
