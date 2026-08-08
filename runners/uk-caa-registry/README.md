@@ -16,7 +16,7 @@ G-INFO has no bulk-export endpoint, so this runner enumerates the entire registe
 
 Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the CAA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
-**Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, a full run takes several hours. It is deliberately scheduled as the last runner of the day in `config/ofelia/config.ini.example` (`10 6 * * 1`, after `ourairports` at `10 5 * * 1`) to avoid overlapping with other Monday jobs.
+**Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, a full run takes several hours. It is deliberately scheduled as the last runner of the day by the `ofelia` service's labels in `docker-compose.core.yaml` (`0 10 6 * * 1`, after `ourairports` at `0 10 5 * * 1`) to avoid overlapping with other Monday jobs.
 
 ## Columns
 

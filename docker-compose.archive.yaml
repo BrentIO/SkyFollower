@@ -3,7 +3,7 @@ name: skyfollower-archive
 services:
 
   archive-processor:
-    image: ghcr.io/brentio/skyfollower-archive:latest
+    image: ghcr.io/brentio/skyfollower-archive:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     volumes:
       - ./config/archive/settings.json:/app/settings.json:ro
@@ -30,9 +30,12 @@ services:
   # ---------------------------------------------------------------------------
 
   # No healthcheck -- a one-shot job that runs to completion and exits, not
-  # a long-running service with a state to keep reporting on.
+  # a long-running service with a state to keep reporting on. It keeps a
+  # profile of its own for the same reason: `up -d` must never start it,
+  # while `docker compose run --rm archive-compaction` (a manual run,
+  # outside the schedule) activates the profile by itself.
   archive-compaction:
-    image: ghcr.io/brentio/skyfollower-archive-compaction:latest
+    image: ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-archive-compaction
     profiles: ["compaction"]
     volumes:
@@ -41,13 +44,38 @@ services:
       # directory stays directly readable by the operator on the host.
       - ./data/archive-compaction:/app/data
 
-  # No depends_on -- its ofelia-config.ini's job-run entry runs in `image =`
-  # mode (a fresh, disposable container per scheduled run), so ofelia needs
-  # no archive-compaction container to exist beforehand.
+  # Runs in label mode (`daemon --docker`), overriding the image's default
+  # `daemon --config /etc/ofelia/config.ini` CMD. Ofelia requires job-run
+  # definitions to live as labels on its own container, since each run
+  # creates a brand new container rather than reusing an existing one --
+  # and Compose interpolates ${...} inside label values, which Ofelia's
+  # INI parser never did.
+  #
+  # No depends_on -- the job below creates a fresh, disposable container per
+  # scheduled run from its `image` label, so no archive-compaction container
+  # needs to exist beforehand. No profile either: the scheduler is a
+  # long-running service that always belongs up, which is exactly why the
+  # one-shot archive-compaction service above keeps a profile of its own.
+  #
+  # Ofelia 0.3.x's cron parser REQUIRES 6 fields with a leading seconds
+  # value: "sec min hour dom month dow". Standard 5-field cron (no seconds)
+  # is only auto-detected starting in Ofelia 0.4.x, which has never left
+  # beta -- there is no stable tag to pin to instead. Keep the leading "0"
+  # below (or whatever second is actually wanted) if this schedule changes.
+  #
+  # The schedule targets "the day before yesterday" (see
+  # archive-compaction/README.md), so the exact time of day only needs to be
+  # well after midnight UTC -- there's no upstream data source to wait on,
+  # unlike the core host's runners.
   ofelia:
     image: mcuadros/ofelia:latest
     restart: unless-stopped
-    profiles: ["compaction"]
+    command: ["daemon", "--docker"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./config/archive/ofelia-config.ini:/etc/ofelia/config.ini:ro
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-run.archive-compaction.schedule: "0 50 4 * * *"
+      ofelia.job-run.archive-compaction.image: "ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.archive-compaction.volume: '["${SKYFOLLOWER_ROOT}/config/archive/compaction-settings.json:/app/settings.json:ro"]'
+      ofelia.job-run.archive-compaction.delete: "true"

@@ -23,13 +23,14 @@ without disturbing rabbitmq/redis/runners). The message processor is
 designed to scale by adding more hosts, each running the same compose
 file. The MLAT receiver is optional, dedicated to MLAT-only `sources[]`,
 and deployed separately from the host running the local RTL-SDR
-hardware. Archive compaction is also optional (behind the `compaction`
-Compose profile) and runs its own `ofelia` instance alongside the
-archive processor. Get the relevant file(s) onto each host — clone the
-repo, or use `scripts/download-host-files.sh` to fetch just what a given
-role needs (see [Getting Started](/getting-started/)) — populate the
-relevant `config/` settings files, then bring up the appropriate
-file(s):
+hardware. Archive compaction runs on its own `ofelia` instance alongside
+the archive processor; the one-shot job itself sits behind the
+`compaction` Compose profile so only its scheduler, never the job, comes
+up with `docker compose up -d`. Get the relevant file(s) onto each host —
+clone the repo, or use `scripts/download-host-files.sh` to fetch just
+what a given role needs (see [Getting Started](/getting-started/)) —
+populate the relevant `config/` settings files and `.env`, then bring the
+host up:
 
 | File | Role | Services |
 |------|------|---------|
@@ -37,7 +38,7 @@ file(s):
 | `docker-compose.core.yaml` | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Rules/areas API (co-located with `docker-compose.core.yaml`) | `management-ui` |
 | `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts) | `message-processor-0` (one per host) |
-| `docker-compose.archive.yaml` | Long-term storage | `archive-processor`; `archive-compaction` + its own `ofelia` instance (optional, behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
+| `docker-compose.archive.yaml` | Long-term storage | `archive-processor`, its own `ofelia` instance; `archive-compaction` (the one-shot job, behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
 
 ## Components
 
@@ -79,7 +80,6 @@ on the host. Example files for every component are in `config/`:
 | `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
 | `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
 | `config/runners/settings.json.example` | All runners in `docker-compose.core.yaml` |
-| `config/ofelia/config.ini.example` | `ofelia` in `docker-compose.core.yaml` |
 | `config/rabbitmq/rabbitmq.conf.example` | `rabbitmq` in `docker-compose.core.yaml` |
 | `config/rabbitmq/enabled_plugins.example` | `rabbitmq` in `docker-compose.core.yaml` |
 

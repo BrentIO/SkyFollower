@@ -44,23 +44,26 @@ something else instead). A file that doesn't exist yet at the latest
 release (e.g. a component added since the last one shipped) falls back to
 `main` for that one file, with a printed warning.
 
+The script also writes a `.env` (mode `0600`) into the destination
+directory, holding this host's Compose values — the image version
+(`SKYFOLLOWER_VERSION`, pinned to the release the files were fetched
+from), the Compose project name, the compose file to act on, and the
+destination's absolute path. Compose reads it automatically, which is why
+no `-f` flag appears below. Editing `SKYFOLLOWER_VERSION` to an older
+release tag and re-running `docker compose up -d` is the rollback path.
+
 Once the files are downloaded, fill in real values in each generated
-`config/*/*` file, then bring the host up:
+`config/*/*` file, then bring the host up from that directory:
 ```bash
-docker compose -f <compose-file> up -d
+docker compose up -d
 ```
 
-On the `core` host specifically, `ofelia` (the runner scheduler) sits
-behind the `runners` Compose profile, so it needs its own explicit start —
-`up -d` alone won't bring it up:
-```bash
-docker compose -f docker-compose.core.yaml --profile runners up -d ofelia
-```
-Naming `ofelia` explicitly (rather than the whole `runners` profile) matters
-here: `ofelia` has no `depends_on` on the runner-\* services, so this starts
-only `ofelia` itself, not every runner container at once. Then see [Loading
-All Data](#loading-all-data) below to do a first-time data import instead of
-waiting on each runner's own scheduled `ofelia` run.
+That's the complete command for every role, including `core` — the runner
+scheduler (`ofelia`) comes up with everything else, while the
+runner-\* services stay behind the `runners` profile so `up -d` never
+launches them all at once. See [Loading All Data](#loading-all-data)
+below to do a first-time data import instead of waiting on each runner's
+own scheduled run.
 
 ## Advanced
 
@@ -73,44 +76,36 @@ list) and fill in real values before starting containers.
 # 1. Copy the example settings for each component on this host and fill in values
 #    e.g. for the core host:
 cp config/runners/settings.json.example config/runners/settings.json
-cp config/ofelia/config.ini.example config/ofelia/config.ini
-# Ofelia's job-run bind-mounts require an absolute host path, not a
-# relative one -- resolve the __ROOT_DIRECTORY__ placeholder to this
-# repo's absolute path (the archive host's config/archive/ofelia-config.ini
-# needs the same substitution, once copied from its own .example):
-sed -i "s#__ROOT_DIRECTORY__#$(pwd)#g" config/ofelia/config.ini
 cp config/management-ui/settings.json.example config/management-ui/settings.json
 cp config/rabbitmq/rabbitmq.conf.example config/rabbitmq/rabbitmq.conf
 cp config/rabbitmq/enabled_plugins.example config/rabbitmq/enabled_plugins
 
-# ADS-B reception — receiver
-# docker-compose.receiver.yaml is a tracked file, so never sed it in
-# place (that would leave your clone permanently dirty and conflict on
-# the next `git pull`) -- copy it to a local, untracked name per
-# instance first, matching how Quick Start resolves the same
-# __INSTANCE_SUFFIX__ placeholder automatically from the destination
-# folder's name (see receiver/README.md's "Running Multiple Receiver
-# Instances"). Leave the suffix empty for your first/only receiver:
-cp docker-compose.receiver.yaml docker-compose.receiver.local.yaml
-sed -i "s#__INSTANCE_SUFFIX__##g" docker-compose.receiver.local.yaml
-docker compose -f docker-compose.receiver.local.yaml up -d
+# 2. Write a .env alongside the compose files. Quick Start generates this
+#    for you; on a full clone, create it by hand. SKYFOLLOWER_ROOT must be
+#    an absolute path -- ofelia's scheduled jobs bind-mount through the
+#    Docker Engine API, which has no project directory to resolve a
+#    relative path against:
+cat > .env <<EOF
+SKYFOLLOWER_VERSION=latest
+COMPOSE_PROJECT_NAME=skyfollower-core
+COMPOSE_FILE=docker-compose.core.yaml
+SKYFOLLOWER_ROOT=$(pwd)
+EOF
 
-# Dedicated MLAT receiver (optional; same image, either on its own host,
-# or alongside the first on this host -- give it its own copy and its
-# own suffix, e.g. -mlat, so it never collides with the first instance's
-# project name):
-cp docker-compose.receiver.yaml docker-compose.receiver-mlat.local.yaml
-sed -i "s#__INSTANCE_SUFFIX__#-mlat#g" docker-compose.receiver-mlat.local.yaml
+# ADS-B reception — receiver. Its compose file sets no project name, so
+# COMPOSE_PROJECT_NAME in .env is what keeps two receivers on one host
+# apart (see receiver/README.md's "Running Multiple Receiver Instances"):
+docker compose -f docker-compose.receiver.yaml up -d
+
+# Dedicated MLAT receiver (optional; same image and compose file, either on
+# its own host or alongside the first on this host -- give it its own
+# folder, its own .env with a different COMPOSE_PROJECT_NAME, and its own
+# settings.json):
 cp config/receiver/mlat-settings.json.example config/receiver/mlat-settings.json
-# then point docker-compose.receiver-mlat.local.yaml's settings.json volume
-# line at config/receiver/mlat-settings.json instead of config/receiver/settings.json
-docker compose -f docker-compose.receiver-mlat.local.yaml up -d
 
-# Core — message bus + enrichment data
+# Core — message bus + enrichment data. ofelia comes up with it; the
+# runner-* services stay behind their profile:
 docker compose -f docker-compose.core.yaml up -d
-# ofelia sits behind the "runners" Compose profile and has no depends_on,
-# so name it explicitly -- this starts only ofelia, not every runner too:
-docker compose -f docker-compose.core.yaml --profile runners up -d ofelia
 # The core host also runs the management UI, as its own compose file (its
 # only dependency is Redis, already on this host):
 docker compose -f docker-compose.management-ui.yaml up -d
@@ -124,9 +119,10 @@ docker compose -f docker-compose.archive.yaml up -d
 
 ## Loading All Data
 
-To run a single data runner manually (e.g. for a first-time import):
+To run a single data runner manually (e.g. for a first-time import), from
+the core host's directory:
 ```bash
-docker compose -f docker-compose.core.yaml run --rm runner-ourairports
+docker compose run --rm runner-ourairports
 ```
 
 To bulk-load *every* runner once (e.g. right after install, so Redis isn't
@@ -138,12 +134,12 @@ longer than the others. The runner list comes from `docker compose config`
 itself, not a separate list, so it's always accurate for whatever's actually
 declared in `docker-compose.core.yaml`:
 ```bash
-docker compose -f docker-compose.core.yaml run --rm runner-mictronics
-for svc in $(docker compose -f docker-compose.core.yaml --profile runners config --services \
+docker compose run --rm runner-mictronics
+for svc in $(docker compose --profile runners config --services \
     | grep '^runner-' | grep -v -E '^runner-(mictronics|uk-caa-registry)$' | sort); do
-  docker compose -f docker-compose.core.yaml run --rm "$svc"
+  docker compose run --rm "$svc"
 done
-docker compose -f docker-compose.core.yaml run --rm runner-uk-caa-registry
+docker compose run --rm runner-uk-caa-registry
 ```
 
 ## Next steps
