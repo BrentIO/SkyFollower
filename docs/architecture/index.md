@@ -19,11 +19,28 @@ resize ever restarts a receiver — which matters, because a receiver restart
 is an ingest gap: it is reading live TCP streams, and whatever arrives while
 it is down is gone.
 
-To add a message processor: uncomment the next instance's block in
-`docker-compose.message-processor.yaml`, give it a
-`MESSAGE_PROCESSOR_ID` unique across the whole deployment, and bring it up.
-That is the entire procedure, on any host. The message processor claims its
-ID in Redis on startup and exits if another instance already holds it.
+`docker-compose.message-processor.yaml` ships eight processor definitions
+built from one shared anchor. `message-processor-1` always runs; each of the
+other seven sits behind a Compose profile named after it. To add a message
+processor on any host, name its profile in that host's `.env` and bring the
+host up:
+
+```bash
+COMPOSE_PROFILES=mp-2,mp-3      # this node runs three processors
+```
+
+That is the entire procedure — no file to edit, no block to uncomment, no
+generated compose file. Each instance gets its own bind-mounted data
+directory, so no two share an active flight store.
+
+IDs are unique across the deployment by construction rather than by
+convention: each instance's `MESSAGE_PROCESSOR_ID` is
+`${MESSAGE_PROCESSOR_PREFIX}-N`, and the prefix defaults to the node's
+hostname (written into `.env` by `scripts/download-host-files.sh`), so two
+nodes each running three processors get `turing-node-3-1..3` and
+`turing-node-4-1..3` with no coordination. The message processor still
+claims its ID in Redis on startup and exits if another instance already
+holds it.
 
 Measured over 5,000 randomly generated ICAO hexes:
 

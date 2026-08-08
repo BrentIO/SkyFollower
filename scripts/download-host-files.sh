@@ -142,7 +142,11 @@ case "$ROLE" in
   message-processor)
     COMPOSE_FILES=(docker-compose.message-processor.yaml)
     CONFIG_FILES=()
-    DATA_DIRS=(data/message-processor-0)
+    # All eight, not just the one that always runs: enabling another
+    # processor is meant to be a COMPOSE_PROFILES line in .env and nothing
+    # else, which it stops being if its data directory has to be created
+    # by hand first (or by Docker, as root).
+    DATA_DIRS=(data/message-processor-1 data/message-processor-2 data/message-processor-3 data/message-processor-4 data/message-processor-5 data/message-processor-6 data/message-processor-7 data/message-processor-8)
     PROJECT_NAME="skyfollower-message-processor"
     ;;
   archive)
@@ -338,6 +342,11 @@ ENV_EOF
 # own number. Defaulted to this node's hostname so two nodes never collide
 # on an ID without anyone having to coordinate the numbering.
 MESSAGE_PROCESSOR_PREFIX=${MESSAGE_PROCESSOR_PREFIX}
+
+# message-processor-1 always runs. To run more on this node, list the extra
+# instances' profiles here -- nothing else changes:
+#   COMPOSE_PROFILES=mp-2,mp-3      # three processors on this node
+COMPOSE_PROFILES=
 
 # Receiver's reference position, used to decode locally-referenced CPR
 # positions. Decimal degrees.
