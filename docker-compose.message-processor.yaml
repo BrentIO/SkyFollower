@@ -22,51 +22,128 @@ x-message-processor-environment: &message-processor-environment
   MQTT_USERNAME: ${MQTT_USERNAME}
   MQTT_PASSWORD: ${MQTT_PASSWORD}
 
+# Everything identical across instances. What differs is the service name,
+# the profile gating it, its own data directory and its own ID -- so those
+# four are all each service holds.
+#
+# deploy.replicas cannot substitute for this. A replica's hostname is its
+# container ID rather than an ordinal, so there is nothing inside the
+# container to derive a distinct MESSAGE_PROCESSOR_ID from; the per-replica
+# index that would solve it ({{.Task.Slot}}) is Swarm-mode templating and is
+# not substituted by `docker compose up`. Replicas would also share one
+# volume definition, which means one SQLite active store written by N
+# processes with N independent recovery loops.
+x-message-processor: &message-processor
+  image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
+  restart: unless-stopped
+  # RAM-backed, not the container's writable layer -- the healthcheck
+  # heartbeat file is rewritten every 15s and must never hit the host's
+  # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
+  tmpfs:
+    - /app/health
+  healthcheck:
+    test: ["CMD", "python", "/app/healthcheck.py"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+
 services:
 
-  message-processor-0:
-    image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
-    restart: unless-stopped
+  # message-processor-1 always runs; 2 through 8 are each gated behind a
+  # profile of their own, so a node running three processors sets one line
+  # in its .env and nothing else:
+  #
+  #   COMPOSE_PROFILES=mp-2,mp-3
+  #
+  # No receiver is touched by adding one. A processor declares and binds its
+  # own queue, and the consistent-hash exchange starts routing to it as soon
+  # as that binding exists.
+  #
+  # Slots inside the exchange are positional and assigned in the order
+  # processors bind, and `docker compose up -d` starts services in no
+  # guaranteed order -- so bringing several up at once assigns slots in
+  # whatever order they happen to connect. That is harmless: slots need to
+  # be stable, not predictable, and they are stable across restarts once
+  # established. Scaling down, remove the highest-numbered instance:
+  # unbinding from the middle reshuffles ~68% of aircraft, while merely
+  # stopping a container leaves its binding intact and costs nothing.
+  #
+  # MESSAGE_PROCESSOR_PREFIX defaults to this node's hostname, written into
+  # .env by scripts/download-host-files.sh, so two nodes each running
+  # several processors never collide on an ID without anyone coordinating.
+  #
+  # Each instance's data directory is a bind mount of its own, matching
+  # rabbitmq/redis on the core host -- the active flight store stays
+  # directly readable by the operator, and no two processors share one.
+
+  message-processor-1:
+    <<: *message-processor
     volumes:
-      # Bind mount, matching rabbitmq/redis on the core host -- the data
-      # directory stays directly readable by the operator on the host.
-      - ./data/message-processor-0:/app/data
-    # RAM-backed, not the container's writable layer -- the healthcheck
-    # heartbeat file is rewritten every 15s and must never hit the host's
-    # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
-    tmpfs:
-      - /app/health
-    healthcheck:
-      test: ["CMD", "python", "/app/healthcheck.py"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    # The prefix defaults to this node's hostname, written into .env by
-    # scripts/download-host-files.sh, so two nodes each running several
-    # processors never collide on an ID without anyone coordinating.
+      - ./data/message-processor-1:/app/data
     environment:
       <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-0
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-1
 
-  # To add a second message processor on this host, uncomment the block
-  # below. No receiver is touched: a processor declares and binds its own
-  # queue, and the exchange starts routing to it as soon as that binding
-  # exists.
-  #
-  # message-processor-1:
-  #   image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./data/message-processor-1:/app/data
-  #   tmpfs:
-  #     - /app/health
-  #   healthcheck:
-  #     test: ["CMD", "python", "/app/healthcheck.py"]
-  #     interval: 15s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 30s
-  #   environment:
-  #     <<: *message-processor-environment
-  #     MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-1
+  message-processor-2:
+    <<: *message-processor
+    profiles: ["mp-2"]
+    volumes:
+      - ./data/message-processor-2:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-2
+
+  message-processor-3:
+    <<: *message-processor
+    profiles: ["mp-3"]
+    volumes:
+      - ./data/message-processor-3:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-3
+
+  message-processor-4:
+    <<: *message-processor
+    profiles: ["mp-4"]
+    volumes:
+      - ./data/message-processor-4:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-4
+
+  message-processor-5:
+    <<: *message-processor
+    profiles: ["mp-5"]
+    volumes:
+      - ./data/message-processor-5:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-5
+
+  message-processor-6:
+    <<: *message-processor
+    profiles: ["mp-6"]
+    volumes:
+      - ./data/message-processor-6:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-6
+
+  message-processor-7:
+    <<: *message-processor
+    profiles: ["mp-7"]
+    volumes:
+      - ./data/message-processor-7:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-7
+
+  message-processor-8:
+    <<: *message-processor
+    profiles: ["mp-8"]
+    volumes:
+      - ./data/message-processor-8:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-8
