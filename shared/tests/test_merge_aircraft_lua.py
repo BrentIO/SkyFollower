@@ -21,6 +21,18 @@ import pytest
 
 redis = pytest.importorskip("redis")
 
+# Under pytest-xdist, a "module"-scoped fixture is instantiated once per
+# worker *process*, not once globally -- if this module's tests get split
+# across workers (which happens unpredictably once there's enough other
+# work in the full suite to balance against), each worker independently
+# exercises the shared aircraft:{mictronics,registry,livery}:{hex} keys
+# below against the one live Redis every worker actually talks to, racing
+# each other. The icao_hex fixture only draws from a 256-value space, so a
+# collision between two workers' concurrently-running tests is a real risk,
+# not a theoretical one -- see shared/tests/test_route_airports_lua.py for
+# the same fix applied to the same class of problem.
+pytestmark = pytest.mark.xdist_group(name="merge_aircraft_lua")
+
 _LUA_PATH = pathlib.Path(__file__).parent.parent / "lua" / "merge_aircraft.lua"
 _REDIS_HOST = os.environ.get("REDIS_TEST_HOST", "localhost")
 _REDIS_PORT = int(os.environ.get("REDIS_TEST_PORT", "6379"))
