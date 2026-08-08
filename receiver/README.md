@@ -153,7 +153,7 @@ The receiver has no idea how many message processors exist and never needs to
 be reconfigured or restarted when that number changes. Each message processor
 declares and binds its own queue; the exchange starts routing to it the moment
 the binding exists. The exchange name, type and arguments are defined once in
-[`shared/rabbitmq_topology.py`](../shared/rabbitmq_topology.py) and declared
+[`shared/rabbitmq_topology.py`](https://github.com/BrentIO/SkyFollower/blob/main/shared/rabbitmq_topology.py) and declared
 idempotently by both components on every connect.
 
 The exchange carries an `alternate-exchange` argument pointing at the
