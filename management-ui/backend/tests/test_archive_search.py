@@ -192,6 +192,7 @@ def _configure_env(monkeypatch, tmp_path) -> None:
     for name, value in {
         "REDIS_HOST": "localhost",
         "REDIS_PORT": "6379",
+        "REDIS_PASSWORD": "test-password",
         "S3_BUCKET": "test-bucket",
         "AWS_DEFAULT_REGION": "us-east-1",
         "AWS_ACCESS_KEY_ID": "x",

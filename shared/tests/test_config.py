@@ -34,7 +34,7 @@ _RABBITMQ = {
     "RABBITMQ_USERNAME": "skyfollower",
     "RABBITMQ_PASSWORD": "secret",
 }
-_REDIS = {"REDIS_HOST": "redis.example.com"}
+_REDIS = {"REDIS_HOST": "redis.example.com", "REDIS_PASSWORD": "secret"}
 _S3 = {
     "S3_BUCKET": "flights",
     "AWS_DEFAULT_REGION": "us-east-1",
@@ -91,9 +91,19 @@ class TestRequiredVariables:
 
     def test_blank_value_counts_as_missing(self):
         with pytest.raises(ConfigError) as excinfo:
-            load_config("redis", environ={"REDIS_HOST": "   "})
+            load_config(
+                "redis", environ={"REDIS_HOST": "   ", "REDIS_PASSWORD": "secret"}
+            )
 
         assert excinfo.value.problems == ["REDIS_HOST is required but is not set"]
+
+    def test_redis_password_is_required(self):
+        with pytest.raises(ConfigError) as excinfo:
+            load_config("redis", environ={"REDIS_HOST": "redis.example.com"})
+
+        assert excinfo.value.problems == [
+            "REDIS_PASSWORD is required but is not set"
+        ]
 
     def test_aws_credentials_are_required_but_not_returned(self):
         cfg = load_config("s3", environ=_env(_S3))
@@ -131,6 +141,7 @@ class TestDefaults:
         assert cfg["mqtt"]["port"] == 1883
         assert cfg["rabbitmq"]["port"] == 5672
         assert cfg["redis"]["port"] == 6379
+        assert cfg["redis"]["password"] == "secret"
         assert cfg["athena"] == {
             "workgroup": "skyfollower",
             "database": "skyfollower",
@@ -390,4 +401,8 @@ class TestBlockHelpers:
         for name, value in _REDIS.items():
             monkeypatch.setenv(name, value)
         monkeypatch.setenv("REDIS_PORT", "6380")
-        assert redis_config() == {"host": "redis.example.com", "port": 6380}
+        assert redis_config() == {
+            "host": "redis.example.com",
+            "port": 6380,
+            "password": "secret",
+        }

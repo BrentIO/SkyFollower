@@ -39,6 +39,7 @@ import redis as redis_lib
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.redis_client import build_redis_client
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
@@ -531,10 +532,7 @@ class MessageProcessor:
 
         # Redis
         rc = config["redis"]
-        self._redis = redis_lib.Redis(
-            host=rc["host"], port=rc.get("port", 6379),
-            decode_responses=True,
-        )
+        self._redis = build_redis_client(rc)
         _lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "merge_aircraft.lua"
         self._merge_sha = self._redis.script_load(_lua_path.read_text())
         _route_lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "route_airports.lua"

@@ -155,6 +155,7 @@ def redis_config(loader: Optional[ConfigLoader] = None) -> dict:
     block = {
         "host": loader.string("REDIS_HOST"),
         "port": loader.integer("REDIS_PORT", 6379),
+        "password": loader.string("REDIS_PASSWORD"),
     }
     if own:
         loader.raise_for_problems()

@@ -31,6 +31,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.config import ConfigError, load_config
+from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
@@ -595,11 +596,7 @@ def main() -> None:
     configure_logging(cfg.get("log_level"))
 
     rc = cfg["redis"]
-    r = redis_lib.Redis(
-        host=rc["host"],
-        port=rc.get("port", 6379),
-        decode_responses=True,
-    )
+    r = build_redis_client(rc)
 
     ttl_days = cfg.get("redis_ttl_days", 14)
     ttl = ttl_days * 86400

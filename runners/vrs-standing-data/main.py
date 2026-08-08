@@ -37,6 +37,7 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import ConfigError, load_config
+from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import route_key
 from shared.mqtt import build_mqtt_client
@@ -283,11 +284,7 @@ def main() -> None:
     configure_logging(cfg.get("log_level"))
 
     rc = cfg["redis"]
-    r = redis_lib.Redis(
-        host=rc["host"],
-        port=rc.get("port", 6379),
-        decode_responses=True,
-    )
+    r = build_redis_client(rc)
 
     db_path = "/app/data/staging.db"
 

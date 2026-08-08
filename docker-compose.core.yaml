@@ -8,7 +8,7 @@ name: skyfollower-core
 # default for "wherever this host was deployed to".
 x-ofelia-runner-defaults:
   network: &ofelia-runner-network "${COMPOSE_PROJECT_NAME:-skyfollower-core}_default"
-  environment: &ofelia-runner-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_TTL_DAYS=${REDIS_TTL_DAYS:-14}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
+  environment: &ofelia-runner-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_PASSWORD=${REDIS_PASSWORD}", "REDIS_TTL_DAYS=${REDIS_TTL_DAYS:-14}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
   delete: &ofelia-runner-delete "true"
 
 # Every runner reads the same set, so the services below alias this block
@@ -19,6 +19,7 @@ x-runner-environment: &runner-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   REDIS_HOST: ${REDIS_HOST}
   REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
   REDIS_TTL_DAYS: ${REDIS_TTL_DAYS:-14}
   MQTT_HOST: ${MQTT_HOST}
   MQTT_PORT: ${MQTT_PORT:-1883}
@@ -75,9 +76,9 @@ services:
     # traffic is flowing — these are starting points, not measured values.
     environment:
       REDISEARCH_ARGS: "MAXSEARCHRESULTS 10000 MAXAGGREGATERESULTS 10000 FORK_GC_RUN_INTERVAL 300"
-    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --dir /data
+    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --dir /data --requirepass ${REDIS_PASSWORD}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} --no-auth-warning ping"]
       interval: 30s
       timeout: 5s
       retries: 3
