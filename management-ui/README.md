@@ -387,9 +387,9 @@ backend keeps a second, independent copy:
   change.
 
 `$DATA_DIR` defaults to `/app/data`, matching `docker-compose.management-ui.yaml`'s
-`management-ui-data:/app/data` volume mount (same convention as
-`message-processor-0-archive`'s and `archive-data`'s `/app/data` mounts),
-and can be overridden with the `DATA_DIR` environment variable.
+`./data/management-ui:/app/data` bind mount (same convention as the message
+processor's and archive processor's `/app/data` mounts), and can be
+overridden with the `DATA_DIR` environment variable.
 
 ## Regenerating `specs/openapi.yaml`
 

@@ -10,6 +10,11 @@ COPY shared/ ./shared/
 COPY specs/aws/ ./specs/aws/
 COPY archive-processor/ ./archive-processor/
 
+# Pinned at /app/healthcheck.py in every image that has one, so all three
+# compose files can name the identical HEALTHCHECK command regardless of
+# how each image lays its source out underneath.
+COPY shared/healthcheck.py ./healthcheck.py
+
 ENV PYTHONPATH=/app
 
 WORKDIR /app/archive-processor

@@ -7,7 +7,20 @@ services:
     restart: unless-stopped
     volumes:
       - ./config/archive/settings.json:/app/settings.json:ro
-      - archive-data:/app/data
+      # Bind mount, matching rabbitmq/redis on the core host -- the data
+      # directory stays directly readable by the operator on the host.
+      - ./data/archive-processor:/app/data
+    # RAM-backed, not the container's writable layer -- the healthcheck
+    # heartbeat file is rewritten every 15s and must never hit the host's
+    # storage the way /app/data (the S3 fallback queue) legitimately does.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # Archive Compaction — scheduled by its own ofelia instance, not the
@@ -16,13 +29,17 @@ services:
   # the core has no AWS-facing components today.
   # ---------------------------------------------------------------------------
 
+  # No healthcheck -- a one-shot job that runs to completion and exits, not
+  # a long-running service with a state to keep reporting on.
   archive-compaction:
     image: ghcr.io/brentio/skyfollower-archive-compaction:latest
     container_name: skyfollower-archive-compaction
     profiles: ["compaction"]
     volumes:
       - ./config/archive/compaction-settings.json:/app/settings.json:ro
-      - archive-compaction-data:/app/data
+      # Bind mount, matching rabbitmq/redis on the core host -- the data
+      # directory stays directly readable by the operator on the host.
+      - ./data/archive-compaction:/app/data
 
   # No depends_on -- its ofelia-config.ini's job-run entry runs in `image =`
   # mode (a fresh, disposable container per scheduled run), so ofelia needs
@@ -34,7 +51,3 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/archive/ofelia-config.ini:/etc/ofelia/config.ini:ro
-
-volumes:
-  archive-data:
-  archive-compaction-data:

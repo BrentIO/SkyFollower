@@ -17,6 +17,7 @@ import json
 import logging
 import logging.handlers
 import os
+import pathlib
 import re
 import signal
 import sys
@@ -63,6 +64,12 @@ _AWS_SETUP_TEMPLATES = {
 # How long the "last archived segment" pointer for an aircraft is kept in
 # Redis before it expires on its own (see _try_stitch / _update_stitch_pointer).
 _STITCH_POINTER_TTL_SECONDS = 86400
+
+# tmpfs-mounted in docker-compose.archive.yaml -- these writes must never
+# hit the host's storage, only /app/data (the S3 fallback queue) is
+# durable/persistent.
+_HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
+_HEALTHCHECK_INTERVAL_SECONDS = 15
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +414,7 @@ class ArchiveProcessor:
         threading.Thread(
             target=self._rmq_queue_depth_sampler_loop, daemon=True, name="rmq-depth-sampler"
         ).start()
+        threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
 
         self._consume_loop()
 
@@ -852,6 +860,27 @@ class ArchiveProcessor:
 
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
+
+    # ------------------------------------------------------------------
+    # Docker healthcheck (heartbeat file)
+    # ------------------------------------------------------------------
+
+    def _healthcheck_loop(self) -> None:
+        """Touch a heartbeat file while genuinely connected to RabbitMQ, for
+        Docker's HEALTHCHECK to check the mtime of. S3 deliberately isn't
+        part of the condition: an S3 outage is absorbed by the fallback queue
+        by design, so it isn't an unhealthy container. A fixed interval
+        independent of telemetry_interval_seconds (which is user-configurable
+        and not tuned for this), so healthcheck timing stays predictable."""
+        heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        while not self._shutdown.is_set():
+            if self._rmq_connected:
+                try:
+                    heartbeat_path.touch()
+                except OSError:
+                    pass
+            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery

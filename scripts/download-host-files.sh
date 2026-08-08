@@ -92,10 +92,16 @@ usage() {
 
 [ -n "$ROLE" ] || usage
 
+# DATA_DIRS lists this role's bind-mount sources. Docker creates a missing
+# bind-mount source itself, but as root -- an operator who is in the docker
+# group without being root then can't inspect, copy, or remove the
+# directory afterwards. Creating them here, unprivileged, keeps them owned
+# by whoever runs the stack.
 case "$ROLE" in
   receiver)
     COMPOSE_FILES=(docker-compose.receiver.yaml)
     CONFIG_FILES=(config/receiver/settings.json.example)
+    DATA_DIRS=(data/receiver)
     ;;
   receiver-mlat)
     # Same compose file as "receiver" -- the MLAT instance is the identical
@@ -105,22 +111,27 @@ case "$ROLE" in
     # starts from and by its own destination folder.
     COMPOSE_FILES=(docker-compose.receiver.yaml)
     CONFIG_FILES=(config/receiver/mlat-settings.json.example)
+    DATA_DIRS=(data/receiver)
     ;;
   core)
     COMPOSE_FILES=(docker-compose.core.yaml)
     CONFIG_FILES=(config/runners/settings.json.example config/runners/phonic_overrides.json.example config/ofelia/config.ini.example config/rabbitmq/rabbitmq.conf.example config/rabbitmq/enabled_plugins.example)
+    DATA_DIRS=(data/rabbitmq data/redis)
     ;;
   management-ui)
     COMPOSE_FILES=(docker-compose.management-ui.yaml)
     CONFIG_FILES=(config/management-ui/settings.json.example)
+    DATA_DIRS=(data/management-ui)
     ;;
   message-processor)
     COMPOSE_FILES=(docker-compose.message-processor.yaml)
     CONFIG_FILES=(config/message-processor/settings.json.example)
+    DATA_DIRS=(data/message-processor-0)
     ;;
   archive)
     COMPOSE_FILES=(docker-compose.archive.yaml)
     CONFIG_FILES=(config/archive/settings.json.example config/archive/compaction-settings.json.example config/archive/ofelia-config.ini.example)
+    DATA_DIRS=(data/archive-processor data/archive-compaction)
     ;;
   *)
     echo "Unknown role: ${ROLE}" >&2
@@ -170,6 +181,13 @@ if [ -d "${DEST}/config" ]; then
     done
   ' _ {} +
 fi
+
+echo
+echo "Creating data directories..."
+for data_dir in "${DATA_DIRS[@]}"; do
+  mkdir -p "${DEST}/${data_dir}"
+  echo "  ${DEST}/${data_dir}"
+done
 
 echo
 echo "Resolving __ROOT_DIRECTORY__ placeholders..."
