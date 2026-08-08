@@ -3,17 +3,17 @@
 SkyFollower Traffic Replayer
 
 Reads a captured NDJSON file (from traffic-recorder) and publishes messages to
-RabbitMQ queues in one of two modes:
+the ADS-B consistent-hash exchange in one of two modes:
 
   relative  — preserves original inter-message timing
   stress    — publishes as fast as RabbitMQ accepts (no delays)
 
 Usage:
     python main.py --input capture.ndjson --mode relative \
-        --processor-count 1 --rabbitmq-host 192.168.1.10
+        --rabbitmq-host 192.168.1.10
 
     python main.py --input capture.ndjson --mode stress \
-        --processor-count 4 --rabbitmq-host 192.168.1.10 \
+        --rabbitmq-host 192.168.1.10 \
         --rabbitmq-user skyfollower --rabbitmq-password secret
 """
 
@@ -27,6 +27,8 @@ import threading
 import time
 
 import pika
+
+from shared.rabbitmq_topology import ADSB_EXCHANGE, declare_adsb_topology
 
 
 # ---------------------------------------------------------------------------
@@ -44,15 +46,6 @@ def _connect(host: str, port: int, user: str, password: str) -> pika.BlockingCon
     return pika.BlockingConnection(params)
 
 
-def _declare_queues(channel, processor_count: int) -> None:
-    for i in range(processor_count):
-        channel.queue_declare(queue=f"adsb-{i}", durable=True)
-
-
-def _queue_name(icao_hex: str, processor_count: int) -> str:
-    return f"adsb-{int(icao_hex, 16) % processor_count}"
-
-
 # ---------------------------------------------------------------------------
 # Replay
 # ---------------------------------------------------------------------------
@@ -60,7 +53,6 @@ def _queue_name(icao_hex: str, processor_count: int) -> str:
 def replay(
     messages: list[dict],
     channel,
-    processor_count: int,
     mode: str,
     stop_event: threading.Event,
 ) -> int:
@@ -82,7 +74,6 @@ def replay(
             if target > now:
                 time.sleep(target - now)
 
-        queue = _queue_name(msg["icao_hex"], processor_count)
         body = json.dumps(
             {
                 "raw": msg["raw"],
@@ -93,8 +84,8 @@ def replay(
             separators=(",", ":"),
         )
         channel.basic_publish(
-            exchange="",
-            routing_key=queue,
+            exchange=ADSB_EXCHANGE,
+            routing_key=msg["icao_hex"],
             body=body,
             properties=pika.BasicProperties(delivery_mode=2),
         )
@@ -131,12 +122,6 @@ def main() -> None:
         choices=["relative", "stress"],
         required=True,
         help="relative: preserve original timing; stress: publish as fast as possible",
-    )
-    parser.add_argument(
-        "--processor-count",
-        type=int,
-        required=True,
-        help="Number of processor queues (must match receiver/message-processor config)",
     )
     parser.add_argument("--rabbitmq-host", required=True)
     parser.add_argument("--rabbitmq-port", type=int, default=5672)
@@ -176,7 +161,7 @@ def main() -> None:
         sys.exit(1)
 
     channel = connection.channel()
-    _declare_queues(channel, args.processor_count)
+    declare_adsb_topology(channel)
 
     stop_event = threading.Event()
 
@@ -190,7 +175,7 @@ def main() -> None:
     start = time.monotonic()
 
     try:
-        count = replay(messages, channel, args.processor_count, args.mode, stop_event)
+        count = replay(messages, channel, args.mode, stop_event)
     except KeyboardInterrupt:
         stop_event.set()
         count = 0

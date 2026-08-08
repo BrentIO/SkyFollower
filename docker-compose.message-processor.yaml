@@ -24,10 +24,10 @@ services:
     environment:
       MESSAGE_PROCESSOR_ID: "0"
 
-  # To add a second message processor on this host:
-  #   1. Uncomment the block below.
-  #   2. Set PROCESSOR_COUNT=2 in the receiver's settings.json.
-  #   3. Restart the receiver for new routing to take effect.
+  # To add a second message processor on this host, uncomment the block
+  # below. No receiver is touched: a processor declares and binds its own
+  # queue, and the exchange starts routing to it as soon as that binding
+  # exists.
   #
   # message-processor-1:
   #   image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}

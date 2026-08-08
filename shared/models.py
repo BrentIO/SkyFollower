@@ -12,7 +12,7 @@ def generate_flight_id() -> str:
 
 
 class InboundMessage(BaseModel):
-    """Raw ADS-B/UAT message published by the Receiver to a RabbitMQ adsb-{id} queue."""
+    """Raw ADS-B/UAT message published by the Receiver to the adsb exchange."""
 
     raw: str
     icao_hex: str

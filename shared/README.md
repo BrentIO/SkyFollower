@@ -21,6 +21,13 @@ time via a relative path reference in their `requirements.txt`.
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.
 
+- **`rabbitmq_topology.py`** — The ADS-B exchange's name, type and arguments,
+  plus the helpers that declare it and bind a message processor's queue to it.
+  The receiver and the message processor both declare this topology on every
+  connect and must agree on it exactly, since RabbitMQ answers a
+  redeclaration with differing arguments with a channel-level error. Defining
+  it once turns that agreement into a guarantee.
+
 - **`fallback_queue.py`** — `FallbackQueue`, the SQLite-backed local
   retry queue every component that talks to an external dependency
   (RabbitMQ, S3) uses when that dependency is unreachable. Below a

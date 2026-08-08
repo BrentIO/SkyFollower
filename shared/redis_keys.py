@@ -98,7 +98,7 @@ def config_flight_ttl_seconds_key() -> str:
     return "config:flight_ttl_seconds"
 
 
-def message_processor_heartbeat_key(message_processor_id: int) -> str:
+def message_processor_heartbeat_key(message_processor_id: str) -> str:
     """
     Message processor liveness key used to detect duplicate
     MESSAGE_PROCESSOR_ID on startup. Set with NX + TTL = 2 × telemetry_interval.
@@ -107,7 +107,7 @@ def message_processor_heartbeat_key(message_processor_id: int) -> str:
     return f"message_processor:{message_processor_id}:heartbeat"
 
 
-def metrics_registration_misses_key(message_processor_id: int, period: str) -> str:
+def metrics_registration_misses_key(message_processor_id: str, period: str) -> str:
     """
     Counter for Redis enrichment misses (aircraft not found) per message processor.
     period must be one of: hour, today, lifetime.
@@ -118,7 +118,7 @@ def metrics_registration_misses_key(message_processor_id: int, period: str) -> s
     return f"metrics:message_processor:{message_processor_id}:registration_misses:{period}"
 
 
-def metrics_aircraft_type_misses_key(message_processor_id: int, period: str) -> str:
+def metrics_aircraft_type_misses_key(message_processor_id: str, period: str) -> str:
     """
     Counter for aircraft type lookup misses per message processor.
     period must be one of: hour, today, lifetime.

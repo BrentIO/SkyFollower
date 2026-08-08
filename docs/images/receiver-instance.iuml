@@ -5,7 +5,7 @@
 ' distinct aliases per diagram so receiver.puml and
 ' receiver-mlat-topology.puml don't hand-duplicate this shape.
 !procedure $receiverCore($comp_alias, $fallback_alias)
-component "Receiver\n--\nTags: raw, icao_hex, received_at, source\nRoutes: adsb-{icao_hex_int % PROCESSOR_COUNT}" as $comp_alias
+component "Receiver\n--\nTags: raw, icao_hex, received_at, source\nPublishes: exchange adsb, routing key icao_hex" as $comp_alias
 database "queue.db\n(SQLite WAL)" as $fallback_alias
 $comp_alias -right-> $fallback_alias : RabbitMQ offline
 $fallback_alias .left.> $comp_alias : Drains on RabbitMQ reconnect\nor every telemetry tick

@@ -1,6 +1,6 @@
 # Message Processor
 
-The message processor consumes raw ADS-B and UAT messages from a RabbitMQ
+The message processor consumes raw ADS-B and UAT messages from its own RabbitMQ
 queue, maintains per-aircraft flight state in a file-backed (WAL-mode) SQLite
 database so it survives a process restart, enriches each flight with
 registration and operator data from Redis, evaluates
@@ -37,10 +37,20 @@ hosts.
 
 ### `MESSAGE_PROCESSOR_ID` Environment Variable
 
-`MESSAGE_PROCESSOR_ID` is a required integer environment variable set in the
-Docker Compose service definition. It must match one of the queue names
-declared by the receiver (`adsb-0`, `adsb-1`, …). The message processor
-consumes from `adsb-{MESSAGE_PROCESSOR_ID}`.
+`MESSAGE_PROCESSOR_ID` is a required environment variable set in the Docker
+Compose service definition. It can be any string; it only has to be unique
+across the whole deployment. A host-derived prefix plus an index (e.g.
+`turing-node-3-1`) makes that uniqueness structural rather than something
+tracked on paper.
+
+The message processor declares and consumes from `adsb-{MESSAGE_PROCESSOR_ID}`,
+binding that queue to the `adsb` consistent-hash exchange with a weight of `1`
+(see [Routing](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#routing)
+in the receiver's README for the exchange's shape and its operational
+consequences). Because the ID is embedded in the queue name, an abandoned
+queue is identifiable by name alone: the RabbitMQ management UI shows
+`adsb-turing-node-3-1` with a consumer count of zero once that message
+processor is gone.
 
 On startup the message processor attempts to claim a Redis key
 `message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat` using `SET NX`. If the
@@ -53,9 +63,8 @@ Host"), every message processor instance shares the identical
 is just: uncomment the next instance's block in
 `docker-compose.message-processor.yaml` (it already ships with a
 commented-out `message-processor-1` template, its own named volume, and
-`MESSAGE_PROCESSOR_ID: "1"`), bump `processor_count` in the receiver's
-`settings.json` to match the new total instance count, and restart the
-receiver so its routing picks up the new queue.
+`MESSAGE_PROCESSOR_ID: "1"`) and bring it up. No receiver is touched, and
+none has to be restarted.
 
 Example:
 

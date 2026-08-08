@@ -4,9 +4,10 @@ SkyFollower Receiver
 
 Connects to one or more TCP sources — readsb (1090 MHz Mode S / MLAT) or
 dump978-fa (978 MHz UAT) — extracts each message's ICAO hex (via pyModeS for
-1090/MLAT, directly from the UAT payload for 978), and routes it to the
-appropriate RabbitMQ queue based on a modulo-bucketing scheme.  Falls back to
-a local SQLite queue when RabbitMQ is unavailable, and drains the fallback on
+1090/MLAT, directly from the UAT payload for 978), and publishes it to
+RabbitMQ's consistent-hash exchange keyed by that hex, leaving the broker to
+pick which message processor handles the aircraft.  Falls back to a local
+SQLite queue when RabbitMQ is unavailable, and drains the fallback on
 reconnect.
 
 One container handles all configured sources concurrently (one thread per source).
@@ -39,6 +40,7 @@ from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
+from shared.rabbitmq_topology import ADSB_EXCHANGE, declare_adsb_topology
 from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
@@ -330,10 +332,7 @@ class Receiver:
         source: str,
         rate_tracker: _RateTracker,
     ) -> None:
-        """Compute the target queue, build the InboundMessage envelope, and publish."""
-        processor_count = self._cfg.get("processor_count", 1)
-        queue_name = f"adsb-{int(icao_hex, 16) % processor_count}"
-
+        """Build the InboundMessage envelope and publish it keyed by ICAO hex."""
         msg = InboundMessage(
             raw=raw,
             icao_hex=icao_hex,
@@ -343,7 +342,7 @@ class Receiver:
         payload = msg.model_dump_json()
 
         rate_tracker.record()
-        self._publish(queue_name, payload)
+        self._publish(icao_hex, payload)
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -367,10 +366,7 @@ class Receiver:
                 conn = pika.BlockingConnection(self._rmq_params())
                 ch = conn.channel()
 
-                # Pre-declare all queues
-                processor_count = self._cfg.get("processor_count", 1)
-                for i in range(processor_count):
-                    ch.queue_declare(queue=f"adsb-{i}", durable=True)
+                declare_adsb_topology(ch)
 
                 with self._rmq_lock:
                     self._rmq_connection = conn
@@ -453,7 +449,7 @@ class Receiver:
         if "exc" in outcome:
             raise outcome["exc"]
 
-    def _do_publish(self, queue_name: str, payload: str) -> None:
+    def _do_publish(self, routing_key: str, payload: str) -> None:
         """The only place that actually calls channel.basic_publish().
         Must only ever run on the rabbitmq thread -- callers reach this via
         _pika_invoke(), never directly."""
@@ -462,47 +458,46 @@ class Receiver:
         if channel is None:
             raise RuntimeError("RabbitMQ channel gone")
         channel.basic_publish(
-            exchange="",
-            routing_key=queue_name,
+            exchange=ADSB_EXCHANGE,
+            routing_key=routing_key,
             body=payload.encode(),
             properties=pika.BasicProperties(delivery_mode=2),
         )
 
-    def _publish(self, queue_name: str, payload: str) -> None:
+    def _publish(self, routing_key: str, payload: str) -> None:
         """Publish to RabbitMQ; fall back to SQLite on failure."""
         with self._rmq_lock:
             connected = self._rmq_connected
 
         if connected:
             try:
-                self._pika_invoke(lambda: self._do_publish(queue_name, payload))
+                self._pika_invoke(lambda: self._do_publish(routing_key, payload))
                 return
             except Exception as exc:
                 logger.debug("RabbitMQ publish failed: %s — writing to fallback.", exc)
                 with self._rmq_lock:
                     self._rmq_connected = False
 
-        self._fallback_put(queue_name, payload)
+        self._fallback_put(routing_key, payload)
 
-    def _fallback_put(self, queue_name: str, payload: str) -> None:
+    def _fallback_put(self, routing_key: str, payload: str) -> None:
         """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
-        has no queue_name column of its own, unlike this component's
-        previous hand-rolled fallback queue. queue_name is the target
-        RabbitMQ routing key computed once at insert time (see
-        _route_message), and has to be persisted alongside the payload
-        rather than recomputed on drain against a possibly-since-changed
-        processor_count -- so it's wrapped into one JSON string here and
-        unwrapped again in _drain_fallback's process_fn."""
-        self._fallback.put(json.dumps({"queue_name": queue_name, "payload": payload}))
+        has no routing_key column of its own, unlike this component's
+        previous hand-rolled fallback queue. Persisting the routing key
+        alongside the payload keeps the drain path identical to the live
+        publish path, with no need to re-parse a stored message body to
+        work out where it was going -- so it's wrapped into one JSON string
+        here and unwrapped again in _drain_fallback's process_fn."""
+        self._fallback.put(json.dumps({"routing_key": routing_key, "payload": payload}))
 
     def _drain_fallback(self) -> None:
         def process_fn(wrapped: str) -> None:
             item = json.loads(wrapped)
-            queue_name = item["queue_name"]
+            routing_key = item["routing_key"]
             payload = item["payload"]
 
             try:
-                self._pika_invoke(lambda: self._do_publish(queue_name, payload))
+                self._pika_invoke(lambda: self._do_publish(routing_key, payload))
             except Exception:
                 with self._rmq_lock:
                     self._rmq_connected = False

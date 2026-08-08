@@ -7,57 +7,59 @@ flights in S3, including the RabbitMQ offline-fallback path at each hop.
 
 ## Scaling Message Processors
 
-Each message processor handles the subset of aircraft whose ICAO hex modulo
-`PROCESSOR_COUNT` equals the message processor's ID. To add a second message
-processor:
+Receivers publish every message to the durable `adsb` exchange, of type
+`x-consistent-hash`, keyed by the aircraft's ICAO hex. Each message processor
+declares and binds its own durable queue, `adsb-{MESSAGE_PROCESSOR_ID}`, with
+a weight of `1`. The exchange hashes the routing key against the bound queues
+and delivers each message to exactly one of them, so an aircraft stays with
+one message processor and the per-aircraft flight state it holds.
 
-1. Uncomment the `message-processor-1` block in `docker-compose.message-processor.yaml` and its volume entry.
-2. Increment `processor_count` in the receiver's `settings.json` (e.g. `"processor_count": 2`).
-3. Restart the receiver — it will pre-declare the new queue and begin routing to it.
-4. Start the new message processor container: `docker compose -f docker-compose.message-processor.yaml up -d`.
+**No receiver knows or cares how many message processors exist**, so no
+resize ever restarts a receiver — which matters, because a receiver restart
+is an ingest gap: it is reading live TCP streams, and whatever arrives while
+it is down is gone.
 
-Each message processor must run on a separate host (or at least with a
-unique `MESSAGE_PROCESSOR_ID`). The message processor claims its ID in
-Redis on startup and exits if the ID is already claimed by another instance.
+To add a message processor: uncomment the next instance's block in
+`docker-compose.message-processor.yaml`, give it a
+`MESSAGE_PROCESSOR_ID` unique across the whole deployment, and bring it up.
+That is the entire procedure, on any host. The message processor claims its
+ID in Redis on startup and exits if another instance already holds it.
 
-**Increasing `PROCESSOR_COUNT` reshuffles every aircraft's target message
-processor** (`icao_hex % PROCESSOR_COUNT`), not just the newly-added
-capacity — it's a modulo over the *new* count, so most aircraft that used
-to hash to an existing message processor now hash somewhere else. Existing
-message processors will see some of their in-flight flights go stale as
-traffic reroutes to the new message processor; those flights age out and
-archive normally via the crash-durable eviction path (see Crash Recovery &
-Backlog Replay below), while the new message processor starts a fresh
-flight for that aircraft the next time it's seen. This is an accepted
-split — the same category of fragmentation `flight_ttl_seconds` already
-causes elsewhere — not data loss or corruption. No special drain is
-required to resize upward safely, though performing it during a quiet
-period will minimize the number of flights that get split.
+Measured over 5,000 randomly generated ICAO hexes:
 
-**Removing a message processor** works the same way in reverse:
+| Operation | Aircraft moving to a different message processor | Receiver restart |
+|---|---|---|
+| Add a message processor | ~20%, all onto the new one | None |
+| Remove the last-bound message processor | ~20%, redistributed evenly | None |
+| All message processors restart, any order | 0% | None |
+| Remove a message processor from the middle | ~68% | None |
 
-1. Stop the message processor container(s) being removed.
-2. Decrement `processor_count` in the receiver's `settings.json`, and
-   comment out (or remove) the corresponding block/volume in
-   `docker-compose.message-processor.yaml`.
-3. Restart the receiver so the new routing takes effect.
-4. Decommission the removed message processor's container and volume.
+Slots inside the exchange are positional and assigned in binding order, which
+is why removal must happen from the end: deleting a queue in the middle slides
+every later queue down and rehashes most aircraft. Treat message processors as
+a stack — add and remove at the end. A restart moves nothing at all, because
+the binding is durable state held by RabbitMQ and rebinding an existing
+binding is a no-op.
 
-Splitting an in-progress flight across the resize boundary is an accepted
-trade-off, same as resizing up. The removed message processor's residual
-`active_flights.db` data does **not** need to be manually drained or
-preserved before decommissioning — any flights it was still tracking are
-simply abandoned; surviving message processors will start fresh flights for
-those aircraft under the new routing the next time they're seen.
+None of this is data loss. Nothing is dropped, and every message still routes
+and processes. In-progress flights for reshuffled aircraft split: the old
+message processor's partial state ages out after `flight_ttl_seconds` and
+archives as one segment (via the crash-durable eviction path — see Crash
+Recovery & Backlog Replay below), the new one starts another, and the archive
+processor's split-flight stitching merges the adjacent segments. The cost is
+degraded archive quality for a few minutes.
 
-The archive-processor detects and merges these adjacent split-flight
-records after the fact, keyed on a short-lived Redis pointer
-(`archive:last_segment:{icao_hex}`, 1-day TTL). Stitching fails soft: if
-Redis is unreachable, the pointer lookup/update is skipped and the
-segments are simply left unmerged rather than blocking the archive write.
-See
+Stitching is keyed on a short-lived Redis pointer
+(`archive:last_segment:{icao_hex}`, 1-day TTL) and fails soft: if Redis is
+unreachable, the pointer lookup/update is skipped and the segments are simply
+left unmerged rather than blocking the archive write. See
 [Split-Flight Stitching](https://github.com/BrentIO/SkyFollower/blob/main/archive-processor/README.md#split-flight-stitching)
 in the archive processor's README for the full behavior.
+
+A decommissioned message processor's residual `active_flights.db` does not
+need to be drained or preserved — any flights it was still tracking are
+abandoned, and surviving message processors start fresh flights for those
+aircraft the next time they are seen.
 
 ## Crash Recovery & Backlog Replay
 
