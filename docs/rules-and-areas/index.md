@@ -16,6 +16,7 @@ Example `rules.example.json` entry:
     "name": "Heavy aircraft arriving",
     "description": "Any heavy aircraft descending below 5000 ft",
     "enabled": true,
+    "force_archive": false,
     "conditions": [
       { "type": "wake_turbulence_category", "operator": "equals", "value": "heavy" },
       { "type": "altitude", "operator": "maximum", "value": 5000 },
@@ -25,10 +26,18 @@ Example `rules.example.json` entry:
 ]
 ```
 
+`force_archive` is a boolean, defaulting to `false`. MLAT-only flights (where
+the flight's accumulated `receiver_sources` is exactly `["MLAT"]`) are dropped
+rather than written to S3 — see the
+[Archive Processor docs](/components/archive-processor). Setting
+`force_archive: true` on a rule overrides that skip for any flight matching
+the rule, so an MLAT-only flight the user cares about still gets archived.
+
 Available condition types: `altitude`, `heading`, `velocity`, `vertical_speed`,
-`area`, `date`, `ident`, `squawk`, `military`, `operator_airline_designator`,
-`aircraft_type_designator`, `aircraft_registration`, `aircraft_icao_hex`,
-`aircraft_powerplant_count`, `wake_turbulence_category`, `matched_rules`.
+`area`, `date`, `ident`, `squawk`, `military`, `receiver_source`,
+`operator_airline_designator`, `aircraft_type_designator`,
+`aircraft_registration`, `aircraft_icao_hex`, `aircraft_powerplant_count`,
+`wake_turbulence_category`, `matched_rules`.
 
 See the [Message Processor docs](/components/message-processor) for operator and constraint details.
 
