@@ -857,6 +857,7 @@ class TestMessageProcessorIdentity:
             "RABBITMQ_USERNAME": "u",
             "RABBITMQ_PASSWORD": "p",
             "REDIS_HOST": "localhost",
+            "REDIS_PASSWORD": "p",
             "MQTT_HOST": "localhost",
             "MQTT_USERNAME": "u",
             "MQTT_PASSWORD": "p",

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.redis_client import build_redis_client
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
@@ -376,10 +377,7 @@ class ArchiveProcessor:
 
         # Redis
         rc = config["redis"]
-        self._redis = redis_lib.Redis(
-            host=rc["host"], port=rc.get("port", 6379),
-            decode_responses=True,
-        )
+        self._redis = build_redis_client(rc)
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
         # read once at startup and cached. Not hot-reloaded; restart to pick

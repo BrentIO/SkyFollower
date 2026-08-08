@@ -121,6 +121,20 @@ first avoids that miss and the log noise, but isn't required for
 correctness. Bring everything back in this order: Redis, then RabbitMQ,
 then `ofelia`.
 
+**Upgrading an existing host to Redis authentication** — Redis now starts
+with `requirepass` and rejects unauthenticated connections. Every host that
+already has a `.env` predating this change needs `REDIS_PASSWORD` added to
+it *before* pulling the new images, on every host that talks to Redis:
+core, message processor, archive, and management-UI. Set the same value
+everywhere Redis is reached across the network — there is one password,
+not one per component. Upgrading core first and everything else after (or
+in any order) both fail the same way in between: whichever side updates
+first simply can't authenticate to the other until the last host catches
+up, the same as rotating any shared credential. There's no partial or
+silent failure mode to worry about — a client missing `REDIS_PASSWORD`
+fails loudly at startup (`shared/config.py` treats it as required), rather
+than connecting unauthenticated or hanging.
+
 **A single message processor** (not a resize — resizing the processor count
 up or down changes aircraft-to-message-processor routing and is documented
 separately) — stop it. RabbitMQ retains its queue (`adsb-{id}`, durable) and
