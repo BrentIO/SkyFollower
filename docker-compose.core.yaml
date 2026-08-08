@@ -49,6 +49,11 @@ services:
       - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     # The same two variables every client authenticates with, so the broker
     # and its clients can no longer be started from different credentials.
+    # RabbitMQ always creates this user as a full administrator on first
+    # boot -- there is no env var that creates it scoped from the start.
+    # scripts/install.sh's provision_rabbitmq_users demotes it to
+    # SkyFollower's own resources (and creates a separate administrator for
+    # the dashboard) once the container reports healthy.
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}

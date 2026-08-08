@@ -665,6 +665,16 @@ collect_core_env() {
   else
     RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$existing_rmq_pw")"
   fi
+  # Fixed, not prompted -- nothing requires a human to choose the dashboard
+  # admin's username any more than its password. Its credentials never
+  # leave this host: no other role's .env ever references it, and no
+  # component reads it, since RabbitMQ is provisioned by rabbitmqctl after
+  # startup (see provision_rabbitmq_users), not by an image env var.
+  RABBITMQ_ADMIN_USERNAME="$(existing_env_value_or "$env_file" RABBITMQ_ADMIN_USERNAME skyfollower-admin)"
+  RABBITMQ_ADMIN_PASSWORD="$(existing_env_value "$env_file" RABBITMQ_ADMIN_PASSWORD)"
+  if [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
+    RABBITMQ_ADMIN_PASSWORD="$(generate_password)"
+  fi
   local existing_redis_pw
   existing_redis_pw="$(existing_env_value "$env_file" REDIS_PASSWORD)"
   if [ "$NON_INTERACTIVE" -eq 0 ] && [ -z "$existing_redis_pw" ]; then
@@ -688,10 +698,20 @@ collect_core_env() {
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# The broker container is started with these and every client authenticates
-# with them -- one pair, one file, so the two can no longer drift apart.
+# The broker container is started with these, and the receiver, message
+# processor and archive processor all authenticate with them too -- one
+# pair, one file, so the two can no longer drift apart. RabbitMQ's image
+# always creates this user as a full administrator on first boot; this
+# script demotes it to SkyFollower's own scoped, tag-less permissions right
+# after the container reports healthy (see provision_rabbitmq_users).
 RABBITMQ_USERNAME=${RABBITMQ_USERNAME}
 RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+
+# Dashboard-only administrator, provisioned the same way. Never referenced
+# by any other role's .env or read by any component -- the only way to use
+# it is to log into http://<this-host>:15672 by hand.
+RABBITMQ_ADMIN_USERNAME=${RABBITMQ_ADMIN_USERNAME}
+RABBITMQ_ADMIN_PASSWORD=${RABBITMQ_ADMIN_PASSWORD}
 
 # Redis as the runners on this host reach it: the compose service name,
 # since they share this project's network.
@@ -1019,6 +1039,79 @@ offer_up() {
   fi
 }
 
+provision_rabbitmq_users() {
+  # RabbitMQ's RABBITMQ_DEFAULT_USER/PASS env vars always create that user
+  # as a full administrator on `/` -- there is no env var that creates it
+  # scoped from the start. This runs once the container is actually up,
+  # demoting the application user to SkyFollower's own resources and
+  # creating a separate administrator for the dashboard, so a compromised
+  # receiver/message-processor/archive host only ever holds a credential
+  # that can publish/consume on known queue names, never one that can
+  # reconfigure the broker. Every rabbitmqctl call below is idempotent, so
+  # running this again (a second install.sh run, --upgrade, or manually
+  # re-running just this role) is always safe -- including the migration
+  # case, where an existing deployment's application user is still
+  # full-admin from before this existed.
+  local role_dir="$1"
+  local rabbitmq_username rabbitmq_admin_username rabbitmq_admin_password
+  rabbitmq_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_USERNAME)"
+  rabbitmq_admin_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_USERNAME)"
+  rabbitmq_admin_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_PASSWORD)"
+  if [ -z "$rabbitmq_username" ] || [ -z "$rabbitmq_admin_username" ] || [ -z "$rabbitmq_admin_password" ]; then
+    echo "  ✗ ${role_dir}/.env is missing RabbitMQ credentials -- skipping user provisioning." >&2
+    return
+  fi
+
+  local container_id
+  container_id="$(cd "$role_dir" && docker compose ps -q rabbitmq)"
+  if [ -z "$container_id" ]; then
+    echo "RabbitMQ isn't running -- skipping user provisioning. Bring it up and" >&2
+    echo "re-run this script for the core role to provision it." >&2
+    return
+  fi
+
+  echo "Waiting for RabbitMQ to become healthy..."
+  local waited=0 health=""
+  while [ "$waited" -lt 60 ]; do
+    health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || echo "")"
+    [ "$health" = "healthy" ] && break
+    sleep 2
+    waited=$((waited + 2))
+  done
+  if [ "$health" != "healthy" ]; then
+    echo "  ✗ RabbitMQ did not report healthy within 60s -- skipping user provisioning." >&2
+    echo "    Re-run this script for the core role once it's healthy." >&2
+    return
+  fi
+
+  echo "Provisioning RabbitMQ users..."
+
+  # configure/write/read, in that order -- amq.default is required for
+  # write because completed flights are published to the archive queue
+  # through the default exchange.
+  if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_username") \
+    && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_username" \
+      '^(adsb.*|archive|amq\.default)$' '^(adsb.*|archive|amq\.default)$' '^(adsb.*|archive)$'); then
+    echo "  ✓ ${rabbitmq_username}: no tags, scoped to SkyFollower's own resources"
+  else
+    echo "  ✗ Could not scope ${rabbitmq_username}'s tags/permissions -- check manually." >&2
+  fi
+
+  # add_user fails if the user already exists (a prior run already created
+  # it, with its own password) -- that's fine, list_users first so this
+  # doesn't print a scary error on every re-run.
+  if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_admin_username}[[:space:]]"); then
+    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_admin_username" "$rabbitmq_admin_password") \
+      || echo "  ✗ Could not create ${rabbitmq_admin_username} -- check manually." >&2
+  fi
+  if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_admin_username" administrator) \
+    && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_admin_username" '.*' '.*' '.*'); then
+    echo "  ✓ ${rabbitmq_admin_username}: administrator (dashboard login only -- see ${role_dir}/.env)"
+  else
+    echo "  ✗ Could not tag/grant permissions for ${rabbitmq_admin_username} -- check manually." >&2
+  fi
+}
+
 offer_ofelia_and_bulk_load() {
   local role_dir="$1"
   local answer
@@ -1198,6 +1291,7 @@ main() {
     i=$((i+1))
     offer_up "$role" "$role_dir"
     if [ "$role" = "core" ]; then
+      provision_rabbitmq_users "$role_dir"
       offer_ofelia_and_bulk_load "$role_dir"
     fi
   done
