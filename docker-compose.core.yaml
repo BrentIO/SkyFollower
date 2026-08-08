@@ -1,7 +1,7 @@
 name: skyfollower-core
 
 # Interpolated from this host's .env (written by
-# scripts/download-host-files.sh). Each carries a fallback so the file is
+# scripts/install.sh). Each carries a fallback so the file is
 # still usable without one, except SKYFOLLOWER_ROOT -- Ofelia's job-run
 # creates containers through the Docker Engine API, which accepts only an
 # absolute host path as a bind-mount source, and there is no sensible

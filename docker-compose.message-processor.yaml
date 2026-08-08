@@ -1,7 +1,7 @@
 name: skyfollower-message-processor
 
 # Interpolated from this host's .env (written by
-# scripts/download-host-files.sh). Named one variable at a time rather than
+# scripts/install.sh). Named one variable at a time rather than
 # `env_file: .env`, so a container only ever holds the values it reads.
 # MESSAGE_PROCESSOR_ID is not here: it's the one value that differs per
 # instance, so each service sets it alongside this block.
@@ -70,7 +70,7 @@ services:
   # stopping a container leaves its binding intact and costs nothing.
   #
   # MESSAGE_PROCESSOR_PREFIX defaults to this node's hostname, written into
-  # .env by scripts/download-host-files.sh, so two nodes each running
+  # .env by scripts/install.sh, so two nodes each running
   # several processors never collide on an ID without anyone coordinating.
   #
   # Each instance's data directory is a bind mount of its own, matching
