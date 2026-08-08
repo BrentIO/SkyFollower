@@ -70,23 +70,22 @@ class TestRequiredVariables:
         with pytest.raises(ConfigError) as excinfo:
             load_config("rabbitmq", "mqtt", "telemetry", "receiver", environ={})
 
+        # mqtt contributes nothing here -- it's optional everywhere, so an
+        # unset MQTT_HOST/USERNAME/PASSWORD is not a problem to report.
         assert set(excinfo.value.problems) == {
             "RABBITMQ_HOST is required but is not set",
             "RABBITMQ_USERNAME is required but is not set",
             "RABBITMQ_PASSWORD is required but is not set",
-            "MQTT_HOST is required but is not set",
-            "MQTT_USERNAME is required but is not set",
-            "MQTT_PASSWORD is required but is not set",
             "RECEIVER_NAME is required but is not set",
             "RECEIVER_SOURCES is required but is not set",
         }
 
     def test_error_message_lists_every_problem(self):
         with pytest.raises(ConfigError) as excinfo:
-            load_config("redis", "mqtt", environ={})
+            load_config("redis", "rabbitmq", environ={})
 
         message = str(excinfo.value)
-        for name in ("REDIS_HOST", "MQTT_HOST", "MQTT_USERNAME", "MQTT_PASSWORD"):
+        for name in ("REDIS_HOST", "RABBITMQ_HOST", "RABBITMQ_USERNAME"):
             assert name in message
 
     def test_blank_value_counts_as_missing(self):
@@ -373,11 +372,24 @@ class TestShape:
 
 class TestBlockHelpers:
     def test_helpers_validate_on_their_own(self, monkeypatch):
+        monkeypatch.delenv("RABBITMQ_HOST", raising=False)
+        monkeypatch.delenv("RABBITMQ_USERNAME", raising=False)
+        monkeypatch.delenv("RABBITMQ_PASSWORD", raising=False)
+        with pytest.raises(ConfigError):
+            rabbitmq_config()
+
+    def test_mqtt_config_never_raises_on_its_own(self, monkeypatch):
+        """Unlike every other block, mqtt has nothing required -- calling it
+        with no MQTT env vars set at all must not raise."""
         monkeypatch.delenv("MQTT_HOST", raising=False)
         monkeypatch.delenv("MQTT_USERNAME", raising=False)
         monkeypatch.delenv("MQTT_PASSWORD", raising=False)
-        with pytest.raises(ConfigError):
-            mqtt_config()
+        assert mqtt_config() == {
+            "host": "",
+            "port": 1883,
+            "username": "",
+            "password": "",
+        }
 
     def test_helpers_share_a_loader_when_given_one(self):
         loader = ConfigLoader({})

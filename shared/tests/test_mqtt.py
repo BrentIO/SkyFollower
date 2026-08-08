@@ -8,6 +8,14 @@ class TestBuildMqttClient:
         assert build_mqtt_client(None) is None
         assert build_mqtt_client({}) is None
 
+    def test_returns_none_for_the_shape_mqtt_config_actually_produces(self):
+        """shared/config.py's mqtt_config() never returns None or {} when
+        MQTT is unconfigured -- it returns a populated dict with a blank
+        host. That's the real "not configured" signal this must handle."""
+        assert build_mqtt_client(
+            {"host": "", "port": 1883, "username": "", "password": ""}
+        ) is None
+
     def test_returns_client_when_config_present(self):
         client = build_mqtt_client({"host": "localhost"})
         assert client is not None

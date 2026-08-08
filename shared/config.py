@@ -125,12 +125,16 @@ def _own_loader(loader: Optional[ConfigLoader]) -> tuple[ConfigLoader, bool]:
 
 
 def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """MQTT is optional everywhere -- host/username/password all default to
+    blank rather than being required, so a component with no MQTT_HOST set
+    still starts. build_mqtt_client() reads this block's `host` to decide
+    whether to skip MQTT entirely."""
     loader, own = _own_loader(loader)
     block = {
-        "host": loader.string("MQTT_HOST"),
+        "host": loader.string("MQTT_HOST", ""),
         "port": loader.integer("MQTT_PORT", 1883),
-        "username": loader.string("MQTT_USERNAME"),
-        "password": loader.string("MQTT_PASSWORD"),
+        "username": loader.string("MQTT_USERNAME", ""),
+        "password": loader.string("MQTT_PASSWORD", ""),
     }
     if own:
         loader.raise_for_problems()
