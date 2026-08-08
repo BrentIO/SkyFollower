@@ -28,4 +28,4 @@ Run the test suite:
 python -m pytest
 ```
 
-Tests live under `message-processor/tests/`, `receiver/tests/`, and `shared/tests/`.
+This runs every component's test suite, discovered from the repo root.
