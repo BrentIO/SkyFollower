@@ -117,6 +117,47 @@ def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
     return bool(registration) and registration.replace("-", "") == ident.replace("-", "")
 
 
+# Reserved/emergency squawk codes -- corrupted DF5/21 identity replies
+# disproportionately decode into these (see #900), so unlike an ordinary
+# squawk value, these require confirmation before being trusted when
+# sourced from a message _decode_1090 couldn't CRC-verify.
+_RESERVED_SQUAWKS = frozenset({"7500", "7600", "7700", "7777"})
+
+# Debounce window/threshold for confirming a reserved squawk or an ident
+# sourced from an unverifiable message (see #900) -- matches
+# SkyFollower-legacy's mitigation for the same false-positive pattern.
+_PARITY_ERROR_CONFIRM_WINDOW_SECONDS = 30
+_PARITY_ERROR_CONFIRM_COUNT = 5
+
+
+def _confirm_after_repeated_sightings(
+    pending: Optional[dict], value: str, received_at: float,
+    window_seconds: float = _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
+    required_count: int = _PARITY_ERROR_CONFIRM_COUNT,
+) -> tuple[dict, bool]:
+    """Track repeated sightings of `value` within a trailing time window,
+    keyed on message timestamps (not wall-clock, so a replayed backlog is
+    judged consistently with live traffic). Returns the updated pending-
+    candidate state and whether `value` just reached the confirmation
+    threshold on this call.
+
+    A differing value seen in between doesn't reset the count for `value`
+    -- only sightings older than the window are pruned -- since range-
+    boundary corruption tends to garble each message independently rather
+    than identically, so demanding strict consecutiveness would make
+    confirmation unreasonably hard to reach.
+    """
+    if pending is not None and pending.get("value") == value:
+        sightings = list(pending.get("sightings", []))
+    else:
+        sightings = []
+
+    sightings = [t for t in sightings if received_at - t <= window_seconds]
+    sightings.append(received_at)
+
+    return {"value": value, "sightings": sightings}, len(sightings) >= required_count
+
+
 # ---------------------------------------------------------------------------
 # SQLite schema (active flight store)
 # ---------------------------------------------------------------------------
@@ -137,7 +178,9 @@ CREATE TABLE IF NOT EXISTS flights (
     receiver_sources TEXT,
     force_archive INTEGER,
     route_resolution_attempted INTEGER,
-    route_candidate_airports TEXT
+    route_candidate_airports TEXT,
+    pending_squawk TEXT,
+    pending_ident  TEXT
 );
 CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
@@ -184,6 +227,13 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE flights ADD COLUMN route_resolution_attempted INTEGER")
     if "route_candidate_airports" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN route_candidate_airports TEXT")
+    if "pending_squawk" not in existing:
+        # A flight recovered from a store predating this column has no
+        # in-progress squawk confirmation -- NULL (no pending candidate)
+        # is the correct starting value, same as a brand-new flight.
+        db.execute("ALTER TABLE flights ADD COLUMN pending_squawk TEXT")
+    if "pending_ident" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN pending_ident TEXT")
     db.commit()
 
 # ---------------------------------------------------------------------------
@@ -295,7 +345,8 @@ class Flight:
         "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
         "aircraft", "ident", "operator", "squawk", "origin", "destination",
         "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
-        "route_candidate_airports", "positions", "velocities", "_db",
+        "route_candidate_airports", "pending_squawk", "pending_ident",
+        "positions", "velocities", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -327,6 +378,12 @@ class Flight:
         # route_resolver.heading_is_stable) can be re-evaluated on later
         # messages without a repeat Redis round trip. None until fetched.
         self.route_candidate_airports: Optional[str] = None
+        # Confirmation-in-progress candidate for a squawk/ident sourced from
+        # a message pyModeS can't CRC-verify (DF5/20/21) -- {"value": ...,
+        # "sightings": [msg.received_at, ...]} while unconfirmed, None once
+        # confirmed (or not yet pending). See _confirm_after_repeated_sightings.
+        self.pending_squawk: Optional[dict] = None
+        self.pending_ident: Optional[dict] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
 
@@ -342,7 +399,7 @@ class Flight:
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, squawk, origin, destination, "
             "matched_rules, receiver_sources, force_archive, route_resolution_attempted, "
-            "route_candidate_airports "
+            "route_candidate_airports, pending_squawk, pending_ident "
             "FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
         )
@@ -365,6 +422,8 @@ class Flight:
         self.force_archive = bool(row["force_archive"])
         self.route_resolution_attempted = bool(row["route_resolution_attempted"])
         self.route_candidate_airports = row["route_candidate_airports"]
+        self.pending_squawk = json.loads(row["pending_squawk"]) if row["pending_squawk"] else None
+        self.pending_ident = json.loads(row["pending_ident"]) if row["pending_ident"] else None
 
         self._load_positions(limit=limit)
         self._load_velocities(limit=limit)
@@ -402,8 +461,9 @@ class Flight:
             "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
             "total_messages, aircraft, ident, operator, squawk, origin, "
             "destination, matched_rules, receiver_sources, force_archive, "
-            "route_resolution_attempted, route_candidate_airports) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "route_resolution_attempted, route_candidate_airports, "
+            "pending_squawk, pending_ident) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
@@ -412,6 +472,8 @@ class Flight:
                 json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
                 int(self.force_archive), int(self.route_resolution_attempted),
                 self.route_candidate_airports,
+                json.dumps(self.pending_squawk) if self.pending_squawk else None,
+                json.dumps(self.pending_ident) if self.pending_ident else None,
             ),
         )
         self._db.commit()
@@ -696,20 +758,31 @@ class MessageProcessor:
             return None
 
         # A real corruption check only for DF17/18 (crc_valid there is a
-        # genuine crc==0 result). For DF0/4/5/11/16/20/21, pyModeS hardcodes
-        # crc_valid=True unconditionally — their CRC field encodes the ICAO
-        # itself, so there's no single-message corruption signal available
-        # for those types at all (confirmed by reading pyModeS's own
-        # message.py). This check is a no-op for that DF set, not a gap we
-        # can close by passing an icao hint — a hint only overrides what
-        # `icao` is reported as, it doesn't verify anything.
+        # genuine crc==0 result). For DF5/20/21, pyModeS can't compute a
+        # real crc_valid without an ICAO hint we don't supply — it reports
+        # crc_valid=None (not True), which this check doesn't catch. That's
+        # not a gap we can close by passing an icao hint here — a hint only
+        # overrides what `icao` is reported as, it doesn't verify anything
+        # against a value we don't already trust. See #900: fields sourced
+        # from a crc_valid=None message get the "verified" flag below
+        # instead, and callers apply extra scrutiny to specific fields
+        # (squawk, ident) that are known to fabricate plausible-looking
+        # garbage from corrupted bits of these DF types.
         if result.get("crc_valid") is False:
             return None
+
+        # True only for a genuinely CRC-verified message (DF17/18); False
+        # for DF5/20/21, where pyModeS reports crc_valid=None because it
+        # can't be determined at all without an ICAO hint. Only attached
+        # alongside squawk/ident, the two fields known to leak fabricated
+        # values from corrupted DF5/20/21 bits — see _update_flight.
+        verified = result.get("crc_valid") is True
 
         data: dict = {"icao_hex": msg.icao_hex}
 
         if result.get("squawk") is not None:
             data["squawk"] = result["squawk"]
+            data["verified"] = verified
 
         if result.get("callsign") is not None:
             # pyModeS 3.x uses "#" (not "_") as its invalid-character
@@ -718,6 +791,7 @@ class MessageProcessor:
             ident = result["callsign"].strip()
             if ident and "#" not in ident:
                 data["ident"] = ident
+                data["verified"] = verified
 
         canonical_wtc = _WAKE_TURBULENCE_MAP.get(result.get("wake_vortex"))
         if canonical_wtc:
@@ -860,7 +934,24 @@ class MessageProcessor:
             ))
 
         if "squawk" in data and not flight.squawk:
-            flight.squawk = str(data["squawk"])
+            squawk = str(data["squawk"])
+            if data.get("verified", True) or squawk not in _RESERVED_SQUAWKS:
+                # Verified source (DF17/18 TC=28), or an ordinary squawk
+                # value where a lone corrupted reading has no real-world
+                # consequence -- trust on first sighting, as before.
+                flight.squawk = squawk
+                flight.pending_squawk = None
+            else:
+                # Reserved/emergency code from a message pyModeS can't
+                # CRC-verify (DF5/21) -- corrupted bits disproportionately
+                # land on exactly these values (see #900), so require
+                # multiple sightings before committing.
+                flight.pending_squawk, confirmed = _confirm_after_repeated_sightings(
+                    flight.pending_squawk, squawk, msg.received_at,
+                )
+                if confirmed:
+                    flight.squawk = squawk
+                    flight.pending_squawk = None
 
         if "wake_turbulence_category" in data:
             # Live decode is the sole writer (registry enrichment never seeds this
@@ -871,8 +962,22 @@ class MessageProcessor:
         if "ident" in data and not flight.ident:
             ident = data["ident"]
             if ident and ident != "00000000":
-                flight.ident = ident
-                self._enrich_operator(flight)
+                if data.get("verified", True):
+                    # DF17/18 TC1-4 -- genuinely CRC-verified.
+                    flight.ident = ident
+                    flight.pending_ident = None
+                    self._enrich_operator(flight)
+                else:
+                    # DF20/21 Comm-B BDS 2,0 -- unlike squawk there's no
+                    # "safe" subset of ident values to exempt, so every
+                    # unverified ident needs confirmation (see #900).
+                    flight.pending_ident, confirmed = _confirm_after_repeated_sightings(
+                        flight.pending_ident, ident, msg.received_at,
+                    )
+                    if confirmed:
+                        flight.ident = ident
+                        flight.pending_ident = None
+                        self._enrich_operator(flight)
 
         if "adsb_version" in data:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
