@@ -57,7 +57,7 @@ file(s):
 | `ca-transport-canada-registry` runner | Imports Transport Canada detailed registration data into Redis | — |
 | `ourairports` runner | Imports airport metadata into Redis | — |
 
-...and 36 more country-specific registration runners — see [Data Runners](/runners/) for the full list.
+...plus the two other global runners (`vrs-standing-data`, `airportwebcams-special-liveries`) and 36 more country-specific registration runners — see [Data Runners](/runners/) for the full list.
 
 `redis` in `docker-compose.core.yaml` sets explicit, non-default tuning
 (`--save ""`, `--no-appendfsync-on-rewrite yes`, a raised RediSearch fork-GC
