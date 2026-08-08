@@ -60,20 +60,28 @@ the narrow case of a post-inclusion delete failure, where the row is
 present twice until someone manually removes the lingering source file —
 logged clearly via `files_delete_failed` when it happens.
 
-## Configuration (`settings.json`)
+## Configuration
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `s3.access_key_id` | string | — | AWS access key ID |
-| `s3.secret_access_key` | string | — | AWS secret access key |
-| `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
-| `s3.bucket` | string | — | S3 bucket the archive processor writes flights/index rows to |
-| `mqtt.host` | string | — | MQTT broker hostname (omit the whole `mqtt` block to skip completion-stats publishing entirely) |
-| `mqtt.port` | integer | `1883` | |
-| `mqtt.username` | string | — | Optional MQTT auth; omit for an anonymous broker |
-| `mqtt.password` | string | — | |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `aws-setup/iam-policy.json` (resolved AWS reference file — see [AWS Setup](#aws-setup)) is written |
-| `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
+Reads its configuration from environment variables via `shared/config.py`'s
+`load_config("mqtt", "s3")`, interpolated by Compose from this host's `.env`
+(written by `scripts/install.sh`). No Redis, no RabbitMQ -- see the table
+at the top of this page.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `S3_BUCKET` | ✅ | — | S3 bucket the archive processor writes flights/index rows to |
+| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain |
+| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+`aws-setup/iam-policy.json` (resolved AWS reference file — see
+[AWS Setup](#aws-setup)) is always written to `/app/data`, a fixed,
+non-configurable bind mount -- see `docker-compose.archive.yaml`.
 
 ## AWS Setup
 

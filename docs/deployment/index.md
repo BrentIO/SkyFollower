@@ -20,24 +20,24 @@ exception of `docker-compose.core.yaml` and
 the same host but kept as separate compose projects (`management-ui`'s
 only dependency is Redis, so it can move to a different host later
 without disturbing rabbitmq/redis/runners). The message processor is
-designed to scale by adding more hosts, each running the same compose
-file. The MLAT receiver is optional, dedicated to MLAT-only `sources[]`,
-and deployed separately from the host running the local RTL-SDR
-hardware. Archive compaction runs on its own `ofelia` instance alongside
-the archive processor; the one-shot job itself sits behind the
-`compaction` Compose profile so only its scheduler, never the job, comes
-up with `docker compose up -d`. Get the relevant file(s) onto each host —
-clone the repo, or use `scripts/download-host-files.sh` to fetch just
-what a given role needs (see [Getting Started](/getting-started/)) —
-populate the relevant `config/` settings files and `.env`, then bring the
-host up:
+designed to scale both by adding more hosts, each running the same
+compose file, and by running more processors on one host (see
+[Architecture](/architecture/)'s Scaling Message Processors section). The
+MLAT receiver is optional, dedicated to MLAT-only sources, and deployed
+separately from the host running the local RTL-SDR hardware. Archive
+compaction runs on its own `ofelia` instance alongside the archive
+processor; the one-shot job itself sits behind the `compaction` Compose
+profile so only its scheduler, never the job, comes up with `docker
+compose up -d`. Get the relevant file(s) onto each host and write its
+`.env` — `scripts/install.sh` does both (see [Getting Started](/getting-started/))
+— then bring the host up:
 
 | File | Role | Services |
 |------|------|---------|
-| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also the optional dedicated MLAT receiver (same file, own `settings.json`, its own auto-generated identity) | `receiver` |
+| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also the optional dedicated MLAT receiver (same file, own `.env`, its own auto-generated identity) | `receiver` |
 | `docker-compose.core.yaml` | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Rules/areas API (co-located with `docker-compose.core.yaml`) | `management-ui` |
-| `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts) | `message-processor-0` (one per host) |
+| `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts, or by running more than one processor on a host) | `message-processor-1` (always on) through `message-processor-8` (profile-gated) |
 | `docker-compose.archive.yaml` | Long-term storage | `archive-processor`, its own `ofelia` instance; `archive-compaction` (the one-shot job, behind the `compaction` Compose profile — see [Archive Compaction](/components/archive-compaction)) |
 
 ## Components
@@ -45,8 +45,8 @@ host up:
 | Container | Description | Default port |
 |-----------|-------------|--------------|
 | `receiver` | Reads raw ADS-B frames from readsb TCP streams; routes to RabbitMQ queues | — |
-| `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only `sources[]` on its own host | — |
-| `message-processor-0` | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine | — |
+| `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only sources on its own host | — |
+| `message-processor-1` (through `-8`) | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine — one container per instance, several may run on one host | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
 | `archive-compaction` | Daily job (its own `ofelia` instance, alongside the archive processor) consolidating each day's per-flight Parquet index files into one file per partition | — |
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
@@ -67,28 +67,147 @@ Pi CM4008032, 8GB RAM/32GB eMMC), not an oversight.
 
 ## Configuration
 
-Each component reads its settings from `/app/settings.json` inside the
-container, bind-mounted read-only from `./config/{component}/settings.json`
-on the host. Example files for every component are in `config/`:
+Every component reads its configuration from environment variables via
+`shared/config.py`'s `load_config()`, interpolated by Compose from that
+host's `.env`. `scripts/install.sh` collects everything a role's `.env`
+needs interactively (see [Getting Started](/getting-started/)); the
+tables below are the full reference, organized by role, for writing one
+by hand or checking what a generated one contains. `LOG_LEVEL` (`"debug"`
+or `"info"`, default `info`) is accepted by every role and omitted from
+each table below.
 
-| File | Used by |
-|------|---------|
-| `config/receiver/settings.json.example` | `docker-compose.receiver.yaml` |
-| `config/receiver/mlat-settings.json.example` | `docker-compose.receiver.yaml` (deployed a second time, on the MLAT instance's own host) |
-| `config/message-processor/settings.json.example` | `docker-compose.message-processor.yaml` |
-| `config/archive/settings.json.example` | `docker-compose.archive.yaml` (`archive-processor`) |
-| `config/archive/compaction-settings.json.example` | `docker-compose.archive.yaml` (`archive-compaction`) |
-| `config/management-ui/settings.json.example` | `docker-compose.management-ui.yaml` |
-| `config/runners/settings.json.example` | All runners in `docker-compose.core.yaml` |
-| `config/rabbitmq/rabbitmq.conf.example` | `rabbitmq` in `docker-compose.core.yaml` |
-| `config/rabbitmq/enabled_plugins.example` | `rabbitmq` in `docker-compose.core.yaml` |
+### Receiver
 
-See the component pages for the full list of settings fields:
+| Variable | Required | Default |
+|---|---|---|
+| `RECEIVER_NAME` | ✅ | — |
+| `RECEIVER_SOURCES` | ✅ | — |
+| `RABBITMQ_HOST` | ✅ | — |
+| `RABBITMQ_PORT` | ❌ | `5672` |
+| `RABBITMQ_USERNAME` | ✅ | — |
+| `RABBITMQ_PASSWORD` | ✅ | — |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
+
+See [Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)
+for what each variable means, `RECEIVER_SOURCES`'s `host:port:source`
+format, and the MLAT-instance and multiple-receiver-instance patterns.
+
+### Core (`rabbitmq`, `redis`, `ofelia`, runners)
+
+| Variable | Required | Default |
+|---|---|---|
+| `RABBITMQ_USERNAME` | ✅ | — |
+| `RABBITMQ_PASSWORD` | ✅ | — |
+| `RABBITMQ_ADMIN_USERNAME` | ❌ | `skyfollower-admin`, generated by the installer |
+| `RABBITMQ_ADMIN_PASSWORD` | ❌ | Generated by the installer |
+| `REDIS_PASSWORD` | ✅ | — |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
+| `REDIS_TTL_DAYS` | ❌ | `14` |
+
+`RABBITMQ_USERNAME`/`PASSWORD` and `REDIS_PASSWORD` are also what every
+other role's `.env` authenticates with, so the same values must be
+distributed to whichever hosts run `message-processor`, `archive`, and
+`management-ui`. `RABBITMQ_ADMIN_USERNAME`/`PASSWORD` are the opposite:
+they exist only for logging into the dashboard on 15672, are never
+referenced by any other role's `.env`, and are provisioned automatically
+by `scripts/install.sh`'s `provision_rabbitmq_users` once RabbitMQ
+reports healthy (see [Architecture](/architecture/) and
+`docker-compose.core.yaml`'s comments on the `rabbitmq` service).
+
+### Management UI
+
+| Variable | Required | Default |
+|---|---|---|
+| `REDIS_HOST` | ✅ | — |
+| `REDIS_PORT` | ❌ | `6379` |
+| `REDIS_PASSWORD` | ✅ | — |
+| `S3_BUCKET` | ✅ | — |
+| `AWS_DEFAULT_REGION` | ✅ | — |
+| `AWS_ACCESS_KEY_ID` | ✅ | — |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — |
+| `ATHENA_WORKGROUP` | ❌ | `skyfollower` |
+| `ATHENA_DATABASE` | ❌ | `skyfollower` |
+| `ATHENA_TABLE` | ❌ | `archive_flights` |
+
+management-ui is a separate Compose project from core even when
+co-located on the same host, so `REDIS_HOST` is typically `localhost`
+here rather than the `redis` service name core's own components use.
+
+### Message Processor
+
+| Variable | Required | Default |
+|---|---|---|
+| `MESSAGE_PROCESSOR_PREFIX` | ❌ | This node's hostname |
+| `COMPOSE_PROFILES` | ❌ | Unset (only `message-processor-1` runs) — set to `mp-2,mp-3,...` to run more on this node |
+| `LATITUDE` | ✅ | — |
+| `LONGITUDE` | ✅ | — |
+| `RABBITMQ_HOST` | ✅ | — |
+| `RABBITMQ_PORT` | ❌ | `5672` |
+| `RABBITMQ_USERNAME` | ✅ | — |
+| `RABBITMQ_PASSWORD` | ✅ | — |
+| `REDIS_HOST` | ✅ | — |
+| `REDIS_PORT` | ❌ | `6379` |
+| `REDIS_PASSWORD` | ✅ | — |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
+| `RULE_NOTIFICATION_MAX_LAG_SECONDS` | ❌ | `30` |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
+
+See [Message Processor](https://github.com/BrentIO/SkyFollower/blob/main/message-processor/README.md#configuration)
+for how `MESSAGE_PROCESSOR_PREFIX`/`COMPOSE_PROFILES` combine into each
+instance's `MESSAGE_PROCESSOR_ID`.
+
+### Archive
+
+| Variable | Required | Default |
+|---|---|---|
+| `S3_BUCKET` | ✅ | — |
+| `AWS_DEFAULT_REGION` | ✅ | — |
+| `AWS_ACCESS_KEY_ID` | ✅ | — |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — |
+| `RABBITMQ_HOST` | ✅ | — |
+| `RABBITMQ_PORT` | ❌ | `5672` |
+| `RABBITMQ_USERNAME` | ✅ | — |
+| `RABBITMQ_PASSWORD` | ✅ | — |
+| `REDIS_HOST` | ✅ | — |
+| `REDIS_PORT` | ❌ | `6379` |
+| `REDIS_PASSWORD` | ✅ | — |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
+
+`archive-compaction` (scheduled by this same host's own `ofelia`
+instance) only needs `S3_BUCKET`/`AWS_*`/`MQTT_*`/`LOG_LEVEL` from this
+same `.env` -- no Redis, no RabbitMQ.
+
+See the component pages for everything beyond configuration:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
 [Archive Processor](/components/archive-processor),
 [Archive Compaction](/components/archive-compaction), and
 [Data Runners](/runners/) (logging convention, plus one page per
 runner).
+
+## Upgrading and Rolling Back
+
+`SKYFOLLOWER_VERSION` in each role's `.env` pins the tag every
+`ghcr.io/brentio/skyfollower-*` image resolves to. `scripts/install.sh
+--upgrade` re-resolves the latest release tag, rewrites
+`SKYFOLLOWER_VERSION` in every role directory found under the install
+root, and runs `docker compose pull && up -d` in each — no prompting.
+Rolling back is the same operation in reverse: edit `SKYFOLLOWER_VERSION`
+to an older release tag by hand and run `docker compose pull && docker
+compose up -d` in that role's directory.
 
 ## Maintenance
 
@@ -101,8 +220,11 @@ consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
 processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
 receiver instance (same `docker-compose.receiver.yaml`, its own host and
-`settings.json`) is maintained identically and independently of the
+`.env`) is maintained identically and independently of the
 SDR-hosting instance, with its own independently-generated identity.
+Notably, a message processor resize (adding, removing, or restarting any
+number of them) never touches a receiver at all — see
+[Architecture](/architecture/)'s Scaling Message Processors section.
 
 **Core** (`rabbitmq`, `redis`, `ofelia`, runners) — stop
 `ofelia` first, so a scheduled runner isn't killed mid-write to Redis, and
@@ -119,7 +241,11 @@ un-merged record instead (no data loss, just a permanent miss for that
 pair, since there's no later backfill). Stopping the archive processor
 first avoids that miss and the log noise, but isn't required for
 correctness. Bring everything back in this order: Redis, then RabbitMQ,
-then `ofelia`.
+then `ofelia`. RabbitMQ's consistent-hash exchange and every message
+processor's queue binding are durable state held by the broker, so they
+survive a RabbitMQ restart intact; only losing RabbitMQ's data directory
+entirely re-establishes slot order from scratch on the next round of
+bindings.
 
 **Upgrading an existing host to Redis authentication** — Redis now starts
 with `requirepass` and rejects unauthenticated connections. Every host that
@@ -135,16 +261,35 @@ silent failure mode to worry about — a client missing `REDIS_PASSWORD`
 fails loudly at startup (`shared/config.py` treats it as required), rather
 than connecting unauthenticated or hanging.
 
-**A single message processor** (not a resize — resizing the processor count
-up or down changes aircraft-to-message-processor routing and is documented
-separately) — stop it. RabbitMQ retains its queue (`adsb-{id}`, durable) and
-simply grows while the message processor is down. Restart it and it drains
-the backlog automatically: the active flight store is durable, and recovery
-is driven by message timestamps rather than wall-clock time, so flights in
-progress when the message processor stopped resume correctly instead of
-being archived just because time passed while it was down. See the
+**Upgrading an existing host to the split RabbitMQ application/admin
+users** — re-running `scripts/install.sh --role core` against an
+already-running broker is the entire migration: `provision_rabbitmq_users`
+demotes the application user (`RABBITMQ_USERNAME`) to SkyFollower's own
+scoped, tag-less permissions regardless of whether it's still full-admin
+from before this existed, and creates `RABBITMQ_ADMIN_USERNAME` if it
+doesn't already exist. Both steps are idempotent, so this is also just
+what happens on every ordinary re-run — nothing else in this section's
+drain order changes.
+
+**A message processor: stopping vs. unbinding.** These look like the same
+action from the operator's side and are not. **Stopping is free** — the
+same recovery path as any restart (a deliberate stop, a crash, a host
+reboot): RabbitMQ retains its queue (`adsb-{id}`, durable) and it simply
+grows while the processor is down, and the active flight store is durable
+with recovery driven by message timestamps rather than wall-clock time, so
+flights in progress when it stopped resume correctly instead of being
+archived just because time passed. See the
 [Message Processor](/components/message-processor) page's Fault Tolerance
-section for the full recovery behavior.
+section for the full recovery behavior. **Unbinding — deleting the
+queue** — is a resize, not a stop: it removes that processor's slot and
+renumbers every slot after it, reshuffling aircraft per the table in
+[Architecture](/architecture/)'s Scaling Message Processors section
+(~20% removing the last-bound processor, ~68% removing one from the
+middle). Stopping a container never unbinds its queue by itself; unbinding
+is a deliberate, separate action (see the runbooks below). A **node
+running several processors** follows the same rule per-instance: stopping
+the node leaves every one of its bindings intact, and nothing renumbers
+until a queue is actually deleted.
 
 **Archive processor** — stop it. Message processors keep publishing completed
 flights to the durable `archive` RabbitMQ queue (or their own local
@@ -164,3 +309,28 @@ background work; nothing writes to `config:rules`/`config:areas` while it's
 down, and message processors keep running against whatever rules/areas were
 last saved. Restart it and it's immediately usable — nothing to drain or
 resync.
+
+### Runbooks
+
+**Add a message processor to a node.** Add its number to
+`COMPOSE_PROFILES` in that node's `.env` (e.g. `COMPOSE_PROFILES=mp-2,mp-3`
+for three processors total) and `docker compose up -d`. Nothing else on
+any host is touched — no receiver restart, no other node involved.
+
+**Remove a message processor permanently.** Stop the highest-numbered
+instance on its node, then unbind it — delete its `adsb-{id}` queue in the
+RabbitMQ management UI (or `rabbitmqctl delete_queue`) — and remove its
+data directory. Removing anything other than the last-bound processor
+reshuffles most in-flight aircraft, producing split flight records; the
+archive processor's split-flight stitching merges them back together
+automatically. This is degraded archive quality for a few minutes, **not**
+data loss.
+
+**Cut over to consistent-hash routing** (a one-time sequence for a
+deployment still on the pre-`x-consistent-hash` exchange). See
+[Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#cutover-to-consistent-hash-routing)'s
+Cutover section for the full operational sequence, including the
+deliberate binding-order step — the only moment slot order can be chosen.
+
+**Upgrade and rollback.** See [Upgrading and Rolling Back](#upgrading-and-rolling-back)
+above.

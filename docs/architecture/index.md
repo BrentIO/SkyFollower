@@ -36,7 +36,7 @@ directory, so no two share an active flight store.
 IDs are unique across the deployment by construction rather than by
 convention: each instance's `MESSAGE_PROCESSOR_ID` is
 `${MESSAGE_PROCESSOR_PREFIX}-N`, and the prefix defaults to the node's
-hostname (written into `.env` by `scripts/download-host-files.sh`), so two
+hostname (written into `.env` by `scripts/install.sh`), so two
 nodes each running three processors get `turing-node-3-1..3` and
 `turing-node-4-1..3` with no coordination. The message processor still
 claims its ID in Redis on startup and exits if another instance already

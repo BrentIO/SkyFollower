@@ -176,20 +176,29 @@ npm run dev    # Vite dev server on :5173, proxying /api to localhost:8000
 npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
 ```
 
-## Configuration (`settings.json`)
+## Configuration
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `redis.host` | string | `"localhost"` | |
-| `redis.port` | integer | `6379` | |
-| `s3.bucket` | string | — | S3 bucket the archive is written to (see [Archive Search](#archive-search)) |
-| `s3.region` | string | `"us-east-1"` | |
-| `s3.access_key_id` | string | — | |
-| `s3.secret_access_key` | string | — | |
-| `athena.workgroup` | string | — | Athena workgroup to run queries against (see [Archive Search](#archive-search)) |
-| `athena.database` | string | — | Glue database name |
-| `athena.table` | string | — | Glue table name (`archive_flights` by default in `specs/aws/glue-table-definition.json`, but this is operator-configured, not assumed) |
-| `log_level` | string | `"info"` | Set to `"debug"` for verbose output |
+Reads its configuration from environment variables via `shared/config.py`'s
+`load_config("redis", "s3", "athena")`, interpolated by Compose from this
+host's `.env` (written by `scripts/install.sh`). management-ui is a
+separate compose file/project from core even when co-located on the same
+host (see `docker-compose.management-ui.yaml`), so its `REDIS_HOST`
+typically points at `localhost` rather than the `redis` service name core's
+own components use.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `REDIS_HOST` | ✅ | — | |
+| `REDIS_PORT` | ❌ | `6379` | |
+| `REDIS_PASSWORD` | ✅ | — | Redis requires authentication; see `shared/redis_client.py`'s `build_redis_client()` |
+| `S3_BUCKET` | ✅ | — | S3 bucket the archive is written to (see [Archive Search](#archive-search)) |
+| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain |
+| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
+| `ATHENA_WORKGROUP` | ❌ | `skyfollower` | Athena workgroup to run queries against (see [Archive Search](#archive-search)) |
+| `ATHENA_DATABASE` | ❌ | `skyfollower` | Glue database name |
+| `ATHENA_TABLE` | ❌ | `archive_flights` | Glue table name, matching `specs/aws/glue-table-definition.json`'s default |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 ## Archive Search
 
@@ -310,8 +319,8 @@ result row's `token` is its `s3_key`, encrypted with `Fernet`
 — a tampered/forged token simply fails to decrypt (`400`) rather than
 decrypting to some attacker-chosen key. The Fernet key itself is
 **ephemeral**: generated fresh via `Fernet.generate_key()` at every
-process startup, held only in memory, never written to
-`settings.json`/env/disk. A restart invalidates every token minted by the
+process startup, held only in memory, never written to `.env` or disk.
+A restart invalidates every token minted by the
 previous process — a search still open in a browser tab across a restart
 gets a `400` on "view flight" until the page is refreshed (which re-fetches
 results from the now-running process, producing freshly-encrypted tokens).

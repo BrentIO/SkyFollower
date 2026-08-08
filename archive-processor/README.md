@@ -10,33 +10,43 @@ flights are queued locally and drained automatically once S3 reconnects.
 
 ![Archive processor architecture](./archive-processor.svg)
 
-## Configuration (`settings.json`)
+## Configuration
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `rabbitmq.host` | string | — | RabbitMQ hostname or IP |
-| `rabbitmq.port` | integer | `5672` | RabbitMQ AMQP port |
-| `rabbitmq.username` | string | — | RabbitMQ username |
-| `rabbitmq.password` | string | — | RabbitMQ password |
-| `redis.host` | string | — | Redis hostname or IP |
-| `redis.port` | integer | `6379` | Redis port |
-| `mqtt.host` | string | — | MQTT broker hostname (omit key to disable MQTT) |
-| `mqtt.port` | integer | `1883` | MQTT broker port |
-| `mqtt.username` | string | — | MQTT username. Optional — omit both `username` and `password` to connect anonymously. |
-| `mqtt.password` | string | — | MQTT password |
-| `s3.access_key_id` | string | — | AWS access key ID |
-| `s3.secret_access_key` | string | — | AWS secret access key |
-| `s3.region` | string | `"us-east-1"` | AWS region for the S3 bucket |
-| `s3.bucket` | string | — | S3 bucket name flights are written to |
-| `telemetry_interval_seconds` | integer | `30` | How often (seconds) the archive processor publishes MQTT statistic messages |
-| `data_dir` | string | `"/app/data"` | Host-mounted directory where `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue — see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS reference files — see [AWS Setup](#aws-setup)) are written |
-| `log_level` | string | `"info"` | Log verbosity. Set to `"debug"` for verbose output. |
+Reads its configuration from environment variables via `shared/config.py`'s
+`load_config("rabbitmq", "redis", "mqtt", "s3", "telemetry")`, interpolated
+by Compose from this host's `.env` (written by `scripts/install.sh`).
 
-`flight_ttl_seconds` is not a local setting — it's read from `config:flight_ttl_seconds`
-in Redis (shared with the message processor) once at startup and cached; not
-hot-reloaded, restart the container to pick up a changed value. Defaults to
-`300` if unset. See [Split-Flight Stitching](#split-flight-stitching) below
-for how it's used.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RABBITMQ_HOST` | ✅ | — | |
+| `RABBITMQ_PORT` | ❌ | `5672` | |
+| `RABBITMQ_USERNAME` | ✅ | — | |
+| `RABBITMQ_PASSWORD` | ✅ | — | |
+| `REDIS_HOST` | ✅ | — | |
+| `REDIS_PORT` | ❌ | `6379` | |
+| `REDIS_PASSWORD` | ✅ | — | Redis requires authentication; see `shared/redis_client.py`'s `build_redis_client()` |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
+| `S3_BUCKET` | ✅ | — | S3 bucket name flights are written to |
+| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain |
+| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the archive processor publishes MQTT statistic messages |
+| `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+`s3.db` (the S3 offline fallback, and the Parquet-index write retry queue —
+see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS
+reference files — see [AWS Setup](#aws-setup)) are always written to
+`/app/data`, a fixed, non-configurable bind mount -- see
+`docker-compose.archive.yaml`.
+
+`flight_ttl_seconds` is not an environment variable — it's read from
+`config:flight_ttl_seconds` in Redis (shared with the message processor)
+once at startup and cached; not hot-reloaded, restart the container to
+pick up a changed value. Defaults to `300` if unset. See
+[Split-Flight Stitching](#split-flight-stitching) below for how it's used.
 
 ## Consuming from RabbitMQ
 
