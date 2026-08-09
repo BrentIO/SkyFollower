@@ -1,7 +1,3 @@
----
-title: "Bosnia and Herzegovina 🇧🇦 BHDCA Registry Runner (ba-bhdca-registry)"
----
-
 # Bosnia and Herzegovina 🇧🇦 BHDCA Registry
 
 | | |
