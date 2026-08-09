@@ -305,6 +305,24 @@ sources:
       "Owner": "Registered owner name"
       "Registration date": "Registration date; mixed formats, not stored"
 
+  sr-casas-registry:
+    description: "Suriname Civil Aviation Safety Authority (CASAS) aircraft register — PZ-prefix registrations"
+    url: "https://www.casas.sr/registry/"
+    format: xlsx
+    cadence: weekly
+    notes: "Index page also links a separate UAS/drone registry xlsx (CASAS-UAS-REGISTRY-*.xlsx) — discovery regex matches REGISTER-{MM}-{YYYY}.xlsx specifically to avoid it; full registration mark is NATIONALITY MARK OR COMMON MARK + REGISTRATION MARK concatenated (e.g. PZ + UBD -> PZ-UBD), not a single column; MAKE and MANUFACTURER differ on ~half of rows (licensed-builder detail) — MAKE used since AircraftRecord has only one manufacturer field; OPERATOR (*) column present but not read, matching the established convention across every other runner with a separate owner/operator pair; MODEL and SERIES concatenated when both present; SERIAL_NUMBER has mixed string/numeric cell types, coerced to string; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "#": "Row sequence number; not stored"
+      "MAKE": "Aircraft manufacturer/brand name (lookup key priority over MANUFACTURER)"
+      "MODEL": "Aircraft model designation; SERIES appended when present"
+      "SERIES": "Model series/variant letter; appended to MODEL; absent on ~14% of rows"
+      "MANUFACTURER": "Licensed-builder name, distinct from MAKE on ~half of rows; not stored"
+      "SERIAL_NUMBER": "Manufacturer serial number"
+      "NATIONALITY MARK OR COMMON MARK": "Registration prefix (always PZ seen); part of lookup key"
+      "REGISTRATION MARK": "Registration suffix; part of lookup key"
+      "OWNER_NAME": "Registered owner name"
+      "OPERATOR (*)": "Registered operator name; present in source but not read"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1068,6 +1086,9 @@ records:
           - source: ba-bhdca-registry
             file: "PDF (discovered via index page)"
             description: "Bosnia and Herzegovina BHDCA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{E7\\-XXX} against Mictronics records; enriches existing records only"
+          - source: sr-casas-registry
+            file: "REGISTER-{MM}-{YYYY}.xlsx"
+            description: "Suriname CASAS does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{PZ\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1216,6 +1237,10 @@ records:
             file: "PDF (discovered via index page)"
             field: "Registrаtion mark"
             description: "Full E7-prefix registration mark (e.g. E7-ABC); a stray space after the hyphen on some rows (e.g. 'E7- NEL') is normalized before use"
+          - source: sr-casas-registry
+            file: "REGISTER-{MM}-{YYYY}.xlsx"
+            field: "NATIONALITY MARK OR COMMON MARK + REGISTRATION MARK"
+            description: "Two columns concatenated with a hyphen to form the full mark (e.g. PZ + UBD -> PZ-UBD)"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1424,6 +1449,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list"
+              - source: sr-casas-registry
+                file: "REGISTER-{MM}-{YYYY}.xlsx"
+                field: OWNER_NAME
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name — wrap in a one-element list; separate OPERATOR (*) column present in source but not read"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -2199,6 +2230,10 @@ records:
               - source: ba-bhdca-registry
                 file: "PDF (discovered via index page)"
                 field: Designation
+              - source: sr-casas-registry
+                file: "REGISTER-{MM}-{YYYY}.xlsx"
+                field: "MODEL + SERIES"
+                description: "Concatenated when both present (e.g. G164 + B -> G164B); trailing asterisk stripped (one source row has 'G164*')"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -2384,6 +2419,10 @@ records:
                 file: "PDF (discovered via index page)"
                 field: Manifacturer
                 description: "sic — typo in source PDF header"
+              - source: sr-casas-registry
+                file: "REGISTER-{MM}-{YYYY}.xlsx"
+                field: MAKE
+                description: "A separate MANUFACTURER column also exists and differs on ~half of rows (licensed-builder detail, e.g. Grumman G164 built by Schweizer) — MAKE used since there is only one manufacturer field"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČ"
@@ -2572,6 +2611,10 @@ records:
               - source: ba-bhdca-registry
                 file: "PDF (discovered via index page)"
                 field: "Serial number"
+              - source: sr-casas-registry
+                file: "REGISTER-{MM}-{YYYY}.xlsx"
+                field: SERIAL_NUMBER
+                description: "Source has mixed string/numeric cell types (e.g. '185B' and 711) — coerced to string"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "SERIJSKI BROJ"
@@ -3148,6 +3191,11 @@ records:
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
           - source: ba-bhdca-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
+          - source: sr-casas-registry
             transform:
               type: constant
               value: false
