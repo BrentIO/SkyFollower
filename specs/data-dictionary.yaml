@@ -335,6 +335,22 @@ sources:
       "NAME OF OPERATOR": "Registered operator name; only registrant-identity column in this source"
       "ADDRESS OF OPERATOR": "Operator address; comma-delimited, may contain embedded newlines"
 
+  tg-anac-registry:
+    description: "Togo Agence Nationale de l'Aviation Civile (ANAC) aircraft register — 5V-prefix registrations"
+    url: "http://www.anac-togo.tg/espace-professionnel/aeronefs/consultation-du-registre-dimmatriculation/"
+    format: html
+    cadence: weekly
+    notes: "Single static HTML table page, single request; despite its header, the 'type' column holds model designations, not the aircraft.type category vocabulary — maps to aircraft.model; Radiation column (OUI/NON, deregistered?) is a real majority filter — only ~28% of rows are NON (active) at any given time, ~70% are OUI (deregistered) and dropped; one row has '(Radié)' appended to every cell including the registration mark itself (data-entry artifact) — rejected by the registration regex before the Radiation check runs; registration marks validated against ^5V-[A-Z0-9]{2,6}$, verified against every row (active and deregistered) in the live table; owner/address blank on many rows; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "N° Ordre": "Sequence number; not stored"
+      "type": "Aircraft model designation (misleadingly named — not the aircraft.type category)"
+      "Immatriculation": "Full 5V-prefix registration mark; lookup key"
+      "Constructeur": "Aircraft manufacturer name"
+      "N° de serie": "Manufacturer serial number"
+      "Radiation": "OUI (deregistered) / NON (active) — filter only, not stored"
+      "Nom propriétaire": "Registered owner name; blank on many rows"
+      "Adresse propriétaire": "Owner address, comma-delimited; blank on many rows; occasionally a phone number instead of an address"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1104,6 +1120,9 @@ records:
           - source: tt-caa-registry
             file: "AIRCRAFT-ON-TTCAA-REGISTER (discovered via index page)"
             description: "Trinidad and Tobago TTCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9Y\\-XXX} against Mictronics records; enriches existing records only"
+          - source: tg-anac-registry
+            file: "consultation-du-registre-dimmatriculation (single HTML page)"
+            description: "Togo ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{5V\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1260,6 +1279,10 @@ records:
             file: "AIRCRAFT-ON-TTCAA-REGISTER (discovered via index page)"
             field: REGISTRATION
             description: "Full 9Y-prefix registration mark; validated against ^9Y-[A-Z0-9]{2,6}$ (a naive {2,4} width drops real 5-character government helicopter suffixes)"
+          - source: tg-anac-registry
+            file: "consultation-du-registre-dimmatriculation (single HTML page)"
+            field: Immatriculation
+            description: "Full 5V-prefix registration mark; validated against ^5V-[A-Z0-9]{2,6}$"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1480,6 +1503,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "No separate owner column exists in this source — operator fills the registrant-identity role directly, wrap in a one-element list"
+              - source: tg-anac-registry
+                file: "consultation-du-registre-dimmatriculation (single HTML page)"
+                field: "Nom propriétaire"
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name — wrap in a one-element list; blank on many rows"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -1650,6 +1679,12 @@ records:
                 transform:
                   type: split_comma
                   description: "Comma-separated address string split into individual street lines; may contain embedded newlines, collapsed to single space before splitting"
+              - source: tg-anac-registry
+                file: "consultation-du-registre-dimmatriculation (single HTML page)"
+                field: "Adresse propriétaire"
+                transform:
+                  type: split_comma
+                  description: "Comma-separated address string split into individual street lines; blank on many rows; occasionally a phone number instead of an address"
               - source: mv-caa-registry
                 file: "Aircraft register PDF (opaque hash filename; discovered via index page)"
                 field: "7"
@@ -2269,6 +2304,10 @@ records:
                 file: "AIRCRAFT-ON-TTCAA-REGISTER (discovered via index page)"
                 field: "MAKE & MODEL"
                 description: "Single combined free-text field, no reliable delimiter to split manufacturer out — stored whole, aircraft.manufacturer left unset"
+              - source: tg-anac-registry
+                file: "consultation-du-registre-dimmatriculation (single HTML page)"
+                field: type
+                description: "Column is misleadingly named — holds model designations (e.g. 'DC8 62', 'PA 31T'), not the aircraft.type category vocabulary"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -2458,6 +2497,9 @@ records:
                 file: "REGISTER-{MM}-{YYYY}.xlsx"
                 field: MAKE
                 description: "A separate MANUFACTURER column also exists and differs on ~half of rows (licensed-builder detail, e.g. Grumman G164 built by Schweizer) — MAKE used since there is only one manufacturer field"
+              - source: tg-anac-registry
+                file: "consultation-du-registre-dimmatriculation (single HTML page)"
+                field: Constructeur
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČ"
@@ -2650,6 +2692,9 @@ records:
                 file: "REGISTER-{MM}-{YYYY}.xlsx"
                 field: SERIAL_NUMBER
                 description: "Source has mixed string/numeric cell types (e.g. '185B' and 711) — coerced to string"
+              - source: tg-anac-registry
+                file: "consultation-du-registre-dimmatriculation (single HTML page)"
+                field: "N° de serie"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "SERIJSKI BROJ"
@@ -3236,6 +3281,11 @@ records:
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
           - source: tt-caa-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
+          - source: tg-anac-registry
             transform:
               type: constant
               value: false
