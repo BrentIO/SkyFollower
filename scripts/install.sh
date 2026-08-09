@@ -1165,7 +1165,9 @@ offer_ofelia_and_bulk_load() {
 # ---------------------------------------------------------------------------
 
 do_upgrade() {
-  resolve_ref
+  # REF/IMAGE_VERSION are already resolved by main() before dispatching
+  # here -- resolving again would mean two GitHub API calls per --upgrade
+  # run for the same answer.
   echo "Upgrading every role directory under ${INSTALL_ROOT} to ${REF}..."
   local found=0
   for env_file in "${INSTALL_ROOT}"/*/.env; do
@@ -1199,6 +1201,7 @@ do_upgrade() {
 # ---------------------------------------------------------------------------
 
 print_banner() {
+  echo
   cat <<'BANNER_EOF'
 ███████ ██   ██ ██    ██ ███████  ██████  ██      ██       ██████  ██     ██ ███████ ██████
 ██      ██  ██   ██  ██  ██      ██    ██ ██      ██      ██    ██ ██     ██ ██      ██   ██
@@ -1235,6 +1238,7 @@ confirm_install_root() {
 
 main() {
   print_banner
+  resolve_ref
 
   if [ "$NON_INTERACTIVE" -eq 0 ] && [ "$ROOT_EXPLICIT" -eq 0 ]; then
     confirm_install_root
@@ -1267,7 +1271,6 @@ main() {
     [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
 
-  resolve_ref
   mkdir -p "$INSTALL_ROOT"
 
   local installed_dirs=()
