@@ -378,6 +378,17 @@ sources:
       "Registration Number (註冊編號)": "Full B-M-prefix registration mark; lookup key"
       "Aircraft Type (型號)": "Combined manufacturer+model designation (single free-text field)"
 
+  sc-scaa-registry:
+    description: "Seychelles Civil Aviation Authority (SCAA) aircraft register — S7-prefix registrations"
+    url: "https://www.scaa.sc/index.php/regulatory/e-registers/aircraft-civil-register"
+    format: html
+    cadence: weekly
+    notes: "Coverage is deliberately small, not a scraping bug: SCAA's own page states aircraft with a principal place of business outside Seychelles and/or not operating within or to Seychelles are not registered; ~19 aircraft at check time; register rendered as three separate <table> elements (one per operator grouping), each with its own header row — every table on the page is parsed, not just the first; this runner uses a real browser-style User-Agent instead of the shared 'Mozilla/5.0 (compatible; P5Software SkyFollower)' string every other runner uses — confirmed by direct testing that SCAA's WAF blocks that exact legacy 'Mozilla/5.0 (compatible; ...)' bot-signature format specifically, not the words themselves; scoped to this runner only; no separate owner column beyond Registered Owner; Aircraft Type has no manufacturer name present at all; one row (S7-IDC) has owner 'Seychelles Government', a state aircraft, still civil — military stays false; no serial number or date columns exist; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "Aircraft Registration": "Full S7-prefix registration mark; lookup key"
+      "Aircraft Type": "Combined manufacturer+model-ish designation (e.g. DHC6-400); no manufacturer name present"
+      "Registered Owner": "Registered owner name"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1156,6 +1167,9 @@ records:
           - source: mo-aacm-registry
             file: "RegisteredAircraft (single HTML page)"
             description: "Macau AACM does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{B\\-MXXX} against Mictronics records; enriches existing records only"
+          - source: sc-scaa-registry
+            file: "aircraft-civil-register (single HTML page, three tables)"
+            description: "Seychelles SCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{S7\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1324,6 +1338,10 @@ records:
             file: "RegisteredAircraft (single HTML page)"
             field: "Registration Number"
             description: "Full B-M-prefix registration mark; validated against ^B-M[A-Z0-9]{2,4}$ after stripping internal whitespace (some cells split the mark across text nodes)"
+          - source: sc-scaa-registry
+            file: "aircraft-civil-register (single HTML page, three tables)"
+            field: "Aircraft Registration"
+            description: "Full S7-prefix registration mark; validated against ^S7-[A-Z0-9]{2,4}$"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1562,6 +1580,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "No owner column exists in this source — Operator (rowspan-merged, Chinese text) fills the registrant-identity role directly, wrap in a one-element list"
+              - source: sc-scaa-registry
+                file: "aircraft-civil-register (single HTML page, three tables)"
+                field: "Registered Owner"
+                transform:
+                  type: wrap_array
+                  description: "Single registered owner name — wrap in a one-element list"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -2368,6 +2392,10 @@ records:
                 file: "RegisteredAircraft (single HTML page)"
                 field: "Aircraft Type (型號)"
                 description: "Combined manufacturer+model string (e.g. '空中巴士 A321-231'), no reliable delimiter to split manufacturer out — stored whole, aircraft.manufacturer left unset"
+              - source: sc-scaa-registry
+                file: "aircraft-civil-register (single HTML page, three tables)"
+                field: "Aircraft Type"
+                description: "No manufacturer name present at all (e.g. 'DHC6-400', 'EC120B') — stored whole, aircraft.manufacturer left unset"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -3366,6 +3394,11 @@ records:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
+          - source: sc-scaa-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex — includes S7-IDC, owned by the Seychelles Government, still civil-registered"
           - source: hr-ccaa-registry
             transform:
               type: constant
