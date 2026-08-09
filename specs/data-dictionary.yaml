@@ -389,6 +389,19 @@ sources:
       "Aircraft Type": "Combined manufacturer+model-ish designation (e.g. DHC6-400); no manufacturer name present"
       "Registered Owner": "Registered owner name"
 
+  lk-caa-registry:
+    description: "Sri Lanka Civil Aviation Authority (CAA) aircraft register — 4R-prefix registrations"
+    url: "https://www.caa.lk/en/downloads/sl-aircraft-register"
+    format: pdf
+    cadence: weekly
+    notes: "PDF path and filename are both date-encoded (e.g. 2026_March/1_Civil_aircraft_registered_in_sri_lanka_as_at_11032026.pdf) and change on every republish, so the download link is discovered by anchor text ('Civil Aircraft Registered in Sri Lanka') rather than URL pattern; a handful of Hot Air Balloon entries have a two-line Make cell that pdfplumber's table extraction splits into a second, otherwise-empty row — filtered out by requiring a non-empty, pattern-matching Registration cell, a table-extraction artifact rather than additional aircraft; a few registration marks have a stray space after the hyphen (e.g. '4R- MDA') — internal whitespace stripped before validation; no separate owner column — Operator fills the registrant-identity role directly, same approach jo-carc-registry/tt-caa-registry take; no serial number or date columns exist; TLS verification is disabled — the server serves only its leaf certificate, without the intermediate needed to build a trust chain from a standard root store, so every compliant TLS client fails to verify it as-is (same situation as cy-dca-registry/hu-kozhaf-registry/rs-cad-registry); no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "Ref.No": "Sequence number; not stored"
+      "Make": "Aircraft manufacturer name"
+      "Model No.": "Aircraft model designation"
+      "Registration": "Full 4R-prefix registration mark; lookup key"
+      "Operator": "Operator name; used as registrant identity (no distinct owner column exists)"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1170,6 +1183,9 @@ records:
           - source: sc-scaa-registry
             file: "aircraft-civil-register (single HTML page, three tables)"
             description: "Seychelles SCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{S7\\-XXX} against Mictronics records; enriches existing records only"
+          - source: lk-caa-registry
+            file: "PDF (discovered via index page)"
+            description: "Sri Lanka CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{4R\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1342,6 +1358,10 @@ records:
             file: "aircraft-civil-register (single HTML page, three tables)"
             field: "Aircraft Registration"
             description: "Full S7-prefix registration mark; validated against ^S7-[A-Z0-9]{2,4}$"
+          - source: lk-caa-registry
+            file: "PDF (discovered via index page)"
+            field: Registration
+            description: "Full 4R-prefix registration mark; validated against ^4R-[A-Z0-9]{2,4}$; a stray space after the hyphen on some rows (e.g. '4R- MDA') is normalized before use"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1586,6 +1606,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list"
+              - source: lk-caa-registry
+                file: "PDF (discovered via index page)"
+                field: Operator
+                transform:
+                  type: wrap_array
+                  description: "No owner column exists in this source — Operator fills the registrant-identity role directly, wrap in a one-element list"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -2396,6 +2422,9 @@ records:
                 file: "aircraft-civil-register (single HTML page, three tables)"
                 field: "Aircraft Type"
                 description: "No manufacturer name present at all (e.g. 'DHC6-400', 'EC120B') — stored whole, aircraft.manufacturer left unset"
+              - source: lk-caa-registry
+                file: "PDF (discovered via index page)"
+                field: "Model No."
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -2591,6 +2620,9 @@ records:
               - source: jo-carc-registry
                 file: "node/684 (single HTML page)"
                 field: Manufacturer
+              - source: lk-caa-registry
+                file: "PDF (discovered via index page)"
+                field: Make
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČ"
@@ -3399,6 +3431,11 @@ records:
               type: constant
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex — includes S7-IDC, owned by the Seychelles Government, still civil-registered"
+          - source: lk-caa-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
           - source: hr-ccaa-registry
             transform:
               type: constant
