@@ -45,6 +45,7 @@ _escape_tag = _mod._escape_tag
 _build_registration_map = _mod._build_registration_map
 write_to_redis = _mod.write_to_redis
 _INDEX_URL = _mod._INDEX_URL
+publish_completion_stats = _mod.publish_completion_stats
 
 
 # ---------------------------------------------------------------------------
@@ -468,3 +469,23 @@ class TestWriteToRedis:
         written = set_call[0][2]
         assert "model" not in written["aircraft"]
         assert "type" not in written["aircraft"]
+
+
+# ---------------------------------------------------------------------------
+# publish_completion_stats
+# ---------------------------------------------------------------------------
+
+
+class TestPublishCompletionStats:
+    def test_blank_host_skips_without_crashing(self):
+        """Regression test: shared/config.py's mqtt_config() always returns a
+        populated dict with host="" (never None/{}) when MQTT_HOST is unset
+        -- the documented way to disable MQTT entirely. A guard that only
+        checks `if not mc` doesn't catch this, since the dict itself is
+        truthy; it then calls build_mqtt_client() (which correctly returns
+        None for a blank host) and crashes assigning .on_connect on None.
+        That crash gets silently swallowed by main()'s outer try/except, so
+        the runner "succeeds" but MQTT stats never publish and a bogus
+        warning gets logged every run. Must not raise."""
+        cfg = {"mqtt": {"host": "", "port": 1883, "username": "", "password": ""}}
+        publish_completion_stats(cfg, 100, "success")
