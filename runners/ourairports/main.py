@@ -307,7 +307,7 @@ def publish_completion_stats(
 ) -> None:
     """Publish completion statistics to MQTT, one retained topic per stat."""
     mc = cfg.get("mqtt")
-    if not mc:
+    if not mc or not mc.get("host"):
         logger.info("No MQTT config; skipping stats publish.")
         return
 

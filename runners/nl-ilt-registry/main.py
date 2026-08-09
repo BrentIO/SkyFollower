@@ -366,7 +366,7 @@ def download_registry() -> str:
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
     mc = cfg.get("mqtt")
-    if not mc:
+    if not mc or not mc.get("host"):
         logger.info("No MQTT config; skipping stats publish.")
         return
 
