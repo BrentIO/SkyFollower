@@ -1303,10 +1303,6 @@ main() {
     echo "  ${installed_roles[$i]}: ${role_dir}"
     i=$((i+1))
   done
-  echo
-  echo "Manual steps this script never performs: static IP assignment, Docker"
-  echo "installation, timezone, cgroup memory accounting, log rotation, and"
-  echo "creating directories outside your home directory."
 }
 
 main
