@@ -12,8 +12,8 @@
 # Or, without cloning anything first:
 #   curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 #
-# <role> is one of: receiver, receiver-mlat, core, management-ui,
-# message-processor, archive -- may be repeated to select several in one
+# <role> is one of: receiver, core, management-ui, message-processor,
+# archive -- may be repeated to select several in one
 # run (e.g. --role core --role management-ui, since both live on the same
 # host). Omit entirely for an interactive multi-select prompt.
 #
@@ -53,7 +53,7 @@ UPGRADE=0
 INSTALL_ROOT="${HOME}/SkyFollower"
 SELECTED_ROLES=()
 
-ALL_ROLES="receiver receiver-mlat core management-ui message-processor archive"
+ALL_ROLES="core management-ui archive message-processor receiver"
 
 # usage()'s exit code depends on why it's being shown: 0 for an explicit
 # --help request (informational, not an error), 1 for anything else
@@ -62,7 +62,7 @@ usage() {
   local code="${1:-1}"
   cat >&2 <<USAGE
 Usage: $SCRIPT_NAME [--root <path>] [--role <role> ...] [--non-interactive] [--upgrade]
-  role: receiver | receiver-mlat | core | management-ui | message-processor | archive
+  role: receiver | core | management-ui | message-processor | archive
 USAGE
   exit "$code"
 }
@@ -507,7 +507,7 @@ role_files() {
   # Files and Configuration tables -- update both places together if it
   # ever changes.
   case "$1" in
-    receiver|receiver-mlat)
+    receiver)
       echo "docker-compose.receiver.yaml"
       ;;
     core)
@@ -527,7 +527,7 @@ role_files() {
 
 role_data_dirs() {
   case "$1" in
-    receiver|receiver-mlat)
+    receiver)
       echo "data/receiver"
       ;;
     core)
@@ -967,7 +967,6 @@ ENV_EOF
 default_folder_for_role() {
   case "$1" in
     receiver) echo "receiver" ;;
-    receiver-mlat) echo "receiver-mlat" ;;
     *) echo "$1" ;;
   esac
 }
@@ -1246,7 +1245,7 @@ main() {
   for role in "${SELECTED_ROLES[@]}"; do
     local folder_name
     folder_name="$(default_folder_for_role "$role")"
-    if [ "$NON_INTERACTIVE" -eq 0 ] && { [ "$role" = "receiver" ] || [ "$role" = "receiver-mlat" ]; }; then
+    if [ "$NON_INTERACTIVE" -eq 0 ] && [ "$role" = "receiver" ]; then
       echo
       folder_name="$(prompt_string FOLDER_NAME "Folder name for this receiver instance" "$folder_name")"
     fi
@@ -1261,7 +1260,7 @@ main() {
     echo
 
     case "$role" in
-      receiver|receiver-mlat) collect_receiver_env "$role_dir" ;;
+      receiver) collect_receiver_env "$role_dir" ;;
       core) collect_core_env "$role_dir" ;;
       management-ui) collect_management_ui_env "$role_dir" ;;
       message-processor) collect_message_processor_env "$role_dir" ;;
