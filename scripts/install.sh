@@ -1101,7 +1101,7 @@ provision_rabbitmq_users() {
   # it, with its own password) -- that's fine, list_users first so this
   # doesn't print a scary error on every re-run.
   if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_admin_username}[[:space:]]"); then
-    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_admin_username" "$rabbitmq_admin_password") \
+    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_admin_username" "$rabbitmq_admin_password" >/dev/null) \
       || echo "  ✗ Could not create ${rabbitmq_admin_username} -- check manually." >&2
   fi
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_admin_username" administrator) \
