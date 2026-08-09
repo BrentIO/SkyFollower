@@ -374,6 +374,12 @@ services:
       ofelia.job-run.runner-ca-transport-canada-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ca-transport-canada-registry.delete: *ofelia-runner-delete
 
+      ofelia.job-run.runner-ba-bhdca-registry.schedule: "0 10 6 * * 7"
+      ofelia.job-run.runner-ba-bhdca-registry.image: "ghcr.io/brentio/skyfollower-runner-ba-bhdca-registry:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.runner-ba-bhdca-registry.network: *ofelia-runner-network
+      ofelia.job-run.runner-ba-bhdca-registry.environment: *ofelia-runner-environment
+      ofelia.job-run.runner-ba-bhdca-registry.delete: *ofelia-runner-delete
+
       ofelia.job-run.runner-airportwebcams-special-liveries.schedule: "0 10 6 * * 5"
       ofelia.job-run.runner-airportwebcams-special-liveries.image: "ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-airportwebcams-special-liveries.network: *ofelia-runner-network
@@ -430,6 +436,14 @@ services:
   runner-ca-transport-canada-registry:
     image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-ca-transport-canada-registry
+    profiles: ["runners"]
+    environment: *runner-environment
+    depends_on:
+      - redis
+
+  runner-ba-bhdca-registry:
+    image: ghcr.io/brentio/skyfollower-runner-ba-bhdca-registry:${SKYFOLLOWER_VERSION:-latest}
+    container_name: skyfollower-runner-ba-bhdca-registry
     profiles: ["runners"]
     environment: *runner-environment
     depends_on:
