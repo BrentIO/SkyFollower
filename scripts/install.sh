@@ -50,7 +50,8 @@ set -euo pipefail
 SCRIPT_NAME="$(basename "$0")"
 NON_INTERACTIVE=0
 UPGRADE=0
-INSTALL_ROOT="${HOME}/SkyFollower"
+INSTALL_ROOT="$PWD"
+ROOT_EXPLICIT=0
 SELECTED_ROLES=()
 
 ALL_ROLES="core management-ui archive message-processor receiver"
@@ -71,6 +72,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --root)
       INSTALL_ROOT="${2:?--root requires a path}"
+      ROOT_EXPLICIT=1
       shift 2
       ;;
     --role)
@@ -1163,7 +1165,9 @@ offer_ofelia_and_bulk_load() {
 # ---------------------------------------------------------------------------
 
 do_upgrade() {
-  resolve_ref
+  # REF/IMAGE_VERSION are already resolved by main() before dispatching
+  # here -- resolving again would mean two GitHub API calls per --upgrade
+  # run for the same answer.
   echo "Upgrading every role directory under ${INSTALL_ROOT} to ${REF}..."
   local found=0
   for env_file in "${INSTALL_ROOT}"/*/.env; do
@@ -1197,6 +1201,7 @@ do_upgrade() {
 # ---------------------------------------------------------------------------
 
 print_banner() {
+  echo
   cat <<'BANNER_EOF'
 ███████ ██   ██ ██    ██ ███████  ██████  ██      ██       ██████  ██     ██ ███████ ██████
 ██      ██  ██   ██  ██  ██      ██    ██ ██      ██      ██    ██ ██     ██ ██      ██   ██
@@ -1207,8 +1212,38 @@ BANNER_EOF
   echo
 }
 
+# Only asked when --root was not explicitly passed and the run is
+# interactive -- confirms the resolved default (now $PWD, not
+# ${HOME}/SkyFollower) before anything else happens, since preflight's
+# writability check and every later step depend on INSTALL_ROOT being
+# right from the start.
+confirm_install_root() {
+  local answer
+  read -r -p "Use ${INSTALL_ROOT} as the root directory? [Y/n]: " answer </dev/tty
+  case "$answer" in
+    ""|[Yy]|[Yy][Ee][Ss])
+      return
+      ;;
+  esac
+  local path
+  while true; do
+    read -r -p "  Install root directory: " path </dev/tty
+    if [ -n "$path" ]; then
+      INSTALL_ROOT="$path"
+      return
+    fi
+    echo "    Required." >&2
+  done
+}
+
 main() {
   print_banner
+  resolve_ref
+
+  if [ "$NON_INTERACTIVE" -eq 0 ] && [ "$ROOT_EXPLICIT" -eq 0 ]; then
+    confirm_install_root
+  fi
+
   preflight
 
   if [ "$UPGRADE" -eq 1 ]; then
@@ -1236,7 +1271,6 @@ main() {
     [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
 
-  resolve_ref
   mkdir -p "$INSTALL_ROOT"
 
   local installed_dirs=()
