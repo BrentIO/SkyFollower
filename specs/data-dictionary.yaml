@@ -351,6 +351,22 @@ sources:
       "Nom propriétaire": "Registered owner name; blank on many rows"
       "Adresse propriétaire": "Owner address, comma-delimited; blank on many rows; occasionally a phone number instead of an address"
 
+  jo-carc-registry:
+    description: "Jordan Civil Aviation Regulatory Commission (CARC) aircraft register — JY-prefix registrations, Transport Category only"
+    url: "https://www.carc.gov.jo/en/node/684"
+    format: html
+    cadence: weekly
+    notes: "Coverage is partial by design: CARC's own page text says this covers only Transport Category aircraft operating for compensation or hire — general aviation and private aircraft are excluded, not a scraping bug; single request, no discovery step; visually looks like one table per operator (Royal Jordanian Airlines, Jordan Aviation, Arab Wings, Airlines Solitaire Air Ltd. Co. at check time) but is actually one HTML <table> — 1-cell rows are operator-section headers, each followed by a 7-cell column-header row and that operator's data rows; a stray 1-cell row reading 'Jordanian Registered Aircraft' (page-title artifact) appears once after the first operator's header and is skipped, not treated as a new operator; operator list discovered from the page, not hardcoded; Category column always 'Transport', not the aircraft.type vocabulary, not stored; no separate owner column — the operator-section heading fills the registrant-identity role directly, same approach sg-caas-registry/tt-caa-registry take; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "Manufacturer": "Aircraft manufacturer name"
+      "Model": "Aircraft model designation"
+      "Category": "Always 'Transport'; not the aircraft.type category; not stored"
+      "MSN": "Manufacturer serial number"
+      "Reg Mark": "Full JY-prefix registration mark; lookup key"
+      "Reg. No.": "Internal CARC registry number, distinct from the registration mark; not stored"
+      "Reg. Date": "Registration date; inconsistent formats across operator sections; not stored"
+      "(operator section heading)": "Not a table column — comes from which operator section the row was scraped from; used as registrant identity"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1123,6 +1139,9 @@ records:
           - source: tg-anac-registry
             file: "consultation-du-registre-dimmatriculation (single HTML page)"
             description: "Togo ANAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{5V\\-XXX} against Mictronics records; enriches existing records only"
+          - source: jo-carc-registry
+            file: "node/684 (single HTML page)"
+            description: "Jordan CARC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{JY\\-XXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1283,6 +1302,10 @@ records:
             file: "consultation-du-registre-dimmatriculation (single HTML page)"
             field: Immatriculation
             description: "Full 5V-prefix registration mark; validated against ^5V-[A-Z0-9]{2,6}$"
+          - source: jo-carc-registry
+            file: "node/684 (single HTML page)"
+            field: "Reg Mark"
+            description: "Full JY-prefix registration mark; validated against ^JY-[A-Z0-9]{2,6}$"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1509,6 +1532,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "Single registered owner name — wrap in a one-element list; blank on many rows"
+              - source: jo-carc-registry
+                file: "node/684 (single HTML page)"
+                field: "(operator section heading)"
+                transform:
+                  type: wrap_array
+                  description: "No owner column exists in this source — the operator-section heading fills the registrant-identity role directly, wrap in a one-element list"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -2308,6 +2337,9 @@ records:
                 file: "consultation-du-registre-dimmatriculation (single HTML page)"
                 field: type
                 description: "Column is misleadingly named — holds model designations (e.g. 'DC8 62', 'PA 31T'), not the aircraft.type category vocabulary"
+              - source: jo-carc-registry
+                file: "node/684 (single HTML page)"
+                field: Model
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -2500,6 +2532,9 @@ records:
               - source: tg-anac-registry
                 file: "consultation-du-registre-dimmatriculation (single HTML page)"
                 field: Constructeur
+              - source: jo-carc-registry
+                file: "node/684 (single HTML page)"
+                field: Manufacturer
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČ"
@@ -2695,6 +2730,9 @@ records:
               - source: tg-anac-registry
                 file: "consultation-du-registre-dimmatriculation (single HTML page)"
                 field: "N° de serie"
+              - source: jo-carc-registry
+                file: "node/684 (single HTML page)"
+                field: MSN
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "SERIJSKI BROJ"
@@ -3286,6 +3324,11 @@ records:
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
           - source: tg-anac-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
+          - source: jo-carc-registry
             transform:
               type: constant
               value: false

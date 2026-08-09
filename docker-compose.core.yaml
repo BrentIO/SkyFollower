@@ -398,6 +398,12 @@ services:
       ofelia.job-run.runner-tg-anac-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-tg-anac-registry.delete: *ofelia-runner-delete
 
+      ofelia.job-run.runner-jo-carc-registry.schedule: "0 10 10 * * 1"
+      ofelia.job-run.runner-jo-carc-registry.image: "ghcr.io/brentio/skyfollower-runner-jo-carc-registry:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.runner-jo-carc-registry.network: *ofelia-runner-network
+      ofelia.job-run.runner-jo-carc-registry.environment: *ofelia-runner-environment
+      ofelia.job-run.runner-jo-carc-registry.delete: *ofelia-runner-delete
+
       ofelia.job-run.runner-airportwebcams-special-liveries.schedule: "0 10 6 * * 5"
       ofelia.job-run.runner-airportwebcams-special-liveries.image: "ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-airportwebcams-special-liveries.network: *ofelia-runner-network
@@ -486,6 +492,14 @@ services:
   runner-tg-anac-registry:
     image: ghcr.io/brentio/skyfollower-runner-tg-anac-registry:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-tg-anac-registry
+    profiles: ["runners"]
+    environment: *runner-environment
+    depends_on:
+      - redis
+
+  runner-jo-carc-registry:
+    image: ghcr.io/brentio/skyfollower-runner-jo-carc-registry:${SKYFOLLOWER_VERSION:-latest}
+    container_name: skyfollower-runner-jo-carc-registry
     profiles: ["runners"]
     environment: *runner-environment
     depends_on:
