@@ -367,6 +367,17 @@ sources:
       "Reg. Date": "Registration date; inconsistent formats across operator sections; not stored"
       "(operator section heading)": "Not a table column — comes from which operator section the row was scraped from; used as registrant identity"
 
+  mo-aacm-registry:
+    description: "Macau Civil Aviation Authority (AACM) aircraft register — B-M-prefix registrations (Macau's slice of China's B- namespace)"
+    url: "https://www.aacm.gov.mo/zh-hant/industry-page/RegisteredAircraft"
+    format: html
+    cadence: weekly
+    notes: "Single request, no discovery step; only the zh-hant (Traditional Chinese) page renders a table on plain HTTP fetch — the en-us path returns unrendered Vue.js template placeholders with no table content, so Operator is genuine Chinese text, stored as-is (first runner in the repo to handle CJK text end-to-end, verified round-trip through Redis); Operator column uses rowspan to span every aircraft belonging to the same operator (rowspan=23 for the first operator at check time) — table expanded to a full grid before parsing, same approach kg-caa-registry uses; at least one registration cell has the mark split across multiple text nodes in the source HTML (renders as 'B-MB U' instead of 'B-MBU') — internal whitespace stripped from the registration value before validation, not just collapsed; no separate owner column — Operator fills the registrant-identity role directly, same approach sg-caas-registry/tt-caa-registry/jo-carc-registry take; Aircraft Type is a single combined manufacturer+model string, no reliable delimiter to split manufacturer out; no serial number or address columns exist; no ICAO hex — RediSearch lookup via Mictronics index; must run after Mictronics"
+    fields:
+      "Operator (經營人)": "Operator name (Chinese text); rowspan-merged across each operator's aircraft"
+      "Registration Number (註冊編號)": "Full B-M-prefix registration mark; lookup key"
+      "Aircraft Type (型號)": "Combined manufacturer+model designation (single free-text field)"
+
   nz-caa-registry:
     description: "New Zealand Civil Aviation Authority aircraft register — ZK-prefix registrations"
     url: "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
@@ -1142,6 +1153,9 @@ records:
           - source: jo-carc-registry
             file: "node/684 (single HTML page)"
             description: "Jordan CARC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{JY\\-XXX} against Mictronics records; enriches existing records only"
+          - source: mo-aacm-registry
+            file: "RegisteredAircraft (single HTML page)"
+            description: "Macau AACM does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{B\\-MXXX} against Mictronics records; enriches existing records only"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             description: "Croatia CCAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{9A\\-XXX} against Mictronics records; enriches existing records only"
@@ -1306,6 +1320,10 @@ records:
             file: "node/684 (single HTML page)"
             field: "Reg Mark"
             description: "Full JY-prefix registration mark; validated against ^JY-[A-Z0-9]{2,6}$"
+          - source: mo-aacm-registry
+            file: "RegisteredAircraft (single HTML page)"
+            field: "Registration Number"
+            description: "Full B-M-prefix registration mark; validated against ^B-M[A-Z0-9]{2,4}$ after stripping internal whitespace (some cells split the mark across text nodes)"
           - source: hr-ccaa-registry
             file: "PDF (hash-based, discovered via index page)"
             field: "REG. OZNAKA"
@@ -1538,6 +1556,12 @@ records:
                 transform:
                   type: wrap_array
                   description: "No owner column exists in this source — the operator-section heading fills the registrant-identity role directly, wrap in a one-element list"
+              - source: mo-aacm-registry
+                file: "RegisteredAircraft (single HTML page)"
+                field: "Operator (經營人)"
+                transform:
+                  type: wrap_array
+                  description: "No owner column exists in this source — Operator (rowspan-merged, Chinese text) fills the registrant-identity role directly, wrap in a one-element list"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: VLASNIK
@@ -2340,6 +2364,10 @@ records:
               - source: jo-carc-registry
                 file: "node/684 (single HTML page)"
                 field: Model
+              - source: mo-aacm-registry
+                file: "RegisteredAircraft (single HTML page)"
+                field: "Aircraft Type (型號)"
+                description: "Combined manufacturer+model string (e.g. '空中巴士 A321-231'), no reliable delimiter to split manufacturer out — stored whole, aircraft.manufacturer left unset"
               - source: hr-ccaa-registry
                 file: "PDF (hash-based, discovered via index page)"
                 field: "PROIZVOĐAČEVA OZNAKA ZRAKOPLOVA"
@@ -3329,6 +3357,11 @@ records:
               value: false
               description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
           - source: jo-carc-registry
+            transform:
+              type: constant
+              value: false
+              description: "Civil register; explicitly overwrites any stale military:true from Mictronics or a prior record on a reused hex"
+          - source: mo-aacm-registry
             transform:
               type: constant
               value: false
