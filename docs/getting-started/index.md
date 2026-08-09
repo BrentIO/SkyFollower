@@ -36,8 +36,8 @@ management-ui` for the core host, which runs both):
 ./scripts/install.sh --role core --role management-ui
 ```
 
-`<role>` is one of `receiver`, `receiver-mlat`, `core`, `management-ui`,
-`message-processor`, or `archive` — matching the Compose Files table in
+`<role>` is one of `receiver`, `core`, `management-ui`, `message-processor`,
+or `archive` — matching the Compose Files table in
 [Deployment](/deployment/#compose-files).
 
 Other flags:
