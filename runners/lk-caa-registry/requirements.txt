@@ -1,0 +1,5 @@
+beautifulsoup4==4.15.0
+lxml==6.1.1
+paho-mqtt==2.1.0
+pdfplumber==0.11.10
+requests==2.34.2
