@@ -78,6 +78,22 @@ class FakeRedis:
     def evalsha(self, sha: str, numkeys: int, *args):
         return None
 
+    def ft(self, index: str) -> "_FakeFt":
+        # lifespan() unconditionally ensures all three RediSearch indices
+        # exist at startup (see #934) regardless of which endpoints a given
+        # test in this file actually exercises -- archive search doesn't
+        # use search indices at all, so this just reports every index as
+        # already present and never needs create_index() to do anything.
+        return _FakeFt()
+
+
+class _FakeFt:
+    def info(self):
+        return {}
+
+    def create_index(self, fields, definition):
+        raise AssertionError("create_index() should not be called -- info() always reports the index as present")
+
 
 class FakeAthenaClient:
     """Each start_query_execution call gets its own incrementing

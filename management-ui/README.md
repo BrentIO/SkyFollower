@@ -397,6 +397,33 @@ backend keeps a second, independent copy:
 processor's and archive processor's `/app/data` mounts), and can be
 overridden with the `DATA_DIR` environment variable.
 
+## Reference-Data Search Index Bootstrap
+
+![RediSearch index bootstrap and lookup safety net](./search-index-bootstrap-sequence.svg)
+
+The three RediSearch indices backing reference-data lookups
+(`idx:aircraft:mictronics`, `idx:aircraft:registry`, `idx:airport`) are
+each normally created lazily by the data runner that owns them, on that
+runner's first successful run. On a fresh install (or before that runner's
+first scheduled run), the index simply doesn't exist yet, and any lookup
+that reaches it used to surface a raw `Redis error: No such index ...` as
+an unhelpful `500`.
+
+`lifespan()` now ensures all three indices exist (empty, if unpopulated)
+unconditionally at startup, mirroring each runner's own lazy-creation
+pattern (`_ensure_search_index()` in `main.py`) — a lookup against an
+unpopulated index is then a normal `404` (no match) instead of an error.
+`_search_one()` keeps a safety net for any "no such index" condition that
+still slips through (e.g. a future `.ft(...)` call site `lifespan()`
+doesn't cover): it returns `503` with an actionable message rather than
+the raw exception text. redis-py/RediSearch expose no dedicated exception
+type for "index doesn't exist" — it surfaces as a generic
+`ResponseError`/`RedisError` whose message is literally `"No such index
+<name>"`, so detection is by message text, not exception type (a code
+comment next to the check flags this as inherently a little fragile
+against future Redis/RediSearch wording changes). A genuine connectivity/
+auth failure is unaffected — still `500` with the raw message.
+
 ## Regenerating `specs/openapi.yaml`
 
 ```bash
