@@ -649,6 +649,23 @@ LOG_LEVEL=info
 ENV_EOF
 }
 
+# Reuses a password collect_core_env() already collected/generated earlier
+# in this same run instead of a dependent role independently re-prompting
+# against its own (often still-empty) .env -- see CORE_SELECTED_IN_THIS_RUN
+# and where collect_core_env() stashes CORE_REDIS_PASSWORD/
+# CORE_RABBITMQ_PASSWORD. Per the resolved scope, this skips the prompt
+# entirely (no Enter-to-accept step) rather than merely pre-filling a
+# default, since the value is already decided, not just a guess at one.
+resolve_core_shared_password() {
+  local core_var="$1" varname="$2" label="$3" env_file="$4"
+  local core_val="${!core_var:-}"
+  if [ -n "$core_val" ]; then
+    printf '%s' "$core_val"
+    return
+  fi
+  prompt_password_value "$varname" "$label" "$(existing_env_value "$env_file" "$varname")"
+}
+
 collect_core_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (core) --"
@@ -667,6 +684,10 @@ collect_core_env() {
   else
     RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$existing_rmq_pw")"
   fi
+  # Stashed in a run-scoped variable so any dependent role's collect_*_env
+  # processed later in this same invocation can reuse it silently -- see
+  # resolve_core_shared_password() above.
+  CORE_RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
   # Fixed, not prompted -- nothing requires a human to choose the dashboard
   # admin's username any more than its password. Its credentials never
   # leave this host: no other role's .env ever references it, and no
@@ -691,6 +712,8 @@ collect_core_env() {
   else
     REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$existing_redis_pw")"
   fi
+  # Stashed the same way as CORE_RABBITMQ_PASSWORD above.
+  CORE_REDIS_PASSWORD="$REDIS_PASSWORD"
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -748,7 +771,7 @@ collect_management_ui_env() {
   fi
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$redis_default")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
-  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
+  REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file")"
   S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
   AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)")"
@@ -816,10 +839,10 @@ collect_message_processor_env() {
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(existing_env_value_or "$env_file" RABBITMQ_USERNAME skyfollower)")"
-  RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$(existing_env_value "$env_file" RABBITMQ_PASSWORD)")"
+  RABBITMQ_PASSWORD="$(resolve_core_shared_password CORE_RABBITMQ_PASSWORD RABBITMQ_PASSWORD "RabbitMQ password" "$env_file")"
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(existing_env_value "$env_file" REDIS_HOST)")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
-  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
+  REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file")"
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -881,10 +904,10 @@ collect_archive_env() {
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(existing_env_value_or "$env_file" RABBITMQ_USERNAME skyfollower)")"
-  RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$(existing_env_value "$env_file" RABBITMQ_PASSWORD)")"
+  RABBITMQ_PASSWORD="$(resolve_core_shared_password CORE_RABBITMQ_PASSWORD RABBITMQ_PASSWORD "RabbitMQ password" "$env_file")"
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(existing_env_value "$env_file" REDIS_HOST)")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
-  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)")"
+  REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file")"
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -1270,6 +1293,20 @@ main() {
     esac
     [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
+
+  # collect_core_env() must actually run before any dependent role's
+  # collect_*_env in the loop below, since those read CORE_REDIS_PASSWORD/
+  # CORE_RABBITMQ_PASSWORD that only exist once core has stashed them (see
+  # resolve_core_shared_password()) -- reorder core to the front regardless
+  # of what order roles were selected/typed in, without disturbing the
+  # relative order of the rest.
+  if [ -n "${CORE_SELECTED_IN_THIS_RUN:-}" ]; then
+    local reordered_roles=("core")
+    for r in "${SELECTED_ROLES[@]}"; do
+      [ "$r" = "core" ] || reordered_roles+=("$r")
+    done
+    SELECTED_ROLES=("${reordered_roles[@]}")
+  fi
 
   mkdir -p "$INSTALL_ROOT"
 
