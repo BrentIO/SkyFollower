@@ -17,6 +17,41 @@ permissions:
   contents: read
 
 jobs:
+  # redis/redis-stack-server is pinned independently here and in
+  # docker-compose.core.yaml (dependabot's docker-compose ecosystem only
+  # scans compose files, not workflow `services:` blocks -- see
+  # .github/dependabot.yml) so a bump to one without the other would
+  # silently drift the test-time Redis version from what's actually
+  # deployed. This job hard-fails the workflow when the two pins disagree.
+  check-redis-image-pin:
+    name: 🔒 Check redis-stack-server pin matches docker-compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Compare redis/redis-stack-server pin against docker-compose.core.yaml
+        run: |
+          set -euo pipefail
+          # Anchored on "image: " (not just the bare image name) so this
+          # doesn't match its own pattern text below when grepping this
+          # workflow file, and doesn't match the explanatory comment above
+          # this job.
+          workflow_image=$(grep -ohE 'image: *redis/redis-stack-server:[^[:space:]]+' .github/workflows/run-tests.yaml | sed 's/^image: *//' | head -n1)
+          compose_image=$(grep -ohE 'image: *redis/redis-stack-server:[^[:space:]]+' docker-compose.core.yaml | sed 's/^image: *//' | head -n1)
+
+          if [ -z "$workflow_image" ] || [ -z "$compose_image" ]; then
+            echo "::error::Could not find a redis/redis-stack-server image reference in one of the two files (workflow='${workflow_image}', compose='${compose_image}')."
+            exit 1
+          fi
+
+          echo "run-tests.yaml:            $workflow_image"
+          echo "docker-compose.core.yaml:  $compose_image"
+
+          if [ "$workflow_image" != "$compose_image" ]; then
+            echo "::error::redis/redis-stack-server pin mismatch -- .github/workflows/run-tests.yaml ($workflow_image) does not match docker-compose.core.yaml ($compose_image). Update both to the same tag@digest in the same PR."
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
     # RedisJSON + Lua scripting support, matching docker-compose.core.yaml.
@@ -26,7 +61,7 @@ jobs:
     # intermittently skip (not fail) on a cold container instead of running.
     services:
       redis:
-        image: redis/redis-stack-server:latest
+        image: redis/redis-stack-server:7.4.0-v8@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
         ports:
           - 6379:6379
         options: >-

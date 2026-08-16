@@ -92,7 +92,7 @@ services:
   # well after midnight UTC -- there's no upstream data source to wait on,
   # unlike the core host's runners.
   ofelia:
-    image: mcuadros/ofelia:latest
+    image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
     restart: unless-stopped
     command: ["daemon", "--docker"]
     volumes:
