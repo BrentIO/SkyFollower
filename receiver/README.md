@@ -38,7 +38,7 @@ a fixed, non-configurable bind mount -- see `docker-compose.receiver.yaml`.
 
 Comma-separated `host:port:source` triples, parsed by `shared/config.py`'s
 `parse_receiver_sources()`. Each triple's `source` is the tag applied to
-every message from that stream: one of `1090`, `978`, or `MLAT`
+every message from that stream: one of `1090`, `978`, or `EXTERNAL`
 (case-insensitive).
 
 Example, the SDR-hosting receiver (e.g. on the Raspberry Pi):
@@ -47,37 +47,16 @@ Example, the SDR-hosting receiver (e.g. on the Raspberry Pi):
 RECEIVER_SOURCES=192.168.1.10:30002:1090,192.168.1.10:30978:978
 ```
 
-An `MLAT` source does not need to be co-located with the receiver's SDR
+An `EXTERNAL` source does not need to be co-located with the receiver's SDR
 hardware — it's a plain TCP connection like any other source, so its host
-can point at a remote MLAT-results feed (e.g. a readsb instance receiving
-results from an `mlat-client`). MLAT frames use the same raw Mode S format
-as `1090`, so no separate parsing is required. Nothing prevents adding an
-`MLAT` triple to the same `RECEIVER_SOURCES` list above, but a **separate
-receiver instance** is recommended instead — message routing is keyed on
-`icao_hex`, not receiver identity, so a second instance publishes into the
-exact same pipeline with no special handling on the message processor side, while
-keeping internet-facing MLAT ingestion off the resource-constrained device
-handling the local RTL-SDR hardware. That second instance can run on its
-own host, or alongside the first on the same host (see [Running Multiple
-Receiver Instances](#running-multiple-receiver-instances) below) — both
-are the exact same mechanism. Any number of MLAT providers can be
-configured on that instance — each is its own triple with source `MLAT`:
-
-```
-RECEIVER_SOURCES=mlat-server-a.example.com:30105:MLAT,mlat-server-b.example.com:30105:MLAT
-```
-
-There's no separate compose file for the MLAT instance -- it's the exact
-same `receiver` image and the same `docker-compose.receiver.yaml`, deployed
-a second time into its own folder per [Running Multiple Receiver
-Instances](#running-multiple-receiver-instances) below, with its own
-`RECEIVER_SOURCES`. It publishes MQTT topics under its own
-independently-generated receiver identity (see Receiver Identity below) and
-drains through its own `queue.db`, entirely independent of the SDR-hosting
-instance -- nothing about it needs to be told it's "the MLAT one" beyond
-which triples its `RECEIVER_SOURCES` lists.
-
-![Receiver MLAT provider topology](./receiver-mlat-topology.svg)
+can point at any other Beast/raw-Mode-S TCP feed. `EXTERNAL` frames use the
+same raw Mode S format as `1090`, so no separate parsing is required.
+Nothing prevents adding an `EXTERNAL` triple to the same `RECEIVER_SOURCES`
+list above; a second, independent receiver instance is also an option (see
+[Running Multiple Receiver Instances](#running-multiple-receiver-instances)
+below) — message routing is keyed on `icao_hex`, not receiver identity, so
+either shape publishes into the exact same pipeline with no special
+handling on the message processor side.
 
 ## Receiver Identity
 
@@ -91,13 +70,13 @@ Because identity is generated per instance (keyed off that instance's own `data_
 
 Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and its own `.env`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
 
-`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/install.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `mlat-adsb.lol` gets project `skyfollower-mlat-adsb-lol` (container `skyfollower-mlat-adsb-lol-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
+`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/install.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `receiver-2` gets project `skyfollower-receiver-2` (container `skyfollower-receiver-2-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
 
 To run a second receiver on the same host as the first, run the installer again for the `receiver` role -- it prompts for a folder name each time one is selected:
 
 ```bash
 ./scripts/install.sh --role receiver
-# Folder name for this receiver instance [receiver]: mlat-adsb.lol
+# Folder name for this receiver instance [receiver]: receiver-2
 # ...then RECEIVER_NAME, RECEIVER_SOURCES, RabbitMQ/MQTT credentials for this instance
 ```
 
@@ -290,7 +269,7 @@ All topics use the root `SkyFollower`.
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `version` | String | Running image version (`VERSION` env var, `"dev"` if unset) |
 
-A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_last_message_at` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two MLAT feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "MLAT" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_last_message_at`.
+A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_last_message_at` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two EXTERNAL feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "EXTERNAL" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_last_message_at`.
 
 Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`.
 

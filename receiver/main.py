@@ -2,9 +2,10 @@
 """
 SkyFollower Receiver
 
-Connects to one or more TCP sources — readsb (1090 MHz Mode S / MLAT) or
-dump978-fa (978 MHz UAT) — extracts each message's ICAO hex (via pyModeS for
-1090/MLAT, directly from the UAT payload for 978), and publishes it to
+Connects to one or more TCP sources — readsb (1090 MHz Mode S, including any
+EXTERNAL-tagged 1090-style feed) or dump978-fa (978 MHz UAT) — extracts each
+message's ICAO hex (via pyModeS for 1090/EXTERNAL, directly from the UAT
+payload for 978), and publishes it to
 RabbitMQ's consistent-hash exchange keyed by that hex, leaving the broker to
 pick which message processor handles the aircraft.  Falls back to a local
 SQLite queue when RabbitMQ is unavailable, and drains the fallback on
@@ -111,7 +112,7 @@ class Receiver:
 
         # Per-connection rate trackers keyed by (host, port) -- not the
         # source tag, since more than one connection can share a tag (e.g.
-        # two MLAT feeds) and needs independent tracking rather than a
+        # two EXTERNAL feeds) and needs independent tracking rather than a
         # summed rate.
         self._rates: dict[tuple[str, int], _RateTracker] = {}
         # Live up/down state per connection -- True only while the TCP

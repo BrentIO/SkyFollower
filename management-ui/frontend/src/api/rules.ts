@@ -3,7 +3,7 @@ import { apiClient } from "./client";
 // Mirrors management-ui/backend/main.py's Condition/Rule Pydantic models
 // (see also CLAUDE.md's Conditions table). `value` is a string for every
 // type except `matched_rules` (a list of rule identifiers) and
-// `receiver_source` (a list of 1-2 of "1090"/"978"/"MLAT") -- matching
+// `receiver_source` (a list of 1-2 of "1090"/"978"/"EXTERNAL") -- matching
 // SkyFollower-legacy's convention (altitude "10000", military "true",
 // heading "340,020" for min,max wrap-around).
 export const CONDITION_TYPES = [

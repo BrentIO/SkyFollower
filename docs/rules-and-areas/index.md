@@ -26,12 +26,12 @@ Example `rules.example.json` entry:
 ]
 ```
 
-`force_archive` is a boolean, defaulting to `false`. MLAT-only flights (where
-the flight's accumulated `receiver_sources` is exactly `["MLAT"]`) are dropped
-rather than written to S3 — see the
+`force_archive` is a boolean, defaulting to `false`. External-only flights
+(where the flight's accumulated `receiver_sources` is exactly `["EXTERNAL"]`)
+are dropped rather than written to S3 — see the
 [Archive Processor docs](/components/archive-processor). Setting
 `force_archive: true` on a rule overrides that skip for any flight matching
-the rule, so an MLAT-only flight the user cares about still gets archived.
+the rule, so an external-only flight the user cares about still gets archived.
 
 Available condition types: `altitude`, `heading`, `velocity`, `vertical_speed`,
 `area`, `date`, `ident`, `squawk`, `military`, `receiver_source`,

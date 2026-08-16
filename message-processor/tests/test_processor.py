@@ -480,13 +480,13 @@ class TestDecodeMessageRouting:
         )
         assert p._decode_message(msg)["adsb_version"] == 2
 
-    def test_mlat_source_routes_to_decode_1090(self):
-        # MLAT frames are still raw Mode-S hex — same path as 1090, source
-        # was never branched on before this PR either.
+    def test_external_source_routes_to_decode_1090(self):
+        # EXTERNAL-tagged frames are still raw Mode-S hex — same path as
+        # 1090, source was never branched on before this PR either.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="8DA8AE7FF8000000004000F9567C",
-            icao_hex="A8AE7F", received_at=1.0, source="MLAT",
+            icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL",
         )
         assert p._decode_message(msg)["adsb_version"] == 2
 
@@ -526,13 +526,13 @@ class TestFlight:
         f.first_message = 1000.0
         f.last_message = 2000.0
         f.total_messages = 3
-        f.receiver_sources = ["MLAT", "1090"]
+        f.receiver_sources = ["EXTERNAL", "1090"]
         f.force_archive = True
         f.save()
 
         f2 = Flight(db)
         assert f2.load("A8AE7F") is True
-        assert f2.receiver_sources == ["MLAT", "1090"]
+        assert f2.receiver_sources == ["EXTERNAL", "1090"]
         assert f2.force_archive is True
 
     def test_receiver_sources_and_force_archive_defaults(self):
@@ -656,11 +656,11 @@ class TestFlight:
         f.first_message = 1.0
         f.last_message = 1.0
         f.total_messages = 1
-        f.receiver_sources = ["MLAT"]
+        f.receiver_sources = ["EXTERNAL"]
         f.force_archive = True
         f.save()
         cf = f.to_completed_flight()
-        assert cf.receiver_sources == ["MLAT"]
+        assert cf.receiver_sources == ["EXTERNAL"]
         assert cf.force_archive is True
 
 
@@ -1820,7 +1820,7 @@ class TestReceiverSourcesAccumulation:
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = None
 
-        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
         msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="1090")
 
         with p._db_lock:
@@ -1829,7 +1829,7 @@ class TestReceiverSourcesAccumulation:
 
         f = Flight(p._db)
         f.load("A8AE7F")
-        assert f.receiver_sources == ["MLAT", "1090"]
+        assert f.receiver_sources == ["EXTERNAL", "1090"]
 
     def test_dedupes_repeated_same_source(self):
         p, mock_redis = _make_processor()
@@ -1848,25 +1848,25 @@ class TestReceiverSourcesAccumulation:
 
     def test_not_only_set_on_first_message(self):
         """Regression guard: source used to be set only inside the
-        `if not exists:` branch, so a flight created on MLAT that later got
-        picked up on 1090 never reflected the second source."""
+        `if not exists:` branch, so a flight created on EXTERNAL that later
+        got picked up on 1090 never reflected the second source."""
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = None
 
-        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
         p_db_lock_msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="978")
 
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, msg1)
         f = Flight(p._db)
         f.load("A8AE7F")
-        assert f.receiver_sources == ["MLAT"]
+        assert f.receiver_sources == ["EXTERNAL"]
 
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, p_db_lock_msg2)
         f2 = Flight(p._db)
         f2.load("A8AE7F")
-        assert f2.receiver_sources == ["MLAT", "978"]
+        assert f2.receiver_sources == ["EXTERNAL", "978"]
 
 
 class TestConfirmAfterRepeatedSightings:
@@ -2092,7 +2092,7 @@ class TestForceArchiveFromRules:
             {"identifier": "rule1", "name": "", "description": "", "force_archive": True, "conditions": []},
         ]
 
-        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, msg)
 
@@ -2108,7 +2108,7 @@ class TestForceArchiveFromRules:
             {"identifier": "rule1", "name": "", "description": "", "force_archive": False, "conditions": []},
         ]
 
-        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, msg)
 
@@ -2126,14 +2126,14 @@ class TestForceArchiveFromRules:
         p._rules_engine.evaluate.return_value = [
             {"identifier": "rule1", "name": "", "description": "", "force_archive": True, "conditions": []},
         ]
-        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="MLAT")
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, msg1)
 
         # Second message: rule already in matched_rules, so evaluate()
         # would naturally skip it in the real engine — simulate that here.
         p._rules_engine.evaluate.return_value = []
-        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="MLAT")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=2.0, source="EXTERNAL")
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F"}, msg2)
 

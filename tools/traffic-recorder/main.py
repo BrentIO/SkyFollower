@@ -8,7 +8,7 @@ traffic-replayer tool.
 
 Usage:
     python main.py --output capture.ndjson --duration 7200 \
-        --sources "localhost:30002:1090" "localhost:30978:978" "localhost:30105:MLAT"
+        --sources "localhost:30002:1090" "localhost:30978:978" "localhost:30105:EXTERNAL"
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import pyModeS as pms
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from shared.adsb_1090 import parse_tcp_stream as parse_1090_stream
+from shared.config import RECEIVER_SOURCE_TAGS
 from shared.uat import parse_978_line
 
 # ---------------------------------------------------------------------------
@@ -78,7 +79,7 @@ class SourceCapture(threading.Thread):
             sock.settimeout(1.0)
             if self.source_tag == "978":
                 self._capture_978(sock)
-            elif self.source_tag in ("1090", "MLAT"):
+            elif self.source_tag in ("1090", "EXTERNAL"):
                 self._capture_1090(sock)
 
     def _capture_1090(self, sock: socket.socket) -> None:
@@ -135,7 +136,7 @@ class SourceCapture(threading.Thread):
 # Entry point
 # ---------------------------------------------------------------------------
 
-_VALID_SOURCE_TAGS = {"1090", "978", "MLAT"}
+_VALID_SOURCE_TAGS = set(RECEIVER_SOURCE_TAGS)
 
 
 def _parse_source(s: str) -> tuple[str, int, str]:
@@ -170,7 +171,7 @@ def main() -> None:
         nargs="+",
         required=True,
         metavar="HOST:PORT:SOURCE_TAG",
-        help='One or more sources, e.g. "localhost:30002:1090" "localhost:30978:978" "localhost:30105:MLAT"',
+        help='One or more sources, e.g. "localhost:30002:1090" "localhost:30978:978" "localhost:30105:EXTERNAL"',
     )
     args = parser.parse_args()
 

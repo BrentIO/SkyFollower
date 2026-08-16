@@ -22,10 +22,10 @@ only dependency is Redis, so it can move to a different host later
 without disturbing rabbitmq/redis/runners). The message processor is
 designed to scale both by adding more hosts, each running the same
 compose file, and by running more processors on one host (see
-[Architecture](/architecture/)'s Scaling Message Processors section). The
-MLAT receiver is optional, dedicated to MLAT-only sources, and deployed
-separately from the host running the local RTL-SDR hardware. Archive
-compaction runs on its own `ofelia` instance alongside the archive
+[Architecture](/architecture/)'s Scaling Message Processors section). A
+second receiver instance is optional and can be deployed separately from
+the host running the local RTL-SDR hardware, e.g. to ingest a remote
+feed. Archive compaction runs on its own `ofelia` instance alongside the archive
 processor; the one-shot job itself sits behind the `compaction` Compose
 profile so only its scheduler, never the job, comes up with `docker
 compose up -d`. Get the relevant file(s) onto each host and write its
@@ -34,7 +34,7 @@ compose up -d`. Get the relevant file(s) onto each host and write its
 
 | File | Role | Services |
 |------|------|---------|
-| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also the optional dedicated MLAT receiver (same file, own `.env`, its own auto-generated identity) | `receiver` |
+| `docker-compose.receiver.yaml` | ADS-B reception (Raspberry Pi); also any additional receiver instance (same file, own `.env`, its own auto-generated identity) | `receiver` |
 | `docker-compose.core.yaml` | Message bus + enrichment data | `rabbitmq`, `redis`, `ofelia`, all runners |
 | `docker-compose.management-ui.yaml` | Rules/areas API (co-located with `docker-compose.core.yaml`) | `management-ui` |
 | `docker-compose.message-processor.yaml` | Flight state + rules (scale by adding hosts, or by running more than one processor on a host) | `message-processor-1` (always on) through `message-processor-8` (profile-gated) |
@@ -45,7 +45,7 @@ compose up -d`. Get the relevant file(s) onto each host and write its
 | Container | Description | Default port |
 |-----------|-------------|--------------|
 | `receiver` | Reads raw ADS-B frames from readsb TCP streams; routes to RabbitMQ queues | — |
-| `receiver` (MLAT instance, optional) | Same image, its own auto-generated identity, dedicated to MLAT-only sources on its own host | — |
+| `receiver` (additional instance, optional) | Same image, its own auto-generated identity, deployed independently on its own host | — |
 | `message-processor-1` (through `-8`) | Consumes ADS-B messages, maintains flight state, enriches from Redis, runs rules engine — one container per instance, several may run on one host | — |
 | `archive-processor` | Receives completed flights from RabbitMQ, writes gzipped JSON to S3 | — |
 | `archive-compaction` | Daily job (its own `ofelia` instance, alongside the archive processor) consolidating each day's per-flight Parquet index files into one file per partition | — |
@@ -94,7 +94,7 @@ each table below.
 
 See [Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)
 for what each variable means, `RECEIVER_SOURCES`'s `host:port:source`
-format, and the MLAT-instance and multiple-receiver-instance patterns.
+format, and the multiple-receiver-instance pattern.
 
 ### Core (`rabbitmq`, `redis`, `ofelia`, runners)
 
@@ -218,9 +218,9 @@ image update — depends on what it is and what depends on it.
 **Receiver** — no draining needed. It's the origin of the data, not a
 consumer of anything upstream, so stopping it is simply a coverage gap in
 the ADS-B feed itself; every downstream component (RabbitMQ, message
-processors, archive) is unaffected. Stop it, restart it, done. The optional MLAT
-receiver instance (same `docker-compose.receiver.yaml`, its own host and
-`.env`) is maintained identically and independently of the
+processors, archive) is unaffected. Stop it, restart it, done. An optional
+second receiver instance (same `docker-compose.receiver.yaml`, its own host
+and `.env`) is maintained identically and independently of the
 SDR-hosting instance, with its own independently-generated identity.
 Notably, a message processor resize (adding, removing, or restarting any
 number of them) never touches a receiver at all — see

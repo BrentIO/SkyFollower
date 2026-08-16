@@ -613,19 +613,19 @@ class ArchiveProcessor:
     def _process_flight(self, flight: CompletedFlight) -> None:
         """Write to S3 (or fallback) if S3 is currently reachable.
 
-        MLAT-only flights are dropped here, before either the S3
+        External-only flights are dropped here, before either the S3
         write or the local fallback queue — deliberately, not deferred, since
         the whole point is avoiding the S3 storage cost of flights the user
         never asked to keep. force_archive (set by a matching rule) overrides
-        the drop for MLAT-only flights the user does care about.
+        the drop for external-only flights the user does care about.
         """
-        if set(flight.receiver_sources) == {"MLAT"} and not flight.force_archive:
+        if set(flight.receiver_sources) == {"EXTERNAL"} and not flight.force_archive:
             try:
                 self._redis.incr(metrics_flights_skipped_key("hour"))
                 self._redis.incr(metrics_flights_skipped_key("today"))
             except Exception as exc:
                 logger.warning("Redis counter update failed: %s", exc)
-            logger.info("Skipped MLAT-only flight %s (no force_archive match).", flight.id)
+            logger.info("Skipped external-only flight %s (no force_archive match).", flight.id)
             return
 
         with self._s3_lock:
@@ -900,8 +900,8 @@ class ArchiveProcessor:
         sensors = [
             ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None),
             ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None),
-            ("flights_skipped_hour", "Flights Skipped MLAT-Only (Hour)", "mdi:airplane-off", "total_increasing", None),
-            ("flights_skipped_today", "Flights Skipped MLAT-Only (Today)", "mdi:airplane-off", "total_increasing", None),
+            ("flights_skipped_hour", "Flights Skipped External-Only (Hour)", "mdi:airplane-off", "total_increasing", None),
+            ("flights_skipped_today", "Flights Skipped External-Only (Today)", "mdi:airplane-off", "total_increasing", None),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),

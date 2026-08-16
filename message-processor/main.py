@@ -729,9 +729,9 @@ class MessageProcessor:
             self._update_flight(data, msg)
 
     def _decode_message(self, msg: InboundMessage) -> Optional[dict]:
-        """Route to the source-specific decoder. MLAT frames are still raw
-        Mode-S hex, same as 1090 — this dispatch was never keyed on source
-        before, so that's not a behavior change."""
+        """Route to the source-specific decoder. EXTERNAL-tagged frames are
+        still raw Mode-S hex, same as 1090 — this dispatch was never keyed
+        on source before, so that's not a behavior change."""
         if msg.source == "978":
             return self._decode_978(msg)
         return self._decode_1090(msg)

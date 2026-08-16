@@ -398,7 +398,7 @@ class TestConditionValidation:
 
     def test_receiver_source_rejects_all_three(self):
         assert _bare_engine().load_rules_json(json.dumps([
-            _rule("r", [_cond("receiver_source", "equals", ["1090", "978", "MLAT"])])
+            _rule("r", [_cond("receiver_source", "equals", ["1090", "978", "EXTERNAL"])])
         ])) is False
 
     def test_receiver_source_rejects_duplicates(self):
@@ -680,12 +680,12 @@ class TestMilitaryEval:
 
 class TestReceiverSourceEval:
     def test_single_value_match(self):
-        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["MLAT"])])])
-        f = FlightStub(receiver_sources=["MLAT"])
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["EXTERNAL"])])])
+        f = FlightStub(receiver_sources=["EXTERNAL"])
         assert e.evaluate(f) != []
 
     def test_single_value_no_match(self):
-        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["MLAT"])])])
+        e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["EXTERNAL"])])])
         f = FlightStub(receiver_sources=["1090"])
         assert e.evaluate(f) == []
 
@@ -696,7 +696,7 @@ class TestReceiverSourceEval:
 
     def test_no_overlap_no_match(self):
         e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["1090", "978"])])])
-        assert e.evaluate(FlightStub(receiver_sources=["MLAT"])) == []
+        assert e.evaluate(FlightStub(receiver_sources=["EXTERNAL"])) == []
 
     def test_empty_receiver_sources_no_match(self):
         e = _engine_with_rules([_rule("r", [_cond("receiver_source", "equals", ["1090"])])])
@@ -708,7 +708,7 @@ class TestReceiverSourceEval:
         # without ever touching the areas' shapely geometry.
         e = _engine_with_rules(
             [_rule("r", [
-                _cond("receiver_source", "equals", ["MLAT"]),
+                _cond("receiver_source", "equals", ["EXTERNAL"]),
                 _cond("area", "equals", "LI"),
             ])],
             areas={

@@ -427,7 +427,7 @@ validate_receiver_sources() {
     # tr, not ${tag^^} -- the latter is a bash 4+ feature and this script
     # otherwise only relies on bash 3.2+ syntax.
     case "$(printf '%s' "$tag" | tr 'a-z' 'A-Z')" in
-      1090|978|MLAT) ;;
+      1090|978|EXTERNAL) ;;
       *) return 1 ;;
     esac
   done
@@ -441,13 +441,13 @@ prompt_receiver_sources() {
     if [ -z "$val" ]; then
       record_problem "RECEIVER_SOURCES is required but is not set"
     elif ! validate_receiver_sources "$val"; then
-      record_problem "RECEIVER_SOURCES entries must be host:port:source triples (source is 1090, 978, or MLAT)"
+      record_problem "RECEIVER_SOURCES entries must be host:port:source triples (source is 1090, 978, or EXTERNAL)"
     fi
     printf '%s' "$val"
     return
   fi
   echo "  Comma-separated host:port:source triples, one per readsb connection." >&2
-  echo "  source is one of 1090, 978, MLAT. Example:" >&2
+  echo "  source is one of 1090, 978, EXTERNAL. Example:" >&2
   echo "    192.168.1.x:30002:1090,192.168.1.x:30978:978" >&2
   local input
   while true; do
@@ -457,7 +457,7 @@ prompt_receiver_sources() {
       printf '%s' "$input"
       return
     fi
-    echo "    Each entry must be host:port:source (source: 1090, 978, or MLAT)." >&2
+    echo "    Each entry must be host:port:source (source: 1090, 978, or EXTERNAL)." >&2
   done
 }
 
@@ -628,7 +628,7 @@ collect_receiver_env() {
 RECEIVER_NAME=${RECEIVER_NAME}
 
 # Comma-separated host:port:source triples, one per readsb connection.
-# source is one of 1090, 978, MLAT.
+# source is one of 1090, 978, EXTERNAL.
 RECEIVER_SOURCES=${RECEIVER_SOURCES}
 
 RABBITMQ_HOST=${RABBITMQ_HOST}

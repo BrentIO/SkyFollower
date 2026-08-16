@@ -107,16 +107,16 @@ class TestSourceCaptureJoin:
 
 
 class TestParseSource:
-    def test_mlat_tag_accepted(self):
-        assert _parse_source("localhost:30105:MLAT") == ("localhost", 30105, "MLAT")
+    def test_external_tag_accepted(self):
+        assert _parse_source("localhost:30105:EXTERNAL") == ("localhost", 30105, "EXTERNAL")
 
-    def test_lowercase_mlat_rejected(self):
+    def test_lowercase_external_rejected(self):
         with pytest.raises(argparse.ArgumentTypeError):
-            _parse_source("localhost:30105:mlat")
+            _parse_source("localhost:30105:external")
 
 
-class TestMLATRouting:
-    def test_mlat_routes_to_capture_1090(self):
+class TestExternalRouting:
+    def test_external_routes_to_capture_1090(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind(("127.0.0.1", 0))
         server.listen(1)
@@ -133,7 +133,7 @@ class TestMLATRouting:
         capture = SourceCapture(
             host=host,
             port=port,
-            source_tag="MLAT",
+            source_tag="EXTERNAL",
             output_lock=threading.Lock(),
             output_file=io.StringIO(),
             stop_event=stop_event,

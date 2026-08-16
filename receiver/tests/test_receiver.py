@@ -94,9 +94,9 @@ class TestSourceLoopDispatch:
         calls = self._run_dispatch(r, "1090")
         assert calls == ["1090"]
 
-    def test_mlat_source_dispatches_to_1090_reader(self):
-        r = self._make_receiver("MLAT")
-        calls = self._run_dispatch(r, "MLAT")
+    def test_external_source_dispatches_to_1090_reader(self):
+        r = self._make_receiver("EXTERNAL")
+        calls = self._run_dispatch(r, "EXTERNAL")
         assert calls == ["1090"]
 
 
@@ -294,24 +294,25 @@ class TestIcaoRoutingIntegration:
         assert len(msg_dict["icao_hex"]) == 6
         assert msg_dict["raw"] == raw_hex.upper() or msg_dict["raw"] == raw_hex
 
-    def test_handle_message_routes_mlat_same_as_1090(self):
-        """MLAT frames use the same raw Mode S format as 1090 — no special
-        handling is needed; the source tag is simply carried through."""
+    def test_handle_message_routes_external_same_as_1090(self):
+        """EXTERNAL-tagged frames use the same raw Mode S format as 1090 —
+        no special handling is needed; the source tag is simply carried
+        through."""
         r = self._make_receiver()
 
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
         r._publish = lambda q, p: published.append((q, p))
-        r._rates["MLAT"] = _RateTracker()
+        r._rates["EXTERNAL"] = _RateTracker()
 
-        r._handle_message(raw_hex, "MLAT", r._rates["MLAT"], ("localhost", 30002))
+        r._handle_message(raw_hex, "EXTERNAL", r._rates["EXTERNAL"], ("localhost", 30002))
 
         assert len(published) == 1
         _, payload = published[0]
 
         import json
         msg_dict = json.loads(payload)
-        assert msg_dict["source"] == "MLAT"
+        assert msg_dict["source"] == "EXTERNAL"
         assert len(msg_dict["icao_hex"]) == 6
 
     def test_handle_978_message_routes_correctly(self):
@@ -891,7 +892,7 @@ class TestTelemetryPayload:
             "sources": [
                 {"host": "localhost", "port": 30002, "source": "1090"},
                 {"host": "localhost", "port": 30978, "source": "978"},
-                {"host": "localhost", "port": 30105, "source": "MLAT"},
+                {"host": "localhost", "port": 30105, "source": "EXTERNAL"},
             ],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
         }

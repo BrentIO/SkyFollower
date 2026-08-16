@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
+from shared.config import RECEIVER_SOURCE_TAGS
+
 
 def generate_flight_id() -> str:
     """Return a new UUID-v7 string for use as a flight _id."""
@@ -17,7 +19,7 @@ class InboundMessage(BaseModel):
     raw: str
     icao_hex: str
     received_at: float  # Unix timestamp (seconds)
-    source: Literal["1090", "978", "MLAT"]
+    source: Literal[RECEIVER_SOURCE_TAGS]
 
     @field_validator("icao_hex")
     @classmethod
@@ -172,8 +174,8 @@ class CompletedFlight(BaseModel):
     first_message: datetime
     last_message: datetime
     total_messages: int
-    receiver_sources: list[Literal["1090", "978", "MLAT"]] = []  # every distinct ADS-B receive source seen
-    force_archive: bool = False              # True if a matching rule (force_archive) overrides the MLAT-only archive skip
+    receiver_sources: list[Literal[RECEIVER_SOURCE_TAGS]] = []  # every distinct ADS-B receive source seen
+    force_archive: bool = False              # True if a matching rule (force_archive) overrides the external-only archive skip
     aircraft: dict                           # AircraftRecord fields; must include icao_hex
     ident: Optional[str] = None
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped

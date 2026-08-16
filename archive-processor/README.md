@@ -58,22 +58,22 @@ A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
 loops.
 
-## MLAT-Only Flight Skip
+## External-Only Flight Skip
 
-Flights whose `receiver_sources` is exactly `["MLAT"]` are dropped instead
+Flights whose `receiver_sources` is exactly `["EXTERNAL"]` are dropped instead
 of archived — not written to S3, and not queued to the local fallback
-either, since the drop is deliberate rather than deferred. MLAT can
-produce a very large number of tracked aircraft the user has no interest
-in, and S3 storage cost scales with what gets archived. Any mix that
-includes a non-MLAT source (e.g. `["1090", "MLAT"]`) archives normally,
-since the aircraft was independently seen on a real receive path at some
-point.
+either, since the drop is deliberate rather than deferred. A high-volume
+EXTERNAL feed can produce a very large number of tracked aircraft the user
+has no interest in, and S3 storage cost scales with what gets archived. Any
+mix that includes a non-EXTERNAL source (e.g. `["1090", "EXTERNAL"]`)
+archives normally, since the aircraft was independently seen on a real
+receive path at some point.
 
 `force_archive: true` on the flight (set by the message processor when any matched
 rule in `config:rules` carries a `force_archive: true` property — see
 [message-processor/README.md](../message-processor/README.md)) overrides the skip for
-MLAT-only flights the user does care about, without having to archive
-every MLAT contact indiscriminately. Skipped flights increment
+external-only flights the user does care about, without having to archive
+every external contact indiscriminately. Skipped flights increment
 `flights_skipped_hour`/`flights_skipped_today` (see Statistics below).
 
 ## S3 Object Format
@@ -360,8 +360,8 @@ All topics use the root `SkyFollower`.
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `flights_archived_hour` | Integer as string | Flights successfully written to S3 this hour |
 | `flights_archived_today` | Integer as string | Flights successfully written to S3 today (UTC) |
-| `flights_skipped_hour` | Integer as string | MLAT-only flights dropped instead of archived this hour |
-| `flights_skipped_today` | Integer as string | MLAT-only flights dropped instead of archived today, UTC |
+| `flights_skipped_hour` | Integer as string | External-only flights dropped instead of archived this hour |
+| `flights_skipped_today` | Integer as string | External-only flights dropped instead of archived today, UTC |
 | `s3_connected` | `True` or `False` | Current S3 connectivity state |
 | `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |

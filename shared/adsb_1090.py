@@ -2,8 +2,9 @@
 Shared readsb raw-format (*hex;) TCP stream parsing for SkyFollower.
 
 The receiver and the traffic-recorder tool both need to parse readsb's raw
-Mode S output format (used for 1090 MHz ADS-B and MLAT); this is the single
-implementation both import, so the two never drift out of sync.
+Mode S output format (used for 1090 MHz ADS-B and any EXTERNAL-tagged
+1090-style feed); this is the single implementation both import, so the
+two never drift out of sync.
 """
 
 from __future__ import annotations

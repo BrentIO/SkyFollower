@@ -320,7 +320,7 @@ export function RuleForm({
 
           <label
             className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"
-            title="Archives MLAT-only flights that match this rule. MLAT-only flights are otherwise skipped."
+            title="Archives external-only flights that match this rule. External-only flights are otherwise skipped."
           >
             <input
               type="checkbox"

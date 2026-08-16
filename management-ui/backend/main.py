@@ -56,7 +56,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from shared.aws_setup import write_aws_setup_files  # noqa: E402
-from shared.config import load_config  # noqa: E402
+from shared.config import RECEIVER_SOURCE_TAGS, load_config  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
@@ -198,7 +198,7 @@ _RULE_EXAMPLES: dict[str, dict] = {
         "2026-01-15 11:31 PM EST and 2027-06-27 2:50 PM EDT (entered in US "
         "Eastern time, stored as UTC -- note the date rolls back a day for "
         "the first one), force-archived even if the flight would otherwise "
-        "be skipped for being MLAT-only",
+        "be skipped for being external-only",
         "identifier": "b52_force_persist_2026_2027",
         "enabled": True,
         "force_archive": True,
@@ -211,10 +211,10 @@ _RULE_EXAMPLES: dict[str, dict] = {
     "Air Force One overhead, verified via 1090": {
         "name": "Air Force One overhead, verified via 1090",
         "description": "ADFDF8 (Air Force One) force-archived only when actually received "
-        "via 1090MHz ADS-B, not merely via MLAT -- it often suppresses its position and is "
-        "then only visible via MLAT triangulation, which doesn't imply it's actually nearby. "
-        "If it isn't showing up on 1090, skip the force-archive and let the normal MLAT-only "
-        "archive skip apply.",
+        "via 1090MHz ADS-B, not merely via an EXTERNAL-tagged source -- an EXTERNAL source's "
+        "provenance isn't guaranteed the way a direct receive path's is, so seeing it there "
+        "alone doesn't confirm it's actually nearby. If it isn't showing up on 1090, skip the "
+        "force-archive and let the normal external-only archive skip apply.",
         "identifier": "af1_1090_verified",
         "enabled": True,
         "force_archive": True,
@@ -403,10 +403,10 @@ class MilitaryCondition(_ConditionBase):
 class ReceiverSourceCondition(_ConditionBase):
     type: Literal["receiver_source"]
     operator: Literal["equals"]
-    # 1-2 of "1090"/"978"/"MLAT", no duplicates -- all 3 would be equivalent
-    # to no filter at all (every flight has at least one), so RulesEngine
-    # rejects that as dead weight rather than a real filter.
-    value: list[Literal["1090", "978", "MLAT"]] = Field(min_length=1, max_length=2)
+    # 1-2 of "1090"/"978"/"EXTERNAL", no duplicates -- all 3 would be
+    # equivalent to no filter at all (every flight has at least one), so
+    # RulesEngine rejects that as dead weight rather than a real filter.
+    value: list[Literal[RECEIVER_SOURCE_TAGS]] = Field(min_length=1, max_length=2)
 
     @field_validator("value")
     @classmethod
