@@ -977,6 +977,13 @@ _NOT_FOUND = {404: {"description": "Not found", "model": ErrorDetail}}
 _CONFLICT = {409: {"description": "Identifier already exists", "model": ErrorDetail}}
 _REDIS_ERROR = {500: {"description": "Redis error", "model": ErrorDetail}}
 _VALIDATION_ERROR = {400: {"description": "Validation error", "model": ErrorDetail}}
+# Distinct from _REDIS_ERROR: only raised by _search_one() when the specific
+# failure is "index does not exist yet" (see its docstring) rather than a
+# genuine connectivity/auth failure -- routes that call _search_one() add
+# this alongside _REDIS_ERROR, not instead of it.
+_SEARCH_INDEX_UNAVAILABLE = {
+    503: {"description": "Search index not ready yet -- data hasn't been loaded", "model": ErrorDetail}
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1351,7 +1358,7 @@ def delete_area(identifier: str):
     "/api/aircraft",
     tags=["reference-data"],
     response_model=AircraftRecord,
-    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_SEARCH_INDEX_UNAVAILABLE},
 )
 def get_aircraft(
     icao_hex: Optional[str] = FastAPIQuery(default=None, title="ICAO Hex", description="6-character ICAO hex, e.g. A8AE7F"),
@@ -1404,7 +1411,7 @@ def get_operator(designator: str):
     "/api/airports/{code}",
     tags=["reference-data"],
     response_model=AirportRecord,
-    responses={**_NOT_FOUND, **_REDIS_ERROR},
+    responses={**_NOT_FOUND, **_REDIS_ERROR, **_SEARCH_INDEX_UNAVAILABLE},
 )
 def get_airport(code: str):
     normalized = code.strip().upper()

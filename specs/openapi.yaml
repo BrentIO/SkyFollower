@@ -693,6 +693,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Search index not ready yet -- data hasn't been loaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
         '422':
           description: Validation Error
           content:
@@ -765,6 +771,12 @@ paths:
                 $ref: '#/components/schemas/ErrorDetail'
         '500':
           description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Search index not ready yet -- data hasn't been loaded
           content:
             application/json:
               schema:

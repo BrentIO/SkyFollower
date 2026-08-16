@@ -1,0 +1,53 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Management UI Backend — RediSearch Index Bootstrap & Lookup Safety Net
+
+box "Management UI Backend" $OnPrem
+    participant "Backend" as Backend
+end box
+
+box "Redis" $OnPrem
+    database "idx:aircraft:mictronics /\nidx:aircraft:registry /\nidx:airport" as Redis
+end box
+
+== Startup: ensure every search index exists ==
+
+note over Backend
+    lifespan(), for each of the three indices
+    (_SEARCH_INDEX_SCHEMAS) -- unconditionally, not just
+    the owning data-runner's own lazy-creation on its first run
+end note
+
+loop for each of the 3 indices
+    Backend -> Redis++ : **Check whether the index already exists**\n""r.ft(index).info()""
+    alt index exists
+        Redis --> Backend-- : info
+        Backend -> Backend : **Nothing to do**
+    else index missing
+        Redis --> Backend-- : ""ResponseError""
+        Backend -> Redis++ : **Create it, empty**\n""r.ft(index).create_index(fields=[TagField(...)], ...)""
+        Redis --> Backend-- : OK
+        Backend -> Backend : **Log the creation**\n""logger.info: Created search index""
+    end
+end
+
+== Reference-data lookup (_search_one, e.g. GET /api/aircraft?registration=...) ==
+
+Backend -> Redis++ : **Exact-match tag search**\n""FT.SEARCH idx @field:{value}""
+alt match found
+    Redis --> Backend-- : doc id
+    Backend --> Backend : HTTP 200
+else no match
+    Redis --> Backend-- : (empty)
+    Backend --> Backend : HTTP 404
+else index doesn't exist (safety net -- startup should have prevented this)
+    Redis --> Backend-- : ""ResponseError: No such index <name>""
+    Backend -> Backend : **Detect "no such index" in the message text**\nredis-py/RediSearch expose no typed exception for this
+    Backend --> Backend : HTTP 503 (actionable message, not the raw exception)
+else genuine Redis failure (connectivity/auth)
+    Redis --> Backend-- : ""RedisError""
+    Backend --> Backend : HTTP 500
+end
+
+@enduml
