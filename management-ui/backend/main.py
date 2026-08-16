@@ -43,6 +43,8 @@ from fastapi import Query as FastAPIQuery
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from redis.commands.search.field import TagField
+from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query as RedisSearchQuery
 from uuid_extensions import uuid7
 
@@ -745,6 +747,48 @@ _AWS_SETUP_TEMPLATES = {
 }
 
 
+# Every RediSearch index management-ui queries (via _search_one() below),
+# plus enough of its schema to create it empty. Each index is otherwise
+# only created lazily by the data runner that owns it, the first time that
+# runner actually runs (e.g. runners/mictronics/main.py's own
+# _ensure_search_index) -- on a fresh install, or if that runner just
+# hasn't had a scheduled run yet, the index simply doesn't exist and
+# querying it raises a raw "No such index" Redis error. lifespan() below
+# creates all three unconditionally at startup instead, so a query against
+# an unpopulated index returns a normal empty result instead of an error.
+# Field/prefix values must stay in sync with each owning runner's schema
+# (runners/mictronics/main.py, runners/us-faa-registry/main.py and its
+# per-country siblings, runners/ourairports/main.py).
+_SEARCH_INDEX_SCHEMAS: list[tuple[str, str, list[tuple[str, str]]]] = [
+    (
+        AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+        "aircraft:mictronics:",
+        [("$.icao_hex", "icao_hex"), ("$.registration", "registration")],
+    ),
+    (
+        AIRCRAFT_REGISTRY_SEARCH_INDEX,
+        "aircraft:registry:",
+        [("$.icao_hex", "icao_hex"), ("$.registration", "registration")],
+    ),
+    (AIRPORT_SEARCH_INDEX, "airport:", [("$.icao_code", "icao_code"), ("$.iata_code", "iata_code")]),
+]
+
+
+def _ensure_search_index(r: redis_lib.Redis, index: str, prefix: str, tag_fields: list[tuple[str, str]]) -> None:
+    """Create `index` (empty, if unpopulated) if it doesn't already exist --
+    the same lazy-creation pattern each owning data-runner performs on its
+    own first run, just performed unconditionally here so management-ui
+    never has to wait on that runner having executed first."""
+    try:
+        r.ft(index).info()
+    except Exception:
+        r.ft(index).create_index(
+            fields=[TagField(path, as_name=as_name) for path, as_name in tag_fields],
+            definition=IndexDefinition(prefix=[prefix], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", index)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _redis, _engine, _merge_aircraft_sha, _route_airports_sha
@@ -754,6 +798,8 @@ async def lifespan(app: FastAPI):
 
     redis_config = config.get("redis", {})
     _redis = build_redis_client(redis_config)
+    for index, prefix, tag_fields in _SEARCH_INDEX_SCHEMAS:
+        _ensure_search_index(_redis, index, prefix, tag_fields)
     _engine = RulesEngine(_redis)
     _merge_aircraft_sha = _redis.script_load((_LUA_DIR / "merge_aircraft.lua").read_text())
     _route_airports_sha = _redis.script_load((_LUA_DIR / "route_airports.lua").read_text())
@@ -962,6 +1008,25 @@ def _search_one(index: str, field: str, value: str) -> Optional[str]:
     try:
         result = _redis.ft(index).search(RedisSearchQuery(f"@{field}:{{{_escape_tag(value)}}}").paging(0, 1))
     except redis_lib.RedisError as exc:
+        # lifespan() proactively creates all three search indices at
+        # startup, so this should be rare -- a safety net for an index
+        # created after that point (e.g. concurrently, or by a future
+        # .ft(...) call site lifespan() doesn't cover). redis-py/RediSearch
+        # expose no dedicated exception type for "index doesn't exist" --
+        # it surfaces as a generic ResponseError/RedisError whose message
+        # is literally "No such index <name>" (the same string Redis
+        # itself returns), so this checks message text rather than
+        # exception type. That's inherently a little fragile against
+        # future Redis/RediSearch wording changes.
+        if "no such index" in str(exc).lower():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Search index {index!r} does not exist yet -- the data runner "
+                    "that populates it may not have run yet. See the initial "
+                    "data-runner bulk load step in the getting-started docs."
+                ),
+            ) from exc
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
     return result.docs[0].id if result.docs else None
 

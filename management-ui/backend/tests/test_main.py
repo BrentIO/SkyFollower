@@ -61,15 +61,33 @@ class _FakeSearchResult:
 
 
 class _FakeFt:
-    """Minimal stand-in for redis.Redis.ft(index) -- only supports the
+    """Minimal stand-in for redis.Redis.ft(index) -- supports the
     single-tag exact-match `@field:{value}` queries main.py's _search_one()
-    actually issues, resolved by scanning FakeRedis.store."""
+    actually issues (resolved by scanning FakeRedis.store), plus info()/
+    create_index() so main.py's startup _ensure_search_index() (see
+    lifespan()) has something to call against."""
 
     def __init__(self, redis: "FakeRedis", index: str):
         self._redis = redis
         self._index = index
 
+    def info(self):
+        # Real redis-py raises (a generic Exception, not a typed one) when
+        # FT.INFO targets an index that doesn't exist -- main.py's
+        # _ensure_search_index() relies on that to decide whether to
+        # create it.
+        if self._index not in self._redis.indices:
+            raise Exception(f"Unknown index name: {self._index}")
+        return {}
+
+    def create_index(self, fields, definition):
+        self._redis.indices.add(self._index)
+        self._redis.create_index_calls.append(self._index)
+
     def search(self, query):
+        error = self._redis.search_errors.get(self._index)
+        if error is not None:
+            raise error
         match = re.match(r"@(\w+):\{(.+)\}$", query.query_string())
         field, raw_value = match.group(1), match.group(2)
         value = re.sub(r"\\(.)", r"\1", raw_value)  # undo _escape_tag's backslash-escaping
@@ -112,6 +130,15 @@ class FakeRedis:
         self.get_error: Exception | None = None
         self.set_error: Exception | None = None
         self._scripts: dict[str, str] = {}
+        # Search-index bookkeeping for _FakeFt.info()/create_index() -- see
+        # TestSearchIndexBootstrap below. Starts empty so every test's
+        # lifespan() run exercises the real create-if-missing path;
+        # search_errors lets a test force a specific index's _FakeFt.search()
+        # to raise, to simulate that index missing despite lifespan()'s
+        # proactive creation (main.py's _search_one() safety net).
+        self.indices: set[str] = set()
+        self.create_index_calls: list[str] = []
+        self.search_errors: dict[str, Exception] = {}
 
     def get(self, key):
         if self.get_error:
@@ -1159,3 +1186,77 @@ class TestRouteLookup:
         resp = client.get("/api/routes/N12345")
         assert resp.status_code == 200
         assert resp.json()["operator"] is None
+
+
+class TestSearchIndexBootstrap:
+    """Covers #934: management-ui must proactively create all three
+    RediSearch indices (empty, if unpopulated) at startup instead of
+    relying on their owning data runner having run at least once, and
+    _search_one() must turn a "no such index" Redis error into a friendly,
+    actionable message rather than a raw 500 for any case that slips past
+    that proactive creation."""
+
+    def test_lifespan_creates_all_three_indices_when_missing(self, client, fake_redis):
+        # `client` fixture already drove lifespan() via TestClient's context
+        # manager -- fake_redis.indices starts empty, so all three must have
+        # been created by the time the app finished starting up.
+        assert fake_redis.indices == {
+            ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX,
+            ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX,
+            ui_main.AIRPORT_SEARCH_INDEX,
+        }
+
+    def test_lifespan_does_not_recreate_an_already_existing_index(self, tmp_path, monkeypatch):
+        fake_redis = FakeRedis()
+        fake_redis.indices.add(ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX)
+        _configure_env(tmp_path, monkeypatch)
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+        assert ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX not in fake_redis.create_index_calls
+        assert ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX in fake_redis.create_index_calls
+        assert ui_main.AIRPORT_SEARCH_INDEX in fake_redis.create_index_calls
+
+    def test_search_one_friendly_error_for_mictronics_index(self, client, fake_redis):
+        fake_redis.search_errors[ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX] = ui_main.redis_lib.ResponseError(
+            f"No such index {ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX}"
+        )
+        resp = client.get("/api/aircraft", params={"registration": "N659DL"})
+        assert resp.status_code != 500
+        detail = resp.json()["detail"]
+        assert "No such index" not in detail
+        assert "does not exist yet" in detail
+
+    def test_search_one_friendly_error_for_registry_index(self, client, fake_redis):
+        # Mictronics index search succeeds (no match, no error) -- the
+        # registry index is only queried as the fallback, so its error must
+        # still be caught and turned friendly rather than propagating raw.
+        fake_redis.search_errors[ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX] = ui_main.redis_lib.ResponseError(
+            f"No such index {ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX}"
+        )
+        resp = client.get("/api/aircraft", params={"registration": "N12345"})
+        assert resp.status_code != 500
+        detail = resp.json()["detail"]
+        assert "No such index" not in detail
+        assert "does not exist yet" in detail
+
+    def test_search_one_friendly_error_for_airport_index(self, client, fake_redis):
+        fake_redis.search_errors[ui_main.AIRPORT_SEARCH_INDEX] = ui_main.redis_lib.ResponseError(
+            f"No such index {ui_main.AIRPORT_SEARCH_INDEX}"
+        )
+        resp = client.get("/api/airports/JFK")
+        assert resp.status_code != 500
+        detail = resp.json()["detail"]
+        assert "No such index" not in detail
+        assert "does not exist yet" in detail
+
+    def test_search_one_still_returns_500_for_a_genuine_redis_error(self, client, fake_redis):
+        # Non-index-missing RedisErrors must keep the existing raw-message
+        # 500 behavior -- only the specific "no such index" text gets the
+        # friendlier treatment.
+        fake_redis.search_errors[ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX] = ui_main.redis_lib.RedisError(
+            "connection refused"
+        )
+        resp = client.get("/api/aircraft", params={"registration": "N659DL"})
+        assert resp.status_code == 500
+        assert "connection refused" in resp.json()["detail"]
