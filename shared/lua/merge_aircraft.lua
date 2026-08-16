@@ -29,7 +29,7 @@
 -- result never carries a bare `source` — every present key's `source` is
 -- collected into `data_sources`, an array in mictronics -> registry ->
 -- livery order, distinct from the unrelated per-flight
--- `receiver_sources` field (1090/978/MLAT).
+-- `receiver_sources` field (1090/978/EXTERNAL).
 --
 -- Called by the message processor via EVALSHA so the merge is a single round-trip.
 

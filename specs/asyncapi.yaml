@@ -51,7 +51,7 @@ channels:
     description: >
       Average message rate for one specific sources[] connection since
       last report -- one topic per configured connection, not per source
-      tag, so two connections sharing a tag (e.g. two MLAT feeds) get
+      tag, so two connections sharing a tag (e.g. two EXTERNAL feeds) get
       independent rates instead of a single summed value. Published every
       telemetry_interval_seconds, retained.
     parameters:
@@ -383,7 +383,7 @@ channels:
   archiveFlightsSkippedHour:
     address: SkyFollower/archive/statistic/flights_skipped_hour
     description: >
-      MLAT-only flights dropped instead of archived this hour. Published
+      External-only flights dropped instead of archived this hour. Published
       every telemetry_interval_seconds, retained.
     messages:
       ArchiveFlightsSkippedHourMessage:
@@ -392,7 +392,7 @@ channels:
   archiveFlightsSkippedToday:
     address: SkyFollower/archive/statistic/flights_skipped_today
     description: >
-      MLAT-only flights dropped instead of archived today (UTC). Published
+      External-only flights dropped instead of archived today (UTC). Published
       every telemetry_interval_seconds, retained.
     messages:
       ArchiveFlightsSkippedTodayMessage:
@@ -805,13 +805,13 @@ operations:
     action: send
     channel:
       $ref: '#/channels/archiveFlightsSkippedHour'
-    summary: Archive processor publishes hourly MLAT-only flights skipped
+    summary: Archive processor publishes hourly external-only flights skipped
 
   publishArchiveFlightsSkippedToday:
     action: send
     channel:
       $ref: '#/channels/archiveFlightsSkippedToday'
-    summary: Archive processor publishes today's MLAT-only flights skipped
+    summary: Archive processor publishes today's external-only flights skipped
 
   publishArchiveS3Connected:
     action: send
@@ -1142,7 +1142,7 @@ components:
     ArchiveFlightsSkippedHourMessage:
       name: ArchiveFlightsSkippedHourMessage
       title: Archive flights skipped this hour
-      summary: MLAT-only flights dropped instead of archived this hour
+      summary: External-only flights dropped instead of archived this hour
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveFlightsSkippedHour'
@@ -1150,7 +1150,7 @@ components:
     ArchiveFlightsSkippedTodayMessage:
       name: ArchiveFlightsSkippedTodayMessage
       title: Archive flights skipped today
-      summary: MLAT-only flights dropped instead of archived today (UTC)
+      summary: External-only flights dropped instead of archived today (UTC)
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveFlightsSkippedToday'
@@ -1456,12 +1456,12 @@ components:
 
     ArchiveFlightsSkippedHour:
       type: integer
-      description: MLAT-only flights dropped instead of archived this hour
+      description: External-only flights dropped instead of archived this hour
       example: 118
 
     ArchiveFlightsSkippedToday:
       type: integer
-      description: MLAT-only flights dropped instead of archived today, UTC
+      description: External-only flights dropped instead of archived today, UTC
       example: 2540
 
     ArchiveS3Connected:
@@ -1762,12 +1762,12 @@ components:
           type: array
           items:
             type: string
-            enum: ["1090", "978", "MLAT"]
+            enum: ["1090", "978", "EXTERNAL"]
           description: Every distinct ADS-B receive source seen for this flight, in first-seen order
           example: ["1090"]
         force_archive:
           type: boolean
-          description: True if a matching rule (force_archive) overrides the MLAT-only archive skip for this flight
+          description: True if a matching rule (force_archive) overrides the external-only archive skip for this flight
           example: false
         first_message:
           type: string

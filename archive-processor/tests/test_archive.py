@@ -515,10 +515,10 @@ class TestRedisCounterIncrements:
 
 
 # ---------------------------------------------------------------------------
-# MLAT-only flight skip + force_archive override
+# External-only flight skip + force_archive override
 # ---------------------------------------------------------------------------
 
-class TestMlatOnlySkip:
+class TestExternalOnlySkip:
     def _make_processor(self, tmp_dir: str):
         from archive_processor.main import ArchiveProcessor
 
@@ -541,23 +541,23 @@ class TestMlatOnlySkip:
             processor._s3_connected = True
             return processor, mock_redis
 
-    def test_mlat_only_flight_not_written_to_s3(self):
+    def test_external_only_flight_not_written_to_s3(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
-            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
 
             with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
                 processor._process_flight(flight)
 
             mock_archive.assert_not_called()
 
-    def test_mlat_only_flight_not_queued_to_local_fallback(self):
+    def test_external_only_flight_not_queued_to_local_fallback(self):
         """Skip must happen before the S3-available branch — even when S3 is
         down, a skipped flight is dropped, not deferred."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
             processor._s3_connected = False
-            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
 
             processor._process_flight(flight)
 
@@ -566,14 +566,14 @@ class TestMlatOnlySkip:
     def test_mixed_sources_archived_normally(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
-            flight = _make_flight(receiver_sources=["1090", "MLAT"], force_archive=False)
+            flight = _make_flight(receiver_sources=["1090", "EXTERNAL"], force_archive=False)
 
             with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
                 processor._process_flight(flight)
 
             mock_archive.assert_called_once()
 
-    def test_non_mlat_single_source_archived_normally(self):
+    def test_non_external_single_source_archived_normally(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
             flight = _make_flight(receiver_sources=["1090"], force_archive=False)
@@ -583,20 +583,20 @@ class TestMlatOnlySkip:
 
             mock_archive.assert_called_once()
 
-    def test_force_archive_overrides_mlat_only_skip(self):
+    def test_force_archive_overrides_external_only_skip(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
-            flight = _make_flight(receiver_sources=["MLAT"], force_archive=True)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=True)
 
             with patch.object(processor, "_archive_flight_to_s3") as mock_archive:
                 processor._process_flight(flight)
 
             mock_archive.assert_called_once()
 
-    def test_mlat_only_skip_increments_skipped_metric(self):
+    def test_external_only_skip_increments_skipped_metric(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
-            flight = _make_flight(receiver_sources=["MLAT"], force_archive=False)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
 
             processor._process_flight(flight)
 

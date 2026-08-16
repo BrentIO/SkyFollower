@@ -31,7 +31,7 @@ from typing import Callable, Optional
 # the container, and no deployment has a reason to vary it.
 DATA_DIR = "/app/data"
 
-RECEIVER_SOURCE_TAGS = ("1090", "978", "MLAT")
+RECEIVER_SOURCE_TAGS = ("1090", "978", "EXTERNAL")
 
 _REQUIRED = object()
 
@@ -206,7 +206,7 @@ def parse_receiver_sources(raw: str) -> list[dict]:
     Comma-separated `host:port:source` triples:
 
         192.168.10.5:30002:1090,192.168.10.5:30978:978
-        out.adsb.lol:1366:MLAT
+        out.adsb.lol:1366:EXTERNAL
 
     Raises ValueError naming the offending triple, since a host commonly
     lists several and "parse failed" would leave the operator to find which.

@@ -1,7 +1,7 @@
 # Getting Started
 
-SkyFollower runs across several hosts (one more if you add the optional
-dedicated MLAT receiver), each bringing up exactly one Docker Compose file
+SkyFollower runs across several hosts (one more if you add an optional
+additional receiver instance), each bringing up exactly one Docker Compose file
 (except the core host, which brings up two — see below). See
 [Deployment](/deployment/) for the full compose-file mapping before you
 start — this page only covers the commands to actually bring each host
@@ -111,7 +111,7 @@ EOF
 # Instances"). Give each instance its own folder and its own .env:
 docker compose up -d
 
-# Dedicated MLAT receiver (optional; same image and compose file as
+# Additional receiver instance (optional; same image and compose file as
 # above, either on its own host or alongside the first on this host --
 # give it its own folder and its own .env with a different
 # COMPOSE_PROJECT_NAME and RECEIVER_SOURCES):

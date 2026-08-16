@@ -57,7 +57,7 @@ function defaultValueFor(type: ConditionType): string | string[] {
 const RECEIVER_SOURCE_OPTIONS: readonly { value: string; label: string }[] = [
   { value: "1090", label: "1090MHz ADS-B" },
   { value: "978", label: "978 UAT" },
-  { value: "MLAT", label: "MLAT" },
+  { value: "EXTERNAL", label: "External" },
 ];
 
 // WAKE_TURBULENCE_CATEGORIES stores the exact lowercase strings

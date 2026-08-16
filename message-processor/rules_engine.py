@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 from shapely.geometry import Point, Polygon
 
+from shared.config import RECEIVER_SOURCE_TAGS
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -49,7 +51,7 @@ _VALID_OPERATORS = frozenset({"equals", "minimum", "maximum", "in_list", "not_in
 
 _WAKE_TURBULENCE_CATEGORIES = frozenset({"light", "medium", "heavy"})
 
-_RECEIVER_SOURCES = frozenset({"1090", "978", "MLAT"})
+_RECEIVER_SOURCES = frozenset(RECEIVER_SOURCE_TAGS)
 
 
 # ---------------------------------------------------------------------------

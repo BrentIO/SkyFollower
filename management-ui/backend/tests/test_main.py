@@ -648,7 +648,7 @@ class TestConditionOperatorEnforcement:
 class TestReceiverSourceCondition:
     """
     receiver_source's list-shaped value has constraints beyond a plain
-    operator check (1-2 elements, no duplicates, only 1090/978/MLAT) --
+    operator check (1-2 elements, no duplicates, only 1090/978/EXTERNAL) --
     covered separately from TestConditionOperatorEnforcement's single
     valid/invalid-operator table.
     """
@@ -659,7 +659,7 @@ class TestReceiverSourceCondition:
         assert resp.status_code == 422
 
     def test_three_values_rejected(self, client):
-        cond = {"type": "receiver_source", "operator": "equals", "value": ["1090", "978", "MLAT"]}
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["1090", "978", "EXTERNAL"]}
         resp = client.post("/api/rules", json=_rule("bad", conditions=[cond]))
         assert resp.status_code == 422
 
@@ -674,7 +674,7 @@ class TestReceiverSourceCondition:
         assert resp.status_code == 422
 
     def test_single_value_accepted(self, client):
-        cond = {"type": "receiver_source", "operator": "equals", "value": ["MLAT"]}
+        cond = {"type": "receiver_source", "operator": "equals", "value": ["EXTERNAL"]}
         resp = client.post("/api/rules", json=_rule("ok", conditions=[cond]))
         assert resp.status_code == 201
 

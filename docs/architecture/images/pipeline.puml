@@ -5,14 +5,12 @@
 title Message Pipeline
 
 !includesub ../../../receiver/receiver.puml!COMPONENT
-!includesub ../../../receiver/receiver-mlat-topology.puml!COMPONENT
 !includesub ../../../message-processor/message-processor.puml!COMPONENT
 !includesub central-server.puml!COMPONENT
 !includesub ../../../archive-processor/archive-processor.puml!COMPONENT
 !includesub ../../../archive-compaction/archive-compaction.puml!COMPONENT
 !includesub aws.puml!COMPONENT
 
-ReceiverMlat -> adsbx : Publisher
 Receiver -> adsbx : Publisher
 ProcessorC ----> adsbq : Consumer
 ProcessorC -down--> Redis : Enrichment lookups
@@ -24,7 +22,6 @@ Compactor ---> s3 : Read + merge a day's small Parquet files,\nwrite one compact
 Compactor ---> s3 : Delete compacted sources
 
 RevProc -[hidden]down-> MsgProc
-RevProc -[hidden]down-> RevMlat
 MsgProc -[hidden]down-> CentralSvr
 CentralSvr -[hidden]down-> ArchProc
 ArchProc -[hidden]down---> AWS

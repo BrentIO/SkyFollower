@@ -239,8 +239,8 @@ class TestMessageProcessorId:
 
 class TestReceiverSources:
     def test_single_triple(self):
-        assert parse_receiver_sources("out.adsb.lol:1366:MLAT") == [
-            {"host": "out.adsb.lol", "port": 1366, "source": "MLAT"}
+        assert parse_receiver_sources("out.adsb.lol:1366:EXTERNAL") == [
+            {"host": "out.adsb.lol", "port": 1366, "source": "EXTERNAL"}
         ]
 
     def test_multiple_triples(self):
@@ -256,8 +256,8 @@ class TestReceiverSources:
         parsed = parse_receiver_sources(" 192.168.10.5 : 30002 : 1090 , host2:30002:978 ")
         assert [s["host"] for s in parsed] == ["192.168.10.5", "host2"]
 
-    def test_lowercase_mlat_is_canonicalised(self):
-        assert parse_receiver_sources("h:1:mlat")[0]["source"] == "MLAT"
+    def test_lowercase_external_is_canonicalised(self):
+        assert parse_receiver_sources("h:1:external")[0]["source"] == "EXTERNAL"
 
     def test_empty_value_is_rejected(self):
         with pytest.raises(ValueError, match="at least one host:port:source triple"):
@@ -294,7 +294,7 @@ class TestReceiverSources:
         message = str(excinfo.value)
         assert "'host:30002:1091'" in message
         assert "invalid source '1091'" in message
-        assert "1090, 978, MLAT" in message
+        assert "1090, 978, EXTERNAL" in message
 
     def test_only_the_offending_triple_of_several_is_named(self):
         with pytest.raises(ValueError) as excinfo:

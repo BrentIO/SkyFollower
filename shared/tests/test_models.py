@@ -39,9 +39,9 @@ class TestInboundMessage:
         with pytest.raises(ValidationError):
             InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="978MHz")
 
-    def test_mlat_source(self):
-        msg = InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="MLAT")
-        assert msg.source == "MLAT"
+    def test_external_source(self):
+        msg = InboundMessage(raw="x", icao_hex="ABCDEF", received_at=0.0, source="EXTERNAL")
+        assert msg.source == "EXTERNAL"
 
 
 class TestPosition:
@@ -221,8 +221,8 @@ class TestCompletedFlight:
         assert flight.receiver_sources == ["978"]
 
     def test_receiver_sources_multiple_values(self):
-        flight = self._make(receiver_sources=["MLAT", "1090"])
-        assert flight.receiver_sources == ["MLAT", "1090"]
+        flight = self._make(receiver_sources=["EXTERNAL", "1090"])
+        assert flight.receiver_sources == ["EXTERNAL", "1090"]
 
     def test_receiver_sources_defaults_to_empty_list(self):
         """Must default, not be required — legacy migrated flights have no
