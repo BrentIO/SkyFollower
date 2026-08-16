@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y graphviz
-          wget -q https://github.com/plantuml/plantuml/releases/download/v1.2026.2/plantuml-1.2026.2.jar -O /opt/plantuml.jar
+          wget -q https://github.com/plantuml/plantuml/releases/download/v1.2026.6/plantuml-1.2026.6.jar -O /opt/plantuml.jar
           echo '#!/bin/sh' | sudo tee /usr/local/bin/plantuml
           echo 'exec java -jar /opt/plantuml.jar "$@"' | sudo tee -a /usr/local/bin/plantuml
           sudo chmod +x /usr/local/bin/plantuml
