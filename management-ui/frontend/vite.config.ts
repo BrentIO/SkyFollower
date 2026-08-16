@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // maplibre-gl ships its worker as a separate file (maplibre-gl-worker.mjs)
 // that itself has a hardcoded relative import of a second file
@@ -49,7 +50,7 @@ function maplibreWorkerAssets(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), maplibreWorkerAssets()],
+  plugins: [react(), tailwindcss(), maplibreWorkerAssets()],
   server: {
     proxy: {
       "/api": "http://localhost:8000",
