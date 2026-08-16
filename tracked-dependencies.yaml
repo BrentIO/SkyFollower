@@ -16,4 +16,4 @@ dependencies:
     url: https://github.com/plantuml/plantuml
     # Keep in sync with the jar version pinned in
     # .github/workflows/deploy-docs.yaml's "Install PlantUML" step.
-    version: v1.2026.2
+    version: v1.2026.6
