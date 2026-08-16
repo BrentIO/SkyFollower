@@ -1,0 +1,19 @@
+# Dependencies pinned by direct GitHub-release URL (not through a
+# package-manager manifest Dependabot can see), tracked here so
+# .github/workflows/audit-dependencies.yaml can flag them when they drift
+# behind upstream.
+#
+# Each entry must be a repo that publishes proper GitHub Releases, not a
+# tag-only repo. The workflow's version lookup prefers GET
+# /repos/{repo}/releases/latest, which GitHub documents as returning the
+# most recent non-prerelease, non-draft release; a tag-only repo has no
+# such endpoint, so the workflow falls back to plain git tags, which carry
+# no prerelease flag and cannot be filtered the same way. Adding a
+# tag-only repo here risks the audit reporting a prerelease/snapshot tag
+# as "latest".
+dependencies:
+  - name: PlantUML
+    url: https://github.com/plantuml/plantuml
+    # Keep in sync with the jar version pinned in
+    # .github/workflows/deploy-docs.yaml's "Install PlantUML" step.
+    version: v1.2026.2
