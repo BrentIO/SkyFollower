@@ -1,3 +1,3 @@
-boto3==1.43.65
+boto3==1.43.70
 pyarrow==25.0.1
 paho-mqtt==2.1.0
