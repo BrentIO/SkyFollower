@@ -1,5 +1,5 @@
 fastapi==0.140.0
 uvicorn==0.51.0
-boto3==1.43.60
+boto3==1.43.65
 cryptography==50.0.0
 shapely==2.1.2
