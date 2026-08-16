@@ -33,7 +33,7 @@ services:
   # ---------------------------------------------------------------------------
 
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
     restart: unless-stopped
     ports:
       - "5672:5672"
@@ -65,7 +65,7 @@ services:
       start_period: 30s
 
   redis:
-    image: redis/redis-stack-server:latest
+    image: redis/redis-stack-server:7.4.0-v8@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -120,7 +120,7 @@ services:
   # leading "0" (or whatever second is actually wanted). Don't drop back
   # to 5 fields when adding a job.
   ofelia:
-    image: mcuadros/ofelia:latest
+    image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
     restart: unless-stopped
     command: ["daemon", "--docker"]
     volumes:
