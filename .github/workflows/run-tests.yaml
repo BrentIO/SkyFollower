@@ -59,6 +59,86 @@ jobs:
             exit 1
           fi
 
+  # .github/dependabot.yml is a fully-manual, one-entry-per-directory file
+  # with no auto-discovery of its own (unlike this workflow's `discover` job
+  # below, or build-container-images.yaml's discover-images job) -- a new
+  # component is added by copying an existing one's structure
+  # (requirements.txt/Dockerfile/package.json), but nothing forces
+  # dependabot.yml to be updated in the same PR. This job hard-fails the
+  # workflow if it ever drifts again, in either direction: a directory with
+  # a manifest file but no matching entry (a new/renamed component that
+  # Dependabot silently isn't watching), or an entry whose directory no
+  # longer exists or no longer has the relevant manifest file (a stale
+  # entry left behind by a removed/renamed component).
+  check-dependabot-sync:
+    name: 🔒 Check dependabot.yml matches repo layout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Compare dependabot.yml pip/docker/npm entries against actual manifest locations
+        run: |
+          set -euo pipefail
+          fail=0
+
+          # Same `find` pattern used by this workflow's own `discover` job
+          # and by build-container-images.yaml's discover-images job.
+          pip_actual=$(find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0 \
+            | xargs -0 -n1 dirname | sed 's|^\./|/|' | sort -u)
+          docker_actual=$(find . -name Dockerfile -not -path './.venv/*' -not -path './node_modules/*' -print0 \
+            | xargs -0 -n1 dirname | sed 's|^\./|/|' | sort -u)
+          npm_actual=$(find . -name package.json -not -path '*/node_modules/*' -print0 \
+            | xargs -0 -n1 dirname | sed 's|^\./|/|' | sort -u)
+
+          # dependabot.yml's format is a strict, regular list of stanzas --
+          # each entry has exactly one "package-ecosystem" line immediately
+          # followed (after the intervening non-matching "schedule"/
+          # "interval" lines) by exactly one "directory" line -- so pairing
+          # the two grep matches in file order is equivalent to parsing the
+          # YAML, without a YAML parser dependency in this job.
+          pairs=$(grep -oE 'package-ecosystem: "[^"]+"|directory: "[^"]+"' .github/dependabot.yml \
+            | paste - - \
+            | sed -E 's/package-ecosystem: "([^"]+)"\t?directory: "([^"]+)"/\1\t\2/')
+
+          get_dirs() {
+            echo "$pairs" | awk -F'\t' -v eco="$1" '$1 == eco { print $2 }' | sort -u
+          }
+
+          pip_declared=$(get_dirs "pip")
+          docker_declared=$(get_dirs "docker")
+          npm_declared=$(get_dirs "npm")
+
+          check_ecosystem() {
+            local name="$1" actual="$2" declared="$3"
+
+            local missing
+            missing=$(comm -23 <(echo "$actual") <(echo "$declared") | sed '/^$/d')
+            if [ -n "$missing" ]; then
+              echo "::error::.github/dependabot.yml is missing '$name' entries for these directories (they have the relevant manifest file but no matching entry):"
+              echo "$missing" | sed 's/^/  /'
+              fail=1
+            fi
+
+            local stale
+            stale=$(comm -13 <(echo "$actual") <(echo "$declared") | sed '/^$/d')
+            if [ -n "$stale" ]; then
+              echo "::error::.github/dependabot.yml has stale '$name' entries pointing at directories that no longer exist or no longer have the relevant manifest file:"
+              echo "$stale" | sed 's/^/  /'
+              fail=1
+            fi
+          }
+
+          check_ecosystem "pip" "$pip_actual" "$pip_declared"
+          check_ecosystem "docker" "$docker_actual" "$docker_declared"
+          check_ecosystem "npm" "$npm_actual" "$npm_declared"
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::.github/dependabot.yml has drifted from the repo's actual requirements.txt/Dockerfile/package.json locations. Update it in the same PR that added/removed the component."
+            exit 1
+          fi
+
+          echo "dependabot.yml pip/docker/npm entries match the repo's actual requirements.txt/Dockerfile/package.json locations."
+
   # Discovers every component directory with its own requirements.txt, same
   # `find` pattern this workflow always used for the (now-removed) combined
   # install, just turned into a matrix instead of a concatenation target.
@@ -148,7 +228,7 @@ jobs:
   all-tests-passed:
     name: ✅ All component tests passed
     runs-on: ubuntu-latest
-    needs: [check-redis-image-pin, test]
+    needs: [check-redis-image-pin, check-dependabot-sync, test]
     if: always()
     steps:
       - name: Check that every required job succeeded
@@ -156,6 +236,10 @@ jobs:
           set -euo pipefail
           if [ "${{ needs.check-redis-image-pin.result }}" != "success" ]; then
             echo "::error::check-redis-image-pin did not succeed (${{ needs.check-redis-image-pin.result }})."
+            exit 1
+          fi
+          if [ "${{ needs.check-dependabot-sync.result }}" != "success" ]; then
+            echo "::error::check-dependabot-sync did not succeed (${{ needs.check-dependabot-sync.result }})."
             exit 1
           fi
           if [ "${{ needs.test.result }}" != "success" ]; then
