@@ -3,3 +3,5 @@ uvicorn==0.51.0
 boto3==1.43.70
 cryptography==50.0.0
 shapely==2.1.2
+redis==8.1.0
+uuid7==0.1.0
