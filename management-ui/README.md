@@ -425,8 +425,8 @@ still slips through (e.g. a future `.ft(...)` call site `lifespan()`
 doesn't cover): it returns `503` with an actionable message rather than
 the raw exception text. redis-py/RediSearch expose no dedicated exception
 type for "index doesn't exist" — it surfaces as a generic
-`ResponseError`/`RedisError` whose message is literally `"No such index
-<name>"`, so detection is by message text, not exception type (a code
+`ResponseError`/`RedisError` whose message is literally `"No such index <name>"`,
+so detection is by message text, not exception type (a code
 comment next to the check flags this as inherently a little fragile
 against future Redis/RediSearch wording changes). A genuine connectivity/
 auth failure is unaffected — still `500` with the raw message.
