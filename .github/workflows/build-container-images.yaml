@@ -123,6 +123,13 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/arm64,linux/amd64
+          # BuildKit's default provenance/SBOM attestations attach a second
+          # manifest per platform to the pushed image index. Nothing here
+          # consumes them, and some tooling (including GHCR's own package
+          # page) doesn't recognize attestation manifests and displays them
+          # as a phantom "unknown/unknown" platform instead of hiding them.
+          provenance: false
+          sbom: false
           build-args: |
             VERSION=${{ github.ref_name }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
