@@ -40,6 +40,10 @@ splice, validate, write-back, not a partial update in Redis itself.
 | `POST` | `/api/areas` | Add one new area. `201`, `409` if `identifier` already exists, `400` on validation failure |
 | `PUT` | `/api/areas/{identifier}` | Replace one existing area. `200`, `404` if `identifier` doesn't exist yet, `400` on mismatch/validation failure |
 | `DELETE` | `/api/areas/{identifier}` | Remove one area. `204`, or `404` if not found |
+| `GET` | `/api/aircraft?icao_hex={hex}` or `?registration={reg}` | Aircraft enrichment lookup by one or the other (not both, not neither). `200`, `400`/`422` if both/neither query param is given, `404` if not found, `503` if the backing RediSearch index isn't ready yet (registration lookup only — see below) |
+| `GET` | `/api/operators/{designator}` | One operator's enrichment. `200`, or `404` if not found |
+| `GET` | `/api/airports/{code}` | Airport metadata, by 4-char ICAO or 3-char IATA code. `200`, `404` if not found, `503` if the backing RediSearch index isn't ready yet (IATA lookup only — see below) |
+| `GET` | `/api/routes/{ident}` | Route lookup by flight ident, with best-effort operator enrichment. `200`, or `404` if not found |
 
 Both `Rule` and `Area` require `identifier` (routing key, no spaces —
 `message-processor/rules_engine.py` rejects a spaced rule identifier
@@ -49,10 +53,13 @@ backend turns into an explicit `400` by checking the identifier actually
 survived the reload). `name` is a separate, optional free-text display
 label that *can* contain spaces.
 
-Aircraft lookup (`GET /api/aircraft/{icao_hex}`, `GET /api/aircraft?registration={reg}`)
-and missing-operator reporting (`GET /api/operators/missing`) aren't built yet —
-removed for now rather than kept as `501` stubs; see CLAUDE.md's Open Items
-("UI expansion").
+The registration-based `/api/aircraft` lookup and the IATA-code branch of
+`/api/airports/{code}` go through RediSearch (`_search_one()` in
+`main.py`); their `503` above is the safety net described in [Reference-Data
+Search Index Bootstrap](#reference-data-search-index-bootstrap) below, not
+an error you should normally see in practice. `icao_hex`-based aircraft
+lookups and 4-char-ICAO airport lookups are plain Redis key reads and never
+return `503`.
 
 Every successful write recomputes the full array/collection, computes a
 SHA-256 hash of it, and writes both to Redis (`config:rules` /
