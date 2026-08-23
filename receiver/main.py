@@ -686,8 +686,6 @@ class Receiver:
         sensors += [
             ("started_at", f"{display} — Started At",
              "mdi:clock-start", None, None),
-            ("version", f"{display} — Version",
-             "mdi:tag", None, None),
             ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
             ("dead_letter_queue_depth", f"{display} — Dead Letter Queue Depth",
