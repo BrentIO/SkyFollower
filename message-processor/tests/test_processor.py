@@ -1686,6 +1686,31 @@ class TestWakeTurbulenceCategoryLiveOverwrite:
         assert f.aircraft["wake_turbulence_category"] == "heavy"
 
 
+class TestRulesEngineHwmNanoseconds:
+    """rules_engine_hwm_ns measures a single evaluate() call in
+    nanoseconds, not milliseconds -- ms resolution would mostly read 0-1
+    for this in-process, no-I/O call."""
+
+    def test_evaluate_duration_recorded_in_nanoseconds(self):
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+        msg = InboundMessage(
+            raw="00" * 14, icao_hex=icao_hex, received_at=1_700_000_000.0, source="1090"
+        )
+
+        # 1 microsecond of "elapsed" monotonic time -> 1000 nanoseconds.
+        # _update_flight's rules-timing block is the only caller of
+        # time.monotonic() reached here (route resolution never fires --
+        # no ident on this message).
+        times = iter([100.0, 100.000001])
+        with patch("message_processor.main.time.monotonic", side_effect=lambda: next(times)):
+            with p._db_lock:
+                p._update_flight({"icao_hex": icao_hex}, msg)
+
+        hwm_ns = p._rules_time.hwm_ms_and_reset()
+        assert hwm_ns == pytest.approx(1000.0, rel=1e-6)
+
+
 class TestUpdateFlightTriggersRouteResolution:
     """End-to-end through _update_flight: resolution fires mid-flight, the
     moment the last of ident/position/altitude/heading arrives -- not at
@@ -1793,7 +1818,7 @@ class TestTelemetryPayload:
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         expected = {
             "started_at", "messages_per_second", "processing_time_hwm_ms",
-            "rules_engine_hwm_ms", "rabbitmq_input_queue_depth_hwm",
+            "rules_engine_hwm_ns", "rabbitmq_input_queue_depth_hwm",
             "local_archive_queue_depth", "active_flights",
             "registration_misses_hour", "registration_misses_today",
             "aircraft_type_misses_hour", "aircraft_type_misses_today",
@@ -1841,6 +1866,24 @@ class TestTelemetryPayload:
         }
         cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_processing_time_hwm_ms/config"]
         assert cfg["suggested_display_precision"] == 1
+
+    def test_rules_engine_hwm_ha_discovery_uses_ns_unit_and_precision(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_rules_engine_hwm_ns/config"]
+        assert cfg["unit_of_measurement"] == "ns"
+        assert cfg["suggested_display_precision"] == 0
+        assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/rules_engine_hwm_ns"
+        assert "homeassistant/sensor/SkyFollower_message_processor_0_rules_engine_hwm_ms/config" \
+            not in configs
 
     def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
         p = self._make_processor()

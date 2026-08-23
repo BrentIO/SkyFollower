@@ -222,17 +222,20 @@ channels:
       MessageProcessorProcessingTimeHwmMsMessage:
         $ref: '#/components/messages/MessageProcessorProcessingTimeHwmMsMessage'
 
-  messageProcessorRulesEngineHwmMs:
-    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_engine_hwm_ms'
+  messageProcessorRulesEngineHwmNs:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_engine_hwm_ns'
     description: >
-      Rules engine duration high-water mark since last publish; resets on
-      publish. Published every telemetry_interval_seconds, retained.
+      Rules engine duration high-water mark since last publish, in
+      nanoseconds (a single rule-evaluation pass is in-process/no-I/O and
+      almost always sub-millisecond, so nanoseconds carries the signal
+      millisecond resolution would lose); resets on publish. Published
+      every telemetry_interval_seconds, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      MessageProcessorRulesEngineHwmMsMessage:
-        $ref: '#/components/messages/MessageProcessorRulesEngineHwmMsMessage'
+      MessageProcessorRulesEngineHwmNsMessage:
+        $ref: '#/components/messages/MessageProcessorRulesEngineHwmNsMessage'
 
   messageProcessorRabbitmqInputQueueDepthHwm:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rabbitmq_input_queue_depth_hwm'
@@ -723,11 +726,11 @@ operations:
       $ref: '#/channels/messageProcessorProcessingTimeHwmMs'
     summary: Message processor publishes its processing time high-water mark
 
-  publishMessageProcessorRulesEngineHwmMs:
+  publishMessageProcessorRulesEngineHwmNs:
     action: send
     channel:
-      $ref: '#/channels/messageProcessorRulesEngineHwmMs'
-    summary: Message processor publishes its rules engine duration high-water mark
+      $ref: '#/channels/messageProcessorRulesEngineHwmNs'
+    summary: Message processor publishes its rules engine duration high-water mark (nanoseconds)
 
   publishMessageProcessorRabbitmqInputQueueDepthHwm:
     action: send
@@ -1043,13 +1046,13 @@ components:
       payload:
         $ref: '#/components/schemas/MessageProcessorProcessingTimeHwmMs'
 
-    MessageProcessorRulesEngineHwmMsMessage:
-      name: MessageProcessorRulesEngineHwmMsMessage
-      title: Message Processor rules engine duration high-water mark
-      summary: Rules engine duration high-water mark since last publish
+    MessageProcessorRulesEngineHwmNsMessage:
+      name: MessageProcessorRulesEngineHwmNsMessage
+      title: Message Processor rules engine duration high-water mark (nanoseconds)
+      summary: Rules engine duration high-water mark since last publish, in nanoseconds
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/MessageProcessorRulesEngineHwmMs'
+        $ref: '#/components/schemas/MessageProcessorRulesEngineHwmNs'
 
     MessageProcessorRabbitmqInputQueueDepthHwmMessage:
       name: MessageProcessorRabbitmqInputQueueDepthHwmMessage
@@ -1393,10 +1396,10 @@ components:
       description: End-to-end message processing time high-water mark since last publish; resets on publish
       example: 12.3
 
-    MessageProcessorRulesEngineHwmMs:
-      type: integer
-      description: Rules engine duration high-water mark since last publish; resets on publish
-      example: 45
+    MessageProcessorRulesEngineHwmNs:
+      type: number
+      description: Rules engine duration high-water mark since last publish, in nanoseconds; resets on publish
+      example: 45000
 
     MessageProcessorRabbitmqInputQueueDepthHwm:
       type: integer

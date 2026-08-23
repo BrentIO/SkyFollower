@@ -300,7 +300,7 @@ All topics use the root `SkyFollower`.
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `messages_per_second` | Float as string | Rolling 30-second average message rate |
 | `processing_time_hwm_ms` | Float as string | End-to-end processing time high-water mark since last publish; resets on publish |
-| `rules_engine_hwm_ms` | Integer as string | Rules engine duration high-water mark since last publish; resets on publish |
+| `rules_engine_hwm_ns` | Float as string | Rules engine duration high-water mark since last publish, in nanoseconds; resets on publish |
 | `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
 | `dead_letter_queue_depth` | Integer as string | Completed flights dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Flights](#dead-lettering-poison-flights)) |
