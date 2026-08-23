@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import tempfile
 import threading
@@ -24,6 +25,7 @@ import pytest
 
 from receiver.main import (
     _RateTracker,
+    _sanitize_mqtt_id,
     parse_978_line,
 )
 
@@ -1127,3 +1129,115 @@ class TestHaDeviceNameFallback:
         payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
         assert payload["device"]["ids"] == f"SkyFollower_receiver_{r._id}"
         assert payload["state_topic"].startswith(f"SkyFollower/receiver/{r._id}/statistic/")
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_mqtt_id — dotted hosts must not break MQTT topics / HA identifiers
+# ---------------------------------------------------------------------------
+
+class TestSanitizeMqttId:
+    """Regression coverage for _sanitize_mqtt_id() against representative
+    illegal inputs -- dotted IPv4, FQDN, and IPv6 -- per Home Assistant's
+    discovery charset requirement (^[a-zA-Z0-9_-]+$)."""
+
+    _VALID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+    def test_dotted_ipv4_matches_allowed_charset(self):
+        result = _sanitize_mqtt_id("192.168.10.107")
+        assert self._VALID_PATTERN.match(result)
+        assert result == "192-168-10-107"
+
+    def test_fqdn_matches_allowed_charset(self):
+        result = _sanitize_mqtt_id("receiver.attic.example.com")
+        assert self._VALID_PATTERN.match(result)
+        assert result == "receiver-attic-example-com"
+
+    def test_ipv6_matches_allowed_charset(self):
+        result = _sanitize_mqtt_id("fe80::1ff:fe23:4567:890a")
+        assert self._VALID_PATTERN.match(result)
+        assert result == "fe80--1ff-fe23-4567-890a"
+
+    def test_already_valid_value_is_unchanged(self):
+        assert _sanitize_mqtt_id("localhost") == "localhost"
+        assert _sanitize_mqtt_id("30002") == "30002"
+
+    def test_underscore_and_hyphen_are_preserved(self):
+        assert _sanitize_mqtt_id("my_host-01") == "my_host-01"
+
+
+# ---------------------------------------------------------------------------
+# Dotted-host end-to-end sanitization -- runtime state topics and HA
+# discovery must agree on the identical sanitized name
+# ---------------------------------------------------------------------------
+
+class TestDottedHostSanitization:
+    """Confirms _publish_telemetry() and _publish_ha_autodiscovery() both
+    sanitize a dotted-IP source host, and that they agree on the same
+    sanitized segment end-to-end (no drift between state and discovery)."""
+
+    _DOTTED_HOST = "192.168.10.107"
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": self._DOTTED_HOST, "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
+
+    def test_telemetry_topics_contain_no_illegal_characters(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert f"{base}/messages_192-168-10-107_30002_per_second" in topics
+        assert f"{base}/192-168-10-107_30002_connected" in topics
+        assert f"{base}/192-168-10-107_30002_reconnect_count" in topics
+        assert not any("." in t.rsplit("/", 1)[-1] for t in topics)
+
+    def test_ha_discovery_object_id_and_unique_id_contain_no_illegal_characters(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        found_per_source_sensor = False
+        for call in mock_mqtt.publish.call_args_list:
+            if call.args[0].startswith("homeassistant/"):
+                cfg_payload = json.loads(call.args[1])
+                assert re.match(r"^[a-zA-Z0-9_-]+$", cfg_payload["object_id"])
+                assert re.match(r"^[a-zA-Z0-9_-]+$", cfg_payload["unique_id"])
+                if "192-168-10-107" in cfg_payload["object_id"]:
+                    found_per_source_sensor = True
+        assert found_per_source_sensor
+
+    def test_state_topic_and_discovery_state_topic_agree(self):
+        """The discovery payload's state_topic must be byte-identical to a
+        topic _publish_telemetry() actually publishes -- otherwise HA's
+        entity would point at a topic that never receives data."""
+        r = self._make_receiver()
+        # last_message_at is only published once a message has actually
+        # been seen (None -> not published, independent of this issue) --
+        # set it so its discovery sensor's state_topic is comparable too.
+        r._last_message_at[(self._DOTTED_HOST, 30002)] = "2026-01-15T10:00:00+00:00"
+
+        telemetry_mqtt = MagicMock()
+        r._mqtt = telemetry_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        published_topics = {c.args[0] for c in telemetry_mqtt.publish.call_args_list}
+
+        discovery_mqtt = MagicMock()
+        r._mqtt = discovery_mqtt
+        r._publish_ha_autodiscovery()
+        discovery_state_topics = {
+            json.loads(c.args[1])["state_topic"]
+            for c in discovery_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+
+        assert discovery_state_topics <= published_topics

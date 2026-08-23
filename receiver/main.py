@@ -21,6 +21,7 @@ import logging
 import logging.handlers
 import os
 import pathlib
+import re
 import signal
 import socket
 import sys
@@ -97,6 +98,17 @@ def _load_or_create_receiver_id(data_dir: str) -> str:
     with open(path, "w") as f:
         f.write(new_id)
     return new_id
+
+
+def _sanitize_mqtt_id(value: str) -> str:
+    """Replace any character outside [a-zA-Z0-9_-] with '-'.
+
+    Home Assistant discovery requires object_id/unique_id to match
+    ^[a-zA-Z0-9_-]+$. Applied wherever a source's host/port is turned into
+    a topic segment or identifier, so the runtime state topic and the
+    discovery topic/object_id/unique_id use the identical sanitized name.
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "-", value)
 
 
 # ---------------------------------------------------------------------------
@@ -583,25 +595,26 @@ class Receiver:
             tracker = self._rates.get((host, port))
             if tracker is None:
                 continue
+            mqtt_host, mqtt_port = _sanitize_mqtt_id(str(host)), _sanitize_mqtt_id(str(port))
             self._mqtt.publish(
-                f"{base}/messages_{host}_{port}_per_second",
+                f"{base}/messages_{mqtt_host}_{mqtt_port}_per_second",
                 str(round(tracker.rate(), 2)),
                 retain=True,
             )
             self._mqtt.publish(
-                f"{base}/{host}_{port}_connected",
+                f"{base}/{mqtt_host}_{mqtt_port}_connected",
                 str(self._connected.get((host, port), False)),
                 retain=True,
             )
             self._mqtt.publish(
-                f"{base}/{host}_{port}_reconnect_count",
+                f"{base}/{mqtt_host}_{mqtt_port}_reconnect_count",
                 str(self._reconnect_counts.get((host, port), 0)),
                 retain=True,
             )
             last_message_at = self._last_message_at.get((host, port))
             if last_message_at is not None:
                 self._mqtt.publish(
-                    f"{base}/{host}_{port}_last_message_at", last_message_at, retain=True
+                    f"{base}/{mqtt_host}_{mqtt_port}_last_message_at", last_message_at, retain=True
                 )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
@@ -660,14 +673,15 @@ class Receiver:
         sensors = []
         for src in self._cfg.get("sources", []):
             host, port, source = src["host"], src["port"], src["source"]
-            field = f"messages_{host}_{port}_per_second"
+            mqtt_host, mqtt_port = _sanitize_mqtt_id(str(host)), _sanitize_mqtt_id(str(port))
+            field = f"messages_{mqtt_host}_{mqtt_port}_per_second"
             sensors.append((field, f"{display} — {host}:{port} {source} Messages/sec",
                              "mdi:broadcast", "measurement", "msg/s"))
-            sensors.append((f"{host}_{port}_connected", f"{display} — {host}:{port} Connected",
+            sensors.append((f"{mqtt_host}_{mqtt_port}_connected", f"{display} — {host}:{port} Connected",
                              "mdi:lan-connect", None, None))
-            sensors.append((f"{host}_{port}_reconnect_count", f"{display} — {host}:{port} Reconnect Count",
+            sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{display} — {host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None))
-            sensors.append((f"{host}_{port}_last_message_at", f"{display} — {host}:{port} Last Message At",
+            sensors.append((f"{mqtt_host}_{mqtt_port}_last_message_at", f"{display} — {host}:{port} Last Message At",
                              "mdi:clock", None, None))
         sensors += [
             ("local_queue_depth", f"{display} — Local Queue Depth",
