@@ -613,6 +613,7 @@ class MessageProcessor:
         self._rate = _RateTracker()
         self._processing_time = _TimeTracker()
         self._rules_time = _TimeTracker()
+        self._message_latency = _TimeTracker()
         self._rmq_queue_depth_hwm = _DepthHWM()
         self._db_lock = threading.Lock()
 
@@ -739,6 +740,18 @@ class MessageProcessor:
         elapsed_ms = (time.monotonic() - t_start) * 1000
         self._processing_time.record(elapsed_ms)
         self._processing_time.record_hwm(elapsed_ms)
+
+        # message_latency_hwm_ms is receipt-through-processed, including
+        # any time the message spent waiting in RabbitMQ -- msg.received_at
+        # is stamped by the receiver on a different host and crosses the
+        # RabbitMQ hop, so this must use the wall clock (time.time()), not
+        # time.monotonic() like processing_time_hwm_ms above. That makes
+        # it sensitive to wall-clock adjustments (NTP drift, etc.) between
+        # the receiver and message-processor hosts -- an accepted
+        # tradeoff, documented on the HA entity too.
+        latency_ms = (time.time() - msg.received_at) * 1000
+        self._message_latency.record_hwm(latency_ms)
+
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     # ------------------------------------------------------------------
@@ -1401,12 +1414,14 @@ class MessageProcessor:
         processing_hwm = self._processing_time.hwm_ms_and_reset()
         self._processing_time.reset()
         rules_hwm_ns = self._rules_time.hwm_ms_and_reset()
+        message_latency_hwm = self._message_latency.hwm_ms_and_reset()
 
         base = f"SkyFollower/message-processor/{pid}/statistic"
 
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
         self._mqtt.publish(f"{base}/messages_per_second", str(round(self._rate.rate(), 2)), retain=True)
         self._mqtt.publish(f"{base}/processing_time_hwm_ms", str(processing_hwm), retain=True)
+        self._mqtt.publish(f"{base}/message_latency_hwm_ms", str(message_latency_hwm), retain=True)
         self._mqtt.publish(f"{base}/rules_engine_hwm_ns", str(rules_hwm_ns), retain=True)
         self._mqtt.publish(
             f"{base}/rabbitmq_input_queue_depth_hwm",
@@ -1577,6 +1592,12 @@ class MessageProcessor:
             # metric typically reads in the low single-digit milliseconds,
             # where 0 decimal places would round away most of its signal.
             _Sensor("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms",
+                    extra={"suggested_display_precision": 1}),
+            # Same precision rationale as processing_time_hwm_ms above --
+            # this metric is a superset of it (receipt-through-processed,
+            # including RabbitMQ queue wait time), so it never reads
+            # narrower.
+            _Sensor("message_latency_hwm_ms", "Message Latency HWM", "mdi:clock-alert", "measurement", "ms",
                     extra={"suggested_display_precision": 1}),
             # Nanosecond values are large integers (thousands+); a
             # fractional nanosecond carries no real signal (time.monotonic()

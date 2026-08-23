@@ -222,6 +222,27 @@ channels:
       MessageProcessorProcessingTimeHwmMsMessage:
         $ref: '#/components/messages/MessageProcessorProcessingTimeHwmMsMessage'
 
+  messageProcessorMessageLatencyHwmMs:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/message_latency_hwm_ms'
+    description: >
+      Receipt-through-processed latency high-water mark since last publish
+      -- from the moment the receiver parsed the message off the wire
+      through the message processor finishing its work on it, including
+      any time spent waiting in RabbitMQ. A superset of
+      processing_time_hwm_ms (which only covers message-processor-internal
+      decode+state-update work); the two are published side by side.
+      Wall-clock based (received_at is stamped on the receiver host and
+      crosses the RabbitMQ hop), unlike processing_time_hwm_ms's monotonic
+      clock -- sensitive to NTP drift/clock adjustments between the
+      receiver and message-processor hosts. Resets on publish. Published
+      every telemetry_interval_seconds, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorMessageLatencyHwmMsMessage:
+        $ref: '#/components/messages/MessageProcessorMessageLatencyHwmMsMessage'
+
   messageProcessorRulesEngineHwmNs:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_engine_hwm_ns'
     description: >
@@ -726,6 +747,12 @@ operations:
       $ref: '#/channels/messageProcessorProcessingTimeHwmMs'
     summary: Message processor publishes its processing time high-water mark
 
+  publishMessageProcessorMessageLatencyHwmMs:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorMessageLatencyHwmMs'
+    summary: Message processor publishes its receipt-through-processed latency high-water mark
+
   publishMessageProcessorRulesEngineHwmNs:
     action: send
     channel:
@@ -1045,6 +1072,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/MessageProcessorProcessingTimeHwmMs'
+
+    MessageProcessorMessageLatencyHwmMsMessage:
+      name: MessageProcessorMessageLatencyHwmMsMessage
+      title: Message Processor message latency high-water mark
+      summary: Receipt-through-processed latency high-water mark since last publish, including RabbitMQ queue wait time
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorMessageLatencyHwmMs'
 
     MessageProcessorRulesEngineHwmNsMessage:
       name: MessageProcessorRulesEngineHwmNsMessage
@@ -1395,6 +1430,11 @@ components:
       type: number
       description: End-to-end message processing time high-water mark since last publish; resets on publish
       example: 12.3
+
+    MessageProcessorMessageLatencyHwmMs:
+      type: number
+      description: Receipt-through-processed latency high-water mark since last publish, including RabbitMQ queue wait time (superset of MessageProcessorProcessingTimeHwmMs); wall-clock based, sensitive to NTP drift between hosts; resets on publish
+      example: 340.7
 
     MessageProcessorRulesEngineHwmNs:
       type: number

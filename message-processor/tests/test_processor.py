@@ -1711,6 +1711,48 @@ class TestRulesEngineHwmNanoseconds:
         assert hwm_ns == pytest.approx(1000.0, rel=1e-6)
 
 
+class TestMessageLatencyHwmEndToEnd:
+    """message_latency_hwm_ms is receipt-through-processed (wall clock,
+    time.time() - msg.received_at) -- a superset of processing_time_hwm_ms
+    (message-processor-internal decode+state-update work only, monotonic
+    clock), so it must never read narrower, and must surface RabbitMQ
+    queue wait time processing_time_hwm_ms can't see at all."""
+
+    def _run_on_message(self, p, received_at: float) -> None:
+        # raw="00"*14 decodes to DF0 with no tracked fields populated (see
+        # TestDecode1090.test_message_type_with_no_tracked_fields_dropped),
+        # so _process() returns immediately without touching Redis/the
+        # rules engine -- keeps processing_time_hwm_ms genuinely small
+        # without needing to mock enrichment for this test.
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=received_at, source="1090")
+        method = MagicMock(delivery_tag=1)
+        p._on_message(MagicMock(), method, None, msg.model_dump_json().encode())
+
+    def test_latency_is_at_least_processing_time_under_normal_operation(self):
+        p, _ = _make_processor()
+        self._run_on_message(p, time.time())  # received "just now" -- no queue backlog
+
+        latency_hwm = p._message_latency.hwm_ms_and_reset()
+        processing_hwm = p._processing_time.hwm_ms_and_reset()
+        assert latency_hwm >= processing_hwm
+
+    def test_elevated_latency_under_simulated_queue_backlog_while_processing_time_stays_low(self):
+        """A message stamped as received several seconds in the past
+        (simulating time spent queued in RabbitMQ under backpressure) must
+        show elevated message_latency_hwm_ms, while processing_time_hwm_ms
+        -- which only measures work done after delivery -- stays low."""
+        p, _ = _make_processor()
+        backlog_seconds = 5.0
+        self._run_on_message(p, time.time() - backlog_seconds)
+
+        latency_hwm = p._message_latency.hwm_ms_and_reset()
+        processing_hwm = p._processing_time.hwm_ms_and_reset()
+
+        assert latency_hwm >= backlog_seconds * 1000
+        assert processing_hwm < 1000  # genuinely fast -- no real backlog in decode/state-update
+        assert latency_hwm > processing_hwm
+
+
 class TestUpdateFlightTriggersRouteResolution:
     """End-to-end through _update_flight: resolution fires mid-flight, the
     moment the last of ident/position/altitude/heading arrives -- not at
@@ -1818,7 +1860,7 @@ class TestTelemetryPayload:
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         expected = {
             "started_at", "messages_per_second", "processing_time_hwm_ms",
-            "rules_engine_hwm_ns", "rabbitmq_input_queue_depth_hwm",
+            "message_latency_hwm_ms", "rules_engine_hwm_ns", "rabbitmq_input_queue_depth_hwm",
             "local_archive_queue_depth", "active_flights",
             "registration_misses_hour", "registration_misses_today",
             "aircraft_type_misses_hour", "aircraft_type_misses_today",
@@ -1866,6 +1908,33 @@ class TestTelemetryPayload:
         }
         cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_processing_time_hwm_ms/config"]
         assert cfg["suggested_display_precision"] == 1
+
+    def test_message_latency_hwm_publishes_full_float_precision(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._message_latency.record_hwm(340.71234567)
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/message-processor/0/statistic/message_latency_hwm_ms"] == \
+            "340.71234567"
+
+    def test_message_latency_ha_discovery_alongside_processing_time(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_message_latency_hwm_ms/config"]
+        assert cfg["unit_of_measurement"] == "ms"
+        assert cfg["suggested_display_precision"] == 1
+        assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/message_latency_hwm_ms"
 
     def test_rules_engine_hwm_ha_discovery_uses_ns_unit_and_precision(self):
         p = self._make_processor()
