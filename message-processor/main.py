@@ -1423,11 +1423,19 @@ class MessageProcessor:
         self._mqtt.publish(f"{base}/processing_time_hwm_ms", str(processing_hwm), retain=True)
         self._mqtt.publish(f"{base}/message_latency_hwm_ms", str(message_latency_hwm), retain=True)
         self._mqtt.publish(f"{base}/rules_engine_hwm_ns", str(rules_hwm_ns), retain=True)
-        self._mqtt.publish(
-            f"{base}/rabbitmq_input_queue_depth_hwm",
-            str(self._rmq_queue_depth_hwm.value_and_reset()),
-            retain=True,
-        )
+
+        # -1 means "no valid sample landed this window" (see _DepthHWM) --
+        # never put that sentinel on the wire. The topic is retain=True, so
+        # skipping the publish just leaves the last known-good depth in
+        # place instead of overwriting it with -1. Home Assistant's
+        # expire_after (see the HA discovery entry below) is what marks
+        # the entity unavailable if this stays stale across a genuine
+        # sustained outage, rather than a bespoke availability topic.
+        queue_depth_hwm = self._rmq_queue_depth_hwm.value_and_reset()
+        if queue_depth_hwm != -1:
+            self._mqtt.publish(
+                f"{base}/rabbitmq_input_queue_depth_hwm", str(queue_depth_hwm), retain=True
+            )
         self._mqtt.publish(f"{base}/local_archive_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -1572,6 +1580,7 @@ class MessageProcessor:
         if not (self._mqtt and self._mqtt_connected):
             return
         pid = self._id
+        telemetry_interval = self._cfg.get("telemetry_interval_seconds", 30)
         device = build_ha_device(
             identifier=f"SkyFollower_message_processor_{pid}",
             name=f"SkyFollower Message Processor {pid}",
@@ -1605,7 +1614,18 @@ class MessageProcessor:
             # deliberate choice here, unlike processing_time_hwm_ms above.
             _Sensor("rules_engine_hwm_ns", "Rules Engine HWM", "mdi:clock", "measurement", "ns",
                     extra={"suggested_display_precision": 0}),
-            _Sensor("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement"),
+            # expire_after (native HA per-entity staleness detection, no
+            # bespoke availability_topic needed) marks this entity
+            # unavailable once it's gone this many seconds without an
+            # update -- which now only happens when every sample in a
+            # window errored (see _publish_telemetry's skip-on-sentinel
+            # logic above), never on an ordinary retained -1. 3x
+            # telemetry_interval_seconds: long enough that one skipped
+            # tick (a single transient RabbitMQ blip) doesn't flap the
+            # entity, short enough that a real sustained outage still
+            # surfaces as unavailable within a couple of missed cycles.
+            _Sensor("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement",
+                    extra={"expire_after": telemetry_interval * 3}),
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
             _Sensor("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing"),
