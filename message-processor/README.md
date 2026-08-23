@@ -300,6 +300,7 @@ All topics use the root `SkyFollower`.
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `messages_per_second` | Float as string | Rolling 30-second average message rate |
 | `processing_time_hwm_ms` | Float as string | End-to-end processing time high-water mark since last publish; resets on publish |
+| `message_latency_hwm_ms` | Float as string | Receipt-through-processed latency high-water mark since last publish, including RabbitMQ queue wait time (a superset of `processing_time_hwm_ms`); resets on publish. Wall-clock based (`time.time() - msg.received_at`), unlike `processing_time_hwm_ms`'s monotonic clock, since `received_at` is stamped on the receiver host and crosses the RabbitMQ hop -- sensitive to NTP drift between hosts |
 | `rules_engine_hwm_ns` | Float as string | Rules engine duration high-water mark since last publish, in nanoseconds; resets on publish |
 | `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
