@@ -76,6 +76,17 @@ logger = logging.getLogger("message_processor")
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
+# Each message-processor queue has exactly one consumer (bound via the
+# consistent-hash exchange), so prefetch_count buys no fair-dispatch benefit
+# here -- raising it just lets the broker keep messages flowing to the
+# client's local buffer instead of stalling on a full ack round trip after
+# every single message. 100 is a deliberate middle of the "tens to a few
+# hundred" range discussed for this: enough to remove the round-trip stall
+# as the throughput ceiling, without buffering an excessive number of
+# messages client-side that would all need reprocessing (see #1027's
+# positions/velocities dedup) if the connection drops mid-batch.
+_RMQ_PREFETCH_COUNT = 100
+
 # ---------------------------------------------------------------------------
 # US registration regex (skip operator lookup for tail numbers)
 # ---------------------------------------------------------------------------
@@ -737,7 +748,7 @@ class MessageProcessor:
                 self._rmq_channel = self._rmq_connection.channel()
                 declare_adsb_topology(self._rmq_channel)
                 bind_adsb_queue(self._rmq_channel, self._id)
-                self._rmq_channel.basic_qos(prefetch_count=1)
+                self._rmq_channel.basic_qos(prefetch_count=_RMQ_PREFETCH_COUNT)
                 self._rmq_channel.basic_consume(
                     queue=self._queue_name,
                     on_message_callback=self._on_message,
