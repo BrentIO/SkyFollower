@@ -196,9 +196,13 @@ CREATE TABLE IF NOT EXISTS velocities (
     heading       REAL,
     vertical_speed INTEGER
 );
-CREATE INDEX IF NOT EXISTS positions_icao_hex  ON positions  (icao_hex);
-CREATE INDEX IF NOT EXISTS velocities_icao_hex ON velocities (icao_hex);
 """
+# positions/velocities' unique index is created in _migrate_schema() rather
+# than here, since an existing database may already hold duplicate
+# (icao_hex, timestamp) rows from past redeliveries that must be cleaned up
+# first -- CREATE UNIQUE INDEX fails outright otherwise. It supersedes the
+# plain non-unique icao_hex indexes this schema used to define: its leading
+# column already serves the same icao_hex-only lookups.
 
 
 def _migrate_schema(db: sqlite3.Connection) -> None:
@@ -234,6 +238,30 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE flights ADD COLUMN pending_squawk TEXT")
     if "pending_ident" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN pending_ident TEXT")
+
+    # positions/velocities had no uniqueness constraint before this
+    # migration, so RabbitMQ redelivery -- a normal at-least-once
+    # occurrence, not just a symptom of a bug -- could leave duplicate
+    # rows behind. Dedupe any that already exist before creating the
+    # unique index below (a no-op on a database with none), since
+    # CREATE UNIQUE INDEX fails outright on a table that already
+    # violates it.
+    db.execute(
+        "DELETE FROM positions WHERE rowid NOT IN "
+        "(SELECT MIN(rowid) FROM positions GROUP BY icao_hex, timestamp)"
+    )
+    db.execute(
+        "DELETE FROM velocities WHERE rowid NOT IN "
+        "(SELECT MIN(rowid) FROM velocities GROUP BY icao_hex, timestamp)"
+    )
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS positions_icao_hex_timestamp "
+        "ON positions (icao_hex, timestamp)"
+    )
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS velocities_icao_hex_timestamp "
+        "ON velocities (icao_hex, timestamp)"
+    )
     db.commit()
 
 # ---------------------------------------------------------------------------
@@ -511,20 +539,26 @@ class Flight:
     def add_position(self, pos: Position) -> None:
         cur = self._db.cursor()
         cur.execute(
-            "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) "
+            "INSERT OR IGNORE INTO positions (icao_hex, timestamp, latitude, longitude, altitude) "
             "VALUES (?,?,?,?,?)",
             (self.icao_hex, pos.timestamp, pos.latitude, pos.longitude, pos.altitude),
         )
-        self.positions.append(pos)
+        # rowcount is 0 when the unique (icao_hex, timestamp) index caused
+        # this to be silently ignored as a redelivery duplicate -- skip the
+        # in-memory append too, or this list would drift from what's
+        # actually persisted (to_dict() serializes it directly).
+        if cur.rowcount:
+            self.positions.append(pos)
 
     def add_velocity(self, vel: Velocity) -> None:
         cur = self._db.cursor()
         cur.execute(
-            "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) "
+            "INSERT OR IGNORE INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) "
             "VALUES (?,?,?,?,?)",
             (self.icao_hex, vel.timestamp, vel.velocity, vel.heading, vel.vertical_speed),
         )
-        self.velocities.append(vel)
+        if cur.rowcount:
+            self.velocities.append(vel)
 
     # ------------------------------------------------------------------
     # Serialisation to CompletedFlight (for archive queue)
