@@ -51,6 +51,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
+    _migrate_schema,
     _confirm_after_repeated_sightings,
     _PARITY_ERROR_CONFIRM_COUNT,
     _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
@@ -68,6 +69,15 @@ def _make_db() -> sqlite3.Connection:
     db = sqlite3.connect(":memory:", check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.executescript(_SCHEMA)
+    return db
+
+
+def _make_migrated_db() -> sqlite3.Connection:
+    """Like _make_db(), but also runs _migrate_schema() -- needed for
+    anything exercising the positions/velocities unique index, which is
+    created there rather than in _SCHEMA (see _migrate_schema's docstring)."""
+    db = _make_db()
+    _migrate_schema(db)
     return db
 
 
@@ -662,6 +672,124 @@ class TestFlight:
         cf = f.to_completed_flight()
         assert cf.receiver_sources == ["EXTERNAL"]
         assert cf.force_archive is True
+
+
+class TestPositionVelocityDedup:
+    """RabbitMQ redelivery (a normal at-least-once occurrence) can reprocess
+    the same message twice; add_position()/add_velocity() must not leave
+    duplicate rows behind, and the in-memory list must stay in sync with
+    what's actually persisted."""
+
+    def test_add_position_twice_same_timestamp_inserts_once(self):
+        db = _make_migrated_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1000.0
+        f.last_message = 1000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+        pos = Position(timestamp=1000.0, latitude=40.0, longitude=-73.0, altitude=5000)
+        f.add_position(pos)
+        f.add_position(pos)  # simulated redelivery of the identical message
+
+        assert len(f.positions) == 1
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM positions WHERE icao_hex='A8AE7F'")
+        assert cur.fetchone()[0] == 1
+
+    def test_add_velocity_twice_same_timestamp_inserts_once(self):
+        db = _make_migrated_db()
+        f = Flight(db)
+        f.icao_hex = "BBBBBB"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+        vel = Velocity(timestamp=1.0, velocity=450.0, heading=270.0, vertical_speed=500)
+        f.add_velocity(vel)
+        f.add_velocity(vel)
+
+        assert len(f.velocities) == 1
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM velocities WHERE icao_hex='BBBBBB'")
+        assert cur.fetchone()[0] == 1
+
+    def test_reload_matches_in_memory_list_after_duplicate_insert(self):
+        """to_completed_flight()/to_dict() serialize self.positions directly
+        rather than reloading -- a drift between the two would leak a
+        duplicate into archived output even though the database correctly
+        suppressed it."""
+        db = _make_migrated_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1000.0
+        f.last_message = 1000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        pos = Position(timestamp=1000.0, latitude=40.0, longitude=-73.0, altitude=5000)
+        f.add_position(pos)
+        f.add_position(pos)
+
+        f2 = Flight(db)
+        f2.load("A8AE7F")
+        assert len(f2.positions) == len(f.positions) == 1
+
+    def test_different_timestamps_both_inserted(self):
+        """Guards against an overly broad uniqueness key -- two genuinely
+        distinct position reports must not be treated as duplicates."""
+        db = _make_migrated_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1000.0
+        f.last_message = 1001.0
+        f.total_messages = 2
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_position(Position(timestamp=1000.0, latitude=40.0, longitude=-73.0, altitude=5000))
+        f.add_position(Position(timestamp=1001.0, latitude=40.1, longitude=-73.1, altitude=5100))
+
+        assert len(f.positions) == 2
+
+    def test_migrate_schema_dedupes_preexisting_duplicate_rows(self):
+        """A database from before this migration existed may already hold
+        duplicate rows from past redeliveries -- CREATE UNIQUE INDEX would
+        fail outright on those unless they're cleaned up first."""
+        db = _make_db()  # schema only, no migration yet
+        db.execute(
+            "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) "
+            "VALUES ('A8AE7F', 1000.0, 40.0, -73.0, 5000)"
+        )
+        db.execute(
+            "INSERT INTO positions (icao_hex, timestamp, latitude, longitude, altitude) "
+            "VALUES ('A8AE7F', 1000.0, 40.0, -73.0, 5000)"
+        )
+        db.execute(
+            "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) "
+            "VALUES ('A8AE7F', 1000.0, 450.0, 270.0, 500)"
+        )
+        db.execute(
+            "INSERT INTO velocities (icao_hex, timestamp, velocity, heading, vertical_speed) "
+            "VALUES ('A8AE7F', 1000.0, 450.0, 270.0, 500)"
+        )
+        db.commit()
+
+        _migrate_schema(db)  # must not raise, and must dedupe before indexing
+
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM positions WHERE icao_hex='A8AE7F'")
+        assert cur.fetchone()[0] == 1
+        cur.execute("SELECT COUNT(*) FROM velocities WHERE icao_hex='A8AE7F'")
+        assert cur.fetchone()[0] == 1
+
+    def test_migrate_schema_is_idempotent_on_fresh_database(self):
+        db = _make_db()
+        _migrate_schema(db)
+        _migrate_schema(db)  # must not raise on the second call
 
 
 # ---------------------------------------------------------------------------
