@@ -20,6 +20,7 @@ end box
 loop until shutdown
     Processor -> Processor : **Sleep 10 seconds**
     alt consumer channel connected
+        Processor -> Processor : **Schedule the declare on the connection's own thread**\n""connection.add_callback_threadsafe(_sample_on_rmq_thread)""
         Processor -> InputQ++ : **Read queue depth**\n""queue_declare(queue=adsb-{id}, durable=True, passive=True)""
         InputQ --> Processor-- : message_count
         Processor -> Processor : **Record into high-water mark**\n""hwm.record(message_count)""
