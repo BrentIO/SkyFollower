@@ -28,7 +28,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import paho.mqtt.client as mqtt
 import pika
@@ -271,7 +271,7 @@ class _TimeTracker:
     def __init__(self) -> None:
         self._total_ms = 0.0
         self._count = 0
-        self._hwm_ms = 0
+        self._hwm_ms = 0.0
         self._lock = threading.Lock()
 
     def record(self, ms: float) -> None:
@@ -290,10 +290,15 @@ class _TimeTracker:
                 return 0.0
             return self._total_ms / self._count
 
-    def hwm_ms_and_reset(self) -> int:
+    def hwm_ms_and_reset(self) -> float:
+        """Returns the tracked high-water mark at full float precision --
+        no Python-side rounding/truncation. Any display-side rounding (e.g.
+        Home Assistant's suggested_display_precision) is applied by the
+        consumer, not here, so retained state/long-term statistics stay
+        exact."""
         with self._lock:
             v = self._hwm_ms
-            self._hwm_ms = 0
+            self._hwm_ms = 0.0
             return v
 
     def reset(self) -> None:
@@ -329,6 +334,25 @@ class _DepthHWM:
             v = self._hwm
             self._hwm = -1
             return v
+
+
+# ---------------------------------------------------------------------------
+# HA autodiscovery sensor definitions
+# ---------------------------------------------------------------------------
+
+class _Sensor(NamedTuple):
+    """One HA autodiscovery sensor entity for a statistic/{field} topic.
+    `unit`/`extra` default to None so most entries only need the first four
+    positional fields; `extra` carries any additional discovery payload
+    keys a specific entity needs (e.g. suggested_display_precision,
+    expire_after) without every other entry having to spell out a "no
+    extras" placeholder."""
+    field: str
+    name: str
+    icon: str
+    state_class: str
+    unit: Optional[str] = None
+    extra: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1541,33 +1565,42 @@ class MessageProcessor:
         }
         base = f"SkyFollower/message-processor/{pid}/statistic"
         sensors = [
-            ("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
-            ("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms"),
-            ("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
-            ("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement", None),
-            ("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement", None),
-            ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
-            ("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing", None),
-            ("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing", None),
-            ("aircraft_type_misses_hour", "Aircraft Type Misses (Hour)", "mdi:broadcast", "total_increasing", None),
-            ("aircraft_type_misses_today", "Aircraft Type Misses (Today)", "mdi:broadcast", "total_increasing", None),
-            ("active_flights", "Active Flights", "mdi:airplane", "measurement", None),
+            _Sensor("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
+            # suggested_display_precision only rounds what Home Assistant
+            # *displays* -- the retained MQTT state and any long-term
+            # statistics stay at full float precision (see
+            # _TimeTracker.hwm_ms_and_reset()). 1 decimal place: this
+            # metric typically reads in the low single-digit milliseconds,
+            # where 0 decimal places would round away most of its signal.
+            _Sensor("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms",
+                    extra={"suggested_display_precision": 1}),
+            _Sensor("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
+            _Sensor("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement"),
+            _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
+            _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
+            _Sensor("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing"),
+            _Sensor("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing"),
+            _Sensor("aircraft_type_misses_hour", "Aircraft Type Misses (Hour)", "mdi:broadcast", "total_increasing"),
+            _Sensor("aircraft_type_misses_today", "Aircraft Type Misses (Today)", "mdi:broadcast", "total_increasing"),
+            _Sensor("active_flights", "Active Flights", "mdi:airplane", "measurement"),
         ]
-        for field, desc, icon, state_class, unit in sensors:
+        for sensor in sensors:
             payload = {
                 **availability,
-                "state_topic": f"{base}/{field}",
-                "name": desc,
-                "unique_id": f"SkyFollower_message_processor_{pid}_{field}",
-                "object_id": f"SkyFollower_message_processor_{pid}_{field}",
+                "state_topic": f"{base}/{sensor.field}",
+                "name": sensor.name,
+                "unique_id": f"SkyFollower_message_processor_{pid}_{sensor.field}",
+                "object_id": f"SkyFollower_message_processor_{pid}_{sensor.field}",
                 "device": device,
-                "icon": icon,
-                "state_class": state_class,
+                "icon": sensor.icon,
+                "state_class": sensor.state_class,
             }
-            if unit:
-                payload["unit_of_measurement"] = unit
+            if sensor.unit:
+                payload["unit_of_measurement"] = sensor.unit
+            if sensor.extra:
+                payload.update(sensor.extra)
             self._mqtt.publish(
-                f"homeassistant/sensor/SkyFollower_message_processor_{pid}_{field}/config",
+                f"homeassistant/sensor/SkyFollower_message_processor_{pid}_{sensor.field}/config",
                 json.dumps(payload),
                 retain=True,
             )

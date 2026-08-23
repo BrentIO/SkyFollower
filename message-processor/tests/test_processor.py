@@ -969,6 +969,23 @@ class TestTimeTracker:
         tt.reset()
         assert tt.avg_ms() == 0.0
 
+    def test_hwm_preserves_full_float_precision(self):
+        """record_hwm() -> hwm_ms_and_reset() must not round or truncate
+        anywhere in the path -- processing_time_hwm_ms publishes this
+        value as-is, with any display-side rounding left to Home
+        Assistant's suggested_display_precision, not Python."""
+        tt = _TimeTracker()
+        tt.record_hwm(2.5583304843038)
+        assert tt.hwm_ms_and_reset() == 2.5583304843038
+
+    def test_hwm_and_reset_return_type_is_float(self):
+        tt = _TimeTracker()
+        tt.record_hwm(3.0)
+        assert isinstance(tt.hwm_ms_and_reset(), float)
+        # And the post-reset zero value is a float too, not an int --
+        # matches hwm_ms_and_reset()'s -> float type hint.
+        assert isinstance(tt.hwm_ms_and_reset(), float)
+
 
 # ---------------------------------------------------------------------------
 # _DepthHWM — high-water-mark tracker backing rabbitmq_input_queue_depth_hwm
@@ -1795,6 +1812,35 @@ class TestTelemetryPayload:
         p._publish_telemetry()
         calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
         assert calls["SkyFollower/message-processor/0/statistic/processing_time_hwm_ms"] == "50.0"
+
+    def test_processing_time_hwm_publishes_full_float_precision(self):
+        """No Python-side rounding anywhere between record_hwm() and the
+        published MQTT payload -- rounding is display-side only (Home
+        Assistant's suggested_display_precision on the HA discovery
+        entry, asserted separately below)."""
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._processing_time.record_hwm(2.5583304843038)
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/message-processor/0/statistic/processing_time_hwm_ms"] == \
+            "2.5583304843038"
+
+    def test_processing_time_ha_discovery_sets_suggested_display_precision(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_processing_time_hwm_ms/config"]
+        assert cfg["suggested_display_precision"] == 1
 
     def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
         p = self._make_processor()
