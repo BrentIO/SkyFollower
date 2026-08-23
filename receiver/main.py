@@ -684,6 +684,8 @@ class Receiver:
             sensors.append((f"{mqtt_host}_{mqtt_port}_last_message_at", f"{display} — {host}:{port} Last Message At",
                              "mdi:clock", None, None))
         sensors += [
+            ("started_at", f"{display} — Started At",
+             "mdi:clock-start", None, None),
             ("local_queue_depth", f"{display} — Local Queue Depth",
              "mdi:tray-full", "measurement", None),
             ("dead_letter_queue_depth", f"{display} — Dead Letter Queue Depth",
@@ -706,7 +708,7 @@ class Receiver:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
-            if field.endswith("_last_message_at"):
+            if field.endswith("_last_message_at") or field == "started_at":
                 payload["device_class"] = "timestamp"
 
             self._mqtt.publish(

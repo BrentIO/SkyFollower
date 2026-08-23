@@ -1241,3 +1241,75 @@ class TestDottedHostSanitization:
         }
 
         assert discovery_state_topics <= published_topics
+
+
+# ---------------------------------------------------------------------------
+# HA discovery for started_at / version -- companion to the dotted-host fix,
+# separate root cause: these fields were never added to the sensors list at
+# all, so no discovery config was ever attempted for them.
+# ---------------------------------------------------------------------------
+
+class TestHaDiscoveryStartedAt:
+    """started_at is already published as a state topic by
+    _publish_telemetry(); _publish_ha_autodiscovery() must also announce
+    it so Home Assistant creates an entity for it. (version is not given
+    its own sensor -- build_ha_device() already reports it as the
+    device's sw_version.)"""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
+
+    def _discovery_payloads(self, r):
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        return {
+            call.args[0]: json.loads(call.args[1])
+            for call in mock_mqtt.publish.call_args_list
+            if call.args[0].startswith("homeassistant/")
+        }
+
+    def test_started_at_has_a_discovery_entry(self):
+        r = self._make_receiver()
+        payloads = self._discovery_payloads(r)
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_started_at/config"
+        assert topic in payloads
+        assert payloads[topic]["state_topic"] == f"SkyFollower/receiver/{r._id}/statistic/started_at"
+
+    def test_started_at_sensor_has_timestamp_device_class(self):
+        r = self._make_receiver()
+        payloads = self._discovery_payloads(r)
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_started_at/config"
+        assert payloads[topic]["device_class"] == "timestamp"
+
+    def test_version_has_no_discovery_entry(self):
+        """version is not a discovery sensor -- build_ha_device() already
+        reports it as the device's sw_version, so a dedicated entity
+        would be redundant."""
+        r = self._make_receiver()
+        payloads = self._discovery_payloads(r)
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_version/config"
+        assert topic not in payloads
+
+    def test_last_message_at_still_gets_timestamp_device_class(self):
+        """Broadening the started_at check must not regress the existing
+        per-source _last_message_at sensors' device_class."""
+        r = self._make_receiver()
+        payloads = self._discovery_payloads(r)
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_last_message_at/config"
+        assert payloads[topic]["device_class"] == "timestamp"
+
+    def test_started_at_object_id_and_unique_id_use_full_receiver_id(self):
+        r = self._make_receiver()
+        payloads = self._discovery_payloads(r)
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_started_at/config"
+        payload = payloads[topic]
+        assert payload["object_id"] == f"SkyFollower_receiver_{r._id}_started_at"
+        assert payload["unique_id"] == f"SkyFollower_receiver_{r._id}_started_at"
