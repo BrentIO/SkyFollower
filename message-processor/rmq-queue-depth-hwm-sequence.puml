@@ -32,6 +32,10 @@ end
 == Independently, every telemetry_interval_seconds ==
 
 Processor -> Processor : **Read and reset the high-water mark**\n""depth_hwm = hwm.value_and_reset()""
-Processor -\ MQTT : **Publish telemetry**\n""SkyFollower/message-processor/{id}/statistic/rabbitmq_input_queue_depth_hwm"" (retain=True)
+alt depth_hwm != -1
+    Processor -\ MQTT : **Publish telemetry**\n""SkyFollower/message-processor/{id}/statistic/rabbitmq_input_queue_depth_hwm"" (retain=True)
+else no valid sample landed this window
+    Processor -> Processor : **Skip this cycle's publish**\n""-- retained topic keeps its last known-good value --""
+end
 
 @enduml

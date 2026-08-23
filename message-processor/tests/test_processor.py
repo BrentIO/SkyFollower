@@ -1855,6 +1855,12 @@ class TestTelemetryPayload:
         mock_mqtt = MagicMock()
         p._mqtt = mock_mqtt
         p._mqtt_connected = True
+        # A fresh _DepthHWM starts at -1 ("no valid sample landed this
+        # window") -- record a real sample so rabbitmq_input_queue_depth_hwm
+        # is actually published this tick (see #981: -1 is never
+        # published, so it'd otherwise be silently absent from topics
+        # below and this test wouldn't cover it at all).
+        p._rmq_queue_depth_hwm.record(0)
         p._publish_telemetry()
         base = "SkyFollower/message-processor/0/statistic"
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
@@ -1954,6 +1960,21 @@ class TestTelemetryPayload:
         assert "homeassistant/sensor/SkyFollower_message_processor_0_rules_engine_hwm_ms/config" \
             not in configs
 
+    def test_rmq_queue_depth_hwm_ha_discovery_sets_expire_after(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_rabbitmq_input_queue_depth_hwm/config"]
+        # telemetry_interval_seconds=30 (see _minimal_config) x 3.
+        assert cfg["expire_after"] == 90
+
     def test_rmq_queue_depth_hwm_publishes_recorded_max_then_resets(self):
         p = self._make_processor()
         mock_mqtt = MagicMock()
@@ -1968,10 +1989,43 @@ class TestTelemetryPayload:
         first_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
         assert first_calls[topic] == "15"
 
+        # Second tick: nothing recorded since the reset above, so
+        # value_and_reset() is back to -1 ("no valid sample landed this
+        # window") -- must never be published as -1 on the wire (#981);
+        # the retained topic simply keeps its last known-good value ("15"
+        # from the first tick) by not being touched at all this cycle.
         mock_mqtt.reset_mock()
         p._publish_telemetry()
-        second_calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-        assert second_calls[topic] == "-1"
+        second_topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert topic not in second_topics
+
+    def test_rmq_queue_depth_hwm_never_publishes_negative_one(self):
+        """Regression test (#981): feed _DepthHWM only error samples
+        across a window, assert value_and_reset() still internally
+        returns -1 (tracker behavior unchanged) and that
+        _publish_telemetry() does not call mqtt.publish for this specific
+        topic on that tick."""
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rmq_queue_depth_hwm.record(-1)
+        p._rmq_queue_depth_hwm.record(-1)
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1  # unchanged tracker behavior
+
+        # value_and_reset() above already consumed/reset the tracker back
+        # to -1 -- record the same error-only pattern again for the
+        # publish-time assertion below.
+        p._rmq_queue_depth_hwm.record(-1)
+        topic = "SkyFollower/message-processor/0/statistic/rabbitmq_input_queue_depth_hwm"
+
+        p._publish_telemetry()
+
+        published_topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert topic not in published_topics
+        # Every other statistic still publishes normally this cycle --
+        # only this one topic is skipped.
+        assert "SkyFollower/message-processor/0/statistic/active_flights" in published_topics
 
     def test_no_publish_when_mqtt_not_connected(self):
         p = self._make_processor()
