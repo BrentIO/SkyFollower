@@ -681,18 +681,50 @@ class TestProcessorArchive:
         f.save()
         return f.to_completed_flight()
 
-    def test_archive_publishes_when_connected(self):
+    def _connected_processor(self):
+        """A processor with a mocked channel + connection, wired so
+        add_callback_threadsafe invokes the scheduled callback immediately
+        -- standing in for the connection's own thread actually running
+        its ioloop, without needing a second real thread in every test."""
         p, _ = _make_processor()
         mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
         p._rmq_connected = True
+        return p, mock_channel, mock_connection
+
+    def test_archive_publishes_when_connected(self):
+        p, mock_channel, mock_connection = self._connected_processor()
 
         p._archive(self._make_completed_flight())
 
+        mock_connection.add_callback_threadsafe.assert_called_once()
         mock_channel.basic_publish.assert_called_once()
         assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
         assert p._fallback.depth() == 0
         assert p._rmq_connected is True
+
+    def test_archive_schedules_via_add_callback_threadsafe_not_channel_directly(self):
+        """self._rmq_channel must only ever be touched by the thread
+        running start_consuming() -- the eviction thread calling _archive()
+        must go through add_callback_threadsafe, never basic_publish
+        directly, even before the scheduled callback has actually run."""
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()  # add_callback_threadsafe never invokes its callback here
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        p._rmq_connected = True
+
+        p._archive(self._make_completed_flight())
+
+        mock_connection.add_callback_threadsafe.assert_called_once()
+        mock_channel.basic_publish.assert_not_called()
+        # Not yet queued to fallback either -- the callback hasn't run to
+        # decide success/failure.
+        assert p._fallback.depth() == 0
 
     def test_archive_falls_back_when_not_connected(self):
         p, _ = _make_processor()
@@ -703,16 +735,29 @@ class TestProcessorArchive:
         assert p._fallback.depth() == 1
         assert p._rmq_connected is False
 
-    def test_archive_resets_rmq_connected_on_publish_failure(self):
-        """A live basic_publish failure is the only self-correcting path
-        this component has — unlike the receiver, nothing else in
-        _archive() ever flips rmq_connected back, so a failure here must
-        set it False rather than leaving it pinned True."""
+    def test_archive_falls_back_when_scheduling_fails(self):
         p, _ = _make_processor()
         mock_channel = MagicMock()
-        mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = RuntimeError("connection closed")
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
         p._rmq_connected = True
+
+        p._archive(self._make_completed_flight())
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
+    def test_archive_callback_resets_rmq_connected_and_falls_back_on_publish_failure(self):
+        """A live basic_publish failure is the only self-correcting path
+        this component has — unlike the receiver, nothing else in
+        _archive() ever flips rmq_connected back, so a failure inside the
+        scheduled callback must set it False and queue the payload to the
+        fallback itself, since the original caller can no longer observe
+        the outcome synchronously."""
+        p, mock_channel, mock_connection = self._connected_processor()
+        mock_channel.basic_publish.side_effect = RuntimeError("boom")
 
         p._archive(self._make_completed_flight())
 
@@ -747,25 +792,34 @@ def _synchronous_drain_thread():
 
 
 class TestProcessorDrainFallback:
-    def test_drain_fallback_publishes_queued_items(self):
+    def _connected_processor_with_queued_item(self):
+        """A processor with one fallback row queued and a mocked
+        channel + connection, wired so add_callback_threadsafe invokes the
+        scheduled callback immediately -- standing in for the connection's
+        own thread actually running its ioloop."""
         p, _ = _make_processor()
         p._fallback.put('{"_id": "a"}')
         mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        return p, mock_channel, mock_connection
+
+    def test_drain_fallback_publishes_queued_items(self):
+        p, mock_channel, mock_connection = self._connected_processor_with_queued_item()
 
         with _synchronous_drain_thread():
             p._drain_fallback()
 
         assert p._fallback.depth() == 0
+        mock_connection.add_callback_threadsafe.assert_called_once()
         mock_channel.basic_publish.assert_called_once()
         assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
 
     def test_drain_fallback_leaves_items_queued_on_publish_error(self):
-        p, _ = _make_processor()
-        p._fallback.put('{"_id": "a"}')
-        mock_channel = MagicMock()
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
         mock_channel.basic_publish.side_effect = ConnectionError("gone")
-        p._rmq_channel = mock_channel
 
         with _synchronous_drain_thread():
             p._drain_fallback()
@@ -776,11 +830,8 @@ class TestProcessorDrainFallback:
         """A failed basic_publish during draining is just as much evidence
         the connection is broken as a failed live-path publish — mirror
         _archive()'s handling (and the receiver's equivalent fix)."""
-        p, _ = _make_processor()
-        p._fallback.put('{"_id": "a"}')
-        mock_channel = MagicMock()
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
-        p._rmq_channel = mock_channel
         p._rmq_connected = True
 
         with _synchronous_drain_thread():
@@ -788,6 +839,53 @@ class TestProcessorDrainFallback:
 
         assert p._rmq_connected is False
         assert p._fallback.depth() == 1
+
+    def test_drain_fallback_falls_back_when_no_connection(self):
+        """No RabbitMQ connection at all (never connected yet) must behave
+        like any other publish failure -- leave the row queued -- rather
+        than raising out of drain_in_background's background thread."""
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        p._rmq_connection = None
+
+        with _synchronous_drain_thread():
+            p._drain_fallback()
+
+        assert p._fallback.depth() == 1
+
+    def test_publish_schedules_via_add_callback_threadsafe_and_waits_for_it(self):
+        """The drain thread's publish() closure must never touch
+        self._rmq_channel directly -- only the connection's own thread may
+        (see _rmq_channel's threading contract) -- and must block until
+        the scheduled callback has actually run before returning, per
+        drain()'s synchronous per-row contract. Verified here with a real
+        background drain thread (not the synchronous-thread patch) and a
+        callback held back until the test explicitly releases it."""
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        captured: dict = {}
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: captured.setdefault("cb", cb)
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+
+        p._drain_fallback()  # spawns a real background drain thread
+
+        deadline = time.monotonic() + 2.0
+        while "cb" not in captured and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert "cb" in captured, "publish() never scheduled via add_callback_threadsafe"
+        mock_channel.basic_publish.assert_not_called()
+        assert p._fallback.depth() == 1  # not yet removed -- callback hasn't run
+
+        captured["cb"]()  # simulate the connection thread running the callback
+
+        deadline = time.monotonic() + 2.0
+        while p._fallback.depth() != 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        mock_channel.basic_publish.assert_called_once()
+        assert p._fallback.depth() == 0
 
     def _run_one_telemetry_tick(self, p) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
@@ -811,6 +909,9 @@ class TestProcessorDrainFallback:
         p, _ = _make_processor()
         p._fallback.put('{"_id": "a"}')
         p._rmq_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_connection = mock_connection
         p._rmq_connected = True
 
         with _synchronous_drain_thread():
@@ -1004,34 +1105,84 @@ class TestConsumeLoopExchangeBinding:
 
 
 # ---------------------------------------------------------------------------
-# MessageProcessor._rmq_queue_depth — passive queue_declare on this processor's own
-# input queue, reusing the existing consumer channel
+# MessageProcessor._sample_rmq_queue_depth — passive queue_declare on this
+# processor's own input queue, reusing the existing consumer channel but
+# scheduled onto the connection's own thread via add_callback_threadsafe
+# (self._rmq_channel must only ever be touched by the thread running
+# start_consuming())
 # ---------------------------------------------------------------------------
 
-class TestRmqQueueDepth:
-    def test_no_channel_returns_negative_one(self):
+class TestSampleRmqQueueDepth:
+    def test_no_channel_records_negative_one(self):
         p, _ = _make_processor()
         p._rmq_channel = None
-        assert p._rmq_queue_depth() == -1
+        p._rmq_connection = MagicMock()
 
-    def test_returns_message_count_from_passive_declare(self):
+        p._sample_rmq_queue_depth()
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1
+
+    def test_no_connection_records_negative_one(self):
+        p, _ = _make_processor()
+        p._rmq_channel = MagicMock()
+        p._rmq_connection = None
+
+        p._sample_rmq_queue_depth()
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1
+
+    def test_schedules_via_add_callback_threadsafe_not_channel_directly(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()  # never invokes its callback here
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+
+        p._sample_rmq_queue_depth()
+
+        mock_connection.add_callback_threadsafe.assert_called_once()
+        mock_channel.queue_declare.assert_not_called()
+
+    def test_callback_records_message_count_from_passive_declare(self):
         p, _ = _make_processor()
         mock_channel = MagicMock()
         mock_channel.queue_declare.return_value.method.message_count = 7
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
 
-        assert p._rmq_queue_depth() == 7
+        p._sample_rmq_queue_depth()
+
         mock_channel.queue_declare.assert_called_once_with(
             queue=p._queue_name, durable=True, passive=True
         )
+        assert p._rmq_queue_depth_hwm.value_and_reset() == 7
 
-    def test_declare_error_returns_negative_one(self):
+    def test_callback_records_negative_one_on_declare_error(self):
         p, _ = _make_processor()
         mock_channel = MagicMock()
         mock_channel.queue_declare.side_effect = ConnectionError("gone")
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
 
-        assert p._rmq_queue_depth() == -1
+        p._sample_rmq_queue_depth()
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1
+
+    def test_scheduling_failure_records_negative_one(self):
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = RuntimeError("connection closed")
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+
+        p._sample_rmq_queue_depth()
+
+        assert p._rmq_queue_depth_hwm.value_and_reset() == -1
 
 
 # ---------------------------------------------------------------------------
@@ -1055,7 +1206,10 @@ class TestRmqQueueDepthSamplerLoop:
         p, _ = _make_processor()
         mock_channel = MagicMock()
         mock_channel.queue_declare.return_value.method.message_count = 0
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
 
         with patch("message_processor.main.time.sleep") as mock_sleep:
             mock_sleep.side_effect = lambda _s: p._shutdown.set()
@@ -1067,7 +1221,10 @@ class TestRmqQueueDepthSamplerLoop:
         p, _ = _make_processor()
         mock_channel = MagicMock()
         mock_channel.queue_declare.return_value.method.message_count = 12
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
         p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
 
         self._run_one_sample_tick(p)
 
@@ -1076,6 +1233,7 @@ class TestRmqQueueDepthSamplerLoop:
     def test_one_tick_with_no_channel_records_negative_one(self):
         p, _ = _make_processor()
         p._rmq_channel = None
+        p._rmq_connection = MagicMock()
 
         self._run_one_sample_tick(p)
 

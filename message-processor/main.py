@@ -1196,8 +1196,19 @@ class MessageProcessor:
             self._archive(completed)
 
     def _archive(self, flight: CompletedFlight) -> None:
+        """Queue a completed flight for the archive processor. May be
+        called from the thread driving start_consuming() itself (a
+        same-message archive-and-restart inside _update_flight) or from
+        the eviction background thread -- self._rmq_channel/_rmq_connection
+        must only ever be touched by the former, so every call routes
+        through add_callback_threadsafe uniformly rather than branching on
+        the calling thread (harmless -- and still safe -- when called from
+        the connection's own thread too). The scheduled callback decides
+        success/failure and falls back to self._fallback.put() itself,
+        since the caller can no longer observe the outcome synchronously."""
         payload = flight.model_dump_json(by_alias=True)
-        if self._rmq_connected and self._rmq_channel:
+
+        def _publish_on_rmq_thread() -> None:
             try:
                 self._rmq_channel.basic_publish(
                     exchange="",
@@ -1205,23 +1216,64 @@ class MessageProcessor:
                     body=payload.encode(),
                     properties=pika.BasicProperties(delivery_mode=2),
                 )
+            except Exception:
+                self._rmq_connected = False
+                self._fallback.put(payload)
+
+        if self._rmq_connected and self._rmq_connection and self._rmq_channel:
+            try:
+                self._rmq_connection.add_callback_threadsafe(_publish_on_rmq_thread)
                 return
             except Exception:
                 self._rmq_connected = False
+
         self._fallback.put(payload)
 
     def _drain_fallback(self) -> None:
+        """FallbackQueue.drain() (shared/fallback_queue.py) calls
+        process_fn(payload) synchronously and decides retry/dead-letter
+        per row based on whether it raises -- that per-row contract can't
+        change, so this closure can't just fire-and-forget the publish
+        like _archive() does. Instead it schedules the real basic_publish
+        via add_callback_threadsafe (self._rmq_channel must only be
+        touched by the connection's own thread) and blocks on a
+        threading.Event the scheduled callback sets once it has actually
+        attempted the publish, re-raising whatever exception it recorded
+        -- preserving drain()'s synchronous per-row contract from its own
+        point of view while the actual socket write happens on the
+        correct thread."""
         def publish(payload: str) -> None:
+            connection = self._rmq_connection
+            if not connection:
+                raise RuntimeError("RabbitMQ connection unavailable")
+
+            done = threading.Event()
+            outcome: dict = {}
+
+            def _publish_on_rmq_thread() -> None:
+                try:
+                    self._rmq_channel.basic_publish(
+                        exchange="",
+                        routing_key="archive",
+                        body=payload.encode(),
+                        properties=pika.BasicProperties(delivery_mode=2),
+                    )
+                except Exception as exc:
+                    outcome["error"] = exc
+                finally:
+                    done.set()
+
             try:
-                self._rmq_channel.basic_publish(
-                    exchange="",
-                    routing_key="archive",
-                    body=payload.encode(),
-                    properties=pika.BasicProperties(delivery_mode=2),
-                )
+                connection.add_callback_threadsafe(_publish_on_rmq_thread)
             except Exception:
                 self._rmq_connected = False
                 raise
+
+            done.wait()
+            if "error" in outcome:
+                self._rmq_connected = False
+                raise outcome["error"]
+
         self._fallback.drain_in_background(publish)
 
     # ------------------------------------------------------------------
@@ -1373,19 +1425,37 @@ class MessageProcessor:
         except Exception:
             return 0
 
-    def _rmq_queue_depth(self) -> int:
+    def _sample_rmq_queue_depth(self) -> None:
         """Best-effort depth of this processor's input queue via passive
-        declare on the existing consumer channel. Returns -1 on any error
-        (no channel yet, or the declare itself fails)."""
-        if not self._rmq_channel:
-            return -1
+        declare on the existing consumer channel. self._rmq_channel must
+        only be touched by the thread driving start_consuming(), so this
+        (called from the sampler thread) schedules the declare via
+        add_callback_threadsafe rather than calling it directly -- the
+        scheduled callback records the result straight into
+        _rmq_queue_depth_hwm itself, so no value needs to flow back to
+        this thread at all. Records -1 (see _DepthHWM's "no valid sample"
+        sentinel) immediately when there's no channel/connection yet or
+        scheduling itself fails; -1 is also what the callback records if
+        the declare itself raises."""
+        connection = self._rmq_connection
+        channel = self._rmq_channel
+        if not connection or not channel:
+            self._rmq_queue_depth_hwm.record(-1)
+            return
+
+        def _sample_on_rmq_thread() -> None:
+            try:
+                result = channel.queue_declare(
+                    queue=self._queue_name, durable=True, passive=True
+                )
+                self._rmq_queue_depth_hwm.record(result.method.message_count)
+            except Exception:
+                self._rmq_queue_depth_hwm.record(-1)
+
         try:
-            result = self._rmq_channel.queue_declare(
-                queue=self._queue_name, durable=True, passive=True
-            )
-            return result.method.message_count
+            connection.add_callback_threadsafe(_sample_on_rmq_thread)
         except Exception:
-            return -1
+            self._rmq_queue_depth_hwm.record(-1)
 
     def _rmq_queue_depth_sampler_loop(self) -> None:
         """Samples this processor's input queue depth at most once every 10
@@ -1393,7 +1463,7 @@ class MessageProcessor:
         tracker that _publish_telemetry() reads and resets each tick."""
         while not self._shutdown.is_set():
             time.sleep(10)
-            self._rmq_queue_depth_hwm.record(self._rmq_queue_depth())
+            self._sample_rmq_queue_depth()
 
     # ------------------------------------------------------------------
     # Config polling
