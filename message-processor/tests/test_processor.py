@@ -1248,6 +1248,20 @@ class TestConsumeLoopExchangeBinding:
             queue="adsb-turing-node-3-1", on_message_callback=p._on_message
         )
 
+    def test_sets_prefetch_count_above_one(self):
+        """Each queue has exactly one consumer here (bound via the
+        consistent-hash exchange), so prefetch_count=1's fair-dispatch
+        rationale doesn't apply -- it was pure per-message round-trip
+        serialization capping throughput at ~200 msg/sec. Pin >1 rather
+        than the exact tuned value, so this doesn't churn on every future
+        retune."""
+        p, _ = _make_processor()
+        channel = self._run_one_connect(p)
+
+        channel.basic_qos.assert_called_once()
+        _, kwargs = channel.basic_qos.call_args
+        assert kwargs["prefetch_count"] > 1
+
 
 # ---------------------------------------------------------------------------
 # MessageProcessor._sample_rmq_queue_depth — passive queue_declare on this
