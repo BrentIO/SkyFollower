@@ -1008,11 +1008,15 @@ class MessageProcessor:
 
         self._maybe_resolve_route(flight)
 
-        # Rules evaluation
+        # Rules evaluation. Nanoseconds, not milliseconds -- a single
+        # evaluate() call is an in-process, no-I/O rule match against one
+        # flight's cached state, almost always sub-millisecond, so ms
+        # resolution mostly reads 0-1 and loses the signal needed to spot
+        # a real regression.
         t_rules = time.monotonic()
         matched = self._rules_engine.evaluate(flight)
-        rules_ms = (time.monotonic() - t_rules) * 1000
-        self._rules_time.record_hwm(rules_ms)
+        rules_ns = (time.monotonic() - t_rules) * 1e9
+        self._rules_time.record_hwm(rules_ns)
 
         for rule in matched:
             flight.matched_rules.append(rule["identifier"])
@@ -1396,14 +1400,14 @@ class MessageProcessor:
 
         processing_hwm = self._processing_time.hwm_ms_and_reset()
         self._processing_time.reset()
-        rules_hwm = self._rules_time.hwm_ms_and_reset()
+        rules_hwm_ns = self._rules_time.hwm_ms_and_reset()
 
         base = f"SkyFollower/message-processor/{pid}/statistic"
 
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
         self._mqtt.publish(f"{base}/messages_per_second", str(round(self._rate.rate(), 2)), retain=True)
         self._mqtt.publish(f"{base}/processing_time_hwm_ms", str(processing_hwm), retain=True)
-        self._mqtt.publish(f"{base}/rules_engine_hwm_ms", str(rules_hwm), retain=True)
+        self._mqtt.publish(f"{base}/rules_engine_hwm_ns", str(rules_hwm_ns), retain=True)
         self._mqtt.publish(
             f"{base}/rabbitmq_input_queue_depth_hwm",
             str(self._rmq_queue_depth_hwm.value_and_reset()),
@@ -1574,7 +1578,12 @@ class MessageProcessor:
             # where 0 decimal places would round away most of its signal.
             _Sensor("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms",
                     extra={"suggested_display_precision": 1}),
-            _Sensor("rules_engine_hwm_ms", "Rules Engine HWM", "mdi:clock", "measurement", "ms"),
+            # Nanosecond values are large integers (thousands+); a
+            # fractional nanosecond carries no real signal (time.monotonic()
+            # doesn't resolve that finely), so 0 decimal places is the
+            # deliberate choice here, unlike processing_time_hwm_ms above.
+            _Sensor("rules_engine_hwm_ns", "Rules Engine HWM", "mdi:clock", "measurement", "ns",
+                    extra={"suggested_display_precision": 0}),
             _Sensor("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement"),
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
