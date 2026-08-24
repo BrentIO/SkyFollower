@@ -8,9 +8,9 @@ the configured rules engine, publishes MQTT notifications when rules match, and
 routes completed flights to the archive queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one message processor instance;
 scale horizontally by adding message processor containers, whether on the
-same host (see `docker-compose.message-processor.yaml`'s profile-gated
-`message-processor-2`..`message-processor-8` service definitions, and
-`MESSAGE_PROCESSOR_ID` below) or on separate hosts.
+same host or on separate hosts -- see `MESSAGE_PROCESSOR_ID` below for how
+`scripts/install.sh` generates each instance's service block in
+`docker-compose.message-processor.yaml`.
 
 ![Message Processor architecture](./message-processor.svg)
 
@@ -45,40 +45,68 @@ interpolated by Compose from this host's `.env` (written by
 to `/app/data`, a fixed, non-configurable bind mount -- see
 `docker-compose.message-processor.yaml`.
 
-### `MESSAGE_PROCESSOR_ID` and `MESSAGE_PROCESSOR_PREFIX`
+### `MESSAGE_PROCESSOR_ID`
 
-`MESSAGE_PROCESSOR_ID` is set per-service in `docker-compose.message-processor.yaml`
-as `${MESSAGE_PROCESSOR_PREFIX:-mp}-{n}` (e.g. `turing-node-3-1`) rather than
-read directly from `.env` -- it can be any string, it only has to be unique
-across the whole deployment, and deriving it from `MESSAGE_PROCESSOR_PREFIX`
-(a `.env` value, defaulting to the node's own hostname) plus a fixed
-per-service index makes that uniqueness structural rather than something
-tracked on paper.
+`MESSAGE_PROCESSOR_ID` is a single flat, fleet-wide sequential number -- there
+is exactly one ID per processor across the whole deployment, not a per-node
+prefix plus a local index. It's set per-service in
+`docker-compose.message-processor.yaml` as a literal (not read from `.env`
+via interpolation), because `scripts/install.sh` decides it at
+compose-generation time, not the Python process at first boot: the compose
+service name and container name are static values resolved at `docker
+compose up` time, so they can't depend on something a container only
+discovers after it's already running.
 
-The message processor declares and consumes from `adsb-{MESSAGE_PROCESSOR_ID}`,
-binding that queue to the `adsb` consistent-hash exchange with a weight of `1`
-(see [Routing](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#routing)
+That one ID is used verbatim -- with no local/global translation -- for
+every artifact belonging to that processor:
+
+| What | Format |
+|---|---|
+| Compose service name | `skyfollower-message-processor-{id}` |
+| Docker container name | `skyfollower-message-processor-{id}` |
+| RabbitMQ queue name | `skyfollower-message-processor-{id}` |
+| Redis heartbeat/claim key | `skyfollower-message-processor-{id}` |
+| Data directory | `./data/skyfollower-message-processor-{id}` |
+
+The message processor declares and consumes from
+`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, binding that queue to
+the `adsb` consistent-hash exchange with a weight of `1` (see
+[Routing](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#routing)
 in the receiver's README for the exchange's shape and its operational
 consequences). Because the ID is embedded in the queue name, an abandoned
 queue is identifiable by name alone: the RabbitMQ management UI shows
-`adsb-turing-node-3-1` with a consumer count of zero once that message
-processor is gone.
+`skyfollower-message-processor-7` with a consumer count of zero once that
+message processor is gone.
 
 On startup the message processor attempts to claim a Redis key
-`message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat` using `SET NX`. If the
+`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}` using `SET NX`. If the
 key already exists (i.e., another instance with the same ID is running), the
 process exits immediately to prevent duplicate-ID conflicts.
 
-Every message processor instance on a host shares the identical `.env` --
-only the numeric suffix of `MESSAGE_PROCESSOR_ID` differs, and that comes
-from which fixed service definition it is (`message-processor-1` through
-`-8`), not a separate value anyone sets. Scaling out on the same host is
-just: add the next number to `COMPOSE_PROFILES` in `.env` (e.g.
-`COMPOSE_PROFILES=mp-2,mp-3` for three processors total) and bring it up.
-No receiver is touched, and none has to be restarted. See
-`docker-compose.message-processor.yaml`'s own comments for why
-`deploy.replicas` can't substitute for this (each replica would need its
-own volume and its own derivable ID, and Compose doesn't provide either).
+The ID is sequential (operator-supplied count), not random, deliberately:
+scale-down safety depends on operators being able to reason about creation
+order -- remove the highest-numbered/most-recently-bound instance to avoid a
+large RabbitMQ consistent-hash reshuffle (see
+[Routing](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#routing)'s
+"Remove from the end, never the middle" guidance). A random ID would solve
+cross-node uniqueness just as well but would destroy that property.
+
+`docker-compose.message-processor.yaml`, as fetched from the repo, holds only
+the shared `x-message-processor`/`x-message-processor-environment` anchors --
+no services. `scripts/install.sh`'s `collect_message_processor_env()` asks
+whether this run is replacing an existing processor (adopts and confirms one
+specific ID) or adding new ones (asks how many are currently implemented
+fleet-wide and how many this host will add, then computes the new range as
+`existing_count+1` through `existing_count+num_new`), and appends one
+concrete service block per ID -- referencing this file's own anchors, since
+YAML anchors only resolve within the file that defines them -- to this node's
+copy of the file. Re-running it later to add more processors to the same
+node appends new blocks without touching already-running ones; the compose
+file is no-clobber fetched (only written the first time) for exactly this
+reason. See `docker-compose.message-processor.yaml`'s own comments for why
+`deploy.replicas` can't substitute for any of this (each replica would need
+its own volume and its own derivable ID, and Compose doesn't provide
+either).
 
 ## Decoding
 
@@ -144,7 +172,7 @@ band.
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `message_processor:{ID}:heartbeat` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
+| `skyfollower-message-processor-{ID}` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
 | `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
 | `metrics:message_processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
@@ -413,11 +441,13 @@ reconnects after downtime; the rule still fires and is still recorded in
 `matched_rules`/the eventual archived flight.
 
 Because `active_flights.db` only depends on `MESSAGE_PROCESSOR_ID` (which
-determines the RabbitMQ queue consumed, `adsb-{MESSAGE_PROCESSOR_ID}`) and
-not on container identity, moving the file to a replacement container with
-the same `MESSAGE_PROCESSOR_ID` resumes tracking the same way a restart
-does. One caveat: the Redis heartbeat key
-(`message_processor:{MESSAGE_PROCESSOR_ID}:heartbeat`, `SET NX` with a
+determines the RabbitMQ queue consumed,
+`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`) and not on container
+identity, moving the file to a replacement container with the same
+`MESSAGE_PROCESSOR_ID` resumes tracking the same way a restart does. This is
+exactly `scripts/install.sh`'s "replacing an existing message processor?"
+flow -- see `MESSAGE_PROCESSOR_ID` above. One caveat: the Redis heartbeat key
+(`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, `SET NX` with a
 TTL of `2 × telemetry_interval_seconds`) must expire — or be deleted
 manually — before a replacement container can claim the same ID.
 

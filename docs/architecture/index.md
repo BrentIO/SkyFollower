@@ -9,38 +9,47 @@ flights in S3, including the RabbitMQ offline-fallback path at each hop.
 
 Receivers publish every message to the durable `adsb` exchange, of type
 `x-consistent-hash`, keyed by the aircraft's ICAO hex. Each message processor
-declares and binds its own durable queue, `adsb-{MESSAGE_PROCESSOR_ID}`, with
-a weight of `1`. The exchange hashes the routing key against the bound queues
-and delivers each message to exactly one of them, so an aircraft stays with
-one message processor and the per-aircraft flight state it holds.
+declares and binds its own durable queue,
+`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, with a weight of `1`.
+The exchange hashes the routing key against the bound queues and delivers
+each message to exactly one of them, so an aircraft stays with one message
+processor and the per-aircraft flight state it holds.
 
 **No receiver knows or cares how many message processors exist**, so no
 resize ever restarts a receiver — which matters, because a receiver restart
 is an ingest gap: it is reading live TCP streams, and whatever arrives while
 it is down is gone.
 
-`docker-compose.message-processor.yaml` ships eight processor definitions
-built from one shared anchor. `message-processor-1` always runs; each of the
-other seven sits behind a Compose profile named after it. To add a message
-processor on any host, name its profile in that host's `.env` and bring the
-host up:
+`MESSAGE_PROCESSOR_ID` is a single flat, fleet-wide sequential number, and
+that one ID is used verbatim — no local/global translation — as the compose
+service name, container name, RabbitMQ queue name, Redis heartbeat key, and
+data directory alike:
+`skyfollower-message-processor-{id}` everywhere. `docker-compose.message-processor.yaml`,
+as fetched from the repo, holds only the shared anchors every instance is
+built from — no service definitions. `scripts/install.sh` generates the
+concrete per-ID service list into each node's own copy of that file: it asks
+whether this run is replacing an existing processor (adopts one specific ID)
+or adding new ones (asks how many are currently implemented fleet-wide and
+how many this host will add, then computes the new IDs as
+`existing_count+1` through `existing_count+num_new`). To add a message
+processor to an existing node, just re-run `scripts/install.sh` for that
+role — it appends the new service block(s) without touching already-running
+instances.
 
-```bash
-COMPOSE_PROFILES=mp-2,mp-3      # this node runs three processors
-```
-
-That is the entire procedure — no file to edit, no block to uncomment, no
-generated compose file. Each instance gets its own bind-mounted data
-directory, so no two share an active flight store.
+That is the entire procedure — no `COMPOSE_PROFILES` line to write, no block
+to uncomment. Each instance gets its own bind-mounted data directory
+(`./data/skyfollower-message-processor-{id}`), so no two share an active
+flight store.
 
 IDs are unique across the deployment by construction rather than by
-convention: each instance's `MESSAGE_PROCESSOR_ID` is
-`${MESSAGE_PROCESSOR_PREFIX}-N`, and the prefix defaults to the node's
-hostname (written into `.env` by `scripts/install.sh`), so two
-nodes each running three processors get `turing-node-3-1..3` and
-`turing-node-4-1..3` with no coordination. The message processor still
-claims its ID in Redis on startup and exits if another instance already
-holds it.
+convention: they're sequential and fleet-wide, decided by the operator
+answering install.sh's prompts rather than derived from anything local to a
+node (a hostname, in particular, would make replacing a node's hardware
+awkward — the new node would compute a different value). Sequential, not
+random, is deliberate: it preserves the ability to reason about creation
+order, which the "remove the last-bound instance" scale-down guidance below
+depends on. The message processor still claims its ID in Redis on startup
+and exits if another instance already holds it.
 
 Measured over 5,000 randomly generated ICAO hexes:
 

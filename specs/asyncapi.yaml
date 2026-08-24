@@ -1861,9 +1861,12 @@ components:
 
     MessageProcessorId:
       description: >
-        Integer message processor instance identifier. Set via the
-        MESSAGE_PROCESSOR_ID environment variable. Used to distinguish
-        multiple message processor containers running simultaneously.
+        Message processor instance identifier: a single flat, fleet-wide
+        sequential number (e.g. "7"), not a per-node prefix plus a local
+        index. Set via the MESSAGE_PROCESSOR_ID environment variable as a
+        literal in that instance's generated compose service block. The
+        same ID names its RabbitMQ queue, Redis heartbeat key, and data
+        directory verbatim: skyfollower-message-processor-{id}.
 
     RuleIdentifier:
       description: >

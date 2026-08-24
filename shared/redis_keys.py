@@ -102,9 +102,11 @@ def message_processor_heartbeat_key(message_processor_id: str) -> str:
     """
     Message processor liveness key used to detect duplicate
     MESSAGE_PROCESSOR_ID on startup. Set with NX + TTL = 2 × telemetry_interval.
-    message_processor:{id}:heartbeat
+    Same fleet-wide flat ID used for the compose service/container name and
+    the RabbitMQ queue name -- no separate per-key naming scheme.
+    skyfollower-message-processor-{id}
     """
-    return f"message_processor:{message_processor_id}:heartbeat"
+    return f"skyfollower-message-processor-{message_processor_id}"
 
 
 def metrics_registration_misses_key(message_processor_id: str, period: str) -> str:

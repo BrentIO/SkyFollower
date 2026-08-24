@@ -379,7 +379,8 @@ class TestIcaoRoutingIntegration:
 
     def test_receiver_declares_no_processor_queues(self):
         """The receiver knows nothing about how many processors exist: it
-        declares only the exchange topology, never an adsb-{id} queue."""
+        declares only the exchange topology, never a
+        skyfollower-message-processor-{id} queue."""
         r = self._make_receiver()
         ch = MagicMock()
 

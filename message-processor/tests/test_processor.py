@@ -1161,21 +1161,21 @@ class TestMessageProcessorIdentity:
     it names both the input queue and the Redis duplicate-ID guard key."""
 
     def test_queue_name_uses_the_id_verbatim(self):
-        p, _ = _make_processor(message_processor_id="turing-node-3-1")
-        assert p._queue_name == "adsb-turing-node-3-1"
+        p, _ = _make_processor(message_processor_id="7")
+        assert p._queue_name == "skyfollower-message-processor-7"
 
     def test_heartbeat_key_uses_the_id_verbatim(self):
-        p, mock_redis = _make_processor(message_processor_id="turing-node-3-1")
+        p, mock_redis = _make_processor(message_processor_id="7")
         mock_redis.set.return_value = True
 
         p._claim_message_processor_id()
 
         assert mock_redis.set.call_args.args[0] == message_processor_heartbeat_key(
-            "turing-node-3-1"
+            "7"
         )
 
     def test_duplicate_id_still_exits(self):
-        p, mock_redis = _make_processor(message_processor_id="turing-node-3-1")
+        p, mock_redis = _make_processor(message_processor_id="7")
         mock_redis.set.return_value = None
 
         with pytest.raises(SystemExit):
@@ -1183,13 +1183,13 @@ class TestMessageProcessorIdentity:
 
     def test_main_passes_the_id_through_without_coercion(self):
         cfg = _minimal_config()
-        cfg["message_processor_id"] = "turing-node-3-1"
+        cfg["message_processor_id"] = "7"
         with patch("message_processor.main.load_config", return_value=cfg), \
              patch("message_processor.main.MessageProcessor") as MockProcessor, \
              patch("message_processor.main.signal.signal"):
             processor_main()
 
-        assert MockProcessor.call_args.args[1] == "turing-node-3-1"
+        assert MockProcessor.call_args.args[1] == "7"
 
     def test_main_requires_the_id(self):
         # Everything else present, so the exit can only be about the ID.
@@ -1235,17 +1235,17 @@ class TestConsumeLoopExchangeBinding:
         )
 
     def test_binds_its_own_queue_with_weight_one(self):
-        p, _ = _make_processor(message_processor_id="turing-node-3-1")
+        p, _ = _make_processor(message_processor_id="7")
         channel = self._run_one_connect(p)
 
         channel.queue_declare.assert_any_call(
-            queue="adsb-turing-node-3-1", durable=True
+            queue="skyfollower-message-processor-7", durable=True
         )
         channel.queue_bind.assert_any_call(
-            queue="adsb-turing-node-3-1", exchange="adsb", routing_key="1"
+            queue="skyfollower-message-processor-7", exchange="adsb", routing_key="1"
         )
         channel.basic_consume.assert_called_once_with(
-            queue="adsb-turing-node-3-1", on_message_callback=p._on_message
+            queue="skyfollower-message-processor-7", on_message_callback=p._on_message
         )
 
     def test_sets_prefetch_count_above_one(self):

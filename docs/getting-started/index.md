@@ -125,9 +125,10 @@ docker compose up -d
 # .env, own COMPOSE_PROJECT_NAME:
 docker compose up -d
 
-# Message processor (scale by adding more hosts running this same file,
-# or more processors on one host via COMPOSE_PROFILES=mp-2,mp-3,... in
-# .env -- see message-processor/README.md)
+# Message processor (scale by adding more hosts running this same file, or
+# more processors on one host -- re-run scripts/install.sh for this role to
+# add fleet-wide IDs to this node's generated compose file; see
+# message-processor/README.md)
 docker compose up -d
 
 # Archive
