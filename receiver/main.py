@@ -614,7 +614,9 @@ class Receiver:
             last_message_at = self._last_message_at.get((host, port))
             if last_message_at is not None:
                 self._mqtt.publish(
-                    f"{base}/{mqtt_host}_{mqtt_port}_last_message_at", last_message_at, retain=True
+                    f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes",
+                    json.dumps({"last_message_received": last_message_at}),
+                    retain=True,
                 )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
@@ -670,35 +672,41 @@ class Receiver:
             "payload_not_available": "OFFLINE",
         }
 
+        # Entity names deliberately omit `display` -- has_entity_name below
+        # tells HA to compose the displayed label from device.name + this
+        # short name instead. The {host}:{port} (and {source}, for the
+        # per-source Messages/sec sensor) qualifiers stay: unlike `display`,
+        # they distinguish between multiple sources on the same receiver
+        # and aren't redundant with the device block.
         sensors = []
         for src in self._cfg.get("sources", []):
             host, port, source = src["host"], src["port"], src["source"]
             mqtt_host, mqtt_port = _sanitize_mqtt_id(str(host)), _sanitize_mqtt_id(str(port))
             field = f"messages_{mqtt_host}_{mqtt_port}_per_second"
-            sensors.append((field, f"{display} — {host}:{port} {source} Messages/sec",
-                             "mdi:broadcast", "measurement", "msg/s"))
-            sensors.append((f"{mqtt_host}_{mqtt_port}_connected", f"{display} — {host}:{port} Connected",
-                             "mdi:lan-connect", None, None))
-            sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{display} — {host}:{port} Reconnect Count",
-                             "mdi:refresh", "total_increasing", None))
-            sensors.append((f"{mqtt_host}_{mqtt_port}_last_message_at", f"{display} — {host}:{port} Last Message At",
-                             "mdi:clock", None, None))
+            sensors.append((field, f"{host}:{port} {source} Messages/sec",
+                             "mdi:broadcast", "measurement", "msg/s", None))
+            sensors.append((f"{mqtt_host}_{mqtt_port}_connected", f"{host}:{port} Connected",
+                             "mdi:lan-connect", None, None,
+                             f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes"))
+            sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{host}:{port} Reconnect Count",
+                             "mdi:refresh", "total_increasing", None, None))
         sensors += [
-            ("started_at", f"{display} — Started At",
-             "mdi:clock-start", None, None),
-            ("local_queue_depth", f"{display} — Local Queue Depth",
-             "mdi:tray-full", "measurement", None),
-            ("dead_letter_queue_depth", f"{display} — Dead Letter Queue Depth",
-             "mdi:skull-crossbones", "measurement", None),
-            ("rabbitmq_connected", f"{display} — RabbitMQ Connected",
-             "mdi:rabbit", None, None),
+            ("started_at", "Start Time",
+             "mdi:clock-start", None, None, None),
+            ("local_queue_depth", "Local Queue Depth",
+             "mdi:tray-full", "measurement", None, None),
+            ("dead_letter_queue_depth", "Dead Letter Queue Depth",
+             "mdi:skull-crossbones", "measurement", None, None),
+            ("rabbitmq_connected", "RabbitMQ Connected",
+             "mdi:rabbit", None, None, None),
         ]
 
-        for field, desc, icon, state_class, unit in sensors:
+        for field, desc, icon, state_class, unit, json_attributes_topic in sensors:
             payload: dict = {
                 **availability,
                 "state_topic": f"{base}/{field}",
                 "name": desc,
+                "has_entity_name": True,
                 "unique_id": f"SkyFollower_receiver_{rid}_{field}",
                 "object_id": f"SkyFollower_receiver_{rid}_{field}",
                 "device": device,
@@ -708,7 +716,9 @@ class Receiver:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
-            if field.endswith("_last_message_at") or field == "started_at":
+            if json_attributes_topic:
+                payload["json_attributes_topic"] = json_attributes_topic
+            if field == "started_at":
                 payload["device_class"] = "timestamp"
 
             self._mqtt.publish(

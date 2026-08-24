@@ -964,7 +964,7 @@ class TestTelemetryPayload:
         assert calls[f"{base}/localhost_30002_reconnect_count"] == "4"
         assert calls[f"{base}/localhost_30978_reconnect_count"] == "0"
 
-    def test_last_message_at_not_published_before_first_message(self):
+    def test_connected_attributes_not_published_before_first_message(self):
         r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
@@ -972,9 +972,12 @@ class TestTelemetryPayload:
         r._publish_telemetry()
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
         base = f"SkyFollower/receiver/{r._id}/statistic"
-        assert f"{base}/localhost_30002_last_message_at" not in topics
+        assert f"{base}/localhost_30002_connected_attributes" not in topics
 
-    def test_last_message_at_published_once_set(self):
+    def test_connected_attributes_published_once_last_message_set(self):
+        """last_message_at folds into the sibling _connected sensor's
+        json_attributes_topic as a `last_message_received` JSON key,
+        rather than existing as its own standalone entity/state topic."""
         r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
@@ -983,8 +986,11 @@ class TestTelemetryPayload:
         r._publish_telemetry()
         calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
         base = f"SkyFollower/receiver/{r._id}/statistic"
-        assert calls[f"{base}/localhost_30002_last_message_at"] == "2026-01-15T10:00:00+00:00"
-        assert f"{base}/localhost_30978_last_message_at" not in calls
+        assert json.loads(calls[f"{base}/localhost_30002_connected_attributes"]) == {
+            "last_message_received": "2026-01-15T10:00:00+00:00"
+        }
+        assert f"{base}/localhost_30978_connected_attributes" not in calls
+        assert f"{base}/localhost_30002_last_message_at" not in calls
 
     def test_rabbitmq_connected_value(self):
         r = self._make_receiver()
@@ -1031,19 +1037,63 @@ class TestTelemetryPayload:
                     "https://brentio.github.io/SkyFollower/components/receiver.html"
                 )
 
-    def test_last_message_at_sensor_has_timestamp_device_class(self):
+    def test_last_message_at_has_no_standalone_discovery_entry(self):
+        """Folded into the sibling _connected sensor's json_attributes_topic
+        (item #3) -- it must no longer exist as its own entity."""
         r = self._make_receiver()
         mock_mqtt = MagicMock()
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
-        found = False
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert (
+            f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_last_message_at/config"
+            not in topics
+        )
+
+    def test_connected_sensor_has_json_attributes_topic(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_connected/config"
+        payloads = {c.args[0]: json.loads(c.args[1]) for c in mock_mqtt.publish.call_args_list}
+        assert payloads[topic]["json_attributes_topic"] == (
+            f"SkyFollower/receiver/{r._id}/statistic/localhost_30002_connected_attributes"
+        )
+
+    def test_has_entity_name_set_on_every_discovery_payload(self):
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        discovery_calls = [c for c in mock_mqtt.publish.call_args_list if c.args[0].startswith("homeassistant/")]
+        assert discovery_calls
+        for call in discovery_calls:
+            assert json.loads(call.args[1])["has_entity_name"] is True
+
+    def test_no_entity_name_repeats_the_display_value(self):
+        """Entity names must not bake in the receiver's display name --
+        has_entity_name + the device block cover that. The {host}:{port}
+        (and {source}, for Messages/sec) qualifiers on per-source sensors
+        are unrelated to this and must survive."""
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "name": "Attic 1090",
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
         for call in mock_mqtt.publish.call_args_list:
-            if call.args[0] == f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_last_message_at/config":
-                found = True
-                cfg_payload = json.loads(call.args[1])
-                assert cfg_payload["device_class"] == "timestamp"
-        assert found
+            if call.args[0].startswith("homeassistant/"):
+                assert "Attic 1090" not in json.loads(call.args[1])["name"]
 
 
 class TestPublishTelemetryVersion:
@@ -1220,10 +1270,6 @@ class TestDottedHostSanitization:
         topic _publish_telemetry() actually publishes -- otherwise HA's
         entity would point at a topic that never receives data."""
         r = self._make_receiver()
-        # last_message_at is only published once a message has actually
-        # been seen (None -> not published, independent of this issue) --
-        # set it so its discovery sensor's state_topic is comparable too.
-        r._last_message_at[(self._DOTTED_HOST, 30002)] = "2026-01-15T10:00:00+00:00"
 
         telemetry_mqtt = MagicMock()
         r._mqtt = telemetry_mqtt
@@ -1241,6 +1287,27 @@ class TestDottedHostSanitization:
         }
 
         assert discovery_state_topics <= published_topics
+
+    def test_connected_sensor_json_attributes_topic_agrees_with_publish(self):
+        """The _connected sensor's json_attributes_topic must be
+        byte-identical to the topic _publish_telemetry() actually publishes
+        the {"last_message_received": ...} JSON to."""
+        r = self._make_receiver()
+        r._last_message_at[(self._DOTTED_HOST, 30002)] = "2026-01-15T10:00:00+00:00"
+
+        telemetry_mqtt = MagicMock()
+        r._mqtt = telemetry_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        published_topics = {c.args[0] for c in telemetry_mqtt.publish.call_args_list}
+
+        discovery_mqtt = MagicMock()
+        r._mqtt = discovery_mqtt
+        r._publish_ha_autodiscovery()
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_192-168-10-107_30002_connected/config"
+        payloads = {c.args[0]: json.loads(c.args[1]) for c in discovery_mqtt.publish.call_args_list}
+
+        assert payloads[topic]["json_attributes_topic"] in published_topics
 
 
 # ---------------------------------------------------------------------------
@@ -1298,13 +1365,11 @@ class TestHaDiscoveryStartedAt:
         topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_version/config"
         assert topic not in payloads
 
-    def test_last_message_at_still_gets_timestamp_device_class(self):
-        """Broadening the started_at check must not regress the existing
-        per-source _last_message_at sensors' device_class."""
+    def test_started_at_name_reads_start_time(self):
         r = self._make_receiver()
         payloads = self._discovery_payloads(r)
-        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_localhost_30002_last_message_at/config"
-        assert payloads[topic]["device_class"] == "timestamp"
+        topic = f"homeassistant/sensor/SkyFollower_receiver_{r._id}_started_at/config"
+        assert payloads[topic]["name"] == "Start Time"
 
     def test_started_at_object_id_and_unique_id_use_full_receiver_id(self):
         r = self._make_receiver()

@@ -18,7 +18,7 @@ Compose from this host's `.env` (written by `scripts/install.sh`).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `RECEIVER_NAME` | ✅ | — | Friendly label shown in Home Assistant (device name/model and every sensor label) in place of the generic `Receiver {short-id}` fallback. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what this is set to. |
+| `RECEIVER_NAME` | ✅ | — | Friendly label shown in Home Assistant (device name/model) in place of the generic `Receiver {short-id}` fallback. Sensors don't repeat this in their own names -- `has_entity_name: true` has Home Assistant compose each entity's displayed label from the device name plus the sensor's own short name. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what this is set to. |
 | `RECEIVER_SOURCES` | ✅ | — | Comma-separated `host:port:source` triples (see below). At least one is required. |
 | `RABBITMQ_HOST` | ✅ | — | |
 | `RABBITMQ_PORT` | ❌ | `5672` | |
@@ -262,22 +262,28 @@ All topics use the root `SkyFollower`.
 | `messages_{host}_{port}_per_second` | Float as string | Average message rate for one specific `sources[]` connection since last report |
 | `{host}_{port}_connected` | `True` or `False` | Whether the TCP connection to that specific `sources[]` entry's readsb instance is currently open |
 | `{host}_{port}_reconnect_count` | Integer as string | Number of times that specific `sources[]` connection has dropped and been re-established since process start |
-| `{host}_{port}_last_message_at` | UTC ISO-8601 timestamp | When that specific `sources[]` connection last processed a message; not published at all until the first one arrives |
+| `{host}_{port}_connected_attributes` | JSON, e.g. `{"last_message_received": "2026-01-15T10:00:00+00:00"}` | Home Assistant `json_attributes_topic` for the sibling `{host}_{port}_connected` sensor; carries when that specific `sources[]` connection last processed a message. Not published at all until the first message on that connection arrives |
 | `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) |
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `version` | String | Running image version (`VERSION` env var, `"dev"` if unset) |
 
-A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_last_message_at` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two EXTERNAL feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "EXTERNAL" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_last_message_at`.
+A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_connected_attributes` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two EXTERNAL feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "EXTERNAL" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_connected_attributes`.
 
-Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`.
+Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`, except `{host}_{port}_connected_attributes`, which is itself a small JSON payload -- Home Assistant's `json_attributes_topic` mechanism for attaching extra attributes to a sensor doesn't have a plain-value equivalent.
 
 Home Assistant autodiscovery payloads are published to
-`homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect.
+`homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect,
+with `has_entity_name: true` so Home Assistant composes each entity's
+displayed label from the device name plus the entity's own short name
+rather than the receiver's name being baked into every sensor name.
 Each sensor's `state_topic` points directly at its own
 `SkyFollower/receiver/{receiver_id}/statistic/{field}` topic — no
-`value_template` needed.
+`value_template` needed. The `{host}_{port}_connected` sensor additionally
+sets `json_attributes_topic` to its sibling `{host}_{port}_connected_attributes`
+topic, exposing a `last_message_received` attribute instead of a separate
+`_last_message_at` entity.
 
 ## Adding or Changing readsb Sources
 
