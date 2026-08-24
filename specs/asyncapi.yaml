@@ -101,13 +101,17 @@ channels:
       ReceiverConnectionReconnectCountMessage:
         $ref: '#/components/messages/ReceiverConnectionReconnectCountMessage'
 
-  receiverConnectionLastMessageAt:
-    address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_last_message_at'
+  receiverConnectionConnectedAttributes:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_connected_attributes'
     description: >
-      UTC ISO-8601 timestamp of the last message processed for one
-      specific sources[] connection -- not published at all until the
-      first message on that connection arrives. Published every
-      telemetry_interval_seconds once set, retained.
+      JSON attributes for the sibling {connection_host}_{connection_port}_connected
+      sensor -- currently just last_message_received, the UTC ISO-8601
+      timestamp of the last message processed for one specific sources[]
+      connection. Not published at all until the first message on that
+      connection arrives. Published every telemetry_interval_seconds once
+      set, retained. Consumed by Home Assistant discovery's
+      json_attributes_topic on the _connected sensor rather than backing a
+      standalone entity.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -116,8 +120,8 @@ channels:
       connection_port:
         $ref: '#/components/parameters/ConnectionPort'
     messages:
-      ReceiverConnectionLastMessageAtMessage:
-        $ref: '#/components/messages/ReceiverConnectionLastMessageAtMessage'
+      ReceiverConnectionConnectedAttributesMessage:
+        $ref: '#/components/messages/ReceiverConnectionConnectedAttributesMessage'
 
   receiverLocalQueueDepth:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
@@ -698,11 +702,11 @@ operations:
       $ref: '#/channels/receiverConnectionReconnectCount'
     summary: Receiver publishes the reconnect count of one sources[] connection
 
-  publishReceiverConnectionLastMessageAt:
+  publishReceiverConnectionConnectedAttributes:
     action: send
     channel:
-      $ref: '#/channels/receiverConnectionLastMessageAt'
-    summary: Receiver publishes when one sources[] connection last processed a message
+      $ref: '#/channels/receiverConnectionConnectedAttributes'
+    summary: Receiver publishes JSON attributes (last_message_received) for one sources[] connection's _connected sensor
 
   publishReceiverLocalQueueDepth:
     action: send
@@ -1014,13 +1018,13 @@ components:
       payload:
         $ref: '#/components/schemas/ReceiverConnectionReconnectCount'
 
-    ReceiverConnectionLastMessageAtMessage:
-      name: ReceiverConnectionLastMessageAtMessage
-      title: Receiver per-connection last message received time
-      summary: UTC ISO-8601 timestamp of the last message processed for one sources[] connection
-      contentType: text/plain
+    ReceiverConnectionConnectedAttributesMessage:
+      name: ReceiverConnectionConnectedAttributesMessage
+      title: Receiver per-connection _connected sensor JSON attributes
+      summary: JSON attributes (last_message_received) for one sources[] connection's _connected sensor
+      contentType: application/json
       payload:
-        $ref: '#/components/schemas/ReceiverConnectionLastMessageAt'
+        $ref: '#/components/schemas/ReceiverConnectionConnectedAttributes'
 
     ReceiverLocalQueueDepthMessage:
       name: ReceiverLocalQueueDepthMessage
@@ -1394,11 +1398,15 @@ components:
       description: Number of times one sources[] connection has dropped and been re-established since process start
       example: 0
 
-    ReceiverConnectionLastMessageAt:
-      type: string
-      format: date-time
-      description: UTC ISO-8601 timestamp of the last message processed for one sources[] connection
-      example: "2026-01-15T10:00:00+00:00"
+    ReceiverConnectionConnectedAttributes:
+      type: object
+      description: JSON attributes for one sources[] connection's _connected sensor
+      properties:
+        last_message_received:
+          type: string
+          format: date-time
+          description: UTC ISO-8601 timestamp of the last message processed for one sources[] connection
+          example: "2026-01-15T10:00:00+00:00"
 
     ReceiverLocalQueueDepth:
       type: integer
