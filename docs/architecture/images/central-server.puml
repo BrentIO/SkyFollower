@@ -5,7 +5,7 @@
 package "Central Server" as CentralSvr $OnPrem {
     package "RabbitMQ" as Rabbit {
         entity "adsb\n(x-consistent-hash)" as adsbx
-        queue "adsb-{MESSAGE_PROCESSOR_ID}" as adsbq
+        queue "skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}" as adsbq
         queue "archive" as archiveq
 
         adsbx -down-> adsbq : Routing key icao_hex,\nbinding weight 1

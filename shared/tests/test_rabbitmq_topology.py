@@ -6,18 +6,21 @@ from shared.rabbitmq_topology import (
     ADSB_EXCHANGE_ARGUMENTS,
     ADSB_UNROUTABLE_EXCHANGE,
     ADSB_UNROUTABLE_QUEUE,
-    adsb_queue_name,
     bind_adsb_queue,
     declare_adsb_topology,
+    message_processor_queue_name,
 )
 
 
-class TestAdsbQueueName:
+class TestMessageProcessorQueueName:
     def test_numeric_id(self):
-        assert adsb_queue_name("0") == "adsb-0"
+        assert message_processor_queue_name("0") == "skyfollower-message-processor-0"
 
     def test_arbitrary_string_id(self):
-        assert adsb_queue_name("turing-node-3-1") == "adsb-turing-node-3-1"
+        assert (
+            message_processor_queue_name("7")
+            == "skyfollower-message-processor-7"
+        )
 
 
 class TestDeclareAdsbTopology:
@@ -72,14 +75,14 @@ class TestBindAdsbQueue:
     def test_declares_and_binds_with_weight_one(self):
         channel = MagicMock()
 
-        queue_name = bind_adsb_queue(channel, "turing-node-3-1")
+        queue_name = bind_adsb_queue(channel, "7")
 
-        assert queue_name == "adsb-turing-node-3-1"
+        assert queue_name == "skyfollower-message-processor-7"
         channel.queue_declare.assert_called_once_with(
-            queue="adsb-turing-node-3-1", durable=True
+            queue="skyfollower-message-processor-7", durable=True
         )
         channel.queue_bind.assert_called_once_with(
-            queue="adsb-turing-node-3-1",
+            queue="skyfollower-message-processor-7",
             exchange=ADSB_EXCHANGE,
             routing_key=ADSB_BINDING_WEIGHT,
         )

@@ -33,9 +33,14 @@ ADSB_EXCHANGE_ARGUMENTS = {"alternate-exchange": ADSB_UNROUTABLE_EXCHANGE}
 ADSB_BINDING_WEIGHT = "1"
 
 
-def adsb_queue_name(message_processor_id: str) -> str:
-    """Input queue owned by a single message processor. adsb-{MESSAGE_PROCESSOR_ID}"""
-    return f"adsb-{message_processor_id}"
+def message_processor_queue_name(message_processor_id: str) -> str:
+    """
+    Input queue owned by a single message processor. Same fleet-wide flat ID
+    used for the compose service/container name and the Redis heartbeat key --
+    no separate queue-naming scheme layered on top.
+    skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}
+    """
+    return f"skyfollower-message-processor-{message_processor_id}"
 
 
 def declare_adsb_topology(channel) -> None:
@@ -69,7 +74,7 @@ def bind_adsb_queue(channel, message_processor_id: str) -> str:
     existing binding is a no-op, so a restarting processor keeps its slot
     and moves no aircraft.
     """
-    queue_name = adsb_queue_name(message_processor_id)
+    queue_name = message_processor_queue_name(message_processor_id)
     channel.queue_declare(queue=queue_name, durable=True)
     channel.queue_bind(
         queue=queue_name,

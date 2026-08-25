@@ -3,8 +3,9 @@ name: skyfollower-message-processor
 # Interpolated from this host's .env (written by
 # scripts/install.sh). Named one variable at a time rather than
 # `env_file: .env`, so a container only ever holds the values it reads.
-# MESSAGE_PROCESSOR_ID is not here: it's the one value that differs per
-# instance, so each service sets it alongside this block.
+# MESSAGE_PROCESSOR_ID is not here: each generated service below sets it as
+# a literal, since it's the one thing that differs per instance and is
+# decided by install.sh at generation time, not read from .env.
 x-message-processor-environment: &message-processor-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
@@ -23,9 +24,13 @@ x-message-processor-environment: &message-processor-environment
   MQTT_USERNAME: ${MQTT_USERNAME}
   MQTT_PASSWORD: ${MQTT_PASSWORD}
 
-# Everything identical across instances. What differs is the service name,
-# the profile gating it, its own data directory and its own ID -- so those
-# four are all each service holds.
+# Everything identical across instances. What differs per instance is its
+# fleet-wide ID, used verbatim -- with no local/global translation -- as the
+# compose service name, container name, RabbitMQ queue name, Redis
+# heartbeat key, and data directory. scripts/install.sh appends one
+# concrete service block below per fleet ID this node hosts; see
+# collect_message_processor_env()'s "Are you replacing an existing message
+# processor?" and fleet-count prompts.
 #
 # deploy.replicas cannot substitute for this. A replica's hostname is its
 # container ID rather than an ordinal, so there is nothing inside the
@@ -49,102 +54,16 @@ x-message-processor: &message-processor
     retries: 3
     start_period: 30s
 
+# Slots inside the RabbitMQ consistent-hash exchange are positional,
+# assigned in the order processors bind, and stable across restarts once
+# established. Scaling down, remove the highest-numbered instance:
+# unbinding from the middle reshuffles ~68% of aircraft, while merely
+# stopping a container leaves its binding intact and costs nothing. See
+# receiver/README.md's "Remove from the end, never the middle" guidance.
+#
+# No services are declared in this repo-provided template -- it exists only
+# to hold the two anchors above. scripts/install.sh appends one service
+# block per fleet ID immediately below this line the first time it fetches
+# this file for a node, and leaves already-appended blocks (and any
+# instance they represent) untouched on a later re-run that only adds more.
 services:
-
-  # message-processor-1 always runs; 2 through 8 are each gated behind a
-  # profile of their own, so a node running three processors sets one line
-  # in its .env and nothing else:
-  #
-  #   COMPOSE_PROFILES=mp-2,mp-3
-  #
-  # No receiver is touched by adding one. A processor declares and binds its
-  # own queue, and the consistent-hash exchange starts routing to it as soon
-  # as that binding exists.
-  #
-  # Slots inside the exchange are positional and assigned in the order
-  # processors bind, and `docker compose up -d` starts services in no
-  # guaranteed order -- so bringing several up at once assigns slots in
-  # whatever order they happen to connect. That is harmless: slots need to
-  # be stable, not predictable, and they are stable across restarts once
-  # established. Scaling down, remove the highest-numbered instance:
-  # unbinding from the middle reshuffles ~68% of aircraft, while merely
-  # stopping a container leaves its binding intact and costs nothing.
-  #
-  # MESSAGE_PROCESSOR_PREFIX defaults to this node's hostname, written into
-  # .env by scripts/install.sh, so two nodes each running
-  # several processors never collide on an ID without anyone coordinating.
-  #
-  # Each instance's data directory is a bind mount of its own, matching
-  # rabbitmq/redis on the core host -- the active flight store stays
-  # directly readable by the operator, and no two processors share one.
-
-  message-processor-1:
-    <<: *message-processor
-    volumes:
-      - ./data/message-processor-1:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-1
-
-  message-processor-2:
-    <<: *message-processor
-    profiles: ["mp-2"]
-    volumes:
-      - ./data/message-processor-2:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-2
-
-  message-processor-3:
-    <<: *message-processor
-    profiles: ["mp-3"]
-    volumes:
-      - ./data/message-processor-3:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-3
-
-  message-processor-4:
-    <<: *message-processor
-    profiles: ["mp-4"]
-    volumes:
-      - ./data/message-processor-4:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-4
-
-  message-processor-5:
-    <<: *message-processor
-    profiles: ["mp-5"]
-    volumes:
-      - ./data/message-processor-5:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-5
-
-  message-processor-6:
-    <<: *message-processor
-    profiles: ["mp-6"]
-    volumes:
-      - ./data/message-processor-6:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-6
-
-  message-processor-7:
-    <<: *message-processor
-    profiles: ["mp-7"]
-    volumes:
-      - ./data/message-processor-7:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-7
-
-  message-processor-8:
-    <<: *message-processor
-    profiles: ["mp-8"]
-    volumes:
-      - ./data/message-processor-8:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${MESSAGE_PROCESSOR_PREFIX:-mp}-8

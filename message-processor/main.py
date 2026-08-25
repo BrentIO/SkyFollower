@@ -54,9 +54,9 @@ from shared.models import (
 )
 from shared.mqtt import build_mqtt_client
 from shared.rabbitmq_topology import (
-    adsb_queue_name,
     bind_adsb_queue,
     declare_adsb_topology,
+    message_processor_queue_name,
 )
 from shared.redis_keys import (
     config_areas_version_key,
@@ -623,7 +623,7 @@ class MessageProcessor:
     def __init__(self, config: dict, message_processor_id: str) -> None:
         self._cfg = config
         self._id = message_processor_id
-        self._queue_name = adsb_queue_name(message_processor_id)
+        self._queue_name = message_processor_queue_name(message_processor_id)
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 

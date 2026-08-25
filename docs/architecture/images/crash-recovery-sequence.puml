@@ -8,7 +8,7 @@ box "Receiver" $OnPrem
 end box
 
 box "RabbitMQ" $OnPrem
-    queue "adsb-{MESSAGE_PROCESSOR_ID}" as AdsbQ
+    queue "skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}" as AdsbQ
     queue "archive" as ArchiveQ
 end box
 

@@ -539,11 +539,11 @@ role_data_dirs() {
       echo "data/management-ui"
       ;;
     message-processor)
-      # All eight, not just the one that always runs: enabling another
-      # processor is meant to be a COMPOSE_PROFILES line in .env and
-      # nothing else, which it stops being if its data directory has to
-      # be created by hand first (or by Docker, as root).
-      echo "data/message-processor-1 data/message-processor-2 data/message-processor-3 data/message-processor-4 data/message-processor-5 data/message-processor-6 data/message-processor-7 data/message-processor-8"
+      # Nothing fixed to create here: which IDs this node hosts (and so
+      # which data/skyfollower-message-processor-{id} directories exist)
+      # isn't known until collect_message_processor_env() has run its
+      # prompts, which creates each one itself as it appends that ID's
+      # service block.
       ;;
     archive)
       echo "data/archive-processor data/archive-compaction"
@@ -560,6 +560,17 @@ fetch_role() {
   for rel_path in $(role_files "$role"); do
     local dest_path="${role_dir}/${rel_path}"
     mkdir -p "$(dirname "$dest_path")"
+    # message-processor's compose file stops being a static fetched
+    # artifact the moment collect_message_processor_env() appends this
+    # node's per-ID service blocks into it -- re-fetching over it on a
+    # later run would silently discard every already-running instance's
+    # block. No-clobber it exactly like a config/*.example's real target
+    # below: fetched fresh only the first time, left entirely alone once it
+    # exists (delete it by hand to pick up template/anchor changes).
+    if [ "$role" = "message-processor" ] && [ "$rel_path" = "docker-compose.message-processor.yaml" ] && [ -e "$dest_path" ]; then
+      echo "  ${rel_path} (already exists -- left as-is, holds this node's generated processor list)"
+      continue
+    fi
     echo "  ${rel_path}"
     if http_get "${raw_base}/${rel_path}" > "$dest_path" 2>/dev/null; then
       continue
@@ -801,38 +812,158 @@ LOG_LEVEL=info
 ENV_EOF
 }
 
+normalize_message_processor_id() {
+  # Accepts either the full "skyfollower-message-processor-{id}" form or a
+  # bare "{id}", and prints the bare id -- always what's actually stored/
+  # compared, since it's what names the compose service/container, the
+  # RabbitMQ queue, and the Redis heartbeat key are all built from at
+  # generation time. Fails (no output, non-zero exit) on anything that
+  # isn't a positive whole number once the prefix is stripped -- fleet IDs
+  # start at 1, matching existing_count+1 as the first ID a fresh fleet
+  # ever hands out.
+  local raw="$1" id
+  case "$raw" in
+    skyfollower-message-processor-*)
+      id="${raw#skyfollower-message-processor-}"
+      ;;
+    *)
+      id="$raw"
+      ;;
+  esac
+  [[ "$id" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s' "$id"
+}
+
+existing_message_processor_ids() {
+  # IDs already holding a generated service block in this node's compose
+  # file, one per line -- empty (not an error) if the file doesn't exist
+  # yet or has no service blocks appended. Used so a re-run only appends
+  # the IDs it doesn't already find, whether that's this collection
+  # function's own "how many currently implemented" arithmetic overlapping
+  # a prior run, or a "replacing" ID that turns out to already be present.
+  local compose_file="$1"
+  [ -f "$compose_file" ] || return 0
+  grep -E '^  skyfollower-message-processor-[0-9]+:' "$compose_file" 2>/dev/null \
+    | sed -E 's/^  skyfollower-message-processor-([0-9]+):.*/\1/' || true
+}
+
+append_message_processor_service() {
+  # Appends one concrete service block referencing this file's own
+  # x-message-processor/x-message-processor-environment anchors -- YAML
+  # anchors only resolve within the file that defines them, which is why
+  # this can't be a second compose file merged in via COMPOSE_FILE.
+  local compose_file="$1" id="$2"
+  cat >> "$compose_file" <<SERVICE_EOF
+
+  skyfollower-message-processor-${id}:
+    <<: *message-processor
+    container_name: skyfollower-message-processor-${id}
+    volumes:
+      - ./data/skyfollower-message-processor-${id}:/app/data
+    environment:
+      <<: *message-processor-environment
+      MESSAGE_PROCESSOR_ID: ${id}
+SERVICE_EOF
+}
+
 collect_message_processor_env() {
   local role_dir="$1" env_file="${1}/.env"
+  local compose_file="${role_dir}/docker-compose.message-processor.yaml"
   echo "-- ${role_dir} (message-processor) --"
 
-  local default_prefix
-  default_prefix="$(existing_env_value "$env_file" MESSAGE_PROCESSOR_PREFIX)"
-  if [ -z "$default_prefix" ]; then
-    local raw_hostname
-    raw_hostname="$(hostname -s 2>/dev/null || hostname 2>/dev/null || uname -n)"
-    default_prefix="$(sanitize_identifier "$raw_hostname")"
-    [ -z "$default_prefix" ] && default_prefix="mp"
-  fi
-  MESSAGE_PROCESSOR_PREFIX="$(prompt_string MESSAGE_PROCESSOR_PREFIX "Processor ID prefix for this node (unique per node, no coordination needed)" "$default_prefix")"
+  local existing_ids
+  existing_ids="$(existing_message_processor_ids "$compose_file")"
 
-  local existing_profiles existing_count=1
-  existing_profiles="$(existing_env_value "$env_file" COMPOSE_PROFILES)"
-  if [ -n "$existing_profiles" ]; then
-    # Array length, not `grep -c . | wc -l`-style counting: grep exits
-    # non-zero when a count is 0, which -- even guarded by the
-    # non-empty check above -- is exactly the kind of command substitution
-    # failure that silently kills the whole script under set -e.
-    local existing_profiles_arr
-    IFS=',' read -ra existing_profiles_arr <<< "$existing_profiles"
-    existing_count=$(( ${#existing_profiles_arr[@]} + 1 ))
+  local replacing=""
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    replacing="${MESSAGE_PROCESSOR_REPLACING:-n}"
+  else
+    read -r -p "  Are you replacing an existing message processor? [y/N]: " replacing </dev/tty
   fi
-  local num_processors
-  num_processors="$(prompt_int_range NUM_PROCESSORS "How many processors should this node run" "$existing_count" 1 8)"
-  local profiles=""
-  local i
-  for (( i=2; i<=num_processors; i++ )); do
-    profiles="${profiles:+$profiles,}mp-${i}"
-  done
+
+  local ids_to_add=()
+
+  if [ -n "$replacing" ] && [[ "$replacing" =~ ^[Yy] ]]; then
+    local raw_id norm_id=""
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+      raw_id="${MESSAGE_PROCESSOR_REPLACE_ID:-}"
+      if [ -z "$raw_id" ]; then
+        record_problem "MESSAGE_PROCESSOR_REPLACE_ID is required but is not set"
+      elif ! norm_id="$(normalize_message_processor_id "$raw_id")"; then
+        record_problem "MESSAGE_PROCESSOR_REPLACE_ID must be skyfollower-message-processor-{id} or a bare positive whole-number id (got '${raw_id}')"
+      fi
+    else
+      while true; do
+        read -r -p "  What is the queue ID? " raw_id </dev/tty
+        if norm_id="$(normalize_message_processor_id "$raw_id")"; then
+          local confirm
+          read -r -p "  The queue to use is skyfollower-message-processor-${norm_id} -- confirm? [Y/n]: " confirm </dev/tty
+          if [ -z "$confirm" ] || [[ "$confirm" =~ ^[Yy] ]]; then
+            break
+          fi
+          # Declined: loop back and ask for the ID again rather than
+          # aborting -- this is a single value being re-entered, not the
+          # multi-prompt fleet-count collection below, which is what the
+          # design calls out for a full-abort-on-decline treatment.
+        else
+          echo "    Must be skyfollower-message-processor-{id} or a bare positive whole-number id." >&2
+        fi
+      done
+    fi
+    # Only non-interactive mode can reach here with norm_id still unset --
+    # a validation failure recorded a problem above rather than exiting
+    # immediately (matching every other prompt_* helper's non-interactive
+    # behaviour: every problem across every selected role is collected and
+    # reported together at the very end of main(), not one at a time), so
+    # this must not append a malformed empty-id service block in the
+    # meantime.
+    [ -n "$norm_id" ] && ids_to_add=("$norm_id")
+  else
+    local existing_count num_new
+    existing_count="$(prompt_int_range MESSAGE_PROCESSOR_EXISTING_COUNT "How many message processors are currently implemented across your whole fleet" "0" 0 100000)"
+    num_new="$(prompt_int_range MESSAGE_PROCESSOR_NEW_COUNT "How many processors will be on this host" "1" 1 8)"
+
+    local total=$(( existing_count + num_new ))
+    local proceed=""
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+      proceed="y"
+    else
+      read -r -p "  After installation, you will have ${total} message processors. Continue? [Y/n]: " proceed </dev/tty
+    fi
+    if [ -n "$proceed" ] && ! [[ "$proceed" =~ ^[Yy] ]]; then
+      # Full abort, not a loop back to the top of this function: simpler to
+      # implement, and every value collected so far (including RABBITMQ_*/
+      # REDIS_*/MQTT_* below, never mind this function hasn't even reached
+      # those yet) is still just local shell variables that vanish with the
+      # process -- nothing has been written to disk yet for this role.
+      echo "Aborted -- no message-processor configuration was written." >&2
+      exit 1
+    fi
+
+    local i
+    for (( i=existing_count+1; i<=total; i++ )); do
+      ids_to_add+=("$i")
+    done
+  fi
+
+  echo
+  local id
+  # ${arr[@]} directly under set -u throws "unbound variable" on bash 3.2
+  # (macOS's default /bin/bash) when the array has zero elements -- the
+  # non-interactive malformed-ID path above deliberately leaves ids_to_add
+  # empty and defers to the top-level PROBLEMS_FILE check, so this has to
+  # tolerate that instead of crashing here first.
+  if [ "${#ids_to_add[@]}" -gt 0 ]; then
+    for id in "${ids_to_add[@]}"; do
+      if printf '%s\n' "$existing_ids" | grep -qx "$id"; then
+        echo "  skyfollower-message-processor-${id} already has a service block in ${compose_file} -- leaving it as-is."
+        continue
+      fi
+      mkdir -p "${role_dir}/data/skyfollower-message-processor-${id}"
+      append_message_processor_service "$compose_file" "$id"
+      echo "  Added skyfollower-message-processor-${id}."
+    done
+  fi
 
   LATITUDE="$(prompt_number_range LATITUDE "Receiver reference latitude (decimal degrees)" "$(existing_env_value "$env_file" LATITUDE)" -90 90)"
   LONGITUDE="$(prompt_number_range LONGITUDE "Receiver reference longitude (decimal degrees)" "$(existing_env_value "$env_file" LONGITUDE)" -180 180)"
@@ -854,15 +985,9 @@ collect_message_processor_env() {
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# Prefix for every processor ID on this node -- each instance appends its
-# own number. Two nodes never collide on an ID without anyone having to
-# coordinate the numbering as long as this differs per node.
-MESSAGE_PROCESSOR_PREFIX=${MESSAGE_PROCESSOR_PREFIX}
-
-# message-processor-1 always runs. To run more on this node, list the extra
-# instances' profiles here -- nothing else changes:
-#   COMPOSE_PROFILES=mp-2,mp-3      # three processors on this node
-COMPOSE_PROFILES=${profiles}
+# Which processors run on this node -- and each one's MESSAGE_PROCESSOR_ID
+# -- lives in docker-compose.message-processor.yaml as generated service
+# blocks, not here. Re-run install.sh for this role to add more.
 
 # Receiver's reference position, used to decode locally-referenced CPR
 # positions. Decimal degrees.
@@ -1112,10 +1237,11 @@ provision_rabbitmq_users() {
 
   # configure/write/read, in that order -- amq.default is required for
   # write because completed flights are published to the archive queue
-  # through the default exchange.
+  # through the default exchange. skyfollower-message-processor-.* is each
+  # processor's own queue (fleet-ID-named, not adsb-*-prefixed).
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_username") \
     && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_username" \
-      '^(adsb.*|archive|amq\.default)$' '^(adsb.*|archive|amq\.default)$' '^(adsb.*|archive)$'); then
+      '^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$' '^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$' '^(adsb.*|skyfollower-message-processor-.*|archive)$'); then
     echo "  ✓ ${rabbitmq_username}: no tags, scoped to SkyFollower's own resources"
   else
     echo "  ✗ Could not scope ${rabbitmq_username}'s tags/permissions -- check manually." >&2

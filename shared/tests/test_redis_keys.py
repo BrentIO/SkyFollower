@@ -77,8 +77,8 @@ class TestArchiveKeys:
 
 class TestProcessorKeys:
     def test_heartbeat_key(self):
-        assert message_processor_heartbeat_key(0) == "message_processor:0:heartbeat"
-        assert message_processor_heartbeat_key(3) == "message_processor:3:heartbeat"
+        assert message_processor_heartbeat_key(0) == "skyfollower-message-processor-0"
+        assert message_processor_heartbeat_key(3) == "skyfollower-message-processor-3"
 
 
 class TestMetricKeys:
