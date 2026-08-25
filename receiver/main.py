@@ -658,11 +658,11 @@ class Receiver:
         # The friendly name (when set) is what a human actually reads;
         # rid stays the stable identifier underneath for topic paths/
         # unique_id regardless of which label is shown here.
-        display = self._name or f"Receiver {rid[:8]}"
+        display = self._name or rid[:8]
         base = f"SkyFollower/receiver/{rid}/statistic"
         device = build_ha_device(
             identifier=f"SkyFollower_receiver_{rid}",
-            name=f"SkyFollower {display}",
+            name=f"SkyFollower Receiver {display}",
             model=display,
             configuration_url="https://brentio.github.io/SkyFollower/components/receiver.html",
         )
