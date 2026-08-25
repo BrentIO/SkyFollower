@@ -1157,7 +1157,7 @@ class TestHaDeviceNameFallback:
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
         payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
-        assert payload["device"]["name"] == "SkyFollower Attic 1090"
+        assert payload["device"]["name"] == "SkyFollower Receiver Attic 1090"
         assert payload["device"]["model"] == "Attic 1090"
 
     def test_falls_back_to_short_id_when_name_unset(self):
@@ -1167,7 +1167,8 @@ class TestHaDeviceNameFallback:
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
         payload = json.loads(mock_mqtt.publish.call_args_list[0].args[1])
-        assert payload["device"]["model"] == f"Receiver {r._id[:8]}"
+        assert payload["device"]["name"] == f"SkyFollower Receiver {r._id[:8]}"
+        assert payload["device"]["model"] == r._id[:8]
 
     def test_identifier_and_topics_use_full_id_regardless_of_name(self):
         """The full persisted UUID stays the stable identifier/topic key
