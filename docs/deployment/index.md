@@ -90,6 +90,9 @@ each table below.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
+| `REDIS_HOST` | ❌ | — |
+| `REDIS_PORT` | ❌ | `6379` |
+| `REDIS_PASSWORD` | ❌ | — |
 | `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
 
 See [Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)

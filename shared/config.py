@@ -270,6 +270,19 @@ def receiver_config(loader: Optional[ConfigLoader] = None) -> dict:
             block["sources"] = []
     else:
         block["sources"] = []
+    # Unlike every other Redis-consuming component, the receiver's Redis
+    # dependency (identity claim + heartbeat + period counters) is
+    # entirely optional -- read directly here rather than requesting the
+    # shared "redis" nested block, whose redis_config() treats REDIS_HOST
+    # as required. An unset REDIS_HOST leaves block["redis"]["host"] == "",
+    # which Receiver.__init__ treats identically to "redis" being absent
+    # from config entirely (falls back to the original UUID identity
+    # scheme, no Redis-backed behavior at all).
+    block["redis"] = {
+        "host": loader.string("REDIS_HOST", ""),
+        "port": loader.integer("REDIS_PORT", 6379),
+        "password": loader.string("REDIS_PASSWORD", ""),
+    }
     if own:
         loader.raise_for_problems()
     return block

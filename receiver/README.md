@@ -18,7 +18,7 @@ Compose from this host's `.env` (written by `scripts/install.sh`).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `RECEIVER_NAME` | ✅ | — | Friendly label shown in Home Assistant (device name/model) in place of the generic `Receiver {short-id}` fallback. Sensors don't repeat this in their own names -- `has_entity_name: true` has Home Assistant compose each entity's displayed label from the device name plus the sensor's own short name. Purely cosmetic -- has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the persisted identity below regardless of what this is set to. |
+| `RECEIVER_NAME` | ✅ | — | Operator-chosen name for this receiver. With `REDIS_HOST` set below, this **is** the receiver's real identity -- claimed via Redis `SET NX` on first boot, then persisted forever after (see [Receiver Identity](#receiver-identity)). With `REDIS_HOST` unset, it's purely a Home Assistant display label (device name/model) in place of the generic `Receiver {short-id}` fallback, and has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the generated UUID instead. Sensors don't repeat this in their own names either way -- `has_entity_name: true` has Home Assistant compose each entity's displayed label from the device name plus the sensor's own short name. |
 | `RECEIVER_SOURCES` | ✅ | — | Comma-separated `host:port:source` triples (see below). At least one is required. |
 | `RABBITMQ_HOST` | ✅ | — | |
 | `RABBITMQ_PORT` | ❌ | `5672` | |
@@ -28,7 +28,10 @@ Compose from this host's `.env` (written by `scripts/install.sh`).
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver publishes MQTT statistic messages |
+| `REDIS_HOST` | ❌ | — | Leave unset to disable the receiver's Redis-backed identity claim, per-connection message counters, and core-health registration entirely -- see [Receiver Identity](#receiver-identity) and [Redis-Backed Message Counters](#redis-backed-message-counters) |
+| `REDIS_PORT` | ❌ | `6379` | |
+| `REDIS_PASSWORD` | ❌ | — | |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver publishes MQTT statistic messages, refreshes its Redis identity-claim heartbeat, and (at minimum) flushes message counters to Redis |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 `queue.db` (the RabbitMQ offline fallback) is always written to `/app/data`,
@@ -62,9 +65,21 @@ handling on the message processor side.
 
 Each receiver container needs a stable identifier to distinguish it from any other receiver publishing to the same MQTT broker -- included in every MQTT topic it publishes (`SkyFollower/receiver/{id}/...`) and in its HA `identifiers`/`unique_id`. This used to be a manually-set `RECEIVER_ID` environment variable, which had no way to enforce that an operator actually set it, or set it uniquely.
 
-Instead, the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in), reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from the optional `name` field above -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
+**With `REDIS_HOST` set**, `RECEIVER_NAME` itself becomes that stable identity, claimed via Redis the same way `MESSAGE_PROCESSOR_ID` is (see `message-processor/README.md`'s own identity section): on first-ever boot the receiver `SET`s `skyfollower-receiver-{RECEIVER_NAME}` with `NX`, so a second receiver misconfigured with the same name fails to start with a clear "already claimed" error instead of silently colliding. A successful claim is persisted to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in) and reused on every subsequent restart -- **that restart makes zero Redis calls to resolve its identity**, which is what lets a receiver keep capturing and locally-queueing traffic through a total Redis (and RabbitMQ) outage. Only the very first boot needs Redis reachable; if it isn't, the receiver refuses to start rather than falling back to something unverified. Once claimed, a background thread refreshes the claim's TTL every `TELEMETRY_INTERVAL_SECONDS` (mirroring the message processor's own heartbeat exactly) so a genuinely-dead receiver's name frees up for reuse while a live one never loses it.
 
-Because identity is generated per instance (keyed off that instance's own `data_dir` volume) rather than assigned centrally, two or more receivers sharing the same MQTT broker or RabbitMQ never risk a collision -- including two running on the same host, below.
+**With `REDIS_HOST` unset**, none of the above applies: the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` instead, reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from `RECEIVER_NAME`, which stays purely cosmetic in this mode -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
+
+Because identity is either generated per instance (keyed off that instance's own `data_dir` volume) or claimed against a name the operator is responsible for choosing uniquely, two or more receivers sharing the same MQTT broker or RabbitMQ never risk an identity collision -- including two running on the same host, below.
+
+## Redis-Backed Message Counters
+
+With `REDIS_HOST` configured, each `sources[]` connection also gets three cumulative message counts -- `messages_{host}_{port}_total_hour`, `_total_today`, `_total_lifetime` -- for a source too sparse for the existing 30-second `messages_{host}_{port}_per_second` rate to say anything useful about.
+
+The per-message hot path (`_RateTracker.record()`) stays pure in-memory arithmetic; nothing there ever touches Redis or checks the clock. Counts are flushed to Redis from the same background thread that already handles telemetry, triggered by whichever comes first: the normal `TELEMETRY_INTERVAL_SECONDS` tick, or 100 messages accumulated since the last flush (bounds staleness for a busy connection like `1090` without waiting out a possibly-long interval). The actual increment-with-expiry-only-on-creation is `shared/lua/incr_period_counter.lua`, shared with the message processor's own equivalent counters -- called via `EVALSHA` so the exists-check, increment, and conditional `EXPIREAT` are one atomic round-trip.
+
+**Known limitation**: unlike the message processor's own hour/today counters (which read straight from Redis on every publish, so they survive a restart), the receiver publishes these three fields from its own in-memory running totals, which have no persistence layer of their own -- a receiver restart resets what it displays to zero even though the Redis-side totals (what core-health reads) keep accumulating across that restart. `lifetime_count` is the same story: it's a running total for the process's own lifetime, not since the receiver was first ever installed.
+
+Redis is entirely optional for the receiver's core function -- an unset `REDIS_HOST` means none of the identity-claim/heartbeat/counter/core-health-registration behavior above runs at all, and the receiver behaves exactly as it always has (generated-UUID identity, no Redis interaction whatsoever).
 
 ## Running Multiple Receiver Instances
 
@@ -72,12 +87,12 @@ Every receiver deployment -- whether it's the only one on a host, or one of seve
 
 `docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/install.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `receiver-2` gets project `skyfollower-receiver-2` (container `skyfollower-receiver-2-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
 
-To run a second receiver on the same host as the first, run the installer again for the `receiver` role -- it prompts for a folder name each time one is selected:
+To run a second receiver on the same host as the first, run the installer again for the `receiver` role -- it prompts for a name (used as both the install folder and `RECEIVER_NAME`) each time one is selected:
 
 ```bash
 ./scripts/install.sh --role receiver
-# Folder name for this receiver instance [receiver]: receiver-2
-# ...then RECEIVER_NAME, RECEIVER_SOURCES, RabbitMQ/MQTT credentials for this instance
+# Receiver name (install folder + Home Assistant label) [ATTIC-PI]: RECEIVER-2
+# ...then RECEIVER_SOURCES, RabbitMQ/MQTT/Redis credentials for this instance
 ```
 
 or, without cloning anything first:
@@ -86,7 +101,7 @@ or, without cloning anything first:
 curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 ```
 
-Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and auto-generated identity (`receiver_id`, see above) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another `--role receiver` run with a different folder name.
+Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and identity (`receiver_id`, see [Receiver Identity](#receiver-identity)) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another `--role receiver` run with a different name.
 
 Keep in mind each instance is a full copy of the container -- one thread per `RECEIVER_SOURCES` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
 
@@ -260,6 +275,9 @@ All topics use the root `SkyFollower`.
 | Field | Format | Description |
 |-------|--------|-------------|
 | `messages_{host}_{port}_per_second` | Float as string | Average message rate for one specific `sources[]` connection since last report |
+| `messages_{host}_{port}_total_hour` | Integer as string | Cumulative message count for that connection since the current UTC hour began. Only published when `REDIS_HOST` is configured -- see [Redis-Backed Message Counters](#redis-backed-message-counters) |
+| `messages_{host}_{port}_total_today` | Integer as string | Cumulative message count for that connection since the current UTC day began. Only published when `REDIS_HOST` is configured |
+| `messages_{host}_{port}_total_lifetime` | Integer as string | Cumulative message count for that connection since this process started (not since the receiver was first installed -- see the known limitation in [Redis-Backed Message Counters](#redis-backed-message-counters)). Only published when `REDIS_HOST` is configured |
 | `{host}_{port}_connected` | `True` or `False` | Whether the TCP connection to that specific `sources[]` entry's readsb instance is currently open |
 | `{host}_{port}_reconnect_count` | Integer as string | Number of times that specific `sources[]` connection has dropped and been re-established since process start |
 | `{host}_{port}_connected_attributes` | JSON, e.g. `{"last_message_received": "2026-01-15T10:00:00+00:00"}` | Home Assistant `json_attributes_topic` for the sibling `{host}_{port}_connected` sensor; carries when that specific `sources[]` connection last processed a message. Not published at all until the first message on that connection arrives |

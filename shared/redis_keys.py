@@ -109,6 +109,76 @@ def message_processor_heartbeat_key(message_processor_id: str) -> str:
     return f"skyfollower-message-processor-{message_processor_id}"
 
 
+def receiver_heartbeat_key(receiver_id: str) -> str:
+    """
+    Receiver liveness/claim key -- mirrors message_processor_heartbeat_key()
+    exactly. Set with NX + TTL = 2 × telemetry_interval on first-ever claim
+    of a RECEIVER_NAME, then refreshed (unconditional EXPIRE, never a
+    second NX) by the receiver's own _heartbeat_loop for as long as it's
+    running. A local identity already persisted to {data_dir}/receiver_id
+    resumes heartbeating this same key without ever re-running SET NX
+    against it.
+    skyfollower-receiver-{id}
+    """
+    return f"skyfollower-receiver-{receiver_id}"
+
+
+def receiver_registry_index_key() -> str:
+    """
+    SET of every currently-claimed receiver identity -- lets core-health
+    enumerate live receivers in O(receiver count) via SMEMBERS instead of
+    a keyspace SCAN (receivers have no RabbitMQ queue of their own to
+    enumerate through, unlike message processors). Added to at claim time
+    and re-added (idempotent SADD) on every heartbeat tick, so a restart
+    that resumes an already-persisted identity (no claim call at all) still
+    ends up back in the index within one telemetry_interval_seconds. No TTL
+    on the set itself -- self-heals the same way archive_search_index_key
+    does: a caller that SMEMBERS this set and finds a member's
+    receiver:registration:{id} entry already expired just SREMs that stale
+    member itself.
+    receiver:index
+    """
+    return "receiver:index"
+
+
+def receiver_registration_key(receiver_id: str) -> str:
+    """
+    Per-receiver registration entry core-health reads to construct the
+    exact HA discovery/telemetry payloads the receiver's own
+    _publish_ha_autodiscovery()/_publish_telemetry() would have produced
+    for the Redis-backed period-count sensors. JSON array
+    of {host, port, source} triples -- the same shape as the receiver's own
+    `sources[]` config -- since the claimed name already *is* the identity
+    (rid in topic paths), there's no separate UUID left to carry alongside
+    it. Refreshed alongside the heartbeat, TTL'd the same way (2 ×
+    telemetry_interval); a missing entry means core-health should treat
+    that name as no longer live, not as an error.
+    receiver:registration:{id}
+    """
+    return f"receiver:registration:{receiver_id}"
+
+
+def receiver_message_count_key(receiver_id: str, connection_id: str, period: str) -> str:
+    """
+    Redis-backed period counter for one receiver connection's message
+    count -- populated via
+    shared/lua/incr_period_counter.lua, flushed from the receiver's
+    telemetry thread, never the per-message hot path. `connection_id` is
+    the same sanitized `{host}_{port}` identifier already used in that
+    connection's MQTT topic/HA entity segment (_sanitize_mqtt_id'd host and
+    port), so a Redis key and its corresponding
+    messages_{connection_id}_total_{period} MQTT field are trivially
+    derivable from each other -- what core-health's publishing-parity
+    mimicry depends on. period must be one of: hour, today, lifetime.
+    Missing key means the count is genuinely 0, not unavailable -- same
+    principle as the message processor's own miss counters.
+    metrics:receiver:{id}:{connection_id}:messages:{period}
+    """
+    if period not in _VALID_PERIODS:
+        raise ValueError(f"period must be one of {_VALID_PERIODS}, got: {period!r}")
+    return f"metrics:receiver:{receiver_id}:{connection_id}:messages:{period}"
+
+
 def metrics_registration_misses_key(message_processor_id: str, period: str) -> str:
     """
     Counter for Redis enrichment misses (aircraft not found) per message processor.
