@@ -327,25 +327,6 @@ channels:
       MessageProcessorRulesEngineHwmNsMessage:
         $ref: '#/components/messages/MessageProcessorRulesEngineHwmNsMessage'
 
-  messageProcessorRabbitmqInputQueueDepthHwm:
-    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rabbitmq_input_queue_depth_hwm'
-    description: >
-      High-water mark of this message processor's RabbitMQ input queue depth since
-      last publish, sampled at most once every 10 seconds; resets on
-      publish. Not published at all for a telemetry cycle where no valid
-      sample landed this window (e.g. the consumer channel isn't up yet, or
-      every sample in the window errored) -- the topic is retained, so
-      consumers see the last known-good depth stay in place rather than a
-      -1 sentinel on the wire. Consumers should treat a stale/absent update
-      as "unknown" (Home Assistant represents this via the entity's
-      expire_after). Published every telemetry_interval_seconds, retained.
-    parameters:
-      message_processor_id:
-        $ref: '#/components/parameters/MessageProcessorId'
-    messages:
-      MessageProcessorRabbitmqInputQueueDepthHwmMessage:
-        $ref: '#/components/messages/MessageProcessorRabbitmqInputQueueDepthHwmMessage'
-
   messageProcessorLocalArchiveQueueDepth:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/local_archive_queue_depth'
     description: >
@@ -623,17 +604,6 @@ channels:
     messages:
       ArchiveDeadLetterIndexQueueDepthMessage:
         $ref: '#/components/messages/ArchiveDeadLetterIndexQueueDepthMessage'
-
-  archiveRabbitmqArchiveQueueDepthHwm:
-    address: SkyFollower/archive/statistic/rabbitmq_archive_queue_depth_hwm
-    description: >
-      High-water mark of the RabbitMQ 'archive' queue's depth since last
-      publish, sampled at most once every 10 seconds; resets on publish. -1
-      if no valid sample landed this window. Published every
-      telemetry_interval_seconds, retained.
-    messages:
-      ArchiveRabbitmqArchiveQueueDepthHwmMessage:
-        $ref: '#/components/messages/ArchiveRabbitmqArchiveQueueDepthHwmMessage'
 
   archiveStartedAt:
     address: SkyFollower/archive/statistic/started_at
@@ -927,12 +897,6 @@ operations:
       $ref: '#/channels/messageProcessorRulesEngineHwmNs'
     summary: Message processor publishes its rules engine duration high-water mark (nanoseconds)
 
-  publishMessageProcessorRabbitmqInputQueueDepthHwm:
-    action: send
-    channel:
-      $ref: '#/channels/messageProcessorRabbitmqInputQueueDepthHwm'
-    summary: Message processor publishes its RabbitMQ input queue depth high-water mark
-
   publishMessageProcessorLocalArchiveQueueDepth:
     action: send
     channel:
@@ -1064,12 +1028,6 @@ operations:
     channel:
       $ref: '#/channels/archiveDeadLetterIndexQueueDepth'
     summary: Archive processor publishes its dead-lettered (permanently poison) index-row count
-
-  publishArchiveRabbitmqArchiveQueueDepthHwm:
-    action: send
-    channel:
-      $ref: '#/channels/archiveRabbitmqArchiveQueueDepthHwm'
-    summary: Archive processor publishes its RabbitMQ archive queue depth high-water mark
 
   publishArchiveStartedAt:
     action: send
@@ -1305,14 +1263,6 @@ components:
       payload:
         $ref: '#/components/schemas/MessageProcessorRulesEngineHwmNs'
 
-    MessageProcessorRabbitmqInputQueueDepthHwmMessage:
-      name: MessageProcessorRabbitmqInputQueueDepthHwmMessage
-      title: Message Processor RabbitMQ input queue depth high-water mark
-      summary: High-water mark of this message processor's RabbitMQ input queue depth
-      contentType: text/plain
-      payload:
-        $ref: '#/components/schemas/MessageProcessorRabbitmqInputQueueDepthHwm'
-
     MessageProcessorLocalArchiveQueueDepthMessage:
       name: MessageProcessorLocalArchiveQueueDepthMessage
       title: Message Processor local archive queue depth
@@ -1480,14 +1430,6 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveDeadLetterIndexQueueDepth'
-
-    ArchiveRabbitmqArchiveQueueDepthHwmMessage:
-      name: ArchiveRabbitmqArchiveQueueDepthHwmMessage
-      title: Archive RabbitMQ archive queue depth high-water mark
-      summary: High-water mark of the RabbitMQ 'archive' queue's depth since last publish
-      contentType: text/plain
-      payload:
-        $ref: '#/components/schemas/ArchiveRabbitmqArchiveQueueDepthHwm'
 
     ArchiveStartedAtMessage:
       name: ArchiveStartedAtMessage
@@ -1719,11 +1661,6 @@ components:
       description: Rules engine duration high-water mark since last publish, in nanoseconds; resets on publish
       example: 45000
 
-    MessageProcessorRabbitmqInputQueueDepthHwm:
-      type: integer
-      description: High-water mark of this message processor's RabbitMQ input queue depth since last publish, sampled at most once every 10 seconds; resets on publish. Not published this cycle if no valid sample landed this window (e.g. consumer not yet connected) -- the retained topic simply keeps its last known-good value; never published as -1
-      example: 0
-
     MessageProcessorLocalArchiveQueueDepth:
       type: integer
       description: Number of completed flights queued in the local SQLite fallback (completed_flights.db)
@@ -1828,11 +1765,6 @@ components:
     ArchiveDeadLetterIndexQueueDepth:
       type: integer
       description: Number of Parquet index rows dead-lettered (dead_letters/index_queue/ in data_dir) after repeatedly failing to write
-      example: 0
-
-    ArchiveRabbitmqArchiveQueueDepthHwm:
-      type: integer
-      description: High-water mark of the RabbitMQ 'archive' queue's depth since last publish, sampled at most once every 10 seconds; resets on publish. -1 if no valid sample landed this window (e.g. consumer not yet connected)
       example: 0
 
     ArchiveStartedAt:

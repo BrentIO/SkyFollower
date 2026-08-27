@@ -546,6 +546,22 @@ class TestPollRabbitmqOnce:
         published = _state_publishes(app._mqtt)
         assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
 
+    def test_http_failure_publishes_no_queue_or_broker_stats(self):
+        """Equivalent of message-processor's #981 regression on this
+        component: a failed poll must never publish a queue/broker stat at
+        all (stale or sentinel) -- retained state simply doesn't update,
+        and expire_after is what surfaces "unavailable" in HA, not a
+        published garbage value."""
+        app = _wired_app()
+        app._session.get.side_effect = Exception("connection refused")
+        app._publish_queue_stats = MagicMock()
+        app._publish_broker_overview = MagicMock()
+
+        app._poll_rabbitmq_once()
+
+        app._publish_queue_stats.assert_not_called()
+        app._publish_broker_overview.assert_not_called()
+
     def test_successful_poll_publishes_queue_and_broker_stats(self):
         app = _wired_app()
 

@@ -381,35 +381,6 @@ class _TimeTracker:
 
 
 # ---------------------------------------------------------------------------
-# RabbitMQ queue-depth high-water mark
-# ---------------------------------------------------------------------------
-
-class _DepthHWM:
-    """Tracks the highest depth recorded since the last read, resetting on
-    each read — same reset-on-publish contract as _TimeTracker.hwm_ms_and_reset().
-    Starts (and resets to) -1 rather than 0 so "no valid sample landed this
-    window" (e.g. the consumer channel isn't up yet, or the sampler hasn't
-    ticked since the last publish) stays distinguishable from an observed
-    depth of zero — record()'s max keeps a -1 error/no-sample reading from
-    ever overwriting a real one."""
-
-    def __init__(self) -> None:
-        self._hwm = -1
-        self._lock = threading.Lock()
-
-    def record(self, value: int) -> None:
-        with self._lock:
-            if value > self._hwm:
-                self._hwm = value
-
-    def value_and_reset(self) -> int:
-        with self._lock:
-            v = self._hwm
-            self._hwm = -1
-            return v
-
-
-# ---------------------------------------------------------------------------
 # HA autodiscovery sensor definitions
 # ---------------------------------------------------------------------------
 
@@ -693,7 +664,6 @@ class MessageProcessor:
         self._processing_time = _TimeTracker()
         self._rules_time = _TimeTracker()
         self._message_latency = _TimeTracker()
-        self._rmq_queue_depth_hwm = _DepthHWM()
         self._db_lock = threading.Lock()
 
         # Redis-backed period counters (total_messages_processed,
@@ -753,9 +723,6 @@ class MessageProcessor:
         threading.Thread(target=self._eviction_loop, daemon=True, name="eviction").start()
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
-        threading.Thread(
-            target=self._rmq_queue_depth_sampler_loop, daemon=True, name="rmq-depth-sampler"
-        ).start()
 
         self._consume_loop()
 
@@ -1573,18 +1540,6 @@ class MessageProcessor:
         self._mqtt.publish(f"{base}/message_latency_hwm_ms", str(message_latency_hwm), retain=True)
         self._mqtt.publish(f"{base}/rules_engine_hwm_ns", str(rules_hwm_ns), retain=True)
 
-        # -1 means "no valid sample landed this window" (see _DepthHWM) --
-        # never put that sentinel on the wire. The topic is retain=True, so
-        # skipping the publish just leaves the last known-good depth in
-        # place instead of overwriting it with -1. Home Assistant's
-        # expire_after (see the HA discovery entry below) is what marks
-        # the entity unavailable if this stays stale across a genuine
-        # sustained outage, rather than a bespoke availability topic.
-        queue_depth_hwm = self._rmq_queue_depth_hwm.value_and_reset()
-        if queue_depth_hwm != -1:
-            self._mqtt.publish(
-                f"{base}/rabbitmq_input_queue_depth_hwm", str(queue_depth_hwm), retain=True
-            )
         self._mqtt.publish(f"{base}/local_archive_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -1605,46 +1560,6 @@ class MessageProcessor:
             self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
         except Exception:
             pass
-
-    def _sample_rmq_queue_depth(self) -> None:
-        """Best-effort depth of this processor's input queue via passive
-        declare on the existing consumer channel. self._rmq_channel must
-        only be touched by the thread driving start_consuming(), so this
-        (called from the sampler thread) schedules the declare via
-        add_callback_threadsafe rather than calling it directly -- the
-        scheduled callback records the result straight into
-        _rmq_queue_depth_hwm itself, so no value needs to flow back to
-        this thread at all. Records -1 (see _DepthHWM's "no valid sample"
-        sentinel) immediately when there's no channel/connection yet or
-        scheduling itself fails; -1 is also what the callback records if
-        the declare itself raises."""
-        connection = self._rmq_connection
-        channel = self._rmq_channel
-        if not connection or not channel:
-            self._rmq_queue_depth_hwm.record(-1)
-            return
-
-        def _sample_on_rmq_thread() -> None:
-            try:
-                result = channel.queue_declare(
-                    queue=self._queue_name, durable=True, passive=True
-                )
-                self._rmq_queue_depth_hwm.record(result.method.message_count)
-            except Exception:
-                self._rmq_queue_depth_hwm.record(-1)
-
-        try:
-            connection.add_callback_threadsafe(_sample_on_rmq_thread)
-        except Exception:
-            self._rmq_queue_depth_hwm.record(-1)
-
-    def _rmq_queue_depth_sampler_loop(self) -> None:
-        """Samples this processor's input queue depth at most once every 10
-        seconds, independent of telemetry_interval_seconds, feeding the HWM
-        tracker that _publish_telemetry() reads and resets each tick."""
-        while not self._shutdown.is_set():
-            time.sleep(10)
-            self._sample_rmq_queue_depth()
 
     # ------------------------------------------------------------------
     # Config polling
@@ -1710,7 +1625,6 @@ class MessageProcessor:
         if not (self._mqtt and self._mqtt_connected):
             return
         pid = self._id
-        telemetry_interval = self._cfg.get("telemetry_interval_seconds", 30)
         device = build_ha_device(
             identifier=f"SkyFollower_message_processor_{pid}",
             name=f"SkyFollower Message Processor {pid}",
@@ -1744,18 +1658,6 @@ class MessageProcessor:
             # deliberate choice here, unlike processing_time_hwm_ms above.
             _Sensor("rules_engine_hwm_ns", "Rules Engine HWM", "mdi:clock", "measurement", "ns",
                     extra={"suggested_display_precision": 0}),
-            # expire_after (native HA per-entity staleness detection, no
-            # bespoke availability_topic needed) marks this entity
-            # unavailable once it's gone this many seconds without an
-            # update -- which now only happens when every sample in a
-            # window errored (see _publish_telemetry's skip-on-sentinel
-            # logic above), never on an ordinary retained -1. 3x
-            # telemetry_interval_seconds: long enough that one skipped
-            # tick (a single transient RabbitMQ blip) doesn't flap the
-            # entity, short enough that a real sustained outage still
-            # surfaces as unavailable within a couple of missed cycles.
-            _Sensor("rabbitmq_input_queue_depth_hwm", "RabbitMQ Queue Depth HWM", "mdi:tray-full", "measurement",
-                    extra={"expire_after": telemetry_interval * 3}),
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
             _Sensor("active_flights", "Active Flights", "mdi:airplane", "measurement"),
