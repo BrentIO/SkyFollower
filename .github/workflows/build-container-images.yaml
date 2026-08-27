@@ -70,6 +70,7 @@ jobs:
               receiver) name="receiver" ;;
               message-processor) name="message-processor" ;;
               archive-processor) name="archive" ;;
+              archive-compaction) name="archive-compaction" ;;
               core-health) name="core-health" ;;
               management-ui) name="management-ui" ;;
               runners/*) name="runner-$(basename "$dir")" ;;
