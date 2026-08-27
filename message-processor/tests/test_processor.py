@@ -12,6 +12,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from datetime import timezone
 from unittest.mock import MagicMock, patch
@@ -2264,6 +2265,115 @@ class TestTelemetryPayload:
         p._publish_ha_autodiscovery()
         for call in mock_mqtt.publish.call_args_list:
             assert "avg_processing_time_ms" not in call[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Telemetry -- active_flights COUNT(*) must not hold self._db_lock
+#
+# self._db_lock also guards every _update_flight() call on the main
+# consuming thread (see _process()), so a slow COUNT(*) held under that
+# same lock stalls per-message processing for the query's full duration.
+# WAL mode gives the read snapshot isolation without the lock, so
+# _publish_telemetry() must not acquire self._db_lock around this query.
+# ---------------------------------------------------------------------------
+
+class TestTelemetryActiveFlightsNoLock:
+    def _make_processor(self) -> MessageProcessor:
+        with patch("message_processor.main.DATA_DIR", tempfile.mkdtemp()), \
+             patch("message_processor.main.redis_lib.Redis"):
+            p = MessageProcessor(_minimal_config(), message_processor_id="0")
+        return p
+
+    def test_active_flights_query_never_acquires_db_lock(self):
+        """Direct check of the acceptance criterion: swap in a spy lock and
+        confirm _publish_telemetry() never touches it at all."""
+        p = self._make_processor()
+        p._mqtt = MagicMock()
+        p._mqtt_connected = True
+        spy_lock = MagicMock(wraps=p._db_lock)
+        p._db_lock = spy_lock
+
+        p._publish_telemetry()
+
+        spy_lock.acquire.assert_not_called()
+        spy_lock.__enter__.assert_not_called()
+
+    def test_message_thread_not_stalled_by_slow_active_flights_query(self):
+        """Soak-style regression test for the reported symptom: with a
+        deliberately slow COUNT(*) in flight on the telemetry thread (stood
+        in for a large `flights` table so the test is fast and
+        deterministic rather than depending on actually inserting enough
+        rows to measure), the main thread must still be able to acquire
+        self._db_lock -- exactly what _update_flight() does for every
+        message -- essentially immediately instead of waiting on the
+        query."""
+        p = self._make_processor()
+        p._mqtt = MagicMock()
+        p._mqtt_connected = True
+
+        query_started = threading.Event()
+        release_query = threading.Event()
+
+        # sqlite3.Connection/Cursor are immutable C types -- neither one's
+        # methods can be patched in place -- so stand a thin proxy pair in
+        # front of the real connection/cursor instead, swapped onto
+        # self._db only for the telemetry thread's duration, that stalls
+        # specifically on the active_flights query.
+        class _SlowCountCursor:
+            def __init__(self, real_cursor):
+                self._real = real_cursor
+
+            def execute(self, sql, *args, **kwargs):
+                if sql.strip() == "SELECT COUNT(*) FROM flights":
+                    query_started.set()
+                    release_query.wait(timeout=5)
+                self._real.execute(sql, *args, **kwargs)
+                return self
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        class _SlowCountConnection:
+            def __init__(self, real_db):
+                self._real = real_db
+
+            def cursor(self):
+                return _SlowCountCursor(self._real.cursor())
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        real_db = p._db
+
+        def run_telemetry():
+            p._db = _SlowCountConnection(real_db)
+            try:
+                p._publish_telemetry()
+            finally:
+                p._db = real_db
+
+        telemetry_thread = threading.Thread(target=run_telemetry)
+        telemetry_thread.start()
+        try:
+            assert query_started.wait(timeout=2), "COUNT(*) never started"
+
+            # The slow COUNT(*) is now deliberately stalled mid-query on the
+            # telemetry thread. Acquiring self._db_lock here simulates the
+            # main thread's per-message _update_flight() call -- it must
+            # not be blocked waiting on the telemetry thread's read.
+            acquire_start = time.monotonic()
+            with p._db_lock:
+                pass
+            acquire_elapsed = time.monotonic() - acquire_start
+        finally:
+            release_query.set()
+            telemetry_thread.join(timeout=5)
+
+        assert acquire_elapsed < 0.5, (
+            f"self._db_lock acquisition took {acquire_elapsed:.3f}s while the "
+            "active_flights COUNT(*) was in flight -- _publish_telemetry() "
+            "must not hold self._db_lock around that query"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1459,10 +1459,13 @@ class MessageProcessor:
 
         pid = self._id
 
-        with self._db_lock:
-            cur = self._db.cursor()
-            cur.execute("SELECT COUNT(*) FROM flights")
-            active = cur.fetchone()[0]
+        # No self._db_lock here: self._db is opened with check_same_thread=False
+        # and PRAGMA journal_mode=WAL, so this standalone read gets snapshot
+        # isolation without blocking (or being blocked by) the main thread's
+        # per-message writes under the same lock.
+        cur = self._db.cursor()
+        cur.execute("SELECT COUNT(*) FROM flights")
+        active = cur.fetchone()[0]
 
         processing_hwm = self._processing_time.hwm_ms_and_reset()
         self._processing_time.reset()
