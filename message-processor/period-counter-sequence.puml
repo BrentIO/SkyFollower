@@ -33,10 +33,6 @@ loop for each consumed message
         Processor -> Processor : **Record an operator miss**\n""self._operator_misses.record()""
     end
 end
-note over Processor
-    record() is pure in-memory arithmetic under a
-    lock -- no accumulator here ever calls Redis.
-end note
 
 == Independently, every telemetry_interval_seconds (telemetry thread) ==
 
@@ -61,11 +57,8 @@ loop for each of the three accumulators
 end
 
 note over Counter
-    core-health (not this component) reads these keys
-    and publishes them over MQTT/Home Assistant, using
-    the exact topic paths/unique_id this component's own
-    telemetry publisher would otherwise have used -- see
-    core-health/README.md's "Counter mimicry" section.
+    core-health reads these keys and publishes them
+    over MQTT/Home Assistant, not this component.
 end note
 
 @enduml

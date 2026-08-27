@@ -24,19 +24,6 @@ loop for hour, today
     Counter --> Archiver-- : new_value
 end
 
-note over Counter
-    No "lifetime" period for either counter -- out of
-    scope for this component's existing two counters
-    (see message-processor's own equivalent mechanism,
-    which does add one, in its own period-counter-sequence.puml).
-end note
-
-Archiver -> Archiver : **Publish telemetry from Redis directly**\n""self._redis_counter(key)"" -- self-published, unlike message-processor's counters
-note right of Archiver
-    Unchanged by this fix: archive-processor still
-    self-publishes flights_archived/flights_skipped
-    over MQTT/Home Assistant itself -- only the reset
-    mechanism above changed.
-end note
+Archiver -> Archiver : **Publish telemetry from Redis directly**\n""self._redis_counter(key)""
 
 @enduml
