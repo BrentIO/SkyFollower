@@ -23,6 +23,11 @@ services:
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_USERNAME: ${MQTT_USERNAME}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
+      # Optional -- unset REDIS_HOST disables identity claim/heartbeat,
+      # message counters, and core-health registration entirely.
+      REDIS_HOST: ${REDIS_HOST:-}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.

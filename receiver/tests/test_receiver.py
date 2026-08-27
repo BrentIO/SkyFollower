@@ -19,6 +19,7 @@ import socket
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -700,13 +701,16 @@ class TestDrainFallback:
 
     def _run_one_telemetry_tick(self, r) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
-        making the mocked time.sleep set _shutdown so the loop body runs
-        once and then exits — rather than re-implementing the loop's
-        conditional in the test, which wouldn't actually exercise it."""
-        def fake_sleep(_seconds):
+        making the mocked flush-event wait set _shutdown so the loop body
+        runs once and then exits — rather than re-implementing the loop's
+        conditional in the test, which wouldn't actually exercise it.
+        _telemetry_loop waits on r._flush_event instead of
+        a plain time.sleep, so that's what gets faked out here."""
+        def fake_wait(timeout=None):
             r._shutdown.set()
+            return False
 
-        with patch("receiver.main.time.sleep", side_effect=fake_sleep), \
+        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
              patch.object(r, "_publish_telemetry"):
             r._telemetry_loop()
 
@@ -801,6 +805,141 @@ class TestRateTracker:
 
 
 # ---------------------------------------------------------------------------
+# _RateTracker Redis-backed period counters
+# ---------------------------------------------------------------------------
+
+class TestRateTrackerPeriodCounters:
+    """record() must stay pure in-memory arithmetic; flush_to_redis() is
+    the only thing that ever touches Redis or does boundary detection."""
+
+    def test_record_increments_all_three_counters(self):
+        rt = _RateTracker()
+        rt.record()
+        rt.record()
+        assert rt.hour_count == 2
+        assert rt.today_count == 2
+        assert rt.lifetime_count == 2
+
+    def test_record_never_touches_redis(self):
+        """No redis client is even passed to record() -- if it tried to
+        use one, this would AttributeError instead of silently no-op'ing."""
+        rt = _RateTracker()
+        rt.record()  # Must not raise despite no Redis client existing anywhere.
+        assert rt.lifetime_count == 1
+
+    def test_record_sets_flush_event_at_threshold(self):
+        event = threading.Event()
+        rt = _RateTracker(flush_event=event)
+        for _ in range(99):
+            rt.record()
+        assert not event.is_set()
+        rt.record()
+        assert event.is_set()
+
+    def test_record_without_flush_event_does_not_raise(self):
+        rt = _RateTracker(flush_event=None)
+        for _ in range(150):
+            rt.record()
+        assert rt.lifetime_count == 150
+
+    def _now(self, **kwargs):
+        base = datetime(2026, 8, 23, 14, 30, 0, tzinfo=timezone.utc)
+        return base.replace(**kwargs) if kwargs else base
+
+    def test_flush_pushes_delta_via_evalsha_for_hour_and_today(self):
+        rt = _RateTracker()
+        rt.record()
+        rt.record()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(
+            redis_client=mock_redis,
+            script_sha="sha123",
+            key_fn=lambda period: f"key:{period}",
+            now=self._now(),
+        )
+        calls = {c.args[2]: c.args for c in mock_redis.evalsha.call_args_list}
+        assert calls["key:hour"][:4] == ("sha123", 0, "key:hour", 2)
+        assert calls["key:today"][:4] == ("sha123", 0, "key:today", 2)
+
+    def test_flush_uses_plain_incrby_for_lifetime(self):
+        rt = _RateTracker()
+        rt.record()
+        rt.record()
+        rt.record()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(
+            redis_client=mock_redis,
+            script_sha="sha123",
+            key_fn=lambda period: f"key:{period}",
+            now=self._now(),
+        )
+        mock_redis.incrby.assert_called_once_with("key:lifetime", 3)
+
+    def test_flush_with_no_new_messages_calls_nothing(self):
+        rt = _RateTracker()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(
+            redis_client=mock_redis,
+            script_sha="sha123",
+            key_fn=lambda period: f"key:{period}",
+            now=self._now(),
+        )
+        mock_redis.evalsha.assert_not_called()
+        mock_redis.incrby.assert_not_called()
+
+    def test_flush_only_sends_incremental_delta_on_second_flush(self):
+        rt = _RateTracker()
+        mock_redis = MagicMock()
+        rt.record()
+        rt.record()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now())
+        rt.record()
+        mock_redis.reset_mock()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now())
+        mock_redis.incrby.assert_called_once_with("key:lifetime", 1)
+
+    def test_hour_rollover_resets_local_hour_count_only(self):
+        rt = _RateTracker()
+        rt.record()
+        rt.record()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now(minute=59))
+        rt.record()
+        # Next hour -- hour_count must reset; today_count/lifetime_count
+        # (same day) must not.
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now(hour=15, minute=0))
+        assert rt.hour_count == 0
+        assert rt.today_count == 3
+        assert rt.lifetime_count == 3
+
+    def test_day_rollover_resets_local_today_count_only(self):
+        rt = _RateTracker()
+        rt.record()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now(hour=23, minute=59))
+        rt.record()
+        next_day = datetime(2026, 8, 24, 0, 5, 0, tzinfo=timezone.utc)
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", next_day)
+        assert rt.today_count == 0
+        assert rt.lifetime_count == 2
+
+    def test_rollover_does_not_flush_the_dropped_remainder(self):
+        """The small leftover counted toward the now-closed period is
+        dropped rather than misattributed -- see flush_to_redis's own
+        comment on why (a stale EXPIREAT could delete the key outright)."""
+        rt = _RateTracker()
+        rt.record()
+        mock_redis = MagicMock()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now(minute=59))
+        # No further record() -- the rollover flush should see hour_delta
+        # dropped to 0, not the stale 1 message from the old hour.
+        mock_redis.reset_mock()
+        rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now(hour=15, minute=0))
+        hour_calls = [c for c in mock_redis.evalsha.call_args_list if c.args[1] == "key:hour"]
+        assert hour_calls == []
+
+
+# ---------------------------------------------------------------------------
 # Receiver identity: auto-generated, persisted, decoupled from name
 # ---------------------------------------------------------------------------
 
@@ -880,6 +1019,251 @@ class TestReceiverIdAndTopics:
                 mock_cls.assert_called_once()
                 args, kwargs = mock_cls.call_args
                 assert len(args) == 1 and not kwargs
+
+
+# ---------------------------------------------------------------------------
+# Redis-backed identity claim -- three-case startup
+# resolution, mirroring _claim_message_processor_id()/_heartbeat_loop.
+# ---------------------------------------------------------------------------
+
+def _make_receiver_with_redis(cfg=None, data_dir=None, mock_redis=None):
+    """Constructs a real Receiver with Redis mocked out, the same way
+    message-processor/tests/test_processor.py's _make_processor() mocks
+    Redis -- patching redis_lib.Redis (the actual `redis` package's own
+    Redis class, shared by every module that does `import redis as
+    redis_lib`, including shared.redis_client.build_redis_client) rather
+    than receiver.main's own names."""
+    from receiver.main import Receiver
+
+    cfg = cfg or {
+        "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+        "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        "name": "ATTIC",
+        "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
+        "telemetry_interval_seconds": 30,
+    }
+    mock_redis = mock_redis if mock_redis is not None else MagicMock()
+    with patch("receiver.main.DATA_DIR", data_dir or tempfile.mkdtemp()), \
+         patch("receiver.main.redis_lib.Redis", return_value=mock_redis):
+        r = Receiver(cfg)
+    return r, mock_redis
+
+
+class TestReceiverIdentityRedisClaim:
+    def test_case_1_persisted_identity_skips_redis_entirely(self):
+        """A local identity file from a prior claim (or the legacy UUID
+        scheme) means zero Redis calls at startup -- this is what lets a
+        restart survive Redis being unreachable."""
+        data_dir = tempfile.mkdtemp()
+        with open(os.path.join(data_dir, "receiver_id"), "w") as f:
+            f.write("PREVIOUSLY-CLAIMED")
+        r, mock_redis = _make_receiver_with_redis(data_dir=data_dir)
+        assert r._id == "PREVIOUSLY-CLAIMED"
+        mock_redis.set.assert_not_called()
+
+    def test_case_2_claims_configured_name_via_set_nx(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        assert r._id == "ATTIC"
+        mock_redis.set.assert_called_once()
+        args, kwargs = mock_redis.set.call_args
+        assert args[0] == "skyfollower-receiver-ATTIC"
+        assert kwargs.get("nx") is True
+        assert kwargs.get("ex") == 60  # 2 * telemetry_interval_seconds (30)
+
+    def test_case_2_success_persists_identity_locally(self):
+        data_dir = tempfile.mkdtemp()
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        _make_receiver_with_redis(data_dir=data_dir, mock_redis=mock_redis)
+        with open(os.path.join(data_dir, "receiver_id")) as f:
+            assert f.read().strip() == "ATTIC"
+
+    def test_case_2_name_already_claimed_exits(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = None  # SET NX returns nil when the key already exists.
+        with pytest.raises(SystemExit):
+            _make_receiver_with_redis(mock_redis=mock_redis)
+
+    def test_case_3_redis_unreachable_exits(self):
+        mock_redis = MagicMock()
+        mock_redis.set.side_effect = ConnectionError("refused")
+        with pytest.raises(SystemExit):
+            _make_receiver_with_redis(mock_redis=mock_redis)
+
+    def test_no_redis_configured_falls_back_to_uuid(self):
+        """REDIS_HOST unset entirely (no 'redis' block, or one with a
+        blank host) must never call SET NX -- legacy behavior."""
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        from receiver.main import Receiver
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        assert r._redis is None
+        assert len(r._id) == 36  # UUID4 string length
+
+    def test_redis_configured_with_blank_host_is_treated_as_unset(self):
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "redis": {"host": "", "port": 6379, "password": ""},
+        }
+        from receiver.main import Receiver
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        assert r._redis is None
+
+
+class TestReceiverHeartbeatLoop:
+    """Mirrors message-processor's _heartbeat_loop exactly: sleep, then an
+    unconditional EXPIRE (never a second SET NX), fail-soft on any error."""
+
+    def test_heartbeat_refreshes_expiry(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+
+        def fake_sleep(_seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", side_effect=fake_sleep):
+            r._heartbeat_loop()
+
+        mock_redis.expire.assert_called_once_with("skyfollower-receiver-ATTIC", 60)
+
+    def test_heartbeat_never_calls_set_nx(self):
+        """The ongoing heartbeat must never re-run the claim -- only ever
+        refresh the TTL of a key it already knows is its own."""
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.reset_mock()
+
+        def fake_sleep(_seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", side_effect=fake_sleep):
+            r._heartbeat_loop()
+
+        # _register_with_core_health() legitimately calls .set() for the
+        # registration entry -- what must never happen again is a SET NX
+        # against the claim key.
+        for call in mock_redis.set.call_args_list:
+            assert call.kwargs.get("nx") is not True
+
+    def test_heartbeat_fails_soft_on_redis_error(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.expire.side_effect = ConnectionError("boom")
+
+        def fake_sleep(_seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", side_effect=fake_sleep):
+            r._heartbeat_loop()  # Must not raise.
+
+
+class TestCoreHealthRegistration:
+    """A small index SET + per-receiver registration entry
+    for core-health to enumerate live receivers without a keyspace SCAN."""
+
+    def test_register_adds_to_index_set(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.reset_mock()
+        r._register_with_core_health()
+        mock_redis.sadd.assert_called_once_with("receiver:index", "ATTIC")
+
+    def test_register_writes_source_list_with_heartbeat_ttl(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.reset_mock()
+        r._register_with_core_health()
+        mock_redis.set.assert_called_once_with(
+            "receiver:registration:ATTIC",
+            json.dumps([{"host": "localhost", "port": 30002, "source": "1090"}]),
+            ex=60,
+        )
+
+    def test_register_is_a_noop_without_redis(self):
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        from receiver.main import Receiver
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        r._register_with_core_health()  # Must not raise despite self._redis being None.
+
+    def test_register_fails_soft_on_redis_error(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.sadd.side_effect = ConnectionError("boom")
+        r._register_with_core_health()  # Must not raise.
+
+    def test_heartbeat_loop_reregisters_every_tick(self):
+        """Refreshing the registration alongside the heartbeat is what
+        re-registers a receiver that resumed an already-persisted identity
+        (case 1) without ever calling _register_with_core_health() at
+        claim time."""
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        mock_redis.reset_mock()
+
+        def fake_sleep(_seconds):
+            r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", side_effect=fake_sleep):
+            r._heartbeat_loop()
+
+        mock_redis.sadd.assert_called_once_with("receiver:index", "ATTIC")
+
+
+# ---------------------------------------------------------------------------
+# start() thread wiring
+# ---------------------------------------------------------------------------
+
+class TestStartWiresHeartbeatConditionally:
+    """start() must only spin up the heartbeat thread (and register with
+    core-health once up front) when Redis is actually configured."""
+
+    def test_start_starts_heartbeat_thread_when_redis_configured(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = _make_receiver_with_redis(mock_redis=mock_redis)
+        # start() blocks on self._shutdown.wait() at the very end --
+        # pre-setting it makes that call return immediately.
+        r._shutdown.set()
+        with patch.object(r, "_connect_mqtt"), \
+             patch.object(r, "_register_with_core_health") as mock_register, \
+             patch("receiver.main.threading.Thread") as MockThread:
+            r.start()
+        mock_register.assert_called_once()
+        thread_names = [c.kwargs.get("name") for c in MockThread.call_args_list]
+        assert "heartbeat" in thread_names
+
+    def test_start_does_not_start_heartbeat_thread_without_redis(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        r._shutdown.set()
+        with patch.object(r, "_connect_mqtt"), \
+             patch("receiver.main.threading.Thread") as MockThread:
+            r.start()
+        thread_names = [c.kwargs.get("name") for c in MockThread.call_args_list]
+        assert "heartbeat" not in thread_names
 
 
 # ---------------------------------------------------------------------------
@@ -1095,6 +1479,180 @@ class TestTelemetryPayload:
         for call in mock_mqtt.publish.call_args_list:
             if call.args[0].startswith("homeassistant/"):
                 assert "Attic 1090" not in json.loads(call.args[1])["name"]
+
+
+# ---------------------------------------------------------------------------
+# Period-counter sensors published alongside telemetry/HA discovery --
+# only present at all when Redis is configured.
+# ---------------------------------------------------------------------------
+
+class TestPeriodCounterTelemetryAndDiscovery:
+    def _make_receiver(self, mock_redis=None):
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "name": "ATTIC",
+            "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
+            "telemetry_interval_seconds": 30,
+        }
+        return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
+
+    def test_publish_telemetry_includes_period_counters_when_redis_configured(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        r._rates[("localhost", 30002)].hour_count = 3
+        r._rates[("localhost", 30002)].today_count = 7
+        r._rates[("localhost", 30002)].lifetime_count = 42
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert calls[f"{base}/messages_localhost_30002_total_hour"] == "3"
+        assert calls[f"{base}/messages_localhost_30002_total_today"] == "7"
+        assert calls[f"{base}/messages_localhost_30002_total_lifetime"] == "42"
+
+    def test_publish_telemetry_omits_period_counters_without_redis(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert not any("_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics)
+
+    def test_ha_autodiscovery_includes_period_counter_sensors_when_redis_configured(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        for period in ("hour", "today", "lifetime"):
+            assert (
+                f"homeassistant/sensor/SkyFollower_receiver_ATTIC_messages_localhost_30002_total_{period}/config"
+                in topics
+            )
+
+    def test_ha_autodiscovery_omits_period_counter_sensors_without_redis(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_ha_autodiscovery()
+        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        assert not any("_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics)
+
+
+class TestFlushPeriodCounters:
+    def _make_receiver(self, mock_redis=None):
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "name": "ATTIC",
+            "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
+            "telemetry_interval_seconds": 30,
+        }
+        return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
+
+    def test_flush_lazily_loads_lua_script_once(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_redis.script_load.return_value = "shaXYZ"
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        assert r._incr_period_counter_sha is None
+        r._flush_period_counters()
+        assert r._incr_period_counter_sha == "shaXYZ"
+        mock_redis.script_load.assert_called_once()
+        r._flush_period_counters()
+        mock_redis.script_load.assert_called_once()  # Not reloaded on the second call.
+
+    def test_flush_period_counters_calls_flush_to_redis_per_connection(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_redis.script_load.return_value = "shaXYZ"
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        r._rates[("localhost", 30002)].record()
+        r._flush_period_counters()
+        mock_redis.incrby.assert_called_once_with(
+            "metrics:receiver:ATTIC:localhost_30002:messages:lifetime", 1
+        )
+
+    def test_flush_period_counters_fails_soft_on_script_load_error(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_redis.script_load.side_effect = ConnectionError("boom")
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        r._flush_period_counters()  # Must not raise.
+        assert r._incr_period_counter_sha is None
+
+    def test_flush_period_counters_fails_soft_per_connection(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_redis.script_load.return_value = "shaXYZ"
+        mock_redis.incrby.side_effect = ConnectionError("boom")
+        r, _ = self._make_receiver(mock_redis=mock_redis)
+        r._rates[("localhost", 30002)].record()
+        r._flush_period_counters()  # Must not raise.
+
+
+class TestTelemetryLoopFlushIntegration:
+    """_telemetry_loop must call _flush_period_counters() only when Redis
+    is configured, and wait on the shared flush_event rather than a plain
+    time.sleep -- see the "whichever comes first" trigger design above."""
+
+    def _run_one_tick(self, r):
+        def fake_wait(timeout=None):
+            r._shutdown.set()
+            return False
+
+        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
+             patch.object(r, "_publish_telemetry"):
+            r._telemetry_loop()
+
+    def test_telemetry_tick_flushes_when_redis_configured(self):
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_redis.script_load.return_value = "shaXYZ"
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "name": "ATTIC",
+            "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
+            "telemetry_interval_seconds": 30,
+        }
+        r, _ = _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
+        with patch.object(r, "_flush_period_counters") as mock_flush:
+            self._run_one_tick(r)
+        mock_flush.assert_called_once()
+
+    def test_telemetry_tick_does_not_flush_without_redis(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        with patch.object(r, "_flush_period_counters") as mock_flush:
+            self._run_one_tick(r)
+        mock_flush.assert_not_called()
 
 
 class TestPublishTelemetryVersion:

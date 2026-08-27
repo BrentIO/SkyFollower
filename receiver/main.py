@@ -29,12 +29,13 @@ import threading
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 import paho.mqtt.client as mqtt
 import pika
 import pyModeS as pms
+import redis as redis_lib
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.config import DATA_DIR, ConfigError, load_config
@@ -44,6 +45,13 @@ from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
 from shared.rabbitmq_topology import ADSB_EXCHANGE, declare_adsb_topology
+from shared.redis_client import build_redis_client
+from shared.redis_keys import (
+    receiver_heartbeat_key,
+    receiver_message_count_key,
+    receiver_registration_key,
+    receiver_registry_index_key,
+)
 from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
@@ -58,19 +66,63 @@ _HEALTHCHECK_INTERVAL_SECONDS = 15
 # Rate tracker — 30-second rolling window (copied from message processor pattern)
 # ---------------------------------------------------------------------------
 
+_FLUSH_PENDING_THRESHOLD = 100
+
+
 class _RateTracker:
-    def __init__(self, window: int = 30) -> None:
+    def __init__(self, window: int = 30, flush_event: Optional[threading.Event] = None) -> None:
         self._window = window
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
 
+        # Redis-backed period counters. Pure in-memory
+        # running totals for *this process's own lifetime* -- record()
+        # only ever adds to them, never reads/writes Redis and never
+        # resets them for a real hour/day boundary (that happens in
+        # flush_to_redis(), from the telemetry thread, never here). There
+        # is deliberately no persisted store behind these three fields, so
+        # a receiver restart resets the receiver's own published totals to
+        # zero even though Redis (what core-health reads) keeps
+        # accumulating across that restart -- see receiver/README.md's
+        # "known limitation" note.
+        self.hour_count = 0
+        self.today_count = 0
+        self.lifetime_count = 0
+        # Bookkeeping only flush_to_redis() touches: the last value of
+        # each counter already pushed to Redis (so it can INCRBY just the
+        # delta), and the hour/day "bucket" (floored to the boundary) each
+        # counter was last flushed against, to detect a real rollover.
+        self._flushed_hour = 0
+        self._flushed_today = 0
+        self._flushed_lifetime = 0
+        self._hour_bucket: Optional[datetime] = None
+        self._day_bucket: Optional[datetime] = None
+        # Messages recorded since the last flush, across all three
+        # periods (they always move together) -- crossing
+        # _FLUSH_PENDING_THRESHOLD wakes the telemetry thread early
+        # instead of waiting out the full telemetry_interval_seconds.
+        # Shared across every _RateTracker the receiver owns (one Event
+        # per receiver, not per connection), so any connection crossing
+        # the threshold flushes all of them together.
+        self._pending_since_flush = 0
+        self._flush_event = flush_event
+
     def record(self) -> None:
         now = time.monotonic()
+        crossed = False
         with self._lock:
             self._timestamps.append(now)
             cutoff = now - self._window
             while self._timestamps and self._timestamps[0] < cutoff:
                 self._timestamps.popleft()
+            self.hour_count += 1
+            self.today_count += 1
+            self.lifetime_count += 1
+            self._pending_since_flush += 1
+            if self._pending_since_flush >= _FLUSH_PENDING_THRESHOLD:
+                crossed = True
+        if crossed and self._flush_event is not None:
+            self._flush_event.set()
 
     def rate(self) -> float:
         now = time.monotonic()
@@ -79,6 +131,75 @@ class _RateTracker:
             while self._timestamps and self._timestamps[0] < cutoff:
                 self._timestamps.popleft()
             return len(self._timestamps) / self._window
+
+    def flush_to_redis(
+        self,
+        redis_client,
+        script_sha: str,
+        key_fn: Callable[[str], str],
+        now: datetime,
+    ) -> None:
+        """Pushes the delta accumulated since the last flush into Redis
+        (via incr_period_counter.lua for hour/today, a plain INCRBY for
+        lifetime since it never expires), and resets hour_count/today_count
+        locally on an actually-observed UTC hour/midnight rollover.
+
+        Called only from the receiver's telemetry thread -- never the
+        per-message hot path record() runs on.
+        """
+        hour_bucket = now.replace(minute=0, second=0, microsecond=0)
+        day_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        with self._lock:
+            if self._hour_bucket is None:
+                self._hour_bucket = hour_bucket
+            if self._day_bucket is None:
+                self._day_bucket = day_bucket
+
+            # On a detected rollover, the small remainder of messages
+            # already counted toward the now-closed period is dropped
+            # rather than flushed -- attributing it to the old bucket risks
+            # computing an EXPIREAT that's already in the past (if Redis's
+            # own TTL beat this flush to the real boundary, that would
+            # delete the key the instant it's written), and attributing it
+            # to the new bucket would double-count messages that were
+            # already local-only. Bounded to at most one flush cycle's
+            # worth (telemetry_interval_seconds, or _FLUSH_PENDING_THRESHOLD
+            # messages) each real rollover -- see receiver/README.md.
+            if hour_bucket != self._hour_bucket:
+                hour_delta = 0
+                self.hour_count = 0
+                self._flushed_hour = 0
+                self._hour_bucket = hour_bucket
+            else:
+                hour_delta = self.hour_count - self._flushed_hour
+                self._flushed_hour = self.hour_count
+
+            if day_bucket != self._day_bucket:
+                today_delta = 0
+                self.today_count = 0
+                self._flushed_today = 0
+                self._day_bucket = day_bucket
+            else:
+                today_delta = self.today_count - self._flushed_today
+                self._flushed_today = self.today_count
+
+            lifetime_delta = self.lifetime_count - self._flushed_lifetime
+            self._flushed_lifetime = self.lifetime_count
+            self._pending_since_flush = 0
+
+        if hour_delta:
+            next_hour = hour_bucket + timedelta(hours=1)
+            redis_client.evalsha(
+                script_sha, 0, key_fn("hour"), hour_delta, int(next_hour.timestamp())
+            )
+        if today_delta:
+            next_day = day_bucket + timedelta(days=1)
+            redis_client.evalsha(
+                script_sha, 0, key_fn("today"), today_delta, int(next_day.timestamp())
+            )
+        if lifetime_delta:
+            redis_client.incrby(key_fn("lifetime"), lifetime_delta)
 
 
 def _load_or_create_receiver_id(data_dir: str) -> str:
@@ -139,9 +260,27 @@ class Receiver:
         # feed's silence is visible directly instead of only inferred from
         # its rate having decayed to zero.
         self._last_message_at: dict[tuple[str, int], Optional[str]] = {}
+
+        # Redis is entirely optional for the receiver -- an unset
+        # REDIS_HOST leaves this None and none of the identity-claim/
+        # heartbeat/period-counter/core-health-registration behavior below
+        # runs at all, matching the receiver's original behavior exactly
+        # (random-UUID identity, no Redis interaction).
+        # Woken early (before telemetry_interval_seconds) once a
+        # connection's pending message count crosses
+        # _FLUSH_PENDING_THRESHOLD -- see _RateTracker.record().
+        self._flush_event = threading.Event()
+        rc = config.get("redis") or {}
+        self._redis = build_redis_client(rc) if rc.get("host") else None
+        # Lazily script_load()'d on first flush rather than here -- loading
+        # it during __init__ would be a Redis call on every startup, even
+        # the "local identity already persisted, zero Redis calls" case
+        # below.
+        self._incr_period_counter_sha: Optional[str] = None
+
         for src in config.get("sources", []):
             key = (src["host"], src["port"])
-            self._rates[key] = _RateTracker()
+            self._rates[key] = _RateTracker(flush_event=self._flush_event)
             self._connected[key] = False
             self._reconnect_counts[key] = 0
             self._last_message_at[key] = None
@@ -150,10 +289,13 @@ class Receiver:
         os.makedirs(DATA_DIR, exist_ok=True)
         self._fallback = FallbackQueue(os.path.join(DATA_DIR, "queue.db"))
 
-        self._id = _load_or_create_receiver_id(DATA_DIR)
+        self._id = self._resolve_identity()
         # Optional human-friendly label for HA name/model/sensor labels --
-        # self._id (the persisted UUID) stays the stable identifier used for
-        # topic paths/unique_id regardless of whether this is set or changes.
+        # when Redis is configured, this is the same value as self._id
+        # (the claimed name IS the identity now); in the legacy no-Redis
+        # path self._id is a UUID and this stays the only human-readable
+        # label. self._id stays the stable identifier used for topic
+        # paths/unique_id regardless of whether this is set or changes.
         self._name = config.get("name")
         self._version = os.environ.get("VERSION", "dev")
 
@@ -168,6 +310,117 @@ class Receiver:
         self._mqtt_connected = False
 
     # ------------------------------------------------------------------
+    # Identity -- claim-and-persist, mirroring
+    # _claim_message_processor_id()/_heartbeat_loop in
+    # message-processor/main.py exactly.
+    # ------------------------------------------------------------------
+
+    def _resolve_identity(self) -> str:
+        """Three-case startup identity resolution:
+
+        1. Local identity already persisted ({data_dir}/receiver_id, from
+           a prior successful claim, or the legacy UUID scheme) -- use it
+           immediately, zero Redis calls. Works with Redis/RabbitMQ both
+           unreachable, and is every boot after the first.
+        2. No local identity, Redis not configured at all (REDIS_HOST
+           unset) -- fall back to the original random-UUID scheme
+           unconditionally; none of the Redis-backed behavior applies.
+        3. No local identity, Redis configured:
+           a. reachable -- SET NX the configured RECEIVER_NAME; success
+              persists it locally forever after. Failure (name already
+              claimed by another live receiver) is a critical + exit.
+           b. unreachable -- critical + exit. Deliberately not a
+              fallback-and-proceed case: first-time identity establishment
+              requires Redis reachability to safely verify uniqueness.
+              Every later boot is case 1.
+        """
+        path = os.path.join(DATA_DIR, "receiver_id")
+        if os.path.exists(path):
+            existing = open(path).read().strip()
+            if existing:
+                return existing
+
+        if self._redis is None:
+            return _load_or_create_receiver_id(DATA_DIR)
+
+        configured_name = self._cfg.get("name")
+        if not configured_name:
+            logger.critical(
+                "RECEIVER_NAME must be set to claim a receiver identity via Redis."
+            )
+            sys.exit(1)
+
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        key = receiver_heartbeat_key(configured_name)
+        try:
+            claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
+        except Exception as exc:
+            logger.critical(
+                "Cannot reach Redis to claim receiver identity %r: %s. Exiting.",
+                configured_name, exc,
+            )
+            sys.exit(1)
+
+        if not claimed:
+            logger.critical(
+                "RECEIVER_NAME %r is already claimed by another instance. Exiting.",
+                configured_name,
+            )
+            sys.exit(1)
+
+        with open(path, "w") as f:
+            f.write(configured_name)
+        logger.info("Receiver identity %r claimed.", configured_name)
+        return configured_name
+
+    def _register_with_core_health(self) -> None:
+        """Adds/refreshes this receiver's entry in core-health's small
+        discovery index: an idempotent SADD of the
+        receiver's name into the shared index SET, plus a per-receiver
+        JSON registration entry (just the source list -- host/port/source
+        triples) TTL'd the same as the heartbeat. Called once at the end
+        of every startup (whichever identity-resolution case ran) and
+        again on every subsequent heartbeat tick, so a receiver that
+        resumed an already-persisted identity re-registers itself just as
+        promptly as a freshly-claimed one. Lets core-health enumerate live
+        receivers via SMEMBERS + direct key reads instead of a keyspace
+        SCAN.
+
+        Fails soft -- this is best-effort discovery plumbing, never a
+        reason to affect the receiver's own startup or heartbeat.
+        """
+        if self._redis is None:
+            return
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        ttl = int(interval * 2)
+        try:
+            self._redis.sadd(receiver_registry_index_key(), self._id)
+            self._redis.set(
+                receiver_registration_key(self._id),
+                json.dumps(self._cfg.get("sources", [])),
+                ex=ttl,
+            )
+        except Exception:
+            pass
+
+    def _heartbeat_loop(self) -> None:
+        """Mirrors message-processor's _heartbeat_loop exactly: sleep
+        telemetry_interval_seconds, then refresh (unconditional EXPIRE,
+        never a second SET NX) the claim key's TTL, fail-soft on any
+        Redis error. Also refreshes the core-health registration (Part 3)
+        on the same cadence -- this is what re-registers a receiver that
+        resumed an already-persisted identity (case 1 above) without ever
+        calling _register_with_core_health() at claim time."""
+        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        while not self._shutdown.is_set():
+            time.sleep(interval)
+            try:
+                self._redis.expire(receiver_heartbeat_key(self._id), int(interval * 2))
+            except Exception:
+                pass
+            self._register_with_core_health()
+
+    # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
 
@@ -175,6 +428,12 @@ class Receiver:
         self._setup_logging()
         logger.info(f"Starting SkyFollower Receiver {self._id} {self._version}")
         self._connect_mqtt()
+
+        if self._redis is not None:
+            self._register_with_core_health()
+            threading.Thread(
+                target=self._heartbeat_loop, daemon=True, name="heartbeat"
+            ).start()
 
         # Start RabbitMQ connection in a background thread
         threading.Thread(
@@ -560,7 +819,17 @@ class Receiver:
     def _telemetry_loop(self) -> None:
         interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            time.sleep(interval)
+            # Woken early by _RateTracker.record() crossing
+            # _FLUSH_PENDING_THRESHOLD messages since the last flush, or by
+            # the normal interval elapsing -- whichever comes first.
+            # clear() is safe even if nothing set it: wait() already
+            # returned via the timeout in that case.
+            self._flush_event.wait(timeout=interval)
+            self._flush_event.clear()
+
+            if self._redis is not None:
+                self._flush_period_counters()
+
             # Independent of _rmq_loop's reconnect-triggered drain: a
             # publish failure can pin _rmq_connected False (or leave
             # messages queued) without the underlying connection ever
@@ -578,6 +847,38 @@ class Receiver:
             if rmq_connected:
                 self._drain_fallback()
             self._publish_telemetry()
+
+    def _flush_period_counters(self) -> None:
+        """Pushes each connection's accumulated message count into Redis.
+        Lazily loads incr_period_counter.lua on first use
+        rather than at __init__ time -- see the comment on
+        self._incr_period_counter_sha. Fails soft: a Redis hiccup here
+        just means this cycle's counts stay pending and get folded into
+        the next successful flush."""
+        if self._incr_period_counter_sha is None:
+            try:
+                lua_path = (
+                    pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
+                )
+                self._incr_period_counter_sha = self._redis.script_load(lua_path.read_text())
+            except Exception as exc:
+                logger.debug("incr_period_counter.lua load failed: %s", exc)
+                return
+
+        now = datetime.now(timezone.utc)
+        for (host, port), tracker in self._rates.items():
+            connection_id = f"{_sanitize_mqtt_id(str(host))}_{_sanitize_mqtt_id(str(port))}"
+            try:
+                tracker.flush_to_redis(
+                    redis_client=self._redis,
+                    script_sha=self._incr_period_counter_sha,
+                    key_fn=lambda period, cid=connection_id: receiver_message_count_key(
+                        self._id, cid, period
+                    ),
+                    now=now,
+                )
+            except Exception as exc:
+                logger.debug("Period counter flush failed for %s:%s: %s", host, port, exc)
 
     def _publish_telemetry(self) -> None:
         if not (self._mqtt and self._mqtt_connected):
@@ -618,6 +919,20 @@ class Receiver:
                     json.dumps({"last_message_received": last_message_at}),
                     retain=True,
                 )
+            if self._redis is not None:
+                # Local running totals, not a Redis read -- see
+                # _RateTracker's docstring on why these reset on receiver
+                # restart even though Redis (core-health's source) doesn't.
+                for period, count in (
+                    ("hour", tracker.hour_count),
+                    ("today", tracker.today_count),
+                    ("lifetime", tracker.lifetime_count),
+                ):
+                    self._mqtt.publish(
+                        f"{base}/messages_{mqtt_host}_{mqtt_port}_total_{period}",
+                        str(count),
+                        retain=True,
+                    )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
@@ -690,6 +1005,13 @@ class Receiver:
                              f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes"))
             sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None, None))
+            if self._redis is not None:
+                for period, label in (("hour", "Hour"), ("today", "Today"), ("lifetime", "Lifetime")):
+                    sensors.append((
+                        f"messages_{mqtt_host}_{mqtt_port}_total_{period}",
+                        f"{host}:{port} {source} Messages ({label})",
+                        "mdi:counter", "total_increasing", None, None,
+                    ))
         sensors += [
             ("started_at", "Start Time",
              "mdi:clock-start", None, None, None),

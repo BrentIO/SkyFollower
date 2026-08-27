@@ -321,6 +321,46 @@ class TestReceiverSources:
 
 
 # ---------------------------------------------------------------------------
+# Receiver's own optional Redis block -- unlike every other
+# Redis-consuming component, REDIS_HOST is optional here.
+# ---------------------------------------------------------------------------
+
+
+class TestReceiverOptionalRedis:
+    def test_redis_host_unset_does_not_raise_and_yields_blank_host(self):
+        cfg = load_config("receiver", environ=_env(_RECEIVER))
+        assert cfg["redis"] == {"host": "", "port": 6379, "password": ""}
+
+    def test_redis_host_set_is_read_through(self):
+        cfg = load_config(
+            "receiver",
+            environ=_env(
+                _RECEIVER,
+                REDIS_HOST="redis.example.com",
+                REDIS_PORT="6380",
+                REDIS_PASSWORD="secret",
+            ),
+        )
+        assert cfg["redis"] == {
+            "host": "redis.example.com",
+            "port": 6380,
+            "password": "secret",
+        }
+
+    def test_redis_port_defaults_when_unset(self):
+        cfg = load_config(
+            "receiver", environ=_env(_RECEIVER, REDIS_HOST="redis.example.com")
+        )
+        assert cfg["redis"]["port"] == 6379
+
+    def test_unset_redis_host_is_never_reported_as_a_problem(self):
+        """REDIS_HOST is optional for the receiver -- omitting it must not
+        raise, unlike every other component's "redis" block."""
+        # Does not raise ConfigError.
+        load_config("receiver", environ=_env(_RECEIVER))
+
+
+# ---------------------------------------------------------------------------
 # Shape
 # ---------------------------------------------------------------------------
 

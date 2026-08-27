@@ -19,6 +19,10 @@ from shared.redis_keys import (
     metrics_flights_archived_key,
     metrics_registration_misses_key,
     operator_key,
+    receiver_heartbeat_key,
+    receiver_message_count_key,
+    receiver_registration_key,
+    receiver_registry_index_key,
 )
 
 
@@ -79,6 +83,35 @@ class TestProcessorKeys:
     def test_heartbeat_key(self):
         assert message_processor_heartbeat_key(0) == "skyfollower-message-processor-0"
         assert message_processor_heartbeat_key(3) == "skyfollower-message-processor-3"
+
+
+class TestReceiverKeys:
+    def test_heartbeat_key(self):
+        assert receiver_heartbeat_key("ATTIC") == "skyfollower-receiver-ATTIC"
+
+    def test_registry_index_key(self):
+        assert receiver_registry_index_key() == "receiver:index"
+
+    def test_registration_key(self):
+        assert receiver_registration_key("ATTIC") == "receiver:registration:ATTIC"
+
+    def test_message_count_key_valid_periods(self):
+        assert (
+            receiver_message_count_key("ATTIC", "localhost_30002", "hour")
+            == "metrics:receiver:ATTIC:localhost_30002:messages:hour"
+        )
+        assert (
+            receiver_message_count_key("ATTIC", "localhost_30002", "today")
+            == "metrics:receiver:ATTIC:localhost_30002:messages:today"
+        )
+        assert (
+            receiver_message_count_key("ATTIC", "localhost_30002", "lifetime")
+            == "metrics:receiver:ATTIC:localhost_30002:messages:lifetime"
+        )
+
+    def test_message_count_key_invalid_period(self):
+        with pytest.raises(ValueError, match="period"):
+            receiver_message_count_key("ATTIC", "localhost_30002", "week")
 
 
 class TestMetricKeys:

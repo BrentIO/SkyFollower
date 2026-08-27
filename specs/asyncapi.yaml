@@ -101,6 +101,71 @@ channels:
       ReceiverConnectionReconnectCountMessage:
         $ref: '#/components/messages/ReceiverConnectionReconnectCountMessage'
 
+  # Only published when the receiver has REDIS_HOST configured. Missing
+  # entirely (rather than a zero-valued topic) is how a Redis-less
+  # receiver signals these don't apply, matching the receiver's own
+  # has-no-standalone-entry convention elsewhere in this file rather than
+  # inventing a new one.
+
+  receiverConnectionMessagesTotalHour:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_hour'
+    description: >
+      Cumulative message count for one specific sources[] connection since
+      the current UTC hour began. Only published when the receiver has
+      REDIS_HOST configured. Backed by shared/lua/incr_period_counter.lua
+      via Redis, but published from the receiver's own in-memory running
+      total, not a Redis read -- resets on receiver restart as well as at
+      the real UTC hour boundary (documented limitation, not a bug).
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
+    messages:
+      ReceiverConnectionMessagesTotalHourMessage:
+        $ref: '#/components/messages/ReceiverConnectionMessagesTotalHourMessage'
+
+  receiverConnectionMessagesTotalToday:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_today'
+    description: >
+      Cumulative message count for one specific sources[] connection since
+      the current UTC day began. Only published when the receiver has
+      REDIS_HOST configured. Same in-memory-total/restart-resets caveat as
+      the sibling _total_hour field above. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
+    messages:
+      ReceiverConnectionMessagesTotalTodayMessage:
+        $ref: '#/components/messages/ReceiverConnectionMessagesTotalTodayMessage'
+
+  receiverConnectionMessagesTotalLifetime:
+    address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_lifetime'
+    description: >
+      Cumulative message count for one specific sources[] connection since
+      this process started -- not since the receiver was first installed;
+      there is no persistence layer distinguishing the two. Only published
+      when the receiver has REDIS_HOST configured. Published every
+      telemetry_interval_seconds, retained.
+    parameters:
+      receiver_id:
+        $ref: '#/components/parameters/ReceiverId'
+      connection_host:
+        $ref: '#/components/parameters/ConnectionHost'
+      connection_port:
+        $ref: '#/components/parameters/ConnectionPort'
+    messages:
+      ReceiverConnectionMessagesTotalLifetimeMessage:
+        $ref: '#/components/messages/ReceiverConnectionMessagesTotalLifetimeMessage'
+
   receiverConnectionConnectedAttributes:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_connected_attributes'
     description: >
@@ -702,6 +767,24 @@ operations:
       $ref: '#/channels/receiverConnectionReconnectCount'
     summary: Receiver publishes the reconnect count of one sources[] connection
 
+  publishReceiverConnectionMessagesTotalHour:
+    action: send
+    channel:
+      $ref: '#/channels/receiverConnectionMessagesTotalHour'
+    summary: Receiver publishes the cumulative message count for one sources[] connection since the current UTC hour began (REDIS_HOST configured only)
+
+  publishReceiverConnectionMessagesTotalToday:
+    action: send
+    channel:
+      $ref: '#/channels/receiverConnectionMessagesTotalToday'
+    summary: Receiver publishes the cumulative message count for one sources[] connection since the current UTC day began (REDIS_HOST configured only)
+
+  publishReceiverConnectionMessagesTotalLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/receiverConnectionMessagesTotalLifetime'
+    summary: Receiver publishes the cumulative message count for one sources[] connection since process start (REDIS_HOST configured only)
+
   publishReceiverConnectionConnectedAttributes:
     action: send
     channel:
@@ -1017,6 +1100,30 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ReceiverConnectionReconnectCount'
+
+    ReceiverConnectionMessagesTotalHourMessage:
+      name: ReceiverConnectionMessagesTotalHourMessage
+      title: Receiver per-connection message count (hour)
+      summary: Cumulative message count for one sources[] connection since the current UTC hour began
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverConnectionMessagesTotalHour'
+
+    ReceiverConnectionMessagesTotalTodayMessage:
+      name: ReceiverConnectionMessagesTotalTodayMessage
+      title: Receiver per-connection message count (today)
+      summary: Cumulative message count for one sources[] connection since the current UTC day began
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverConnectionMessagesTotalToday'
+
+    ReceiverConnectionMessagesTotalLifetimeMessage:
+      name: ReceiverConnectionMessagesTotalLifetimeMessage
+      title: Receiver per-connection message count (lifetime)
+      summary: Cumulative message count for one sources[] connection since this process started
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ReceiverConnectionMessagesTotalLifetime'
 
     ReceiverConnectionConnectedAttributesMessage:
       name: ReceiverConnectionConnectedAttributesMessage
@@ -1397,6 +1504,32 @@ components:
       type: integer
       description: Number of times one sources[] connection has dropped and been re-established since process start
       example: 0
+
+    ReceiverConnectionMessagesTotalHour:
+      type: integer
+      description: >
+        Cumulative message count for one sources[] connection since the
+        current UTC hour began. Only published when the receiver has
+        REDIS_HOST configured; resets on receiver restart as well as at
+        the real UTC boundary.
+      example: 214
+
+    ReceiverConnectionMessagesTotalToday:
+      type: integer
+      description: >
+        Cumulative message count for one sources[] connection since the
+        current UTC day began. Only published when the receiver has
+        REDIS_HOST configured; resets on receiver restart as well as at
+        the real UTC boundary.
+      example: 8452
+
+    ReceiverConnectionMessagesTotalLifetime:
+      type: integer
+      description: >
+        Cumulative message count for one sources[] connection since this
+        process started -- not since the receiver was first installed.
+        Only published when the receiver has REDIS_HOST configured.
+      example: 193822
 
     ReceiverConnectionConnectedAttributes:
       type: object
@@ -1863,9 +1996,16 @@ components:
 
     ReceiverId:
       description: >
-        UUID receiver instance identifier, generated on first startup and
-        persisted to {data_dir}/receiver_id -- not operator-set. Allows
-        multiple receiver containers to coexist on the same broker.
+        Receiver instance identifier, persisted to {data_dir}/receiver_id
+        on first successful startup and reused on every restart after.
+        With REDIS_HOST configured, this is the operator-chosen
+        RECEIVER_NAME, claimed via Redis SET NX the same way
+        MESSAGE_PROCESSOR_ID is claimed (first-boot-only Redis dependency;
+        every later boot resumes the persisted value with zero Redis
+        calls). With REDIS_HOST unset, this is a randomly generated UUID
+        instead, and RECEIVER_NAME stays a purely cosmetic label. Either
+        way, allows multiple receiver containers to coexist on the same
+        broker.
 
     MessageProcessorId:
       description: >

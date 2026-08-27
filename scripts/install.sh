@@ -633,7 +633,10 @@ fetch_role() {
 collect_receiver_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (receiver) --"
-  RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Friendly name (shown in Home Assistant)" "$(existing_env_value_or "$env_file" RECEIVER_NAME "$(default_receiver_name)")")"
+  # RECEIVER_NAME itself was already prompted for once, up in the role
+  # loop -- it doubles as the install folder name, so it has to be known
+  # before this function's fetch_role/role_dir even exist. Nothing to do
+  # here but write the value that's already in scope.
   RECEIVER_SOURCES="$(prompt_receiver_sources "$(existing_env_value "$env_file" RECEIVER_SOURCES)")"
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
@@ -643,15 +646,27 @@ collect_receiver_env() {
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(existing_env_value "$env_file" MQTT_PASSWORD)" 0)"
+  # Optional -- leave REDIS_HOST blank to disable entirely: no
+  # identity claim/heartbeat, no period-counter sensors, no core-health
+  # registration, and RECEIVER_NAME stays purely cosmetic (the receiver
+  # falls back to its own generated UUID identity). Same
+  # optional/empty-default pattern MQTT_HOST already uses above.
+  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host (leave blank to disable identity claim + message counters)" "$(existing_env_value "$env_file" REDIS_HOST)" 0)"
+  REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
+  REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(existing_env_value "$env_file" REDIS_PASSWORD)" 0)"
   probe_tcp "$RABBITMQ_HOST" "$RABBITMQ_PORT" "RabbitMQ"
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
+  probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
 
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# Free-text label for this receiver, shown in Home Assistant. The
-# receiver's stable identity is a UUID it generates into
-# data/receiver/receiver_id -- renaming here never renames its MQTT topics.
+# Operator-chosen name for this receiver -- also used as the install
+# folder name. With REDIS_HOST set below, this is the receiver's actual
+# identity (claimed via Redis SET NX on first boot, then persisted to
+# data/receiver/receiver_id forever after); with REDIS_HOST unset, it's
+# purely a Home Assistant display label and the receiver falls back to a
+# generated UUID identity instead.
 RECEIVER_NAME=${RECEIVER_NAME}
 
 # Comma-separated host:port:source triples, one per readsb connection.
@@ -667,6 +682,12 @@ MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}
 MQTT_USERNAME=${MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD}
+
+# Optional -- leave REDIS_HOST blank to disable identity claim, message
+# counters, and core-health registration entirely.
+REDIS_HOST=${REDIS_HOST}
+REDIS_PORT=${REDIS_PORT}
+REDIS_PASSWORD=${REDIS_PASSWORD}
 
 # Seconds between telemetry publishes.
 TELEMETRY_INTERVAL_SECONDS=30
@@ -1458,9 +1479,23 @@ main() {
   for role in "${SELECTED_ROLES[@]}"; do
     local folder_name
     folder_name="$(default_folder_for_role "$role")"
-    if [ "$NON_INTERACTIVE" -eq 0 ] && [ "$role" = "receiver" ]; then
+    if [ "$role" = "receiver" ]; then
+      # One unified prompt replaces the old separate "folder name"
+      # and RECEIVER_NAME prompts -- the same operator-chosen name becomes
+      # the install folder (sanitized the same way project_name_for_folder
+      # already sanitizes it), the HA-displayed label, and (once Redis is
+      # configured below) the name claimed via Redis SET NX, so there's
+      # exactly one place to name a receiver instead of two prompts that
+      # could disagree. default_receiver_name() (the machine's uppercased
+      # short hostname) carries forward as this prompt's
+      # suggested default. prompt_string is already non-interactive-safe
+      # (reads RECEIVER_NAME from the environment instead of prompting),
+      # so this isn't gated on NON_INTERACTIVE the way the old FOLDER_NAME
+      # prompt was.
       echo
-      folder_name="$(prompt_string FOLDER_NAME "Folder name for this receiver instance" "$folder_name")"
+      RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Receiver name (install folder + Home Assistant label)" "$(default_receiver_name)")"
+      folder_name="$(sanitize_identifier "$RECEIVER_NAME")"
+      [ -n "$folder_name" ] || folder_name="$(default_folder_for_role "$role")"
     fi
     local role_dir="${INSTALL_ROOT}/${folder_name}"
     mkdir -p "$role_dir"
