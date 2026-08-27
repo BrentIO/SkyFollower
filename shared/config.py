@@ -166,6 +166,44 @@ def redis_config(loader: Optional[ConfigLoader] = None) -> dict:
     return block
 
 
+def rabbitmq_management_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """RabbitMQ's HTTP Management API, polled only by core-health -- a
+    separate port/credential pair from rabbitmq_config()'s AMQP block above,
+    since core-health authenticates as its own `monitoring`-tagged user
+    (broker-wide read-only), never as the scoped application user every
+    other component connects with."""
+    loader, own = _own_loader(loader)
+    block = {
+        "host": loader.string("RABBITMQ_HOST"),
+        "port": loader.integer("RABBITMQ_MANAGEMENT_PORT", 15672),
+        "username": loader.string("RABBITMQ_MONITORING_USERNAME"),
+        "password": loader.string("RABBITMQ_MONITORING_PASSWORD"),
+    }
+    if own:
+        loader.raise_for_problems()
+    return block
+
+
+def redis_monitoring_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """Redis credentials for core-health's own scoped ACL user (INFO/MEMORY
+    only -- see shared/redis_client.py's `username` parameter), a second,
+    separate credential from redis_config()'s `password`-only default-user
+    block above. core-health still also builds a normal redis_config()
+    client (the same default user every other component uses) to read
+    message-processor's/the receiver's own application counters, which are
+    plain key reads, not INFO/MEMORY introspection."""
+    loader, own = _own_loader(loader)
+    block = {
+        "host": loader.string("REDIS_HOST"),
+        "port": loader.integer("REDIS_PORT", 6379),
+        "username": loader.string("REDIS_MONITORING_USERNAME"),
+        "password": loader.string("REDIS_MONITORING_PASSWORD"),
+    }
+    if own:
+        loader.raise_for_problems()
+    return block
+
+
 def s3_config(loader: Optional[ConfigLoader] = None) -> dict:
     """The bucket name, plus a presence check on boto3's own credential
     variables.
@@ -297,7 +335,9 @@ def telemetry_config(loader: Optional[ConfigLoader] = None) -> dict:
 _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "mqtt": mqtt_config,
     "rabbitmq": rabbitmq_config,
+    "rabbitmq_management": rabbitmq_management_config,
     "redis": redis_config,
+    "redis_monitoring": redis_monitoring_config,
     "s3": s3_config,
     "athena": athena_config,
 }

@@ -1,0 +1,85 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Core Health — RabbitMQ + Redis Poll Loops
+
+box "Core Health" $OnPrem
+    participant "CoreHealth" as CoreHealth
+end box
+
+box "RabbitMQ" $OnPrem
+    participant "Management API" as RmqApi
+end box
+
+box "Redis" $OnPrem
+    participant "Redis" as Redis
+end box
+
+box "MQTT" $OnPrem
+    participant "MQTT Broker" as MQTT
+end box
+
+== Every 10 seconds — RabbitMQ ==
+
+loop until shutdown
+    CoreHealth -> CoreHealth : **Sleep 10 seconds**
+    alt RabbitMQ Management API reachable
+        CoreHealth -> RmqApi++ : **Fetch broker overview**\n""GET /api/overview""
+        RmqApi --> CoreHealth-- : object_totals.connections
+        CoreHealth -> RmqApi++ : **Fetch per-node alarm state**\n""GET /api/nodes""
+        RmqApi --> CoreHealth-- : mem_alarm, disk_free_alarm
+        CoreHealth -> RmqApi++ : **Fetch every queue's stats**\n""GET /api/queues/%2F""
+        RmqApi --> CoreHealth-- : queues[]
+        CoreHealth -> CoreHealth : **Set RabbitMQ is connected**\n""self._rmq_connected = True""
+        CoreHealth -> CoreHealth : **Filter to SkyFollower's own queues**\n""[q for q in queues if is_skyfollower_queue(q.name)]""
+
+        loop for each SkyFollower-owned queue
+            CoreHealth -> CoreHealth : **Classify queue's device/topic**\n""target = _queue_target(queue.name)""
+            CoreHealth -\ MQTT : **Publish queue stats**\n""{target.state_base}/{field}"" (retain=True)
+        end
+
+        CoreHealth -\ MQTT : **Publish broker-wide stats**\n""SkyFollower/core-health/rabbitmq/statistic/*"" (retain=True)
+
+        CoreHealth -> CoreHealth : **Enumerate live message processor IDs**\n""message_processor_id_from_queue_name(queue.name)""
+        loop for each message processor id
+            CoreHealth -> Redis++ : **Read counter (default user)**\n""GET metrics:message_processor:{id}:registration_misses:{period}""
+            Redis --> CoreHealth-- : value or nil
+            CoreHealth -\ MQTT : **Publish mimicked counter**\n""SkyFollower/message-processor/{id}/statistic/{field}"" (retain=True)
+        end
+
+        CoreHealth -> Redis++ : **List claimed receiver names**\n""SMEMBERS receiver:index""
+        Redis --> CoreHealth-- : names
+        loop for each receiver name
+            CoreHealth -> Redis++ : **Read registration entry**\n""GET receiver:{name}:registration""
+            Redis --> CoreHealth-- : sources JSON or nil
+            alt registration present
+                CoreHealth -\ MQTT : **Publish mimicked per-connection counters**\n""SkyFollower/receiver/{name}/statistic/{field}"" (retain=True)
+            else expired or missing
+                CoreHealth -> Redis++ : **Self-heal stale index entry**\n""SREM receiver:index {name}""
+                Redis --> CoreHealth-- : OK
+            end
+        end
+    else any RabbitMQ call raises
+        CoreHealth -> CoreHealth : **Set RabbitMQ is not connected**\n""self._rmq_connected = False""
+    end
+    CoreHealth -\ MQTT : **Publish connectivity flag**\n""SkyFollower/core-health/statistic/rabbitmq_connected"" (retain=True)
+end
+
+== Independently, every 60 seconds — Redis ==
+
+loop until shutdown
+    CoreHealth -> CoreHealth : **Sleep 60 seconds**
+    alt Redis reachable
+        CoreHealth -> Redis++ : **Fetch server info (scoped monitoring user)**\n""INFO everything""
+        Redis --> CoreHealth-- : info
+        CoreHealth -> Redis++ : **Fetch memory stats (scoped monitoring user)**\n""MEMORY STATS""
+        Redis --> CoreHealth-- : memory_stats
+        CoreHealth -> CoreHealth : **Set Redis is connected**\n""self._redis_connected = True""
+        CoreHealth -\ MQTT : **Publish Redis stats**\n""SkyFollower/core-health/redis/statistic/*"" (retain=True)
+    else INFO/MEMORY STATS raises
+        CoreHealth -> CoreHealth : **Set Redis is not connected**\n""self._redis_connected = False""
+    end
+    CoreHealth -\ MQTT : **Publish connectivity flag**\n""SkyFollower/core-health/statistic/redis_connected"" (retain=True)
+end
+
+@enduml

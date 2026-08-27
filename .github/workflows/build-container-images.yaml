@@ -70,6 +70,7 @@ jobs:
               receiver) name="receiver" ;;
               message-processor) name="message-processor" ;;
               archive-processor) name="archive" ;;
+              core-health) name="core-health" ;;
               management-ui) name="management-ui" ;;
               runners/*) name="runner-$(basename "$dir")" ;;
               *) echo "Skipping unrecognized Dockerfile: $dockerfile" >&2; continue ;;

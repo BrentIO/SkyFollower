@@ -20,10 +20,16 @@ def build_redis_client(redis_config: dict) -> redis_lib.Redis:
     `password` is passed unconditionally: shared/config.py's redis_config()
     treats REDIS_PASSWORD as required, so every caller already has one by
     the time this runs.
+
+    `username` is optional and defaults to None (redis-py's own default),
+    which authenticates as the "default" user -- every component before
+    core-health. core-health is the first caller to pass a `username`,
+    authenticating as its own scoped Redis ACL user instead.
     """
     return redis_lib.Redis(
         host=redis_config["host"],
         port=redis_config.get("port", 6379),
+        username=redis_config.get("username") or None,
         password=redis_config.get("password"),
         decode_responses=True,
     )
