@@ -3,10 +3,10 @@
 // Components are a fixed, explicit set — mirroring the explicit
 // receiver/message-processor/archive-processor/ui cases in
 // .github/workflows/build-images.yaml's discover-images job (shared has no
-// Dockerfile/image but still gets a docs page). Data runners are discovered
-// dynamically from the filesystem, mirroring that same job's `runners/*`
-// wildcard case, so a new runner directory picks up a docs page with no
-// changes here.
+// Dockerfile/image but still gets a docs page). Data runners and tools are
+// discovered dynamically from the filesystem, mirroring that same job's
+// `runners/*` wildcard case, so a new runner or tool directory picks up a
+// docs page with no changes here.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -49,6 +49,19 @@ export function discoverRunners() {
     .sort()
     .map((name) => {
       const readmePath = join(runnersDir, name, "README.md");
+      return { name, readmePath, title: h1Title(readmePath, name) };
+    });
+}
+
+export function discoverTools() {
+  const toolsDir = join(REPO_ROOT, "tools");
+  return readdirSync(toolsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(join(toolsDir, name, "README.md")))
+    .sort()
+    .map((name) => {
+      const readmePath = join(toolsDir, name, "README.md");
       return { name, readmePath, title: h1Title(readmePath, name) };
     });
 }
