@@ -19,7 +19,7 @@ loop for hour, today
     alt key did not already exist
         Counter -> Counter : **Set expiry to the real boundary**\n""EXPIREAT key expires_at""
     else key already existed this period
-        Counter -> Counter : **Leave the existing expiry untouched**\n""-- never slides the window forward --""
+        Counter -> Counter : **Leave the existing expiry untouched**\n""(never slides the window forward)""
     end
     Counter --> Archiver-- : new_value
 end
