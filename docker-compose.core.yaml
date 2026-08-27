@@ -88,6 +88,40 @@ services:
       timeout: 5s
       retries: 3
 
+  # Always-on, no `profiles:` -- matches ofelia below, not the runner-*
+  # services further down. Polls RabbitMQ's Management API and Redis's
+  # INFO/MEMORY STATS on its own connections (never the rabbitmq/redis
+  # containers' own internals), so no depends_on: both clients simply retry
+  # on their own poll cadence until each backend is reachable.
+  core-health:
+    image: ghcr.io/brentio/skyfollower-core-health:${SKYFOLLOWER_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_MANAGEMENT_PORT: ${RABBITMQ_MANAGEMENT_PORT:-15672}
+      RABBITMQ_MONITORING_USERNAME: ${RABBITMQ_MONITORING_USERNAME}
+      RABBITMQ_MONITORING_PASSWORD: ${RABBITMQ_MONITORING_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+    # RAM-backed, not the container's writable layer -- matching every
+    # other long-running component's healthcheck heartbeat file. core-health
+    # keeps no state of its own (a pure poller/republisher), so this is its
+    # only tmpfs/volume of any kind.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   # ---------------------------------------------------------------------------
   # Scheduler
   # ---------------------------------------------------------------------------

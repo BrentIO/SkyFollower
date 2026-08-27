@@ -17,6 +17,10 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"
+    directory: "/core-health"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
     directory: "/management-ui/backend"
     schedule:
       interval: "weekly"
@@ -246,6 +250,10 @@ updates:
       interval: "weekly"
   - package-ecosystem: "docker"
     directory: "/archive-processor"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/core-health"
     schedule:
       interval: "weekly"
   - package-ecosystem: "docker"

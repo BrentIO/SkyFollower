@@ -19,7 +19,8 @@ def build_redis_client(redis_config: dict) -> redis_lib.Redis:
 
     `password` is passed unconditionally: shared/config.py's redis_config()
     treats REDIS_PASSWORD as required, so every caller already has one by
-    the time this runs.
+    the time this runs. Every component authenticates as the "default"
+    user with this same password -- no per-component Redis ACL users.
     """
     return redis_lib.Redis(
         host=redis_config["host"],

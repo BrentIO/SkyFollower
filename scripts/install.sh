@@ -725,6 +725,15 @@ collect_core_env() {
   if [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
     RABBITMQ_ADMIN_PASSWORD="$(generate_password)"
   fi
+  # core-health's own broker-wide read-only credential (RabbitMQ's built-in
+  # `monitoring` tag), provisioned the same way as the two above -- fixed
+  # username, generated password, never prompted, since there's no more a
+  # reason for a human to choose this username than the dashboard admin's.
+  RABBITMQ_MONITORING_USERNAME="$(existing_env_value_or "$env_file" RABBITMQ_MONITORING_USERNAME skyfollower-monitoring)"
+  RABBITMQ_MONITORING_PASSWORD="$(existing_env_value "$env_file" RABBITMQ_MONITORING_PASSWORD)"
+  if [ -z "$RABBITMQ_MONITORING_PASSWORD" ]; then
+    RABBITMQ_MONITORING_PASSWORD="$(generate_password)"
+  fi
   local existing_redis_pw
   existing_redis_pw="$(existing_env_value "$env_file" REDIS_PASSWORD)"
   if [ "$NON_INTERACTIVE" -eq 0 ] && [ -z "$existing_redis_pw" ]; then
@@ -765,11 +774,22 @@ RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 RABBITMQ_ADMIN_USERNAME=${RABBITMQ_ADMIN_USERNAME}
 RABBITMQ_ADMIN_PASSWORD=${RABBITMQ_ADMIN_PASSWORD}
 
+# core-health's own broker-wide read-only credential (RabbitMQ's built-in
+# "monitoring" tag -- see provision_rabbitmq_users), used only for polling
+# the Management API on port 15672, never for AMQP.
+RABBITMQ_MANAGEMENT_PORT=15672
+RABBITMQ_MONITORING_USERNAME=${RABBITMQ_MONITORING_USERNAME}
+RABBITMQ_MONITORING_PASSWORD=${RABBITMQ_MONITORING_PASSWORD}
+
 # Redis as the runners on this host reach it: the compose service name,
 # since they share this project's network.
 REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_PASSWORD=${REDIS_PASSWORD}
+
+# core-health authenticates with this same default-user credential for
+# Redis INFO/MEMORY introspection too -- no separate scoped user. See
+# core-health/README.md's Credentials section for why.
 
 # TTL applied to the enrichment keys the runners write.
 REDIS_TTL_DAYS=14
@@ -1219,9 +1239,12 @@ provision_rabbitmq_users() {
   # full-admin from before this existed.
   local role_dir="$1"
   local rabbitmq_username rabbitmq_admin_username rabbitmq_admin_password
+  local rabbitmq_monitoring_username rabbitmq_monitoring_password
   rabbitmq_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_USERNAME)"
   rabbitmq_admin_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_USERNAME)"
   rabbitmq_admin_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_PASSWORD)"
+  rabbitmq_monitoring_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_MONITORING_USERNAME)"
+  rabbitmq_monitoring_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_MONITORING_PASSWORD)"
   if [ -z "$rabbitmq_username" ] || [ -z "$rabbitmq_admin_username" ] || [ -z "$rabbitmq_admin_password" ]; then
     echo "  ✗ ${role_dir}/.env is missing RabbitMQ credentials -- skipping user provisioning." >&2
     return
@@ -1254,7 +1277,13 @@ provision_rabbitmq_users() {
   # configure/write/read, in that order -- amq.default is required for
   # write because completed flights are published to the archive queue
   # through the default exchange. skyfollower-message-processor-.* is each
-  # processor's own queue (fleet-ID-named, not adsb-*-prefixed).
+  # processor's own queue (fleet-ID-named, not adsb-*-prefixed). Keep this
+  # pattern in sync with shared/rabbitmq_topology.py's
+  # SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN -- bash can't import that Python
+  # constant directly, so the two copies have to be kept identical by hand;
+  # core-health filters RabbitMQ's Management API queue list with that
+  # constant, so a change here that isn't mirrored there (or vice versa)
+  # silently drifts "what SkyFollower owns" apart between the two.
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_username") \
     && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_username" \
       '^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$' '^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$' '^(adsb.*|skyfollower-message-processor-.*|archive)$'); then
@@ -1275,6 +1304,27 @@ provision_rabbitmq_users() {
     echo "  ✓ ${rabbitmq_admin_username}: administrator (dashboard login only -- see ${role_dir}/.env)"
   else
     echo "  ✗ Could not tag/grant permissions for ${rabbitmq_admin_username} -- check manually." >&2
+  fi
+
+  # core-health's broker-wide read-only credential. The "monitoring" tag
+  # alone grants Management API visibility into every vhost/queue/
+  # connection's aggregated stats -- no per-resource permission is needed
+  # (or possible: `monitoring` is a role tag, not a permission scope), so
+  # this is set to match nothing rather than left at RabbitMQ's own
+  # all-matching default for a freshly add_user'd account.
+  if [ -n "$rabbitmq_monitoring_username" ] && [ -n "$rabbitmq_monitoring_password" ]; then
+    if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_monitoring_username}[[:space:]]"); then
+      (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_monitoring_username" "$rabbitmq_monitoring_password" >/dev/null) \
+        || echo "  ✗ Could not create ${rabbitmq_monitoring_username} -- check manually." >&2
+    fi
+    if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_monitoring_username" monitoring) \
+      && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_monitoring_username" '^$' '^$' '^$'); then
+      echo "  ✓ ${rabbitmq_monitoring_username}: monitoring tag, no resource permissions (core-health only)"
+    else
+      echo "  ✗ Could not tag/grant permissions for ${rabbitmq_monitoring_username} -- check manually." >&2
+    fi
+  else
+    echo "  ✗ ${role_dir}/.env is missing RabbitMQ monitoring credentials -- skipping core-health's RabbitMQ user." >&2
   fi
 }
 
