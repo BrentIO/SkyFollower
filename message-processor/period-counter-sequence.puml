@@ -1,0 +1,64 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Message Processor — Period Counter Reset Mechanism
+
+box "Message Processor" $OnPrem
+    participant "Processor" as Processor
+end box
+
+box "Redis" $OnPrem
+    database "metrics:message_processor:\n{id}:{counter}:{period}" as Counter
+end box
+
+== Startup, once ==
+
+Processor -> Counter++ : **Reset the lifetime counters**\n""DEL registration_misses:lifetime, operator_misses:lifetime, total_messages_processed:lifetime""
+Counter --> Processor-- : OK
+note right of Processor
+    "lifetime" means "since this process instance
+    started," not "forever" -- Redis is a separate,
+    persistent service, so a restart alone doesn't
+    clear these keys for free.
+end note
+
+== Hot path — every message, zero Redis I/O ==
+
+loop for each consumed message
+    Processor -> Processor : **Record a message processed**\n""self._total_messages_processed.record()""
+    opt aircraft enrichment misses
+        Processor -> Processor : **Record a registration miss**\n""self._registration_misses.record()""
+    end
+    opt operator enrichment misses
+        Processor -> Processor : **Record an operator miss**\n""self._operator_misses.record()""
+    end
+end
+
+== Independently, every telemetry_interval_seconds (telemetry thread) ==
+
+loop for each of the three accumulators
+    Processor -> Processor : **Take and zero the pending delta**\n""delta = accumulator.flush_and_reset()""
+    alt delta == 0
+        Processor -> Processor : **Skip this metric this cycle**
+    else delta > 0
+        loop for hour, today (not lifetime)
+            Processor -> Processor : **Compute the real UTC boundary**\n""expires_at = next_period_boundary(period, now)""
+            Processor -> Counter++ : **Atomically increment and conditionally expire**\n""EVALSHA incr_period_counter.lua 0 key delta expires_at""
+            alt key did not already exist
+                Counter -> Counter : **Set expiry to the real boundary**\n""EXPIREAT key expires_at""
+            else key already existed this period
+                Counter -> Counter : **Leave the existing expiry untouched**\n""(never slides the window forward)""
+            end
+            Counter --> Processor-- : new_value
+        end
+        Processor -> Counter++ : **Increment the lifetime total (never expires)**\n""INCRBY key delta""
+        Counter --> Processor-- : new_value
+    end
+end
+
+note over Counter
+    core-health reads these keys and publishes them
+    over MQTT/Home Assistant, not this component.
+end note
+
+@enduml

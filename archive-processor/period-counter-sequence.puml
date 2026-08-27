@@ -1,0 +1,29 @@
+@startuml
+!include ../docs/images/common-sequence.iuml
+
+title Archive Processor — Period Counter Reset Mechanism
+
+box "Archive Processor" $OnPrem
+    participant "Archiver" as Archiver
+end box
+
+box "Redis" $OnPrem
+    database "metrics:archive:\n{flights_archived|flights_skipped}:\n{period}" as Counter
+end box
+
+== On every archived or skipped flight ==
+
+loop for hour, today
+    Archiver -> Archiver : **Compute the real UTC boundary**\n""expires_at = next_period_boundary(period, now)""
+    Archiver -> Counter++ : **Atomically increment and conditionally expire**\n""EVALSHA incr_period_counter.lua 0 key 1 expires_at""
+    alt key did not already exist
+        Counter -> Counter : **Set expiry to the real boundary**\n""EXPIREAT key expires_at""
+    else key already existed this period
+        Counter -> Counter : **Leave the existing expiry untouched**\n""(never slides the window forward)""
+    end
+    Counter --> Archiver-- : new_value
+end
+
+Archiver -> Archiver : **Publish telemetry from Redis directly**\n""self._redis_counter(key)""
+
+@enduml

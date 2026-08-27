@@ -486,6 +486,9 @@ class TestRedisCounterIncrements:
             return processor, mock_redis
 
     def test_redis_incr_called_after_successful_write(self):
+        # Both hour/today counters go through incr_period_counter.lua now
+        # (see shared/lua/incr_period_counter.lua), not a plain INCR -- so
+        # the real reset-at-boundary fix actually applies here.
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)
 
@@ -498,9 +501,10 @@ class TestRedisCounterIncrements:
                 processor._post_write_success(flight, "flights/2024/05/31/key.json.gz")
 
             from shared.redis_keys import metrics_flights_archived_key
-            mock_redis.incr.assert_any_call(metrics_flights_archived_key("hour"))
-            mock_redis.incr.assert_any_call(metrics_flights_archived_key("today"))
-            assert mock_redis.incr.call_count >= 2
+            evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+            assert metrics_flights_archived_key("hour") in evalsha_keys
+            assert metrics_flights_archived_key("today") in evalsha_keys
+            mock_redis.incr.assert_not_called()
 
     def test_redis_not_incremented_on_s3_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -511,7 +515,90 @@ class TestRedisCounterIncrements:
             processor._process_flight(flight)
 
             mock_redis.incr.assert_not_called()
+            mock_redis.evalsha.assert_not_called()
             assert processor._fallback.depth() == 1
+
+
+class TestIncrPeriodCounters:
+    """_incr_period_counters()'s own behavior -- which key/amount/boundary
+    it hands evalsha. incr_period_counter.lua's own atomicity/expiry-on-
+    creation semantics are covered live against real Redis by
+    shared/tests/test_incr_period_counter_lua.py."""
+
+    def _make_processor(self, tmp_dir: str):
+        from archive_processor.main import ArchiveProcessor
+
+        config = {
+            "s3": {"region": "us-east-1", "bucket": "test-bucket",
+                   "access_key_id": "x", "secret_access_key": "x"},
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "redis": {"host": "localhost"},
+            "mqtt": None,
+            "telemetry_interval_seconds": 30,
+        }
+        with patch("archive_processor.main.DATA_DIR", tmp_dir), \
+             patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
+             patch("archive_processor.main.boto3.Session"):
+            mock_redis = MagicMock()
+            mock_redis.script_load.return_value = "incrsha123"
+            MockRedis.return_value = mock_redis
+            processor = ArchiveProcessor(config)
+            processor._redis = mock_redis
+            return processor, mock_redis
+
+    def test_increments_each_period_by_one_via_evalsha(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            from shared.redis_keys import metrics_flights_archived_key
+
+            processor._incr_period_counters(metrics_flights_archived_key, ("hour", "today"))
+
+            assert mock_redis.evalsha.call_count == 2
+            for c in mock_redis.evalsha.call_args_list:
+                assert c.args[0] == "incrsha123"
+                assert c.args[1] == 0
+                assert c.args[3] == 1  # increment amount
+            keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+            assert keys == {
+                metrics_flights_archived_key("hour"), metrics_flights_archived_key("today"),
+            }
+
+    def test_hour_boundary_uses_real_utc_top_of_hour(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            from shared.redis_keys import metrics_flights_archived_key
+
+            fixed_now = datetime(2026, 8, 23, 14, 37, 0, tzinfo=timezone.utc)
+            with patch("archive_processor.main.datetime") as mock_dt:
+                mock_dt.now.return_value = fixed_now
+                processor._incr_period_counters(metrics_flights_archived_key, ("hour",))
+
+            expected = int(datetime(2026, 8, 23, 15, 0, 0, tzinfo=timezone.utc).timestamp())
+            assert mock_redis.evalsha.call_args.args[4] == expected
+
+    def test_today_boundary_uses_real_utc_midnight(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            from shared.redis_keys import metrics_flights_archived_key
+
+            fixed_now = datetime(2026, 8, 23, 23, 59, 0, tzinfo=timezone.utc)
+            with patch("archive_processor.main.datetime") as mock_dt:
+                mock_dt.now.return_value = fixed_now
+                processor._incr_period_counters(metrics_flights_archived_key, ("today",))
+
+            expected = int(datetime(2026, 8, 24, 0, 0, 0, tzinfo=timezone.utc).timestamp())
+            assert mock_redis.evalsha.call_args.args[4] == expected
+
+    def test_no_lifetime_period_used_for_archive_processor_counters(self):
+        # Explicit scope note from the issue: no new "lifetime" period is
+        # added to archive-processor's existing flights_archived/flights_skipped
+        # counters -- only the reset-mechanism fix for hour/today.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            from shared.redis_keys import metrics_flights_archived_key
+
+            with pytest.raises(ValueError, match="period"):
+                processor._incr_period_counters(metrics_flights_archived_key, ("lifetime",))
 
 
 # ---------------------------------------------------------------------------
@@ -601,8 +688,10 @@ class TestExternalOnlySkip:
             processor._process_flight(flight)
 
             from shared.redis_keys import metrics_flights_skipped_key
-            mock_redis.incr.assert_any_call(metrics_flights_skipped_key("hour"))
-            mock_redis.incr.assert_any_call(metrics_flights_skipped_key("today"))
+            evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+            assert metrics_flights_skipped_key("hour") in evalsha_keys
+            assert metrics_flights_skipped_key("today") in evalsha_keys
+            mock_redis.incr.assert_not_called()
 
     def test_archived_flight_does_not_increment_skipped_metric(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -614,8 +703,8 @@ class TestExternalOnlySkip:
 
             from shared.redis_keys import metrics_flights_skipped_key
             skipped_calls = [
-                c for c in mock_redis.incr.call_args_list
-                if c.args and c.args[0] in (metrics_flights_skipped_key("hour"), metrics_flights_skipped_key("today"))
+                c for c in mock_redis.evalsha.call_args_list
+                if c.args[2] in (metrics_flights_skipped_key("hour"), metrics_flights_skipped_key("today"))
             ]
             assert skipped_calls == []
 

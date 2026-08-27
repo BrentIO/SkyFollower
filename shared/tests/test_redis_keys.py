@@ -15,9 +15,10 @@ from shared.redis_keys import (
     config_rules_key,
     config_rules_version_key,
     message_processor_heartbeat_key,
-    metrics_aircraft_type_misses_key,
     metrics_flights_archived_key,
+    metrics_operator_misses_key,
     metrics_registration_misses_key,
+    metrics_total_messages_processed_key,
     operator_key,
     receiver_heartbeat_key,
     receiver_message_count_key,
@@ -125,13 +126,33 @@ class TestMetricKeys:
         with pytest.raises(ValueError, match="period"):
             metrics_registration_misses_key(0, "week")
 
-    def test_aircraft_type_misses_valid_periods(self):
-        assert metrics_aircraft_type_misses_key(0, "hour") == "metrics:message_processor:0:aircraft_type_misses:hour"
-        assert metrics_aircraft_type_misses_key(2, "lifetime") == "metrics:message_processor:2:aircraft_type_misses:lifetime"
+    def test_operator_misses_valid_periods(self):
+        assert metrics_operator_misses_key(0, "today") == "metrics:message_processor:0:operator_misses:today"
+        assert metrics_operator_misses_key(2, "lifetime") == "metrics:message_processor:2:operator_misses:lifetime"
 
-    def test_aircraft_type_misses_invalid_period(self):
+    def test_operator_misses_invalid_period(self):
         with pytest.raises(ValueError, match="period"):
-            metrics_aircraft_type_misses_key(0, "yesterday")
+            metrics_operator_misses_key(0, "hour")
+        with pytest.raises(ValueError, match="period"):
+            metrics_operator_misses_key(0, "yesterday")
+
+    def test_total_messages_processed_valid_periods(self):
+        assert (
+            metrics_total_messages_processed_key(0, "hour")
+            == "metrics:message_processor:0:total_messages_processed:hour"
+        )
+        assert (
+            metrics_total_messages_processed_key(0, "today")
+            == "metrics:message_processor:0:total_messages_processed:today"
+        )
+        assert (
+            metrics_total_messages_processed_key(0, "lifetime")
+            == "metrics:message_processor:0:total_messages_processed:lifetime"
+        )
+
+    def test_total_messages_processed_invalid_period(self):
+        with pytest.raises(ValueError, match="period"):
+            metrics_total_messages_processed_key(0, "yesterday")
 
     def test_flights_archived_valid_periods(self):
         assert metrics_flights_archived_key("hour") == "metrics:archive:flights_archived:hour"

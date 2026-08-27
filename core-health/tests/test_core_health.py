@@ -42,8 +42,11 @@ CoreHealth = _mod.CoreHealth
 _queue_target = _mod._queue_target
 _sanitize_id = _mod._sanitize_id
 _mp_counter_key = _mod._mp_counter_key
-_metrics_operator_misses_key = _mod._metrics_operator_misses_key
-_metrics_total_messages_processed_key = _mod._metrics_total_messages_processed_key
+# operator_misses/total_messages_processed key builders are the real
+# shared/redis_keys.py functions now (reconciled once message-processor's
+# own counter-writing side landed) -- no more provisional local shims here.
+metrics_operator_misses_key = _mod.metrics_operator_misses_key
+metrics_total_messages_processed_key = _mod.metrics_total_messages_processed_key
 _receiver_index_key = _mod._receiver_index_key
 _receiver_registration_key = _mod._receiver_registration_key
 _receiver_message_total_key = _mod._receiver_message_total_key
@@ -578,20 +581,37 @@ class TestPollRedisOnce:
 
 
 # ---------------------------------------------------------------------------
-# Provisional Redis key helpers
+# Message-processor counter keys (reconciled shared/redis_keys.py builders)
+# and the receiver's own still-provisional key helpers
 # ---------------------------------------------------------------------------
 
-class TestProvisionalRedisKeys:
+class TestReconciledMessageProcessorCounterKeys:
     def test_operator_misses_key_shape(self):
-        assert _metrics_operator_misses_key("mp-1", "today") == (
+        assert metrics_operator_misses_key("mp-1", "today") == (
             "metrics:message_processor:mp-1:operator_misses:today"
         )
 
     def test_total_messages_processed_key_shape(self):
-        assert _metrics_total_messages_processed_key("mp-1", "hour") == (
+        assert metrics_total_messages_processed_key("mp-1", "hour") == (
             "metrics:message_processor:mp-1:total_messages_processed:hour"
         )
 
+    def test_mp_counter_key_uses_the_real_shared_builders(self):
+        # _mp_counter_key must resolve to the exact key message-processor's
+        # own code writes -- shared/redis_keys.py's builders, not a local
+        # provisional shim -- for every counter "kind" it supports.
+        assert _mp_counter_key("mp-1", "registration", "hour") == (
+            "metrics:message_processor:mp-1:registration_misses:hour"
+        )
+        assert _mp_counter_key("mp-1", "operator", "today") == (
+            "metrics:message_processor:mp-1:operator_misses:today"
+        )
+        assert _mp_counter_key("mp-1", "total_messages", "lifetime") == (
+            "metrics:message_processor:mp-1:total_messages_processed:lifetime"
+        )
+
+
+class TestProvisionalReceiverKeys:
     def test_receiver_index_key(self):
         assert _receiver_index_key() == "receiver:index"
 

@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.aws_setup import write_aws_setup_files
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.metrics import next_period_boundary
 from shared.redis_client import build_redis_client
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
@@ -378,6 +379,10 @@ class ArchiveProcessor:
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
+        _incr_lua_path = (
+            pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
+        )
+        self._incr_period_counter_sha = self._redis.script_load(_incr_lua_path.read_text())
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
         # read once at startup and cached. Not hot-reloaded; restart to pick
@@ -610,6 +615,18 @@ class ArchiveProcessor:
             self._fallback.put(payload)
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
+    def _incr_period_counters(self, key_fn, periods: tuple[str, ...]) -> None:
+        """Atomically increments one or more hour/today period counters via
+        shared/lua/incr_period_counter.lua, so each genuinely resets at the
+        real UTC boundary (shared.metrics.next_period_boundary()) instead of
+        accumulating forever. No "lifetime" period here -- out of scope for
+        this component's existing counters (see archive-processor/README.md)."""
+        now = datetime.now(timezone.utc)
+        for period in periods:
+            self._redis.evalsha(
+                self._incr_period_counter_sha, 0, key_fn(period), 1, next_period_boundary(period, now),
+            )
+
     def _process_flight(self, flight: CompletedFlight) -> None:
         """Write to S3 (or fallback) if S3 is currently reachable.
 
@@ -621,8 +638,7 @@ class ArchiveProcessor:
         """
         if set(flight.receiver_sources) == {"EXTERNAL"} and not flight.force_archive:
             try:
-                self._redis.incr(metrics_flights_skipped_key("hour"))
-                self._redis.incr(metrics_flights_skipped_key("today"))
+                self._incr_period_counters(metrics_flights_skipped_key, ("hour", "today"))
             except Exception as exc:
                 logger.warning("Redis counter update failed: %s", exc)
             logger.info("Skipped external-only flight %s (no force_archive match).", flight.id)
@@ -823,8 +839,7 @@ class ArchiveProcessor:
 
         # Redis counters
         try:
-            self._redis.incr(metrics_flights_archived_key("hour"))
-            self._redis.incr(metrics_flights_archived_key("today"))
+            self._incr_period_counters(metrics_flights_archived_key, ("hour", "today"))
         except Exception as exc:
             logger.warning("Redis counter update failed: %s", exc)
 

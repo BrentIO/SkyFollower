@@ -376,6 +376,25 @@ payloads are published to
 each sensor's `state_topic` points directly at its own
 `SkyFollower/archive/statistic/{field}` topic — no `value_template` needed.
 
+`flights_archived_{hour,today}`/`flights_skipped_{hour,today}` are backed by
+`metrics:archive:flights_archived:{hour|today}`/
+`metrics:archive:flights_skipped:{hour|today}` in Redis, and genuinely reset
+at the real UTC hour/midnight boundary rather than accumulating forever.
+Both increments go through `EVALSHA` against
+`shared/lua/incr_period_counter.lua` (`SCRIPT LOAD`ed once at startup into
+`self._incr_period_counter_sha`), which sets `EXPIREAT` to the real next UTC
+boundary (`shared/metrics.py`'s `next_period_boundary()`) only the instant a
+call creates the key — never on a later increment within the same period, so
+the window can't slide forward. Redis's own TTL expiry deletes the key at
+the boundary; the next completed/skipped flight after that recreates it
+fresh, a genuine reset with no external scheduler involved. There is no
+`lifetime` period for either counter — out of scope for this component's
+existing two counters, unlike message-processor's equivalent mechanism (see
+[message-processor/README.md](../message-processor/README.md)), which does
+add one.
+
+![Period counter reset mechanism](./period-counter-sequence.svg)
+
 `rabbitmq_archive_queue_depth_hwm` is sampled by a dedicated background
 loop capped at once every 10 seconds, independent of how low
 `telemetry_interval_seconds` is configured, and tracked as a high-water

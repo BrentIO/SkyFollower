@@ -17,12 +17,15 @@ misses, total messages processed, per-connection message totals) using
 those components' own exact topic paths, unique_id/object_id, and device
 blocks -- nothing on the wire distinguishes core-health publishing these
 from the owning component publishing them itself. See
-_publish_message_processor_counters()/_poll_receivers() below, and
-README.md's "Provisional Redis keys" section for the exact (not yet
-finalized elsewhere) key names assumed here: the components that actually
-*write* these counters are separate, not-yet-implemented changes at the
-time this was built, so this reads defensively -- a missing key means the
-count is genuinely zero, never an error.
+_publish_message_processor_counters()/_poll_receivers() below. The
+message-processor counter keys are the real shared/redis_keys.py builders
+(metrics_registration_misses_key()/metrics_operator_misses_key()/
+metrics_total_messages_processed_key()) -- message-processor is
+write-only for these (see message-processor/README.md), this component is
+the only one that ever publishes them over MQTT/HA. The receiver counter
+keys are still this component's own provisional choice -- see README.md's
+"Provisional Redis keys" section -- reads defensively either way: a
+missing key means the count is genuinely zero, never an error.
 """
 
 from __future__ import annotations
@@ -57,7 +60,11 @@ from shared.rabbitmq_topology import (
     message_processor_id_from_queue_name,
 )
 from shared.redis_client import build_redis_client
-from shared.redis_keys import metrics_registration_misses_key
+from shared.redis_keys import (
+    metrics_operator_misses_key,
+    metrics_registration_misses_key,
+    metrics_total_messages_processed_key,
+)
 
 logger = logging.getLogger("core-health")
 
@@ -92,27 +99,21 @@ def _sanitize_id(value: str) -> str:
 # ---------------------------------------------------------------------------
 # Provisional Redis key names -- see module docstring and README.md.
 #
-# metrics_registration_misses_key() already exists in shared/redis_keys.py
-# and is imported above; the two helpers below mirror its exact shape for
-# the two new message-processor counters described by #1044's design (not
-# yet landed at the time core-health was built), and the two receiver
-# helpers mirror shared/redis_keys.py's existing archive_search_index_key()/
+# The message-processor counter keys this component reads
+# (metrics_registration_misses_key()/metrics_operator_misses_key()/
+# metrics_total_messages_processed_key()) are the real shared/redis_keys.py
+# builders -- reconciled once message-processor's own counter-writing side
+# landed, so no provisional shims remain for them here.
+#
+# The three receiver helpers below remain this component's own provisional
+# choice, mirroring shared/redis_keys.py's existing archive_search_index_key()/
 # archive_search_key() precedent (an index SET of live names, plus a
-# per-name JSON record) for #1046's receiver registration mechanism. None of
-# these four are added to shared/redis_keys.py itself here, deliberately --
-# #1044/#1046 are separate, not-yet-implemented issues that may land with
-# a slightly different exact key, and this avoids a duplicate/conflicting
-# definition landing in the same shared module from two different PRs.
-# Reconcile these with shared/redis_keys.py once #1044/#1046 land.
+# per-name JSON record) for the receiver's identity/registration mechanism.
+# Not added to shared/redis_keys.py itself here, deliberately -- that's a
+# separate, not-yet-reconciled change, and this avoids a duplicate/
+# conflicting definition landing in the same shared module out of step with
+# whatever the receiver's own code actually writes.
 # ---------------------------------------------------------------------------
-
-def _metrics_operator_misses_key(message_processor_id: str, period: str) -> str:
-    return f"metrics:message_processor:{message_processor_id}:operator_misses:{period}"
-
-
-def _metrics_total_messages_processed_key(message_processor_id: str, period: str) -> str:
-    return f"metrics:message_processor:{message_processor_id}:total_messages_processed:{period}"
-
 
 def _receiver_index_key() -> str:
     """SET of every receiver name currently claimed (SADD'd by a receiver
@@ -262,9 +263,9 @@ def _mp_counter_key(pid: str, kind: str, period: str) -> str:
     if kind == "registration":
         return metrics_registration_misses_key(pid, period)
     if kind == "operator":
-        return _metrics_operator_misses_key(pid, period)
+        return metrics_operator_misses_key(pid, period)
     if kind == "total_messages":
-        return _metrics_total_messages_processed_key(pid, period)
+        return metrics_total_messages_processed_key(pid, period)
     raise ValueError(f"unknown counter kind: {kind!r}")
 
 
