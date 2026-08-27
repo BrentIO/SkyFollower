@@ -83,7 +83,7 @@ distinct from core-health's own Redis connectivity failing outright, which
 is a real "skip this tick, let the entity age out" case (see
 `_redis_counter_or_none()` in `main.py`).
 
-### Provisional Redis keys
+### Redis keys
 
 message-processor's counter-*writing* side (`operator_misses`,
 `total_messages_processed`, and the reset-mechanism fix for
@@ -96,28 +96,15 @@ counters (accumulates in memory, flushes to Redis on its own telemetry
 cadence — see `message-processor/README.md`) — this component remains the
 only one that ever publishes them over MQTT/Home Assistant.
 
-The receiver's identity redesign + per-connection counters are still a
-separate, not-yet-reconciled change at the time this note was last
-updated. This component's *reading* side was written defensively against
-the key-naming conventions described for them, using the same shape
-`shared/redis_keys.py`'s existing `archive_search_index_key()` precedent
-already establishes, but the exact key strings below remain this
-component's own provisional choice (not added to `shared/redis_keys.py`
-itself, to avoid a duplicate/conflicting definition landing there from a
-different PR) and may need reconciling once the receiver's own writing
-side is confirmed to match:
-
-| Key | Shape | Written by |
-|---|---|---|
-| `receiver:index` | `SET` of currently-claimed receiver names | receiver |
-| `receiver:{name}:registration` | JSON `{"sources": [{"host", "port", "source"}, ...]}`, TTL'd alongside the receiver's own heartbeat | receiver |
-| `metrics:receiver:{name}:messages_{host}_{port}_total:{period}` | `period` ∈ `hour`, `today`, `lifetime` | receiver |
-
-Until reconciled, core-health simply reads these three as always-absent if
-the receiver's actual key shape differs, and publishes `0` for every field
-they'd back — the same behavior as when the count is genuinely zero so far
-this period, so a shape mismatch here fails silent rather than loud. See
-the tracked follow-up issue for the receiver key reconciliation.
+The receiver's identity/registration mechanism has landed too, and this
+component's reading side is reconciled to it in the same way:
+`receiver_registry_index_key()`/`receiver_registration_key()`/
+`receiver_message_count_key()` are all real `shared/redis_keys.py`
+builders now, imported directly rather than shimmed locally. receiver is
+write-only for these (accumulates in memory, flushes to Redis on its own
+telemetry cadence — see `receiver/README.md`) — this component remains
+the only one that ever publishes them over MQTT/Home Assistant. No
+provisional local key shims remain in `main.py`.
 
 ## Configuration
 
