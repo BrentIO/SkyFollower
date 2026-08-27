@@ -272,6 +272,22 @@ existing_env_value_or() {
   fi
 }
 
+default_receiver_name() {
+  # Suggested RECEIVER_NAME default on a fresh install: the machine's short
+  # hostname, uppercased. `hostname -s` works on both this script's
+  # realistic host platforms (Linux, macOS); the fallback strips everything
+  # after the first '.' from plain `hostname` output in case `-s` isn't
+  # available. `tr` rather than bash 4+ `${h^^}` -- this script has already
+  # hit a real macOS-default-bash-3.2 compatibility bug once (#1031).
+  local h
+  h="$(hostname -s 2>/dev/null)"
+  if [ -z "$h" ]; then
+    h="$(hostname 2>/dev/null)"
+    h="${h%%.*}"
+  fi
+  printf '%s' "$h" | tr 'a-z' 'A-Z'
+}
+
 generate_password() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32
@@ -617,7 +633,7 @@ fetch_role() {
 collect_receiver_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (receiver) --"
-  RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Friendly name (shown in Home Assistant)" "$(existing_env_value "$env_file" RECEIVER_NAME)")"
+  RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Friendly name (shown in Home Assistant)" "$(existing_env_value_or "$env_file" RECEIVER_NAME "$(default_receiver_name)")")"
   RECEIVER_SOURCES="$(prompt_receiver_sources "$(existing_env_value "$env_file" RECEIVER_SOURCES)")"
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
