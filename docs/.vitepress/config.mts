@@ -1,8 +1,9 @@
 import { defineConfig } from "vitepress";
-import { discoverComponents, discoverRunners } from "../scripts/discover.mjs";
+import { discoverComponents, discoverRunners, discoverTools } from "../scripts/discover.mjs";
 
 const components = discoverComponents();
 const runners = discoverRunners();
+const tools = discoverTools();
 
 // `shared` is a library, not a deployable component — it keeps its
 // /components/shared URL but is listed under "Reference" in the sidebar.
@@ -38,6 +39,7 @@ export default defineConfig({
       { text: "Rules & Areas", link: "/rules-and-areas/" },
       { text: "Components", link: "/components/" },
       { text: "Data Runners", link: "/runners/" },
+      { text: "Tools", link: "/tools/" },
     ],
 
     sidebar: [
@@ -69,6 +71,17 @@ export default defineConfig({
           ...runners.map((runner) => ({
             text: runner.title,
             link: `/runners/${runner.name}`,
+          })),
+        ],
+      },
+      {
+        text: "Tools",
+        collapsed: true,
+        items: [
+          { text: "Overview", link: "/tools/" },
+          ...tools.map((tool) => ({
+            text: tool.title,
+            link: `/tools/${tool.name}`,
           })),
         ],
       },
