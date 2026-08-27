@@ -734,16 +734,6 @@ collect_core_env() {
   fi
   # Stashed the same way as CORE_RABBITMQ_PASSWORD above.
   CORE_REDIS_PASSWORD="$REDIS_PASSWORD"
-  # core-health's own Redis ACL-scoped, INFO/MEMORY-only credential -- the
-  # first Redis ACL user in this repo (every other Redis client so far
-  # authenticates as the single "default" user above). Fixed username,
-  # generated password, never prompted, same rationale as
-  # RABBITMQ_MONITORING_USERNAME/PASSWORD above.
-  REDIS_MONITORING_USERNAME="$(existing_env_value_or "$env_file" REDIS_MONITORING_USERNAME skyfollower-monitoring)"
-  REDIS_MONITORING_PASSWORD="$(existing_env_value "$env_file" REDIS_MONITORING_PASSWORD)"
-  if [ -z "$REDIS_MONITORING_PASSWORD" ]; then
-    REDIS_MONITORING_PASSWORD="$(generate_password)"
-  fi
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
@@ -781,13 +771,9 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_PASSWORD=${REDIS_PASSWORD}
 
-# core-health's own Redis ACL-scoped, INFO/MEMORY-only credential -- see
-# provision_redis_monitoring_user below. Provisioned via `ACL SETUSER` with
-# no --aclfile configured on the redis service, so it does NOT survive a
-# redis container restart/recreate -- re-run this script (core role)
-# afterward to recreate it. See core-health/README.md.
-REDIS_MONITORING_USERNAME=${REDIS_MONITORING_USERNAME}
-REDIS_MONITORING_PASSWORD=${REDIS_MONITORING_PASSWORD}
+# core-health authenticates with this same default-user credential for
+# Redis INFO/MEMORY introspection too -- no separate scoped user. See
+# core-health/README.md's Credentials section for why.
 
 # TTL applied to the enrichment keys the runners write.
 REDIS_TTL_DAYS=14
@@ -1326,66 +1312,6 @@ provision_rabbitmq_users() {
   fi
 }
 
-provision_redis_monitoring_user() {
-  # First Redis ACL user in this repo -- every other Redis client
-  # authenticates as the single "default" user via REDIS_PASSWORD alone.
-  # core-health's user is scoped to read-only introspection only (INFO,
-  # MEMORY) via `ACL SETUSER`, run once Redis reports healthy, mirroring
-  # provision_rabbitmq_users' own "wait for healthy, then provision" shape.
-  #
-  # Known limitation, stated explicitly: the redis service isn't configured
-  # with an --aclfile, so this ACL user lives only in the running server's
-  # memory -- it does NOT survive a `redis` container restart/recreate.
-  # Re-run this script (core role) again afterward to recreate it; until
-  # then, core-health's Redis-derived entities simply go unavailable, the
-  # same as any other Redis outage.
-  local role_dir="$1"
-  local redis_password redis_monitoring_username redis_monitoring_password
-  redis_password="$(existing_env_value "${role_dir}/.env" REDIS_PASSWORD)"
-  redis_monitoring_username="$(existing_env_value "${role_dir}/.env" REDIS_MONITORING_USERNAME)"
-  redis_monitoring_password="$(existing_env_value "${role_dir}/.env" REDIS_MONITORING_PASSWORD)"
-  if [ -z "$redis_password" ] || [ -z "$redis_monitoring_username" ] || [ -z "$redis_monitoring_password" ]; then
-    echo "  ✗ ${role_dir}/.env is missing Redis credentials -- skipping core-health's Redis ACL user." >&2
-    return
-  fi
-
-  local container_id
-  container_id="$(cd "$role_dir" && docker compose ps -q redis)"
-  if [ -z "$container_id" ]; then
-    echo "Redis isn't running -- skipping ACL user provisioning. Bring it up and" >&2
-    echo "re-run this script for the core role to provision it." >&2
-    return
-  fi
-
-  echo "Waiting for Redis to become healthy..."
-  local waited=0 health=""
-  while [ "$waited" -lt 60 ]; do
-    health="$(docker inspect --format '{{.State.Health.Status}}' "$container_id" 2>/dev/null || echo "")"
-    [ "$health" = "healthy" ] && break
-    sleep 2
-    waited=$((waited + 2))
-  done
-  if [ "$health" != "healthy" ]; then
-    echo "  ✗ Redis did not report healthy within 60s -- skipping ACL user provisioning." >&2
-    echo "    Re-run this script for the core role once it's healthy." >&2
-    return
-  fi
-
-  echo "Provisioning Redis ACL users..."
-
-  # resetkeys/resetchannels first, so a re-run of this idempotent command
-  # never leaves a stale broader grant from an earlier version of this
-  # script in place -- the four +command grants that follow are always the
-  # user's complete, exact permission set.
-  if (cd "$role_dir" && docker compose exec -T redis redis-cli -a "$redis_password" --no-auth-warning \
-      ACL SETUSER "$redis_monitoring_username" on ">${redis_monitoring_password}" \
-      resetkeys resetchannels -@all +info +memory >/dev/null); then
-    echo "  ✓ ${redis_monitoring_username}: read-only introspection (INFO, MEMORY) only (core-health only)"
-  else
-    echo "  ✗ Could not provision ${redis_monitoring_username} -- check manually." >&2
-  fi
-}
-
 offer_ofelia_and_bulk_load() {
   local role_dir="$1"
   local answer
@@ -1612,7 +1538,6 @@ main() {
     offer_up "$role" "$role_dir"
     if [ "$role" = "core" ]; then
       provision_rabbitmq_users "$role_dir"
-      provision_redis_monitoring_user "$role_dir"
       offer_ofelia_and_bulk_load "$role_dir"
     fi
   done

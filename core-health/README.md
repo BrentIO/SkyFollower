@@ -4,7 +4,7 @@
 |---|---|
 | **Purpose** | Standalone, always-on RabbitMQ + Redis monitor. Polls RabbitMQ's Management HTTP API and Redis's `INFO`/`MEMORY STATS` on its own connections and publishes curated MQTT/Home Assistant telemetry for both, replacing per-component RabbitMQ queue-depth self-polling |
 | **Run frequency** | Always-on, two independent poll loops (RabbitMQ every 10s, Redis every 60s) |
-| **Reads/writes** | RabbitMQ Management API (read-only), Redis (`INFO`/`MEMORY STATS` via a scoped ACL user, plus plain key reads via the same default-user credential every other component uses) — no direct RabbitMQ AMQP connection, no S3 |
+| **Reads/writes** | RabbitMQ Management API (read-only), Redis (`INFO`/`MEMORY STATS` plus plain key reads, both via the same default-user credential every other component uses) — no direct RabbitMQ AMQP connection, no S3 |
 
 ## How it works
 
@@ -22,11 +22,13 @@ Two independent background loops, neither blocking the other:
   of "what SkyFollower owns" can't drift apart (bash can't import a Python
   constant, so the two copies are kept identical by hand — see the comments
   at each site).
-- **Redis, every 60s**: `INFO everything` + `MEMORY STATS`, via the
-  scoped, read-only ACL user described below. No keyspace `SCAN`/`--bigkeys`
-  ever — deliberately out of scope for this recurring loop (real cost
-  against a large keyspace for a shape that doesn't change fast); the two
-  commands above cover every field this component publishes.
+- **Redis, every 60s**: `INFO everything` + `MEMORY STATS`, via the same
+  default-user credential every other component authenticates with (see
+  [Credentials](#credentials) for why this isn't a separate scoped ACL
+  user). No keyspace `SCAN`/`--bigkeys` ever — deliberately out of scope
+  for this recurring loop (real cost against a large keyspace for a shape
+  that doesn't change fast); the two commands above cover every field this
+  component publishes.
 
 Every entity core-health publishes for a queue or for Redis uses its own
 availability topic (`SkyFollower/core-health/status`), not the topic the
@@ -110,9 +112,8 @@ after they land and the count is genuinely zero so far this period.
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
-`load_config("rabbitmq_management", "redis", "redis_monitoring", "mqtt")`,
-interpolated by Compose from this host's `.env` (written by
-`scripts/install.sh`).
+`load_config("rabbitmq_management", "redis", "mqtt")`, interpolated by
+Compose from this host's `.env` (written by `scripts/install.sh`).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -122,9 +123,7 @@ interpolated by Compose from this host's `.env` (written by
 | `RABBITMQ_MONITORING_PASSWORD` | ✅ | — | |
 | `REDIS_HOST` | ✅ | — | Same Redis every other component connects to |
 | `REDIS_PORT` | ❌ | `6379` | |
-| `REDIS_PASSWORD` | ✅ | — | The same default-user credential every other component uses — needed here for plain key reads (application counters), not for `INFO`/`MEMORY` |
-| `REDIS_MONITORING_USERNAME` | ✅ | — | Scoped Redis ACL user, `INFO`/`MEMORY` only (see [Credentials](#credentials)) |
-| `REDIS_MONITORING_PASSWORD` | ✅ | — | |
+| `REDIS_PASSWORD` | ✅ | — | The same default-user credential every other component uses — for both `INFO`/`MEMORY` introspection and plain key reads (application counters); see [Credentials](#credentials) for why this isn't a separate scoped user |
 | `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely (core-health still polls, but publishes nothing) |
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
@@ -133,29 +132,28 @@ interpolated by Compose from this host's `.env` (written by
 
 ## Credentials
 
-Two new, least-privilege credentials, both provisioned by
-`scripts/install.sh` once their respective container reports healthy (see
-`provision_rabbitmq_users()`/`provision_redis_monitoring_user()`):
-
-- **RabbitMQ**: a user tagged `monitoring` — RabbitMQ's built-in tag for
-  broker-wide, read-only Management API visibility. No per-resource
-  permission is granted (or needed): the `monitoring` tag alone is what
-  grants visibility, so this user's `configure`/`write`/`read` permissions
-  are all set to match nothing.
-- **Redis**: the first Redis ACL user in this repo (every other component
-  authenticates as the single "default" user via `REDIS_PASSWORD` alone).
-  Scoped via `ACL SETUSER` to `INFO`/`MEMORY` only — no general key access.
-  **Known limitation**: the `redis` service isn't configured with an
-  `--aclfile`, so this ACL user lives only in the running server's memory
-  and does **not** survive a `redis` container restart/recreate. Re-run
-  `scripts/install.sh` for the core role afterward to recreate it; until
-  then, core-health's Redis-derived entities simply go unavailable, same as
-  any other Redis outage.
-
-core-health also uses the same default-user `REDIS_PASSWORD` every other
-component already has, for plain key reads (the counter mimicry above) —
-that traffic is deliberately kept off the new scoped user, which stays
-genuinely `INFO`/`MEMORY`-only as designed.
+- **RabbitMQ**: a new user tagged `monitoring` — RabbitMQ's built-in tag for
+  broker-wide, read-only Management API visibility, provisioned by
+  `scripts/install.sh` once the `rabbitmq` container reports healthy (see
+  `provision_rabbitmq_users()`). No per-resource permission is granted (or
+  needed): the `monitoring` tag alone is what grants visibility, so this
+  user's `configure`/`write`/`read` permissions are all set to match
+  nothing.
+- **Redis**: no new credential — core-health authenticates as the same
+  "default" user via `REDIS_PASSWORD` every other component already uses,
+  for both `INFO`/`MEMORY` and plain key reads. A separate, scoped
+  (`INFO`/`MEMORY`-only) ACL user was designed and considered — it would
+  have been the first Redis ACL user in this repo — but dropped: combining
+  a new ACL user with the `redis` service's existing `--requirepass`
+  mechanism was confirmed live to silently disable password authentication
+  on the `default` user entirely (not a startup error — Redis accepts an
+  unauthenticated connection with no `AUTH` needed at all), unless the
+  ACL file is pre-seeded with the default user's own credentials before
+  Redis's very first boot. That bootstrapping complexity and risk wasn't
+  worth it for a restriction this component's own code already honors
+  by simply never calling a write command — the same trust model every
+  other component (message-processor, receiver, archive-processor)
+  already operates under today.
 
 ## MQTT
 

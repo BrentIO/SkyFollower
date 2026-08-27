@@ -285,14 +285,19 @@ class CoreHealth:
         self._rmq_auth = (rmc["username"], rmc["password"])
         self._rmq_base_url = f"http://{rmc['host']}:{rmc['port']}"
 
-        # Two separate Redis clients, deliberately: self._redis is the same
-        # default-user credential every other component already uses, for
-        # plain key reads (message-processor's/the receiver's application
-        # counters). self._redis_monitoring authenticates as the new
-        # ACL-scoped, INFO/MEMORY-only user, kept genuinely least-privilege
-        # rather than folding INFO/MEMORY access into the default user.
+        # One Redis client, authenticating as the same default user every
+        # other component already uses -- both for plain key reads
+        # (message-processor's/the receiver's application counters) and for
+        # INFO/MEMORY introspection. A separate ACL-scoped, INFO/MEMORY-only
+        # user was considered (least-privilege) but dropped: it would be the
+        # first ACL user in this repo, and combining it with the existing
+        # `requirepass` mechanism was confirmed live to silently disable
+        # password auth entirely on this Redis image unless the aclfile is
+        # pre-seeded with the default user's own credentials before first
+        # boot -- meaningful bootstrapping complexity and risk for a
+        # restriction this component's own code already honors by simply
+        # never calling a write command.
         self._redis = build_redis_client(config["redis"])
-        self._redis_monitoring = build_redis_client(config["redis_monitoring"])
 
         self._mqtt: Optional[mqtt.Client] = None
         self._mqtt_connected = False
@@ -710,8 +715,8 @@ class CoreHealth:
 
     def _poll_redis_once(self) -> None:
         try:
-            info = self._redis_monitoring.info(section="everything")
-            memory_stats = self._redis_monitoring.memory_stats()
+            info = self._redis.info(section="everything")
+            memory_stats = self._redis.memory_stats()
             self._redis_connected = True
         except redis_lib.exceptions.RedisError as exc:
             if self._redis_connected:
@@ -828,7 +833,7 @@ class CoreHealth:
 
 def main() -> None:
     try:
-        cfg = load_config("rabbitmq_management", "redis", "redis_monitoring", "mqtt")
+        cfg = load_config("rabbitmq_management", "redis", "mqtt")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)

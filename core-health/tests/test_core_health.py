@@ -63,10 +63,6 @@ def _minimal_config() -> dict:
             "username": "mon", "password": "p",
         },
         "redis": {"host": "redis.example.com", "port": 6379, "password": "p"},
-        "redis_monitoring": {
-            "host": "redis.example.com", "port": 6379,
-            "username": "mon", "password": "p",
-        },
         "mqtt": {"host": "", "port": 1883, "username": "", "password": ""},
         "log_level": "info",
     }
@@ -80,7 +76,6 @@ def _wired_app() -> CoreHealth:
     app._mqtt = MagicMock()
     app._mqtt_connected = True
     app._redis = MagicMock()
-    app._redis_monitoring = MagicMock()
     app._session = MagicMock()
     return app
 
@@ -561,7 +556,7 @@ class TestPollRabbitmqOnce:
 class TestPollRedisOnce:
     def test_failure_marks_disconnected(self):
         app = _wired_app()
-        app._redis_monitoring.info.side_effect = redis_lib.exceptions.ConnectionError("down")
+        app._redis.info.side_effect = redis_lib.exceptions.ConnectionError("down")
 
         app._poll_redis_once()
 
@@ -571,8 +566,8 @@ class TestPollRedisOnce:
 
     def test_success_publishes_redis_stats(self):
         app = _wired_app()
-        app._redis_monitoring.info.return_value = {"connected_clients": 3}
-        app._redis_monitoring.memory_stats.return_value = {"keys.count": 100}
+        app._redis.info.return_value = {"connected_clients": 3}
+        app._redis.memory_stats.return_value = {"keys.count": 100}
 
         app._poll_redis_once()
 

@@ -20,7 +20,6 @@ from shared.config import (
     rabbitmq_management_config,
     receiver_config,
     redis_config,
-    redis_monitoring_config,
     runner_config,
     s3_config,
     telemetry_config,
@@ -41,11 +40,6 @@ _RABBITMQ_MANAGEMENT = {
     "RABBITMQ_HOST": "rmq.example.com",
     "RABBITMQ_MONITORING_USERNAME": "skyfollower-monitoring",
     "RABBITMQ_MONITORING_PASSWORD": "secret",
-}
-_REDIS_MONITORING = {
-    "REDIS_HOST": "redis.example.com",
-    "REDIS_MONITORING_USERNAME": "skyfollower-monitoring",
-    "REDIS_MONITORING_PASSWORD": "secret",
 }
 _S3 = {
     "S3_BUCKET": "flights",
@@ -378,11 +372,11 @@ class TestShape:
 
     def test_core_health_shape(self):
         cfg = load_config(
-            "rabbitmq_management", "redis", "redis_monitoring", "mqtt",
-            environ=_env(_RABBITMQ_MANAGEMENT, _REDIS, _REDIS_MONITORING, _MQTT),
+            "rabbitmq_management", "redis", "mqtt",
+            environ=_env(_RABBITMQ_MANAGEMENT, _REDIS, _MQTT),
         )
         assert set(cfg) == {
-            "log_level", "rabbitmq_management", "redis", "redis_monitoring", "mqtt",
+            "log_level", "rabbitmq_management", "redis", "mqtt",
         }
         assert cfg["rabbitmq_management"] == {
             "host": "rmq.example.com",
@@ -390,14 +384,9 @@ class TestShape:
             "username": "skyfollower-monitoring",
             "password": "secret",
         }
-        assert cfg["redis_monitoring"] == {
-            "host": "redis.example.com",
-            "port": 6379,
-            "username": "skyfollower-monitoring",
-            "password": "secret",
-        }
-        # A separate, plain-password default-user credential from
-        # redis_monitoring above -- core-health reads both.
+        # Same default-user credential every other component uses --
+        # core-health authenticates with this for Redis INFO/MEMORY
+        # introspection too, no separate scoped user.
         assert cfg["redis"] == {
             "host": "redis.example.com",
             "port": 6379,
@@ -437,7 +426,6 @@ class TestBlockHelpers:
         redis_config(loader)
         rabbitmq_config(loader)
         rabbitmq_management_config(loader)
-        redis_monitoring_config(loader)
         s3_config(loader)
         athena_config(loader)
         receiver_config(loader)
@@ -463,14 +451,6 @@ class TestBlockHelpers:
         assert rabbitmq_management_config(
             ConfigLoader(_RABBITMQ_MANAGEMENT)
         )["port"] == 15672
-
-    def test_redis_monitoring_config_requires_monitoring_credentials(self, monkeypatch):
-        monkeypatch.delenv("REDIS_MONITORING_USERNAME", raising=False)
-        monkeypatch.delenv("REDIS_MONITORING_PASSWORD", raising=False)
-        for name, value in {"REDIS_HOST": "redis.example.com"}.items():
-            monkeypatch.setenv(name, value)
-        with pytest.raises(ConfigError):
-            redis_monitoring_config()
 
     def test_helpers_read_the_process_environment_by_default(self, monkeypatch):
         for name, value in _REDIS.items():
