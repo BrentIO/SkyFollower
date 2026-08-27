@@ -748,6 +748,12 @@ class MessageProcessor:
                 self._rmq_channel = self._rmq_connection.channel()
                 declare_adsb_topology(self._rmq_channel)
                 bind_adsb_queue(self._rmq_channel, self._id)
+                # Publisher confirms make basic_publish() synchronous and
+                # raise pika.exceptions.UnroutableError (mandatory=True) if
+                # the archive queue doesn't exist, instead of RabbitMQ
+                # silently dropping the message -- see _archive() and
+                # _drain_fallback()'s publish() closure.
+                self._rmq_channel.confirm_delivery()
                 self._rmq_channel.basic_qos(prefetch_count=_RMQ_PREFETCH_COUNT)
                 self._rmq_channel.basic_consume(
                     queue=self._queue_name,
@@ -1301,6 +1307,7 @@ class MessageProcessor:
                     routing_key="archive",
                     body=payload.encode(),
                     properties=pika.BasicProperties(delivery_mode=2),
+                    mandatory=True,
                 )
             except Exception:
                 self._rmq_connected = False
@@ -1343,6 +1350,7 @@ class MessageProcessor:
                         routing_key="archive",
                         body=payload.encode(),
                         properties=pika.BasicProperties(delivery_mode=2),
+                        mandatory=True,
                     )
                 except Exception as exc:
                     outcome["error"] = exc

@@ -16,6 +16,7 @@ import time
 from datetime import timezone
 from unittest.mock import MagicMock, patch
 
+import pika
 import pytest
 
 # message-processor/ can't be imported as a normal package -- the hyphen in
@@ -892,6 +893,35 @@ class TestProcessorArchive:
         assert p._rmq_connected is False
         assert p._fallback.depth() == 1
 
+    def test_archive_publish_sets_mandatory_flag(self):
+        """mandatory=True is what makes an unroutable publish raise instead
+        of RabbitMQ silently dropping the message on the default
+        exchange -- without it, a missing archive queue is
+        indistinguishable from a successful publish."""
+        p, mock_channel, mock_connection = self._connected_processor()
+
+        p._archive(self._make_completed_flight())
+
+        assert mock_channel.basic_publish.call_args.kwargs["mandatory"] is True
+
+    def test_archive_falls_back_when_archive_queue_does_not_exist(self):
+        """With publisher confirms enabled (self._rmq_channel.confirm_delivery()),
+        an unroutable publish -- e.g. no archive queue bound because
+        archive-processor isn't installed -- makes basic_publish() raise
+        pika.exceptions.UnroutableError synchronously instead of the
+        broker silently dropping the message. That must be caught the
+        same way any other publish failure is: fall back to the local
+        SQLite retry queue rather than losing the flight permanently."""
+        p, mock_channel, mock_connection = self._connected_processor()
+        mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
+            [MagicMock()]
+        )
+
+        p._archive(self._make_completed_flight())
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
 
 # Fallback queue put/drain/depth/dead-lettering is now covered by
 # shared/tests/test_fallback_queue.py -- MessageProcessor just wires
@@ -960,6 +990,30 @@ class TestProcessorDrainFallback:
         _archive()'s handling (and the receiver's equivalent fix)."""
         p, mock_channel, _ = self._connected_processor_with_queued_item()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        p._rmq_connected = True
+
+        with _synchronous_drain_thread():
+            p._drain_fallback()
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
+    def test_drain_fallback_publish_sets_mandatory_flag(self):
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
+
+        with _synchronous_drain_thread():
+            p._drain_fallback()
+
+        assert mock_channel.basic_publish.call_args.kwargs["mandatory"] is True
+
+    def test_drain_fallback_leaves_items_queued_when_archive_queue_does_not_exist(self):
+        """Same UnroutableError contract as _archive() itself -- draining
+        must not treat a missing archive queue as a successful publish and
+        drop the row."""
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
+        mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
+            [MagicMock()]
+        )
         p._rmq_connected = True
 
         with _synchronous_drain_thread():
@@ -1261,6 +1315,18 @@ class TestConsumeLoopExchangeBinding:
         channel.basic_qos.assert_called_once()
         _, kwargs = channel.basic_qos.call_args
         assert kwargs["prefetch_count"] > 1
+
+    def test_enables_publisher_confirms(self):
+        """confirm_delivery() must be enabled once the channel is
+        (re)established -- it's what makes basic_publish() synchronous and
+        raise pika.exceptions.UnroutableError for an unroutable archive
+        publish, instead of RabbitMQ silently dropping the message. See
+        TestProcessorArchive/TestProcessorDrainFallback's
+        UnroutableError-falls-back-to-SQLite coverage."""
+        p, _ = _make_processor()
+        channel = self._run_one_connect(p)
+
+        channel.confirm_delivery.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
