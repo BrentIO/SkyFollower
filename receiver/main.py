@@ -62,6 +62,11 @@ logger = logging.getLogger("receiver")
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
+# Minimum spacing between "N unparseable lines" summary warnings, per
+# connection -- keeps a genuine format mismatch visible at default log
+# level without flooding logs at high traffic volume.
+_UNPARSEABLE_WARNING_INTERVAL_SECONDS = 60
+
 # ---------------------------------------------------------------------------
 # Rate tracker — 30-second rolling window (copied from message processor pattern)
 # ---------------------------------------------------------------------------
@@ -518,10 +523,26 @@ class Receiver:
         self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
     ) -> None:
         buf = bytearray()
+        unparseable_count = 0
+        unparseable_window_start = time.monotonic()
+
+        def _maybe_warn_unparseable() -> None:
+            nonlocal unparseable_count, unparseable_window_start
+            now = time.monotonic()
+            if unparseable_count and now - unparseable_window_start >= _UNPARSEABLE_WARNING_INTERVAL_SECONDS:
+                logger.warning(
+                    "%d unparseable 1090 message(s) from %s:%s (source=%s) in the last %ds — "
+                    "check the upstream feed format.",
+                    unparseable_count, host, port, source, _UNPARSEABLE_WARNING_INTERVAL_SECONDS,
+                )
+                unparseable_count = 0
+                unparseable_window_start = now
+
         while not self._shutdown.is_set():
             try:
                 chunk = sock.recv(4096)
             except socket.timeout:
+                _maybe_warn_unparseable()
                 continue
             if not chunk:
                 logger.warning(
@@ -529,17 +550,42 @@ class Receiver:
                 )
                 break
 
-            for raw_hex in parse_tcp_stream(chunk, buf):
+            messages = parse_tcp_stream(chunk, buf)
+            if not messages:
+                logger.debug(
+                    "Received data on %s:%s (source=%s) that did not parse as a "
+                    "complete 1090 message: %r",
+                    host, port, source, chunk[:64],
+                )
+                unparseable_count += 1
+            for raw_hex in messages:
                 self._handle_message(raw_hex, source, rate_tracker, (host, port))
+            _maybe_warn_unparseable()
 
     def _read_978_stream(
         self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
     ) -> None:
         line_buf = b""
+        unparseable_count = 0
+        unparseable_window_start = time.monotonic()
+
+        def _maybe_warn_unparseable() -> None:
+            nonlocal unparseable_count, unparseable_window_start
+            now = time.monotonic()
+            if unparseable_count and now - unparseable_window_start >= _UNPARSEABLE_WARNING_INTERVAL_SECONDS:
+                logger.warning(
+                    "%d unparseable 978 line(s) from %s:%s (source=%s) in the last %ds — "
+                    "check the upstream feed format.",
+                    unparseable_count, host, port, source, _UNPARSEABLE_WARNING_INTERVAL_SECONDS,
+                )
+                unparseable_count = 0
+                unparseable_window_start = now
+
         while not self._shutdown.is_set():
             try:
                 chunk = sock.recv(4096)
             except socket.timeout:
+                _maybe_warn_unparseable()
                 continue
             if not chunk:
                 logger.warning(
@@ -550,12 +596,25 @@ class Receiver:
             line_buf += chunk
             while b"\n" in line_buf:
                 raw_line, line_buf = line_buf.split(b"\n", 1)
-                result = parse_978_line(raw_line.decode("ascii", errors="ignore"))
+                decoded_line = raw_line.decode("ascii", errors="ignore")
+                result = parse_978_line(decoded_line)
                 if result:
                     raw_hex, icao_hex, received_at = result
                     self._handle_978_message(
                         raw_hex, icao_hex, received_at, source, rate_tracker, (host, port)
                     )
+                else:
+                    # !-preambles and blank lines are routine, expected
+                    # input -- only count/log lines that looked like real
+                    # data but still failed to parse.
+                    stripped = decoded_line.strip()
+                    if stripped and not stripped.startswith("!"):
+                        logger.debug(
+                            "Unparseable 978 line from %s:%s (source=%s): %r",
+                            host, port, source, decoded_line,
+                        )
+                        unparseable_count += 1
+            _maybe_warn_unparseable()
 
     def _handle_message(
         self, raw_hex: str, source: str, rate_tracker: _RateTracker, key: tuple[str, int]

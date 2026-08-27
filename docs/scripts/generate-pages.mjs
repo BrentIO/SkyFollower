@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Generates docs/components/*.md and docs/runners/*.md from the source
-// READMEs discovered by discover.mjs. Regenerated on every
+// Generates docs/components/*.md, docs/runners/*.md, and docs/tools/*.md
+// from the source READMEs discovered by discover.mjs. Regenerated on every
 // `docs:dev`/`docs:build` — output is gitignored so the source READMEs stay
 // the single source of truth and the docs site can't drift from them.
 //
@@ -17,7 +17,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { REPO_ROOT, discoverComponents, discoverRunners } from "./discover.mjs";
+import { REPO_ROOT, discoverComponents, discoverRunners, discoverTools } from "./discover.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCS_ROOT = join(__dirname, "..");
@@ -33,6 +33,7 @@ for (const component of components) {
   }
 }
 const runners = discoverRunners();
+const tools = discoverTools();
 
 // Maps a README's containing directory name (e.g. "message-processor") to the
 // docs-site route it's generated to (e.g. "/components/message-processor"), so a
@@ -41,6 +42,7 @@ const runners = discoverRunners();
 const ROUTE_BY_DIR = new Map([
   ...components.map((c) => [c.name, `/components/${c.name}`]),
   ...runners.map((r) => [r.name, `/runners/${r.name}`]),
+  ...tools.map((t) => [t.name, `/tools/${t.name}`]),
 ]);
 
 // Matches a markdown link target that is a relative path ending in
@@ -91,6 +93,14 @@ for (const runner of runners) {
 }
 writePage("runners/index.md", join(REPO_ROOT, "runners", "README.md"));
 
+// Unlike runners/index.md (generated from runners/README.md), tools/index.md
+// is hand-authored and checked in — there's no tools/README.md at the repo
+// root to source it from — so only the per-tool pages are generated here.
+for (const tool of tools) {
+  writePage(`tools/${tool.name}.md`, tool.readmePath, `${tool.title} (${tool.name})`);
+}
+
 console.log(
-  `docs: generated ${components.length} component page(s) and ${runners.length} runner page(s)`,
+  `docs: generated ${components.length} component page(s), ${runners.length} runner page(s), ` +
+    `and ${tools.length} tool page(s)`,
 );

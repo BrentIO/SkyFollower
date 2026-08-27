@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import sys
 import threading
 import time
 
 import pika
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from shared.rabbitmq_topology import ADSB_EXCHANGE, declare_adsb_topology
 

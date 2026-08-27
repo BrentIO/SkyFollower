@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import socket
@@ -437,6 +438,109 @@ class TestIcaoRoutingIntegration:
         r._handle_978_message(raw_hex, icao_hex, received_at, "978", _RateTracker(), key)
 
         assert r._last_message_at[key] is not None
+
+
+# ---------------------------------------------------------------------------
+# Unparseable-line logging (978 and 1090 read loops)
+#
+# Feeds real bytes through a connected socketpair directly into
+# _read_978_stream / _read_1090_stream (rather than mocking parse_978_line /
+# parse_tcp_stream) so the blank-line / !-preamble carve-out is exercised
+# through the actual parsers, not an assumption about how they behave.
+# ---------------------------------------------------------------------------
+
+class TestUnparseableLineLogging:
+    """A line/chunk that looks like real data but fails to parse must be
+    visible from receiver logs -- unconditionally at debug, and via a
+    rate-limited warning at default log level -- without treating routine
+    input (blank lines, 978's !-preamble) as a failure."""
+
+    def _make_receiver(self, source: str = "978"):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": source}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        r._publish = lambda q, p: None
+        return r
+
+    def _run_978(self, r, data: bytes):
+        client, server = socket.socketpair()
+        client.sendall(data)
+        client.close()
+        r._read_978_stream(server, "localhost", 30978, "978", _RateTracker())
+        server.close()
+
+    def _run_1090(self, r, data: bytes):
+        client, server = socket.socketpair()
+        client.sendall(data)
+        client.close()
+        r._read_1090_stream(server, "localhost", 30002, "1090", _RateTracker())
+        server.close()
+
+    def test_978_blank_and_preamble_lines_are_not_logged(self, caplog):
+        r = self._make_receiver("978")
+        data = b"!fecfix=1;program=dump978-fa;version=3.8.1\n\n\n"
+
+        with caplog.at_level(logging.DEBUG, logger="receiver"):
+            self._run_978(r, data)
+
+        assert not any("unparse" in rec.getMessage().lower() for rec in caplog.records)
+
+    def test_978_malformed_line_logs_debug_unconditionally(self, caplog):
+        r = self._make_receiver("978")
+        # Starts with '-' like real UAT data, but the payload isn't valid
+        # hex -- parse_978_line returns None for a non-blank, non-! line.
+        data = b"-notvalidhexpayload;rs=1;\n"
+
+        with caplog.at_level(logging.DEBUG, logger="receiver"):
+            self._run_978(r, data)
+
+        debug_records = [rec for rec in caplog.records if rec.levelno == logging.DEBUG]
+        assert any("978" in rec.getMessage() for rec in debug_records)
+
+    def test_978_repeated_malformed_lines_trigger_rate_limited_warning(self, caplog):
+        r = self._make_receiver("978")
+        data = b"-badline1;\n-badline2;\n-badline3;\n"
+
+        with patch("receiver.main._UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
+             caplog.at_level(logging.DEBUG, logger="receiver"):
+            self._run_978(r, data)
+
+        unparseable_warnings = [
+            rec for rec in caplog.records
+            if rec.levelno == logging.WARNING and "closed connection" not in rec.getMessage()
+        ]
+        assert len(unparseable_warnings) >= 1
+        assert any("3" in rec.getMessage() for rec in unparseable_warnings)
+
+    def test_1090_malformed_data_logs_debug_and_rate_limited_warning(self, caplog):
+        r = self._make_receiver("1090")
+        # Never forms a valid *hex; frame at all.
+        data = b"THIS IS NOT A VALID 1090 FRAME AT ALL"
+
+        with patch("receiver.main._UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
+             caplog.at_level(logging.DEBUG, logger="receiver"):
+            self._run_1090(r, data)
+
+        debug_records = [rec for rec in caplog.records if rec.levelno == logging.DEBUG]
+        unparseable_warnings = [
+            rec for rec in caplog.records
+            if rec.levelno == logging.WARNING and "closed connection" not in rec.getMessage()
+        ]
+        assert any("1090" in rec.getMessage() for rec in debug_records)
+        assert len(unparseable_warnings) >= 1
+
+    def test_1090_valid_message_does_not_log_unparseable(self, caplog):
+        r = self._make_receiver("1090")
+        data = b"*8D4840D6202CC371C32CE0576098;"
+
+        with caplog.at_level(logging.DEBUG, logger="receiver"):
+            self._run_1090(r, data)
+
+        assert not any("unparse" in rec.getMessage().lower() for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------

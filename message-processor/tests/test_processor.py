@@ -12,10 +12,12 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from datetime import timezone
 from unittest.mock import MagicMock, patch
 
+import pika
 import pytest
 
 # message-processor/ can't be imported as a normal package -- the hyphen in
@@ -892,6 +894,35 @@ class TestProcessorArchive:
         assert p._rmq_connected is False
         assert p._fallback.depth() == 1
 
+    def test_archive_publish_sets_mandatory_flag(self):
+        """mandatory=True is what makes an unroutable publish raise instead
+        of RabbitMQ silently dropping the message on the default
+        exchange -- without it, a missing archive queue is
+        indistinguishable from a successful publish."""
+        p, mock_channel, mock_connection = self._connected_processor()
+
+        p._archive(self._make_completed_flight())
+
+        assert mock_channel.basic_publish.call_args.kwargs["mandatory"] is True
+
+    def test_archive_falls_back_when_archive_queue_does_not_exist(self):
+        """With publisher confirms enabled (self._rmq_channel.confirm_delivery()),
+        an unroutable publish -- e.g. no archive queue bound because
+        archive-processor isn't installed -- makes basic_publish() raise
+        pika.exceptions.UnroutableError synchronously instead of the
+        broker silently dropping the message. That must be caught the
+        same way any other publish failure is: fall back to the local
+        SQLite retry queue rather than losing the flight permanently."""
+        p, mock_channel, mock_connection = self._connected_processor()
+        mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
+            [MagicMock()]
+        )
+
+        p._archive(self._make_completed_flight())
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
 
 # Fallback queue put/drain/depth/dead-lettering is now covered by
 # shared/tests/test_fallback_queue.py -- MessageProcessor just wires
@@ -960,6 +991,30 @@ class TestProcessorDrainFallback:
         _archive()'s handling (and the receiver's equivalent fix)."""
         p, mock_channel, _ = self._connected_processor_with_queued_item()
         mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        p._rmq_connected = True
+
+        with _synchronous_drain_thread():
+            p._drain_fallback()
+
+        assert p._rmq_connected is False
+        assert p._fallback.depth() == 1
+
+    def test_drain_fallback_publish_sets_mandatory_flag(self):
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
+
+        with _synchronous_drain_thread():
+            p._drain_fallback()
+
+        assert mock_channel.basic_publish.call_args.kwargs["mandatory"] is True
+
+    def test_drain_fallback_leaves_items_queued_when_archive_queue_does_not_exist(self):
+        """Same UnroutableError contract as _archive() itself -- draining
+        must not treat a missing archive queue as a successful publish and
+        drop the row."""
+        p, mock_channel, _ = self._connected_processor_with_queued_item()
+        mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
+            [MagicMock()]
+        )
         p._rmq_connected = True
 
         with _synchronous_drain_thread():
@@ -1261,6 +1316,18 @@ class TestConsumeLoopExchangeBinding:
         channel.basic_qos.assert_called_once()
         _, kwargs = channel.basic_qos.call_args
         assert kwargs["prefetch_count"] > 1
+
+    def test_enables_publisher_confirms(self):
+        """confirm_delivery() must be enabled once the channel is
+        (re)established -- it's what makes basic_publish() synchronous and
+        raise pika.exceptions.UnroutableError for an unroutable archive
+        publish, instead of RabbitMQ silently dropping the message. See
+        TestProcessorArchive/TestProcessorDrainFallback's
+        UnroutableError-falls-back-to-SQLite coverage."""
+        p, _ = _make_processor()
+        channel = self._run_one_connect(p)
+
+        channel.confirm_delivery.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2198,6 +2265,115 @@ class TestTelemetryPayload:
         p._publish_ha_autodiscovery()
         for call in mock_mqtt.publish.call_args_list:
             assert "avg_processing_time_ms" not in call[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Telemetry -- active_flights COUNT(*) must not hold self._db_lock
+#
+# self._db_lock also guards every _update_flight() call on the main
+# consuming thread (see _process()), so a slow COUNT(*) held under that
+# same lock stalls per-message processing for the query's full duration.
+# WAL mode gives the read snapshot isolation without the lock, so
+# _publish_telemetry() must not acquire self._db_lock around this query.
+# ---------------------------------------------------------------------------
+
+class TestTelemetryActiveFlightsNoLock:
+    def _make_processor(self) -> MessageProcessor:
+        with patch("message_processor.main.DATA_DIR", tempfile.mkdtemp()), \
+             patch("message_processor.main.redis_lib.Redis"):
+            p = MessageProcessor(_minimal_config(), message_processor_id="0")
+        return p
+
+    def test_active_flights_query_never_acquires_db_lock(self):
+        """Direct check of the acceptance criterion: swap in a spy lock and
+        confirm _publish_telemetry() never touches it at all."""
+        p = self._make_processor()
+        p._mqtt = MagicMock()
+        p._mqtt_connected = True
+        spy_lock = MagicMock(wraps=p._db_lock)
+        p._db_lock = spy_lock
+
+        p._publish_telemetry()
+
+        spy_lock.acquire.assert_not_called()
+        spy_lock.__enter__.assert_not_called()
+
+    def test_message_thread_not_stalled_by_slow_active_flights_query(self):
+        """Soak-style regression test for the reported symptom: with a
+        deliberately slow COUNT(*) in flight on the telemetry thread (stood
+        in for a large `flights` table so the test is fast and
+        deterministic rather than depending on actually inserting enough
+        rows to measure), the main thread must still be able to acquire
+        self._db_lock -- exactly what _update_flight() does for every
+        message -- essentially immediately instead of waiting on the
+        query."""
+        p = self._make_processor()
+        p._mqtt = MagicMock()
+        p._mqtt_connected = True
+
+        query_started = threading.Event()
+        release_query = threading.Event()
+
+        # sqlite3.Connection/Cursor are immutable C types -- neither one's
+        # methods can be patched in place -- so stand a thin proxy pair in
+        # front of the real connection/cursor instead, swapped onto
+        # self._db only for the telemetry thread's duration, that stalls
+        # specifically on the active_flights query.
+        class _SlowCountCursor:
+            def __init__(self, real_cursor):
+                self._real = real_cursor
+
+            def execute(self, sql, *args, **kwargs):
+                if sql.strip() == "SELECT COUNT(*) FROM flights":
+                    query_started.set()
+                    release_query.wait(timeout=5)
+                self._real.execute(sql, *args, **kwargs)
+                return self
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        class _SlowCountConnection:
+            def __init__(self, real_db):
+                self._real = real_db
+
+            def cursor(self):
+                return _SlowCountCursor(self._real.cursor())
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        real_db = p._db
+
+        def run_telemetry():
+            p._db = _SlowCountConnection(real_db)
+            try:
+                p._publish_telemetry()
+            finally:
+                p._db = real_db
+
+        telemetry_thread = threading.Thread(target=run_telemetry)
+        telemetry_thread.start()
+        try:
+            assert query_started.wait(timeout=2), "COUNT(*) never started"
+
+            # The slow COUNT(*) is now deliberately stalled mid-query on the
+            # telemetry thread. Acquiring self._db_lock here simulates the
+            # main thread's per-message _update_flight() call -- it must
+            # not be blocked waiting on the telemetry thread's read.
+            acquire_start = time.monotonic()
+            with p._db_lock:
+                pass
+            acquire_elapsed = time.monotonic() - acquire_start
+        finally:
+            release_query.set()
+            telemetry_thread.join(timeout=5)
+
+        assert acquire_elapsed < 0.5, (
+            f"self._db_lock acquisition took {acquire_elapsed:.3f}s while the "
+            "active_flights COUNT(*) was in flight -- _publish_telemetry() "
+            "must not hold self._db_lock around that query"
+        )
 
 
 # ---------------------------------------------------------------------------

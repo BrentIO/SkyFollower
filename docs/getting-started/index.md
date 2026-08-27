@@ -22,9 +22,12 @@ sensible defaults where one exists), writes `.env`, and offers to bring the
 stack up:
 
 ```bash
+# If you've cloned the repo:
 ./scripts/install.sh
+```
 
-# or, without cloning anything first:
+```bash
+# Without cloning anything first:
 curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 ```
 
@@ -66,6 +69,17 @@ flag appears anywhere on this page. Editing `SKYFOLLOWER_VERSION` to an
 older release tag and re-running `docker compose up -d` is the rollback
 path (or re-run `install.sh --upgrade` after checking out an older tag
 locally).
+
+```bash
+# If you've cloned the repo:
+./scripts/install.sh --upgrade
+```
+
+```bash
+# Without cloning anything first -- note the `-s --` before the flag,
+# required to pass arguments through a piped script:
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash -s -- --upgrade
+```
 
 Once a role's `.env` is written, the script offers to bring it up
 (`docker compose up -d`) right then — that's the complete command for
