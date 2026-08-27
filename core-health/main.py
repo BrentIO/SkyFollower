@@ -17,15 +17,16 @@ misses, total messages processed, per-connection message totals) using
 those components' own exact topic paths, unique_id/object_id, and device
 blocks -- nothing on the wire distinguishes core-health publishing these
 from the owning component publishing them itself. See
-_publish_message_processor_counters()/_poll_receivers() below. The
-message-processor counter keys are the real shared/redis_keys.py builders
+_publish_message_processor_counters()/_poll_receivers() below. Every key
+read here -- the message-processor counters
 (metrics_registration_misses_key()/metrics_operator_misses_key()/
-metrics_total_messages_processed_key()) -- message-processor is
-write-only for these (see message-processor/README.md), this component is
-the only one that ever publishes them over MQTT/HA. The receiver counter
-keys are still this component's own provisional choice -- see README.md's
-"Provisional Redis keys" section -- reads defensively either way: a
-missing key means the count is genuinely zero, never an error.
+metrics_total_messages_processed_key()) and the receiver's own
+(receiver_registry_index_key()/receiver_registration_key()/
+receiver_message_count_key()) -- is the real shared/redis_keys.py builder;
+both components are write-only for their own counters (see their
+respective READMEs), this component is the only one that ever publishes
+them over MQTT/HA. Reads defensively either way: a missing key means the
+count is genuinely zero, never an error.
 """
 
 from __future__ import annotations
@@ -64,6 +65,9 @@ from shared.redis_keys import (
     metrics_operator_misses_key,
     metrics_registration_misses_key,
     metrics_total_messages_processed_key,
+    receiver_message_count_key,
+    receiver_registration_key,
+    receiver_registry_index_key,
 )
 
 logger = logging.getLogger("core-health")
@@ -94,46 +98,6 @@ def _sanitize_id(value: str) -> str:
     ^[a-zA-Z0-9_-]+$. Same rule receiver/main.py's own _sanitize_mqtt_id
     applies to host/port topic segments."""
     return re.sub(r"[^a-zA-Z0-9_-]", "-", value)
-
-
-# ---------------------------------------------------------------------------
-# Provisional Redis key names -- see module docstring and README.md.
-#
-# The message-processor counter keys this component reads
-# (metrics_registration_misses_key()/metrics_operator_misses_key()/
-# metrics_total_messages_processed_key()) are the real shared/redis_keys.py
-# builders -- reconciled once message-processor's own counter-writing side
-# landed, so no provisional shims remain for them here.
-#
-# The three receiver helpers below remain this component's own provisional
-# choice, mirroring shared/redis_keys.py's existing archive_search_index_key()/
-# archive_search_key() precedent (an index SET of live names, plus a
-# per-name JSON record) for the receiver's identity/registration mechanism.
-# Not added to shared/redis_keys.py itself here, deliberately -- that's a
-# separate, not-yet-reconciled change, and this avoids a duplicate/
-# conflicting definition landing in the same shared module out of step with
-# whatever the receiver's own code actually writes.
-# ---------------------------------------------------------------------------
-
-def _receiver_index_key() -> str:
-    """SET of every receiver name currently claimed (SADD'd by a receiver
-    at claim time, per #1046). core-health does one cheap SMEMBERS per
-    RabbitMQ poll cycle against this instead of a keyspace SCAN."""
-    return "receiver:index"
-
-
-def _receiver_registration_key(name: str) -> str:
-    """Per-receiver registration entry: JSON {"sources": [{"host","port",
-    "source"}, ...]}. Refreshed alongside the receiver's own Redis
-    heartbeat and TTL'd the same way (per #1046) -- a missing/expired entry
-    means the receiver is no longer live, not just claimed once in the
-    distant past, and core-health self-heals the index SET when it finds
-    one (see _poll_receivers)."""
-    return f"receiver:{name}:registration"
-
-
-def _receiver_message_total_key(name: str, host: str, port: int, period: str) -> str:
-    return f"metrics:receiver:{name}:messages_{host}_{port}_total:{period}"
 
 
 # ---------------------------------------------------------------------------
@@ -621,7 +585,7 @@ class CoreHealth:
 
     def _poll_receivers(self) -> None:
         try:
-            names = self._redis.smembers(_receiver_index_key())
+            names = self._redis.smembers(receiver_registry_index_key())
         except redis_lib.exceptions.RedisError as exc:
             logger.debug("Receiver index read failed: %s", exc)
             return
@@ -630,7 +594,7 @@ class CoreHealth:
 
     def _publish_receiver(self, name: str) -> None:
         try:
-            raw = self._redis.get(_receiver_registration_key(name))
+            raw = self._redis.get(receiver_registration_key(name))
         except redis_lib.exceptions.RedisError as exc:
             logger.debug("Receiver registration read failed for %s: %s", name, exc)
             return
@@ -641,14 +605,19 @@ class CoreHealth:
             # archive_search_index_key's own SMEMBERS callers do for a
             # stale archive_search:{uuid} entry.
             try:
-                self._redis.srem(_receiver_index_key(), name)
+                self._redis.srem(receiver_registry_index_key(), name)
             except redis_lib.exceptions.RedisError:
                 pass
             return
 
         try:
-            registration = json.loads(raw)
-            sources = registration.get("sources") or []
+            # receiver_registration_key()'s value is a JSON array of
+            # {host, port, source} triples directly (the receiver's own
+            # sources[] config, json.dumps'd as-is) -- not wrapped in an
+            # object, per shared/redis_keys.py's docstring.
+            sources = json.loads(raw)
+            if not isinstance(sources, list):
+                raise ValueError(f"expected a JSON array, got {type(sources).__name__}")
         except (TypeError, ValueError) as exc:
             logger.debug("Receiver registration for %s is not valid JSON: %s", name, exc)
             return
@@ -668,11 +637,18 @@ class CoreHealth:
     def _publish_receiver_connection_counters(
         self, name: str, host, port, device: dict, base: str
     ) -> None:
+        # Same sanitized {host}_{port} identifier the receiver itself uses
+        # (receiver/main.py's _sanitize_mqtt_id, applied identically here
+        # as _sanitize_id) as connection_id, both for its own MQTT topic
+        # segment and as receiver_message_count_key()'s connection_id --
+        # required for the Redis key core-health reads here to line up
+        # with the one the receiver actually writes.
         host_s, port_s = _sanitize_id(str(host)), _sanitize_id(str(port))
+        connection_id = f"{host_s}_{port_s}"
         for period, label_suffix in (("hour", "Hour"), ("today", "Today"), ("lifetime", "Lifetime")):
             field = f"messages_{host_s}_{port_s}_total_{period}"
             value = self._redis_counter_or_none(
-                self._redis, _receiver_message_total_key(name, host, port, period)
+                self._redis, receiver_message_count_key(name, connection_id, period)
             )
             if value is None:
                 continue

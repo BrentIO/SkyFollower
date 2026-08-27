@@ -42,14 +42,16 @@ CoreHealth = _mod.CoreHealth
 _queue_target = _mod._queue_target
 _sanitize_id = _mod._sanitize_id
 _mp_counter_key = _mod._mp_counter_key
-# operator_misses/total_messages_processed key builders are the real
-# shared/redis_keys.py functions now (reconciled once message-processor's
-# own counter-writing side landed) -- no more provisional local shims here.
+# operator_misses/total_messages_processed/receiver key builders are all
+# the real shared/redis_keys.py functions now (reconciled once the
+# message-processor's own counter-writing side, and later the receiver's
+# own identity/registration side, landed) -- no more provisional local
+# shims left in core-health/main.py at all.
 metrics_operator_misses_key = _mod.metrics_operator_misses_key
 metrics_total_messages_processed_key = _mod.metrics_total_messages_processed_key
-_receiver_index_key = _mod._receiver_index_key
-_receiver_registration_key = _mod._receiver_registration_key
-_receiver_message_total_key = _mod._receiver_message_total_key
+receiver_registry_index_key = _mod.receiver_registry_index_key
+receiver_registration_key = _mod.receiver_registration_key
+receiver_message_count_key = _mod.receiver_message_count_key
 MQTT_ROOT = _mod.MQTT_ROOT
 CORE_DEVICE_IDENTIFIER = _mod.CORE_DEVICE_IDENTIFIER
 RABBITMQ_POLL_INTERVAL_SECONDS = _mod.RABBITMQ_POLL_INTERVAL_SECONDS
@@ -337,9 +339,13 @@ class TestPollReceivers:
     def test_publishes_counters_for_each_registered_source(self):
         app = _wired_app()
         app._redis.smembers.return_value = {"attic"}
-        registration = {"sources": [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]}
+        # receiver_registration_key()'s value is a bare JSON array of
+        # {host, port, source} triples -- not wrapped in {"sources": [...]}
+        # -- matching what receiver/main.py's _register_with_core_health()
+        # actually writes (json.dumps(self._cfg.get("sources", []))).
+        registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
         app._redis.get.side_effect = lambda key: (
-            json.dumps(registration) if key == _receiver_registration_key("attic") else "5"
+            json.dumps(registration) if key == receiver_registration_key("attic") else "5"
         )
 
         app._poll_receivers()
@@ -348,6 +354,40 @@ class TestPollReceivers:
         assert published[
             "SkyFollower/receiver/attic/statistic/messages_192-168-10-5_30002_total_hour"
         ] == "5"
+        # And the counter was read from the real per-connection key shape,
+        # connection_id = sanitized "{host}_{port}", matching what the
+        # receiver's own telemetry thread flushes to.
+        app._redis.get.assert_any_call(
+            receiver_message_count_key("attic", "192-168-10-5_30002", "hour")
+        )
+
+    def test_registration_key_uses_the_real_shared_builder_shape(self):
+        # Regression test for #1067: core-health's registration GET must
+        # target receiver_registration_key(id) == "receiver:registration:{id}",
+        # not the old provisional "receiver:{id}:registration" (swapped
+        # segments), or the registration lookup always misses.
+        app = _wired_app()
+        app._redis.smembers.return_value = {"attic"}
+        app._redis.get.return_value = None
+
+        app._poll_receivers()
+
+        app._redis.get.assert_called_once_with("receiver:registration:attic")
+
+    def test_live_receiver_with_real_registration_entry_is_not_self_healed(self):
+        # A live receiver's registration entry, written with the real key
+        # shape, must be found -- the index-SET self-heal (SREM) must NOT
+        # fire for it.
+        app = _wired_app()
+        app._redis.smembers.return_value = {"attic"}
+        registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
+        app._redis.get.side_effect = lambda key: (
+            json.dumps(registration) if key == receiver_registration_key("attic") else "5"
+        )
+
+        app._poll_receivers()
+
+        app._redis.srem.assert_not_called()
 
     def test_expired_registration_self_heals_the_index(self):
         app = _wired_app()
@@ -356,7 +396,7 @@ class TestPollReceivers:
 
         app._poll_receivers()
 
-        app._redis.srem.assert_called_once_with(_receiver_index_key(), "stale-receiver")
+        app._redis.srem.assert_called_once_with(receiver_registry_index_key(), "stale-receiver")
 
     def test_malformed_registration_json_is_skipped_not_raised(self):
         app = _wired_app()
@@ -366,6 +406,18 @@ class TestPollReceivers:
         app._poll_receivers()  # must not raise
 
         app._redis.srem.assert_not_called()
+
+    def test_registration_value_that_is_not_a_json_array_is_skipped_not_raised(self):
+        # The real value is a bare JSON array (see the docstring above) --
+        # an object (the old, wrong assumed shape) must be rejected
+        # cleanly, not raise AttributeError from a stray .get("sources").
+        app = _wired_app()
+        app._redis.smembers.return_value = {"attic"}
+        app._redis.get.return_value = json.dumps({"sources": []})
+
+        app._poll_receivers()  # must not raise
+
+        app._mqtt.publish.assert_not_called()
 
     def test_index_read_failure_is_a_no_op(self):
         app = _wired_app()
@@ -581,8 +633,8 @@ class TestPollRedisOnce:
 
 
 # ---------------------------------------------------------------------------
-# Message-processor counter keys (reconciled shared/redis_keys.py builders)
-# and the receiver's own still-provisional key helpers
+# Message-processor and receiver counter keys -- all reconciled
+# shared/redis_keys.py builders, no provisional local shims remain.
 # ---------------------------------------------------------------------------
 
 class TestReconciledMessageProcessorCounterKeys:
@@ -611,16 +663,22 @@ class TestReconciledMessageProcessorCounterKeys:
         )
 
 
-class TestProvisionalReceiverKeys:
-    def test_receiver_index_key(self):
-        assert _receiver_index_key() == "receiver:index"
+class TestReconciledReceiverKeys:
+    def test_receiver_registry_index_key(self):
+        assert receiver_registry_index_key() == "receiver:index"
 
-    def test_receiver_registration_key(self):
-        assert _receiver_registration_key("attic") == "receiver:attic:registration"
+    def test_receiver_registration_key_shape(self):
+        # Real shape: "receiver:registration:{id}" -- the old provisional
+        # helper had these two segments swapped ("receiver:{id}:registration").
+        assert receiver_registration_key("attic") == "receiver:registration:attic"
 
-    def test_receiver_message_total_key_shape(self):
-        assert _receiver_message_total_key("attic", "192.168.10.5", 30002, "hour") == (
-            "metrics:receiver:attic:messages_192.168.10.5_30002_total:hour"
+    def test_receiver_message_count_key_shape(self):
+        # Real shape: "metrics:receiver:{id}:{connection_id}:messages:{period}",
+        # connection_id = sanitized "{host}_{port}" -- entirely different
+        # from the old provisional
+        # "metrics:receiver:{name}:messages_{host}_{port}_total:{period}".
+        assert receiver_message_count_key("attic", "192-168-10-5_30002", "hour") == (
+            "metrics:receiver:attic:192-168-10-5_30002:messages:hour"
         )
 
 
