@@ -319,35 +319,6 @@ def build_parquet_index_row(flight: CompletedFlight, s3_key: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# RabbitMQ queue-depth high-water mark
-# ---------------------------------------------------------------------------
-
-class _DepthHWM:
-    """Tracks the highest depth recorded since the last read, resetting on
-    each read — same reset-on-publish contract as processor/main.py's
-    _TimeTracker.hwm_ms_and_reset(). Starts (and resets to) -1 rather than 0
-    so "no valid sample landed this window" (e.g. the consumer channel isn't
-    up yet, or the sampler hasn't ticked since the last publish) stays
-    distinguishable from an observed depth of zero — record()'s max keeps a
-    -1 error/no-sample reading from ever overwriting a real one."""
-
-    def __init__(self) -> None:
-        self._hwm = -1
-        self._lock = threading.Lock()
-
-    def record(self, value: int) -> None:
-        with self._lock:
-            if value > self._hwm:
-                self._hwm = value
-
-    def value_and_reset(self) -> int:
-        with self._lock:
-            v = self._hwm
-            self._hwm = -1
-            return v
-
-
-# ---------------------------------------------------------------------------
 # Archive Processor
 # ---------------------------------------------------------------------------
 
@@ -397,7 +368,6 @@ class ArchiveProcessor:
         self._rmq_connection: Optional[pika.BlockingConnection] = None
         self._rmq_channel = None
         self._rmq_connected = False
-        self._rmq_queue_depth_hwm = _DepthHWM()
 
     # ------------------------------------------------------------------
     # Startup
@@ -414,9 +384,6 @@ class ArchiveProcessor:
         # Background threads
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._s3_reconnect_loop, daemon=True, name="s3-reconnect").start()
-        threading.Thread(
-            target=self._rmq_queue_depth_sampler_loop, daemon=True, name="rmq-depth-sampler"
-        ).start()
         threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
 
         self._consume_loop()
@@ -573,28 +540,6 @@ class ArchiveProcessor:
                 self._rmq_connected = False
                 logger.error("RabbitMQ error: %s. Retrying in 10s…", exc)
                 time.sleep(10)
-
-    def _rmq_queue_depth(self) -> int:
-        """Best-effort depth of the 'archive' queue via passive declare on
-        the existing consumer channel. Returns -1 on any error (no channel
-        yet, or the declare itself fails)."""
-        if not self._rmq_channel:
-            return -1
-        try:
-            result = self._rmq_channel.queue_declare(
-                queue="archive", durable=True, passive=True
-            )
-            return result.method.message_count
-        except Exception:
-            return -1
-
-    def _rmq_queue_depth_sampler_loop(self) -> None:
-        """Samples the archive queue's depth at most once every 10 seconds,
-        independent of telemetry_interval_seconds, feeding the HWM tracker
-        that _publish_telemetry() reads and resets each tick."""
-        while not self._shutdown.is_set():
-            time.sleep(10)
-            self._rmq_queue_depth_hwm.record(self._rmq_queue_depth())
 
     def _on_message(self, ch, method, props, body: bytes) -> None:
         try:
@@ -922,7 +867,6 @@ class ArchiveProcessor:
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),
             ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
             ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None),
-            ("rabbitmq_archive_queue_depth_hwm", "RabbitMQ Archive Queue Depth HWM", "mdi:tray-full", "measurement", None),
             ("started_at", "Archive Started At", "mdi:clock", None, None),
             ("version", "Archive Version", "mdi:tag", None, None),
         ]
@@ -1009,11 +953,6 @@ class ArchiveProcessor:
         self._mqtt.publish(
             f"{base}/dead_letter_index_queue_depth",
             str(self._index_fallback.dead_letter_depth()),
-            retain=True,
-        )
-        self._mqtt.publish(
-            f"{base}/rabbitmq_archive_queue_depth_hwm",
-            str(self._rmq_queue_depth_hwm.value_and_reset()),
             retain=True,
         )
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)

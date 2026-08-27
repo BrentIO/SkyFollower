@@ -364,7 +364,6 @@ All topics use the root `SkyFollower`.
 | `processing_time_hwm_ms` | Float as string | End-to-end processing time high-water mark since last publish; resets on publish |
 | `message_latency_hwm_ms` | Float as string | Receipt-through-processed latency high-water mark since last publish, including RabbitMQ queue wait time (a superset of `processing_time_hwm_ms`); resets on publish. Wall-clock based (`time.time() - msg.received_at`), unlike `processing_time_hwm_ms`'s monotonic clock, since `received_at` is stamped on the receiver host and crosses the RabbitMQ hop -- sensitive to NTP drift between hosts |
 | `rules_engine_hwm_ns` | Float as string | Rules engine duration high-water mark since last publish, in nanoseconds; resets on publish |
-| `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish. Not published this cycle if no valid sample landed this window (retained topic keeps its last known-good value; never published as `-1`) -- Home Assistant marks the entity unavailable via `expire_after` if this persists across a genuine sustained outage |
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
 | `dead_letter_queue_depth` | Integer as string | Completed flights dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Flights](#dead-lettering-poison-flights)) |
 | `active_flights` | Integer as string | Flights currently tracked in the active store |
@@ -386,13 +385,6 @@ payloads are published to
 connect; each sensor's `state_topic` points directly at its own
 `SkyFollower/message-processor/{ID}/statistic/{field}` topic — no `value_template`
 needed.
-
-`rabbitmq_input_queue_depth_hwm` is sampled by a dedicated background
-loop capped at once every 10 seconds, independent of how low
-`telemetry_interval_seconds` is configured, and tracked as a high-water
-mark that resets each time telemetry is published.
-
-![RabbitMQ queue-depth high-water mark](./rmq-queue-depth-hwm-sequence.svg)
 
 ## Fault Tolerance
 

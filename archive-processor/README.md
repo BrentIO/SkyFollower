@@ -367,7 +367,6 @@ All topics use the root `SkyFollower`.
 | `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
 | `dead_letter_queue_depth` | Integer as string | Flights dead-lettered after repeatedly failing to write to S3 (see [Dead-Lettering Poison Messages and Index Rows](#dead-lettering-poison-messages-and-index-rows)) |
 | `dead_letter_index_queue_depth` | Integer as string | Parquet index rows dead-lettered after repeatedly failing to write |
-| `rabbitmq_archive_queue_depth_hwm` | Integer as string | High-water mark of the RabbitMQ `archive` queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish (`-1` if no valid sample landed this window) |
 
 Each stat is published as its own retained topic (not a combined JSON
 payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
@@ -394,10 +393,3 @@ existing two counters, unlike message-processor's equivalent mechanism (see
 add one.
 
 ![Period counter reset mechanism](./period-counter-sequence.svg)
-
-`rabbitmq_archive_queue_depth_hwm` is sampled by a dedicated background
-loop capped at once every 10 seconds, independent of how low
-`telemetry_interval_seconds` is configured, and tracked as a high-water
-mark that resets each time telemetry is published.
-
-![RabbitMQ queue-depth high-water mark](./rmq-queue-depth-hwm-sequence.svg)
