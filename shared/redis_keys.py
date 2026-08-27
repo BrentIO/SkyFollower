@@ -8,6 +8,7 @@ are always explicit and typos in key names are caught by the type checker.
 
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
+_VALID_OPERATOR_MISSES_PERIODS = frozenset({"today", "lifetime"})
 
 # RediSearch index over all aircraft:mictronics:{hex} JSON documents (Mictronics).
 # Indexed fields: $.icao_hex, $.registration
@@ -181,7 +182,11 @@ def receiver_message_count_key(receiver_id: str, connection_id: str, period: str
 
 def metrics_registration_misses_key(message_processor_id: str, period: str) -> str:
     """
-    Counter for Redis enrichment misses (aircraft not found) per message processor.
+    Counter for aircraft enrichment (registration) lookup misses per message
+    processor -- an icao_hex with no matching aircraft:mictronics/registry/
+    livery record. Operator-lookup misses are a separate failure type with
+    their own dedicated key, metrics_operator_misses_key() -- not counted
+    here.
     period must be one of: hour, today, lifetime.
     metrics:message_processor:{id}:registration_misses:{period}
     """
@@ -190,15 +195,34 @@ def metrics_registration_misses_key(message_processor_id: str, period: str) -> s
     return f"metrics:message_processor:{message_processor_id}:registration_misses:{period}"
 
 
-def metrics_aircraft_type_misses_key(message_processor_id: str, period: str) -> str:
+def metrics_operator_misses_key(message_processor_id: str, period: str) -> str:
     """
-    Counter for aircraft type lookup misses per message processor.
+    Counter for operator:{designator} lookup misses per message processor --
+    a distinct failure type from an aircraft registration miss (see
+    metrics_registration_misses_key()). No "hour" period: operator misses
+    are lower-volume and only tracked today/lifetime.
+    period must be one of: today, lifetime.
+    metrics:message_processor:{id}:operator_misses:{period}
+    """
+    if period not in _VALID_OPERATOR_MISSES_PERIODS:
+        raise ValueError(
+            f"period must be one of {_VALID_OPERATOR_MISSES_PERIODS}, got: {period!r}"
+        )
+    return f"metrics:message_processor:{message_processor_id}:operator_misses:{period}"
+
+
+def metrics_total_messages_processed_key(message_processor_id: str, period: str) -> str:
+    """
+    Counter for every message a message processor attempted to decode
+    (including CRC-corrupt/no-content messages) -- incremented at the same
+    point messages_per_second's own _RateTracker.record() is, per message
+    processor.
     period must be one of: hour, today, lifetime.
-    metrics:message_processor:{id}:aircraft_type_misses:{period}
+    metrics:message_processor:{id}:total_messages_processed:{period}
     """
     if period not in _VALID_PERIODS:
         raise ValueError(f"period must be one of {_VALID_PERIODS}, got: {period!r}")
-    return f"metrics:message_processor:{message_processor_id}:aircraft_type_misses:{period}"
+    return f"metrics:message_processor:{message_processor_id}:total_messages_processed:{period}"
 
 
 def metrics_flights_archived_key(period: str) -> str:

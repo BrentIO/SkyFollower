@@ -377,7 +377,11 @@ channels:
   messageProcessorRegistrationMissesHour:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_hour'
     description: >
-      Aircraft Redis cache misses this hour. Published every
+      Aircraft enrichment (registration) Redis cache misses this hour. Message
+      processor is write-only for this counter (accumulates in memory,
+      flushes to Redis on its own telemetry cadence); core-health is the
+      component that actually publishes this topic, on message processor's
+      behalf, using the exact address/payload shape below. Published every
       telemetry_interval_seconds, retained.
     parameters:
       message_processor_id:
@@ -389,7 +393,9 @@ channels:
   messageProcessorRegistrationMissesToday:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_today'
     description: >
-      Aircraft Redis cache misses today (UTC). Published every
+      Aircraft enrichment (registration) Redis cache misses today (UTC).
+      Published by core-health on message processor's behalf -- see
+      messageProcessorRegistrationMissesHour above. Published every
       telemetry_interval_seconds, retained.
     parameters:
       message_processor_id:
@@ -398,29 +404,99 @@ channels:
       MessageProcessorRegistrationMissesTodayMessage:
         $ref: '#/components/messages/MessageProcessorRegistrationMissesTodayMessage'
 
-  messageProcessorAircraftTypeMissesHour:
-    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/aircraft_type_misses_hour'
+  messageProcessorRegistrationMissesLifetime:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_lifetime'
     description: >
-      Aircraft type lookup misses this hour. Published every
-      telemetry_interval_seconds, retained.
+      Aircraft enrichment (registration) Redis cache misses since this
+      process instance started (resets to 0 on container restart, not a
+      true all-time total). Published by core-health on message processor's
+      behalf -- see messageProcessorRegistrationMissesHour above. Published
+      every telemetry_interval_seconds, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      MessageProcessorAircraftTypeMissesHourMessage:
-        $ref: '#/components/messages/MessageProcessorAircraftTypeMissesHourMessage'
+      MessageProcessorRegistrationMissesLifetimeMessage:
+        $ref: '#/components/messages/MessageProcessorRegistrationMissesLifetimeMessage'
 
-  messageProcessorAircraftTypeMissesToday:
-    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/aircraft_type_misses_today'
+  messageProcessorOperatorMissesToday:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/operator_misses_today'
     description: >
-      Aircraft type lookup misses today (UTC). Published every
+      operator:{designator} Redis lookup misses today (UTC) -- a distinct
+      failure type from a registration miss (see
+      messageProcessorRegistrationMissesHour). No hourly period: operator
+      misses are lower-volume and only tracked today/lifetime. Published by
+      core-health on message processor's behalf, using the exact
+      address/payload shape message processor's own code would have used.
+      Published every telemetry_interval_seconds, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorOperatorMissesTodayMessage:
+        $ref: '#/components/messages/MessageProcessorOperatorMissesTodayMessage'
+
+  messageProcessorOperatorMissesLifetime:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/operator_misses_lifetime'
+    description: >
+      operator:{designator} Redis lookup misses since this process instance
+      started (resets to 0 on container restart, not a true all-time
+      total). Published by core-health on message processor's behalf -- see
+      messageProcessorOperatorMissesToday above. Published every
       telemetry_interval_seconds, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
     messages:
-      MessageProcessorAircraftTypeMissesTodayMessage:
-        $ref: '#/components/messages/MessageProcessorAircraftTypeMissesTodayMessage'
+      MessageProcessorOperatorMissesLifetimeMessage:
+        $ref: '#/components/messages/MessageProcessorOperatorMissesLifetimeMessage'
+
+  messageProcessorTotalMessagesProcessedHour:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_hour'
+    description: >
+      Every message this hour for which an attempt to decode was made
+      (including CRC-corrupt/no-content messages) -- counted at the same
+      point messages_per_second is, before decoding is attempted. Bucketed
+      by wall-clock processing time, not received_at, so a backlog replay
+      counts toward the current hour regardless of the messages' original
+      timestamps. Published by core-health on message processor's behalf,
+      using the exact address/payload shape message processor's own code
+      would have used. Published every telemetry_interval_seconds, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorTotalMessagesProcessedHourMessage:
+        $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedHourMessage'
+
+  messageProcessorTotalMessagesProcessedToday:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_today'
+    description: >
+      Every message today (UTC, wall-clock processing time) for which an
+      attempt to decode was made. Published by core-health on message
+      processor's behalf -- see messageProcessorTotalMessagesProcessedHour
+      above. Published every telemetry_interval_seconds, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorTotalMessagesProcessedTodayMessage:
+        $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedTodayMessage'
+
+  messageProcessorTotalMessagesProcessedLifetime:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_lifetime'
+    description: >
+      Every message since this process instance started for which an
+      attempt to decode was made (resets to 0 on container restart, not a
+      true all-time total). Published by core-health on message
+      processor's behalf -- see messageProcessorTotalMessagesProcessedHour
+      above. Published every telemetry_interval_seconds, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorTotalMessagesProcessedLifetimeMessage:
+        $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedLifetimeMessage'
 
   messageProcessorActiveFlights:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/active_flights'
@@ -873,25 +949,49 @@ operations:
     action: send
     channel:
       $ref: '#/channels/messageProcessorRegistrationMissesHour'
-    summary: Message processor publishes hourly aircraft registration cache misses
+    summary: core-health publishes hourly aircraft registration cache misses on message processor's behalf
 
   publishMessageProcessorRegistrationMissesToday:
     action: send
     channel:
       $ref: '#/channels/messageProcessorRegistrationMissesToday'
-    summary: Message processor publishes today's aircraft registration cache misses
+    summary: core-health publishes today's aircraft registration cache misses on message processor's behalf
 
-  publishMessageProcessorAircraftTypeMissesHour:
+  publishMessageProcessorRegistrationMissesLifetime:
     action: send
     channel:
-      $ref: '#/channels/messageProcessorAircraftTypeMissesHour'
-    summary: Message processor publishes hourly aircraft type lookup misses
+      $ref: '#/channels/messageProcessorRegistrationMissesLifetime'
+    summary: core-health publishes lifetime (since-boot) aircraft registration cache misses on message processor's behalf
 
-  publishMessageProcessorAircraftTypeMissesToday:
+  publishMessageProcessorOperatorMissesToday:
     action: send
     channel:
-      $ref: '#/channels/messageProcessorAircraftTypeMissesToday'
-    summary: Message processor publishes today's aircraft type lookup misses
+      $ref: '#/channels/messageProcessorOperatorMissesToday'
+    summary: core-health publishes today's operator lookup misses on message processor's behalf
+
+  publishMessageProcessorOperatorMissesLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorOperatorMissesLifetime'
+    summary: core-health publishes lifetime (since-boot) operator lookup misses on message processor's behalf
+
+  publishMessageProcessorTotalMessagesProcessedHour:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorTotalMessagesProcessedHour'
+    summary: core-health publishes hourly total messages processed on message processor's behalf
+
+  publishMessageProcessorTotalMessagesProcessedToday:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorTotalMessagesProcessedToday'
+    summary: core-health publishes today's total messages processed on message processor's behalf
+
+  publishMessageProcessorTotalMessagesProcessedLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorTotalMessagesProcessedLifetime'
+    summary: core-health publishes lifetime (since-boot) total messages processed on message processor's behalf
 
   publishMessageProcessorActiveFlights:
     action: send
@@ -1232,7 +1332,7 @@ components:
     MessageProcessorRegistrationMissesHourMessage:
       name: MessageProcessorRegistrationMissesHourMessage
       title: Message Processor registration misses this hour
-      summary: Aircraft Redis cache misses this hour
+      summary: Aircraft enrichment (registration) Redis cache misses this hour, published by core-health
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/MessageProcessorRegistrationMissesHour'
@@ -1240,26 +1340,58 @@ components:
     MessageProcessorRegistrationMissesTodayMessage:
       name: MessageProcessorRegistrationMissesTodayMessage
       title: Message Processor registration misses today
-      summary: Aircraft Redis cache misses today (UTC)
+      summary: Aircraft enrichment (registration) Redis cache misses today (UTC), published by core-health
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/MessageProcessorRegistrationMissesToday'
 
-    MessageProcessorAircraftTypeMissesHourMessage:
-      name: MessageProcessorAircraftTypeMissesHourMessage
-      title: Message Processor aircraft type misses this hour
-      summary: Aircraft type lookup misses this hour
+    MessageProcessorRegistrationMissesLifetimeMessage:
+      name: MessageProcessorRegistrationMissesLifetimeMessage
+      title: Message Processor registration misses lifetime
+      summary: Aircraft enrichment (registration) Redis cache misses since this process instance started, published by core-health
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/MessageProcessorAircraftTypeMissesHour'
+        $ref: '#/components/schemas/MessageProcessorRegistrationMissesLifetime'
 
-    MessageProcessorAircraftTypeMissesTodayMessage:
-      name: MessageProcessorAircraftTypeMissesTodayMessage
-      title: Message Processor aircraft type misses today
-      summary: Aircraft type lookup misses today (UTC)
+    MessageProcessorOperatorMissesTodayMessage:
+      name: MessageProcessorOperatorMissesTodayMessage
+      title: Message Processor operator misses today
+      summary: operator:{designator} Redis lookup misses today (UTC), published by core-health
       contentType: text/plain
       payload:
-        $ref: '#/components/schemas/MessageProcessorAircraftTypeMissesToday'
+        $ref: '#/components/schemas/MessageProcessorOperatorMissesToday'
+
+    MessageProcessorOperatorMissesLifetimeMessage:
+      name: MessageProcessorOperatorMissesLifetimeMessage
+      title: Message Processor operator misses lifetime
+      summary: operator:{designator} Redis lookup misses since this process instance started, published by core-health
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorOperatorMissesLifetime'
+
+    MessageProcessorTotalMessagesProcessedHourMessage:
+      name: MessageProcessorTotalMessagesProcessedHourMessage
+      title: Message Processor total messages processed this hour
+      summary: Every message this hour attempted to decode, published by core-health
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorTotalMessagesProcessedHour'
+
+    MessageProcessorTotalMessagesProcessedTodayMessage:
+      name: MessageProcessorTotalMessagesProcessedTodayMessage
+      title: Message Processor total messages processed today
+      summary: Every message today (UTC) attempted to decode, published by core-health
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorTotalMessagesProcessedToday'
+
+    MessageProcessorTotalMessagesProcessedLifetimeMessage:
+      name: MessageProcessorTotalMessagesProcessedLifetimeMessage
+      title: Message Processor total messages processed lifetime
+      summary: Every message since this process instance started attempted to decode, published by core-health
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorTotalMessagesProcessedLifetime'
 
     MessageProcessorActiveFlightsMessage:
       name: MessageProcessorActiveFlightsMessage
@@ -1604,23 +1736,43 @@ components:
 
     MessageProcessorRegistrationMissesHour:
       type: integer
-      description: Aircraft Redis cache misses this hour
+      description: Aircraft enrichment (registration) Redis cache misses this hour
       example: 2
 
     MessageProcessorRegistrationMissesToday:
       type: integer
-      description: Aircraft Redis cache misses today (UTC)
+      description: Aircraft enrichment (registration) Redis cache misses today (UTC)
       example: 14
 
-    MessageProcessorAircraftTypeMissesHour:
+    MessageProcessorRegistrationMissesLifetime:
       type: integer
-      description: Aircraft type lookup misses this hour
-      example: 0
+      description: Aircraft enrichment (registration) Redis cache misses since this process instance started
+      example: 214
 
-    MessageProcessorAircraftTypeMissesToday:
+    MessageProcessorOperatorMissesToday:
       type: integer
-      description: Aircraft type lookup misses today (UTC)
-      example: 3
+      description: operator:{designator} Redis lookup misses today (UTC)
+      example: 5
+
+    MessageProcessorOperatorMissesLifetime:
+      type: integer
+      description: operator:{designator} Redis lookup misses since this process instance started
+      example: 61
+
+    MessageProcessorTotalMessagesProcessedHour:
+      type: integer
+      description: Every message this hour for which an attempt to decode was made
+      example: 184320
+
+    MessageProcessorTotalMessagesProcessedToday:
+      type: integer
+      description: Every message today (UTC) for which an attempt to decode was made
+      example: 3512890
+
+    MessageProcessorTotalMessagesProcessedLifetime:
+      type: integer
+      description: Every message since this process instance started for which an attempt to decode was made
+      example: 9021455
 
     MessageProcessorActiveFlights:
       type: integer

@@ -101,3 +101,36 @@ class TestIncrPeriodCounter:
 
     def test_missing_key_before_first_call_is_absent(self, redis_client, counter_key):
         assert redis_client.get(counter_key) is None
+
+    def test_key_actually_expires_and_resets_at_a_real_boundary(
+        self, redis_client, script_sha, counter_key
+    ):
+        """End-to-end proof the reset mechanism genuinely works at a real
+        clock boundary -- not just that EXPIREAT/TTL were set correctly
+        (see test_sets_expiry_only_on_creation above). Uses a short,
+        near-future "boundary" (2s out) rather than waiting a real UTC
+        hour/day, but exercises the exact same mechanism
+        message-processor/archive-processor rely on: Redis's own TTL
+        expiry deletes the key, and the next increment after that
+        naturally recreates it fresh (existed == 0 again) rather than
+        continuing to accumulate."""
+        near_future = int(time.time()) + 2
+        result = _incr(redis_client, script_sha, counter_key, 5, near_future)
+        assert result == 5
+
+        # Still present and unexpired just before the boundary.
+        assert redis_client.get(counter_key) == "5"
+
+        deadline = time.time() + 5
+        while redis_client.get(counter_key) is not None and time.time() < deadline:
+            time.sleep(0.1)
+        assert redis_client.get(counter_key) is None, (
+            "key did not expire at its real EXPIREAT boundary"
+        )
+
+        # The next increment after the real expiry recreates the key fresh
+        # (a genuine reset), not a continuation of the old total.
+        later_boundary = int(time.time()) + 3600
+        result_after_reset = _incr(redis_client, script_sha, counter_key, 3, later_boundary)
+        assert result_after_reset == 3
+        assert redis_client.get(counter_key) == "3"

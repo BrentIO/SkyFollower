@@ -85,29 +85,39 @@ is a real "skip this tick, let the entity age out" case (see
 
 ### Provisional Redis keys
 
-message-processor's/the receiver's own counter-*writing* sides
-(`operator_misses`, `total_messages_processed`, and the receiver's identity
-redesign + per-connection counters) are separate, not-yet-implemented
-changes at the time this component was built. This component's *reading*
-side was written defensively against the key-naming conventions described
-for them, using the same shape `shared/redis_keys.py`'s existing
-`metrics_registration_misses_key()`/`archive_search_index_key()` already
-establish, but the exact key strings below are this component's own
-provisional choice (not added to `shared/redis_keys.py` itself, to avoid a
-duplicate/conflicting definition landing there from two different PRs) and
-may need reconciling once those changes land:
+message-processor's counter-*writing* side (`operator_misses`,
+`total_messages_processed`, and the reset-mechanism fix for
+`registration_misses`) has since landed, and this component's reading side
+was reconciled to it: `metrics_registration_misses_key()`/
+`metrics_operator_misses_key()`/`metrics_total_messages_processed_key()`
+are all real `shared/redis_keys.py` builders now, imported directly rather
+than shimmed locally. message-processor is write-only for these three
+counters (accumulates in memory, flushes to Redis on its own telemetry
+cadence — see `message-processor/README.md`) — this component remains the
+only one that ever publishes them over MQTT/Home Assistant.
+
+The receiver's identity redesign + per-connection counters are still a
+separate, not-yet-reconciled change at the time this note was last
+updated. This component's *reading* side was written defensively against
+the key-naming conventions described for them, using the same shape
+`shared/redis_keys.py`'s existing `archive_search_index_key()` precedent
+already establishes, but the exact key strings below remain this
+component's own provisional choice (not added to `shared/redis_keys.py`
+itself, to avoid a duplicate/conflicting definition landing there from a
+different PR) and may need reconciling once the receiver's own writing
+side is confirmed to match:
 
 | Key | Shape | Written by |
 |---|---|---|
-| `metrics:message_processor:{id}:operator_misses:{period}` | `period` ∈ `today`, `lifetime` | message-processor (not yet implemented) |
-| `metrics:message_processor:{id}:total_messages_processed:{period}` | `period` ∈ `hour`, `today`, `lifetime` | message-processor (not yet implemented) |
-| `receiver:index` | `SET` of currently-claimed receiver names | receiver (not yet implemented) |
-| `receiver:{name}:registration` | JSON `{"sources": [{"host", "port", "source"}, ...]}`, TTL'd alongside the receiver's own heartbeat | receiver (not yet implemented) |
-| `metrics:receiver:{name}:messages_{host}_{port}_total:{period}` | `period` ∈ `hour`, `today`, `lifetime` | receiver (not yet implemented) |
+| `receiver:index` | `SET` of currently-claimed receiver names | receiver |
+| `receiver:{name}:registration` | JSON `{"sources": [{"host", "port", "source"}, ...]}`, TTL'd alongside the receiver's own heartbeat | receiver |
+| `metrics:receiver:{name}:messages_{host}_{port}_total:{period}` | `period` ∈ `hour`, `today`, `lifetime` | receiver |
 
-Until those land, core-health simply reads these keys as always-absent and
-publishes `0` for every field they'd back — exactly the same behavior as
-after they land and the count is genuinely zero so far this period.
+Until reconciled, core-health simply reads these three as always-absent if
+the receiver's actual key shape differs, and publishes `0` for every field
+they'd back — the same behavior as when the count is genuinely zero so far
+this period, so a shape mismatch here fails silent rather than loud. See
+the tracked follow-up issue for the receiver key reconciliation.
 
 ## Configuration
 

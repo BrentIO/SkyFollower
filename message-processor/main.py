@@ -58,13 +58,15 @@ from shared.rabbitmq_topology import (
     declare_adsb_topology,
     message_processor_queue_name,
 )
+from shared.metrics import next_period_boundary
 from shared.redis_keys import (
     config_areas_version_key,
     config_flight_ttl_seconds_key,
     config_rules_version_key,
     message_processor_heartbeat_key,
-    metrics_aircraft_type_misses_key,
+    metrics_operator_misses_key,
     metrics_registration_misses_key,
+    metrics_total_messages_processed_key,
     operator_key,
 )
 
@@ -300,6 +302,38 @@ class _RateTracker:
             while self._timestamps and self._timestamps[0] < cutoff:
                 self._timestamps.popleft()
             return len(self._timestamps) / self._window
+
+
+# ---------------------------------------------------------------------------
+# Period-counter accumulator (in-memory, flushed to Redis on the telemetry
+# cadence only -- see MessageProcessor._flush_period_counters())
+# ---------------------------------------------------------------------------
+
+class _CounterAccumulator:
+    """Thread-safe in-memory delta accumulator for a Redis-backed period
+    counter (total_messages_processed / registration_misses / operator_misses).
+
+    record() is pure in-memory arithmetic under a lock -- zero I/O, safe to
+    call from the hot path (_on_message/_enrich_aircraft/_enrich_operator).
+    flush_and_reset() is called only from the telemetry thread, returning
+    (and zeroing) the delta accumulated since the last flush so the caller
+    can push it into Redis via incr_period_counter.lua/INCRBY. This never
+    talks to Redis itself -- it's pure bookkeeping, unlike receiver/main.py's
+    _RateTracker, which also tracks the hour/day bucket internally."""
+
+    def __init__(self) -> None:
+        self._pending = 0
+        self._lock = threading.Lock()
+
+    def record(self, n: int = 1) -> None:
+        with self._lock:
+            self._pending += n
+
+    def flush_and_reset(self) -> int:
+        with self._lock:
+            v = self._pending
+            self._pending = 0
+            return v
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +696,14 @@ class MessageProcessor:
         self._rmq_queue_depth_hwm = _DepthHWM()
         self._db_lock = threading.Lock()
 
+        # Redis-backed period counters (total_messages_processed,
+        # registration_misses, operator_misses) -- pure in-memory
+        # accumulation on the hot path, flushed to Redis only from the
+        # telemetry thread. See _flush_period_counters().
+        self._total_messages_processed = _CounterAccumulator()
+        self._registration_misses = _CounterAccumulator()
+        self._operator_misses = _CounterAccumulator()
+
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
@@ -669,6 +711,10 @@ class MessageProcessor:
         self._merge_sha = self._redis.script_load(_lua_path.read_text())
         _route_lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "route_airports.lua"
         self._route_sha = self._redis.script_load(_route_lua_path.read_text())
+        _incr_lua_path = (
+            pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
+        )
+        self._incr_period_counter_sha = self._redis.script_load(_incr_lua_path.read_text())
 
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
@@ -696,6 +742,7 @@ class MessageProcessor:
     def start(self) -> None:
         self._setup_logging()
         self._claim_message_processor_id()
+        self._reset_lifetime_counters()
         self._connect_mqtt()
         self._rules_engine.reload_if_changed()
         self._load_flight_ttl_seconds()
@@ -726,6 +773,22 @@ class MessageProcessor:
             )
             sys.exit(1)
         logger.info("Message processor %s claimed.", self._id)
+
+    def _reset_lifetime_counters(self) -> None:
+        """"lifetime" means "since this process instance started," not
+        "forever" -- Redis is a separate, persistent service, so a
+        container restart does not clear these keys for free. Explicit
+        DELETE at boot, before the telemetry thread (and therefore the
+        first flush) ever starts, so no message processed before this call
+        completes can leak into the pre-reset lifetime total."""
+        try:
+            self._redis.delete(
+                metrics_registration_misses_key(self._id, "lifetime"),
+                metrics_operator_misses_key(self._id, "lifetime"),
+                metrics_total_messages_processed_key(self._id, "lifetime"),
+            )
+        except Exception as exc:
+            logger.warning("Lifetime counter reset failed: %s", exc)
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -787,6 +850,7 @@ class MessageProcessor:
 
         t_start = time.monotonic()
         self._rate.record()
+        self._total_messages_processed.record()
         self._process(msg)
         elapsed_ms = (time.monotonic() - t_start) * 1000
         self._processing_time.record(elapsed_ms)
@@ -1104,9 +1168,7 @@ class MessageProcessor:
                 aircraft.pop("wake_turbulence_category", None)
                 flight.aircraft = aircraft
             else:
-                self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
-                self._redis.incr(metrics_registration_misses_key(self._id, "today"))
-                self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
+                self._registration_misses.record()
                 if not flight.aircraft:
                     flight.aircraft = {"icao_hex": flight.icao_hex}
         except Exception as exc:
@@ -1142,9 +1204,7 @@ class MessageProcessor:
             if raw:
                 flight.operator = raw
             else:
-                self._redis.incr(metrics_registration_misses_key(self._id, "hour"))
-                self._redis.incr(metrics_registration_misses_key(self._id, "today"))
-                self._redis.incr(metrics_registration_misses_key(self._id, "lifetime"))
+                self._operator_misses.record()
         except Exception as exc:
             logger.debug("Redis enrichment (operator) error: %s", exc)
 
@@ -1451,7 +1511,40 @@ class MessageProcessor:
             # publish below it.
             if self._rmq_connected:
                 self._drain_fallback()
+            self._flush_period_counters()
             self._publish_telemetry()
+
+    def _flush_period_counters(self) -> None:
+        """Pushes each in-memory counter's delta accumulated since the last
+        flush into Redis -- incr_period_counter.lua (hour/today, resetting
+        at the real UTC boundary via shared.metrics.next_period_boundary())
+        or a plain INCRBY (lifetime, which never expires). Called only from
+        the telemetry thread -- _on_message/_enrich_aircraft/_enrich_operator
+        never touch Redis for these counters themselves. Not self-published
+        via MQTT/HA -- core-health reads these keys and publishes them on
+        this component's behalf (see message-processor/README.md)."""
+        now = datetime.now(timezone.utc)
+        for accumulator, key_fn, periods in (
+            (self._total_messages_processed, metrics_total_messages_processed_key,
+             ("hour", "today", "lifetime")),
+            (self._registration_misses, metrics_registration_misses_key,
+             ("hour", "today", "lifetime")),
+            (self._operator_misses, metrics_operator_misses_key, ("today", "lifetime")),
+        ):
+            delta = accumulator.flush_and_reset()
+            if not delta:
+                continue
+            try:
+                for period in periods:
+                    if period == "lifetime":
+                        self._redis.incrby(key_fn(self._id, period), delta)
+                    else:
+                        self._redis.evalsha(
+                            self._incr_period_counter_sha, 0,
+                            key_fn(self._id, period), delta, next_period_boundary(period, now),
+                        )
+            except Exception as exc:
+                logger.debug("Period counter flush failed for %s: %s", key_fn(self._id, "lifetime"), exc)
 
     def _publish_telemetry(self) -> None:
         if not (self._mqtt and self._mqtt_connected):
@@ -1497,26 +1590,14 @@ class MessageProcessor:
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )
         self._mqtt.publish(f"{base}/active_flights", str(active), retain=True)
-        self._mqtt.publish(
-            f"{base}/registration_misses_hour",
-            str(self._redis_counter(metrics_registration_misses_key(pid, "hour"))),
-            retain=True,
-        )
-        self._mqtt.publish(
-            f"{base}/registration_misses_today",
-            str(self._redis_counter(metrics_registration_misses_key(pid, "today"))),
-            retain=True,
-        )
-        self._mqtt.publish(
-            f"{base}/aircraft_type_misses_hour",
-            str(self._redis_counter(metrics_aircraft_type_misses_key(pid, "hour"))),
-            retain=True,
-        )
-        self._mqtt.publish(
-            f"{base}/aircraft_type_misses_today",
-            str(self._redis_counter(metrics_aircraft_type_misses_key(pid, "today"))),
-            retain=True,
-        )
+
+        # registration_misses/operator_misses/total_messages_processed are
+        # write-only from this component's perspective -- accumulated in
+        # memory and flushed to Redis by _flush_period_counters() above,
+        # never self-published via MQTT/HA here. core-health reads those
+        # Redis keys and publishes them on this component's behalf, using
+        # the exact same topic paths/unique_id/device block this method
+        # would otherwise have used -- see message-processor/README.md.
 
         # Refresh heartbeat
         interval = self._cfg.get("telemetry_interval_seconds", 30)
@@ -1524,13 +1605,6 @@ class MessageProcessor:
             self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
         except Exception:
             pass
-
-    def _redis_counter(self, key: str) -> int:
-        try:
-            v = self._redis.get(key)
-            return int(v) if v else 0
-        except Exception:
-            return 0
 
     def _sample_rmq_queue_depth(self) -> None:
         """Best-effort depth of this processor's input queue via passive
@@ -1684,11 +1758,11 @@ class MessageProcessor:
                     extra={"expire_after": telemetry_interval * 3}),
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
-            _Sensor("registration_misses_hour", "Registration Misses (Hour)", "mdi:broadcast", "total_increasing"),
-            _Sensor("registration_misses_today", "Registration Misses (Today)", "mdi:broadcast", "total_increasing"),
-            _Sensor("aircraft_type_misses_hour", "Aircraft Type Misses (Hour)", "mdi:broadcast", "total_increasing"),
-            _Sensor("aircraft_type_misses_today", "Aircraft Type Misses (Today)", "mdi:broadcast", "total_increasing"),
             _Sensor("active_flights", "Active Flights", "mdi:airplane", "measurement"),
+            # registration_misses/operator_misses/total_messages_processed
+            # have no entry here -- core-health publishes their HA discovery
+            # config on this component's behalf, using this exact device
+            # block/unique_id/object_id pattern. See _flush_period_counters().
         ]
         for sensor in sensors:
             payload = {

@@ -14,7 +14,7 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pika
@@ -49,6 +49,7 @@ if "message_processor" not in sys.modules:
 from message_processor.main import (  # noqa: E402  (after sys.path/package setup)
     Flight,
     MessageProcessor,
+    _CounterAccumulator,
     _DepthHWM,
     _RateTracker,
     _TimeTracker,
@@ -60,7 +61,13 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     main as processor_main,
 )
 from shared.models import InboundMessage, Position, Velocity
-from shared.redis_keys import message_processor_heartbeat_key, operator_key
+from shared.redis_keys import (
+    message_processor_heartbeat_key,
+    metrics_operator_misses_key,
+    metrics_registration_misses_key,
+    metrics_total_messages_processed_key,
+    operator_key,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1136,241 @@ class TestRateTracker:
 
 
 # ---------------------------------------------------------------------------
+# _CounterAccumulator
+# ---------------------------------------------------------------------------
+
+class TestCounterAccumulator:
+    def test_starts_at_zero(self):
+        acc = _CounterAccumulator()
+        assert acc.flush_and_reset() == 0
+
+    def test_record_default_increments_by_one(self):
+        acc = _CounterAccumulator()
+        acc.record()
+        acc.record()
+        assert acc.flush_and_reset() == 2
+
+    def test_record_accepts_explicit_amount(self):
+        acc = _CounterAccumulator()
+        acc.record(5)
+        assert acc.flush_and_reset() == 5
+
+    def test_flush_and_reset_zeroes_the_pending_delta(self):
+        acc = _CounterAccumulator()
+        acc.record(3)
+        assert acc.flush_and_reset() == 3
+        assert acc.flush_and_reset() == 0
+
+    def test_record_after_flush_starts_a_fresh_delta(self):
+        acc = _CounterAccumulator()
+        acc.record()
+        acc.flush_and_reset()
+        acc.record()
+        acc.record()
+        assert acc.flush_and_reset() == 2
+
+    def test_concurrent_record_calls_are_not_lost(self):
+        acc = _CounterAccumulator()
+        threads = [threading.Thread(target=acc.record) for _ in range(200)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert acc.flush_and_reset() == 200
+
+
+# ---------------------------------------------------------------------------
+# _flush_period_counters / _reset_lifetime_counters
+#
+# incr_period_counter.lua's own atomicity/expiry-on-creation semantics are
+# covered live against real Redis by shared/tests/test_incr_period_counter_lua.py
+# -- these tests only verify *this component's* side: which keys/periods it
+# calls evalsha/incrby against, with what delta, and that a real UTC
+# boundary rollover changes the EXPIREAT argument it computes.
+# ---------------------------------------------------------------------------
+
+class TestFlushPeriodCounters:
+    def test_no_redis_calls_when_nothing_recorded(self):
+        p, mock_redis = _make_processor()
+        p._flush_period_counters()
+        mock_redis.evalsha.assert_not_called()
+        mock_redis.incrby.assert_not_called()
+
+    def test_total_messages_processed_flushes_hour_today_lifetime(self):
+        p, mock_redis = _make_processor()
+        p._total_messages_processed.record(7)
+        p._flush_period_counters()
+
+        evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+        assert metrics_total_messages_processed_key(p._id, "hour") in evalsha_keys
+        assert metrics_total_messages_processed_key(p._id, "today") in evalsha_keys
+        mock_redis.incrby.assert_called_once_with(
+            metrics_total_messages_processed_key(p._id, "lifetime"), 7
+        )
+        for call in mock_redis.evalsha.call_args_list:
+            assert call.args[3] == 7  # increment amount (ARGV[2])
+
+    def test_registration_misses_flushes_hour_today_lifetime(self):
+        p, mock_redis = _make_processor()
+        p._registration_misses.record(2)
+        p._flush_period_counters()
+
+        evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+        assert metrics_registration_misses_key(p._id, "hour") in evalsha_keys
+        assert metrics_registration_misses_key(p._id, "today") in evalsha_keys
+        mock_redis.incrby.assert_called_once_with(
+            metrics_registration_misses_key(p._id, "lifetime"), 2
+        )
+
+    def test_operator_misses_has_no_hour_period(self):
+        p, mock_redis = _make_processor()
+        p._operator_misses.record(4)
+        p._flush_period_counters()
+
+        evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+        assert metrics_operator_misses_key(p._id, "today") in evalsha_keys
+        # "hour" isn't even a valid period for this metric (see
+        # metrics_operator_misses_key's own validation) -- assert directly
+        # against the raw key shape rather than via the builder.
+        assert f"metrics:message_processor:{p._id}:operator_misses:hour" not in evalsha_keys
+        mock_redis.incrby.assert_called_once_with(
+            metrics_operator_misses_key(p._id, "lifetime"), 4
+        )
+
+    def test_zero_delta_metric_is_skipped_but_others_still_flush(self):
+        p, mock_redis = _make_processor()
+        p._total_messages_processed.record(1)
+        # registration_misses / operator_misses left at zero.
+        p._flush_period_counters()
+
+        evalsha_keys = {c.args[2] for c in mock_redis.evalsha.call_args_list}
+        assert metrics_registration_misses_key(p._id, "hour") not in evalsha_keys
+        assert metrics_operator_misses_key(p._id, "today") not in evalsha_keys
+        assert metrics_total_messages_processed_key(p._id, "hour") in evalsha_keys
+
+    def test_hour_boundary_uses_real_utc_top_of_hour(self):
+        p, mock_redis = _make_processor()
+        p._total_messages_processed.record(1)
+        fixed_now = datetime(2026, 8, 23, 14, 37, 0, tzinfo=timezone.utc)
+        with patch("message_processor.main.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            p._flush_period_counters()
+
+        expected_hour_boundary = int(
+            datetime(2026, 8, 23, 15, 0, 0, tzinfo=timezone.utc).timestamp()
+        )
+        hour_call = next(
+            c for c in mock_redis.evalsha.call_args_list
+            if c.args[2] == metrics_total_messages_processed_key(p._id, "hour")
+        )
+        assert hour_call.args[4] == expected_hour_boundary
+
+    def test_today_boundary_uses_real_utc_midnight(self):
+        p, mock_redis = _make_processor()
+        p._total_messages_processed.record(1)
+        fixed_now = datetime(2026, 8, 23, 23, 59, 0, tzinfo=timezone.utc)
+        with patch("message_processor.main.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            p._flush_period_counters()
+
+        expected_today_boundary = int(
+            datetime(2026, 8, 24, 0, 0, 0, tzinfo=timezone.utc).timestamp()
+        )
+        today_call = next(
+            c for c in mock_redis.evalsha.call_args_list
+            if c.args[2] == metrics_total_messages_processed_key(p._id, "today")
+        )
+        assert today_call.args[4] == expected_today_boundary
+
+    def test_a_failed_flush_for_one_metric_does_not_block_the_others(self):
+        p, mock_redis = _make_processor()
+        p._total_messages_processed.record(1)
+        p._registration_misses.record(1)
+
+        def _evalsha(sha, numkeys, key, *rest):
+            if "total_messages_processed" in key:
+                raise ConnectionError("Redis unavailable")
+            return 1
+
+        mock_redis.evalsha.side_effect = _evalsha
+        p._flush_period_counters()  # must not raise
+
+        registration_keys = {
+            c.args[2] for c in mock_redis.evalsha.call_args_list
+            if "registration_misses" in c.args[2]
+        }
+        assert metrics_registration_misses_key(p._id, "hour") in registration_keys
+
+
+class TestResetLifetimeCounters:
+    def test_deletes_all_three_lifetime_keys(self):
+        p, mock_redis = _make_processor()
+        p._reset_lifetime_counters()
+        mock_redis.delete.assert_called_once_with(
+            metrics_registration_misses_key(p._id, "lifetime"),
+            metrics_operator_misses_key(p._id, "lifetime"),
+            metrics_total_messages_processed_key(p._id, "lifetime"),
+        )
+
+    def test_redis_error_is_swallowed(self):
+        p, mock_redis = _make_processor()
+        mock_redis.delete.side_effect = ConnectionError("Redis unavailable")
+        p._reset_lifetime_counters()  # must not raise
+
+    def test_start_resets_lifetime_before_any_flush(self):
+        """A container restart must zero the lifetime counters -- verified
+        by restarting a processor mid-session (Redis already holding a
+        nonzero lifetime value from "before") and confirming start() clears
+        it, while never touching the hour/today keys."""
+        p, mock_redis = _make_processor()
+        with patch.object(p, "_connect_mqtt"), \
+             patch.object(p, "_load_flight_ttl_seconds"), \
+             patch("message_processor.main.threading.Thread"), \
+             patch.object(p, "_consume_loop"):
+            p._rules_engine.reload_if_changed.return_value = None
+            p.start()
+
+        mock_redis.delete.assert_called_once_with(
+            metrics_registration_misses_key(p._id, "lifetime"),
+            metrics_operator_misses_key(p._id, "lifetime"),
+            metrics_total_messages_processed_key(p._id, "lifetime"),
+        )
+        # Hour/today keys are never DELETEd anywhere -- they live purely in
+        # Redis with their own EXPIREAT, requiring no boot-time handling.
+        for call in mock_redis.delete.call_args_list:
+            for key in call.args:
+                assert "hour" not in key
+                assert ":today" not in key
+
+
+class TestOnMessageRecordsTotalMessagesProcessed:
+    def test_valid_message_increments_total_messages_processed(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(raw="deadbeef", icao_hex="A8AE7F", received_at=time.time(), source="1090")
+        with patch.object(p, "_process"):
+            p._on_message(MagicMock(), MagicMock(delivery_tag=1), None, msg.model_dump_json().encode())
+        assert p._total_messages_processed.flush_and_reset() == 1
+
+    def test_unparseable_body_does_not_increment(self):
+        # A malformed AMQP envelope fails before InboundMessage even
+        # parses -- a different, exceptionally rare failure class from a
+        # corrupt ADS-B payload (which *does* count -- see
+        # _decode_1090/_decode_978 returning None after this point).
+        p, _ = _make_processor()
+        p._on_message(MagicMock(), MagicMock(delivery_tag=1), None, b"not valid json")
+        assert p._total_messages_processed.flush_and_reset() == 0
+
+    def test_corrupt_decode_still_increments(self):
+        # Matches messages_per_second's existing behavior: counted at
+        # _on_message, before _decode_1090/_decode_978 is ever attempted --
+        # so a message that decodes to nothing still counts.
+        p, _ = _make_processor()
+        msg = InboundMessage(raw="00", icao_hex="A8AE7F", received_at=time.time(), source="1090")
+        p._on_message(MagicMock(), MagicMock(delivery_tag=1), None, msg.model_dump_json().encode())
+        assert p._total_messages_processed.flush_and_reset() == 1
+
+
+# ---------------------------------------------------------------------------
 # _TimeTracker
 # ---------------------------------------------------------------------------
 
@@ -1500,6 +1742,9 @@ class TestProcessorEnrichment:
         mock_redis.evalsha.assert_called_once_with("abc123sha", 0, "A8AE7F")
 
     def test_enrich_aircraft_increments_miss_on_cache_miss(self):
+        # A registration miss is recorded in-memory only -- never a
+        # synchronous Redis call on this path (see _flush_period_counters(),
+        # called only from the telemetry thread).
         p, mock_redis = self._make_processor()
         mock_redis.evalsha.return_value = None
 
@@ -1507,7 +1752,9 @@ class TestProcessorEnrichment:
         f.icao_hex = "ZZZZZZ"
         p._enrich_aircraft(f)
 
-        mock_redis.incr.assert_called()
+        assert p._registration_misses.flush_and_reset() == 1
+        assert p._operator_misses.flush_and_reset() == 0
+        mock_redis.incr.assert_not_called()
         assert f.aircraft.get("icao_hex") == "ZZZZZZ"
 
     def test_enrich_aircraft_strips_registry_wake_turbulence_category(self):
@@ -1575,6 +1822,23 @@ class TestProcessorEnrichment:
 
         assert f.operator["airline_designator"] == "DAL"
         mock_redis.json.return_value.get.assert_called_once_with(operator_key("DAL"))
+
+    def test_enrich_operator_miss_recorded_separately_from_registration_misses(self):
+        # Fixes the historical mis-attribution bug: an operator-lookup miss
+        # must never increment registration_misses. Both are pure in-memory
+        # accumulator records -- no synchronous Redis call here either.
+        p, mock_redis = self._make_processor()
+        mock_redis.json.return_value.get.return_value = None
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.ident = "DAL659"
+        f.aircraft = {}
+        p._enrich_operator(f)
+
+        assert p._operator_misses.flush_and_reset() == 1
+        assert p._registration_misses.flush_and_reset() == 0
+        mock_redis.incr.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -2077,10 +2341,35 @@ class TestTelemetryPayload:
             "started_at", "messages_per_second", "processing_time_hwm_ms",
             "message_latency_hwm_ms", "rules_engine_hwm_ns", "rabbitmq_input_queue_depth_hwm",
             "local_archive_queue_depth", "active_flights",
-            "registration_misses_hour", "registration_misses_today",
-            "aircraft_type_misses_hour", "aircraft_type_misses_today",
         }
         assert {f"{base}/{name}" for name in expected}.issubset(topics)
+
+    def test_does_not_self_publish_period_counters(self):
+        # registration_misses/operator_misses/total_messages_processed and
+        # the now-removed aircraft_type_misses are write-only from this
+        # component's perspective -- core-health publishes them on its
+        # behalf (see _flush_period_counters()). Neither the MQTT state
+        # topics nor their HA discovery entries should ever come from here.
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rmq_queue_depth_hwm.record(0)
+        p._publish_telemetry()
+        p._publish_ha_autodiscovery()
+        published = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+        forbidden_fields = (
+            "registration_misses_hour", "registration_misses_today", "registration_misses_lifetime",
+            "operator_misses_today", "operator_misses_lifetime",
+            "total_messages_processed_hour", "total_messages_processed_today",
+            "total_messages_processed_lifetime",
+            "aircraft_type_misses_hour", "aircraft_type_misses_today",
+        )
+        for field in forbidden_fields:
+            assert f"SkyFollower/message-processor/0/statistic/{field}" not in published
+            assert not any(
+                topic.endswith(f"_{field}/config") for topic in published
+            )
 
     def test_processing_time_hwm_not_avg(self):
         p = self._make_processor()

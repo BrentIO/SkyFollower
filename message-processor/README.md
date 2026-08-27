@@ -174,8 +174,42 @@ band.
 |-------------|---------|
 | `skyfollower-message-processor-{ID}` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
-| `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex:` or `operator:` lookup returns no result. The `_hour` key has a 3600 s TTL; `_today` expires at the next UTC midnight. Both are set on first write via `INCR` + `EXPIREAT`/`EXPIRE`. `_lifetime` has no TTL. |
-| `metrics:message_processor:{ID}:aircraft_type_misses:{hour\|today\|lifetime}` | Incremented each time an aircraft type lookup returns no result. Same TTL scheme as above. |
+| `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex` aircraft enrichment lookup (`_enrich_aircraft()`) returns no result. Operator-lookup misses are **not** counted here — they have their own dedicated `operator_misses` key below. |
+| `metrics:message_processor:{ID}:operator_misses:{today\|lifetime}` | Incremented each time an `operator:{designator}` lookup (`_enrich_operator()`) returns no result. No `hour` period — operator misses are lower-volume and only tracked today/lifetime. |
+| `metrics:message_processor:{ID}:total_messages_processed:{hour\|today\|lifetime}` | Incremented for every message an attempt was made to decode (including CRC-corrupt/no-content messages) — the same point `messages_per_second`'s own rate tracker records at, in `_on_message`. Bucketed by wall-clock processing time, not `received_at` — a backlog replay counts entirely toward the current hour/day, not the messages' original timestamps. |
+
+All three counters above share the same reset mechanism and are **write-only**
+from this component's own perspective:
+
+- **Real clock-boundary resets**: `hour`/`today` periods are written via
+  `EVALSHA` against `shared/lua/incr_period_counter.lua` (`SCRIPT LOAD`ed once
+  at startup into `self._incr_period_counter_sha`, matching the
+  `merge_aircraft.lua`/`route_airports.lua` pattern above), which sets
+  `EXPIREAT` to the real next UTC hour/midnight boundary
+  (`shared/metrics.py`'s `next_period_boundary()`) only the instant a call
+  creates the key — never on a later increment within the same period, so the
+  window can't slide forward. Redis's own TTL expiry deletes the key at the
+  boundary; the next increment after that recreates it fresh, a genuine
+  reset with no external scheduler involved.
+- **`lifetime` periods** have no TTL and instead are explicitly `DELETE`d
+  once, in `start()`, before any message is processed — "lifetime" means
+  "since this process instance started," not "forever." Redis is a separate,
+  persistent service, so a container restart alone does not clear these keys.
+- **No per-message Redis round trip**: `_on_message`/`_enrich_aircraft`/
+  `_enrich_operator` only ever touch a small in-memory accumulator
+  (`_CounterAccumulator`, a lock-protected pending count — `record()`/
+  `flush_and_reset()`). The existing telemetry thread (already running on its
+  own cadence, already off the message-consuming path) is the only place
+  that ever flushes an accumulated delta into Redis, via
+  `_flush_period_counters()`.
+- **Not self-published over MQTT/Home Assistant.** [`core-health`](../core-health/README.md)
+  reads these three Redis key families and publishes them on this
+  component's behalf, using the exact topic paths/`unique_id`/device block
+  this component's own `_publish_telemetry()`/`_publish_ha_autodiscovery()`
+  would otherwise have used — nothing on the wire distinguishes the two. See
+  `core-health/README.md`'s "Counter mimicry" section.
+
+![Period counter reset mechanism](./period-counter-sequence.svg)
 
 ## Route Leg Resolution
 
@@ -333,11 +367,17 @@ All topics use the root `SkyFollower`.
 | `rabbitmq_input_queue_depth_hwm` | Integer as string | High-water mark of the input queue's depth since the last publish; sampled at most once every 10 seconds, resets on publish. Not published this cycle if no valid sample landed this window (retained topic keeps its last known-good value; never published as `-1`) -- Home Assistant marks the entity unavailable via `expire_after` if this persists across a genuine sustained outage |
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
 | `dead_letter_queue_depth` | Integer as string | Completed flights dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Flights](#dead-lettering-poison-flights)) |
-| `registration_misses_hour` | Integer as string | Aircraft Redis cache misses this hour |
-| `registration_misses_today` | Integer as string | Aircraft Redis cache misses today (UTC) |
-| `aircraft_type_misses_hour` | Integer as string | Aircraft type lookup misses this hour |
-| `aircraft_type_misses_today` | Integer as string | Aircraft type lookup misses today (UTC) |
 | `active_flights` | Integer as string | Flights currently tracked in the active store |
+
+`registration_misses_{hour,today,lifetime}`, `operator_misses_{today,lifetime}`,
+and `total_messages_processed_{hour,today,lifetime}` are **not** in the table
+above — this component is write-only for those three counters (accumulates in
+memory, flushes to Redis on the telemetry cadence) and does not publish their
+MQTT statistic topics or Home Assistant discovery entries itself.
+[`core-health`](../core-health/README.md) publishes them on this component's
+behalf instead — see the "Keys written" Redis table above for the mechanism.
+`aircraft_type_misses_{hour,today}` no longer exists at all (it was a dead
+metric, never incremented anywhere).
 
 Each stat is published as its own retained topic (not a combined JSON
 payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
