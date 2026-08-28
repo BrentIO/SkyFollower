@@ -65,6 +65,29 @@ RabbitMQ applying backpressure), later messages publish immediately rather
 than sleeping further — the tool never tries to "catch up" by bursting, but
 it also never waits longer than necessary once it's behind.
 
+## After a Replay Finishes
+
+A message processor's flight eviction (and therefore archiving) is gated on
+`message_clock` — the newest message `received_at` it has seen — not
+wall-clock time (see `message-processor/README.md`'s "Active flight store
+durability & crash recovery" section). A replay is just another source of
+messages to it, so this applies the same way here as it does to a RabbitMQ
+backlog drained after a restart: `message_clock` only advances while
+messages are actually being consumed.
+
+If a replay is the *only* traffic a message processor sees (no live
+receiver attached), `message_clock` stops advancing the instant the last
+message is published — there's nothing left to move it forward. Any flights
+still active at that point sit in the active store indefinitely: not
+evicted, not archived, `local_archive_queue_depth` and `active_flights`
+completely flat, no matter how long you leave it running. This is expected,
+not a defect — it will stay that way until either another replay runs
+against the same message processor or a live receiver starts feeding it
+real traffic, at which point `message_clock` jumps forward and eviction
+catches up on its very next pass. Don't chase a flat post-replay
+`local_archive_queue_depth` as a stuck or broken archive path without first
+checking whether anything is still publishing.
+
 ## Arguments
 
 | Flag | Required | Default | Description |
