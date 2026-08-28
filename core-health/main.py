@@ -56,6 +56,7 @@ from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
 from shared.rabbitmq_topology import (
+    ADSB_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
     is_skyfollower_queue,
     message_processor_id_from_queue_name,
@@ -185,6 +186,8 @@ _CORE_RABBITMQ_SENSORS = [
     ("rabbitmq_connections_total", "RabbitMQ Connections", "mdi:lan-connect", "measurement", None),
     ("rabbitmq_memory_alarm", "RabbitMQ Memory Alarm", "mdi:alert", None, None),
     ("rabbitmq_disk_free_alarm", "RabbitMQ Disk Free Alarm", "mdi:alert-octagon", None, None),
+    ("adsb_exchange_publish_in_rate", "ADSB Exchange Publish In Rate", "mdi:upload-network", "measurement", "msg/s"),
+    ("adsb_exchange_publish_out_rate", "ADSB Exchange Publish Out Rate", "mdi:download-network", "measurement", "msg/s"),
 ]
 
 _CORE_REDIS_SENSORS = [
@@ -421,12 +424,17 @@ class CoreHealth:
             # that data point; still one cheap GET, same cadence.
             nodes = self._rmq_get("/api/nodes")
             queues = self._rmq_get("/api/queues/%2F")
+            # The adsb exchange name is a fixed constant (no discovery
+            # needed) -- this is the aggregate publish velocity across
+            # every receiver, before per-queue consistent-hash routing
+            # splits it up across message processors' own queues.
+            exchange = self._rmq_get(f"/api/exchanges/%2F/{ADSB_EXCHANGE}")
             self._rmq_connected = True
         except Exception as exc:
             if self._rmq_connected:
                 logger.warning("RabbitMQ Management API poll failed: %s", exc)
             self._rmq_connected = False
-            overview = nodes = queues = None
+            overview = nodes = queues = exchange = None
 
         self._publish_core_discovery()
         self._publish_stat(f"{MQTT_ROOT}/statistic/started_at", self._started_at)
@@ -441,6 +449,7 @@ class CoreHealth:
             self._publish_queue_stats(queue)
 
         self._publish_broker_overview(overview, nodes)
+        self._publish_exchange_stats(exchange)
 
         pids = sorted({
             pid for q in skyfollower_queues
@@ -459,6 +468,27 @@ class CoreHealth:
         disk_alarm = any(bool(n.get("disk_free_alarm")) for n in (nodes or []))
         self._publish_stat(f"{MQTT_ROOT}/rabbitmq/statistic/rabbitmq_memory_alarm", mem_alarm)
         self._publish_stat(f"{MQTT_ROOT}/rabbitmq/statistic/rabbitmq_disk_free_alarm", disk_alarm)
+
+    def _publish_exchange_stats(self, exchange: Optional[dict]) -> None:
+        """Total message velocity through the adsb exchange -- the
+        aggregate publish rate across every receiver, before per-queue
+        consistent-hash routing splits it up. publish_in is the total
+        incoming velocity; publish_out is a routing-loss cross-check
+        (complementing the adsb-unroutable queue depth): if the two
+        diverge, messages are arriving at the exchange but not reaching
+        any bound queue."""
+        message_stats = (exchange or {}).get("message_stats") or {}
+
+        def _rate(stat: str) -> float:
+            details = message_stats.get(f"{stat}_details") or {}
+            return round(details.get("rate") or 0.0, 2)
+
+        self._publish_stat(
+            f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate", _rate("publish_in")
+        )
+        self._publish_stat(
+            f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate", _rate("publish_out")
+        )
 
     def _publish_queue_stats(self, queue: dict) -> None:
         name = queue.get("name", "")

@@ -292,6 +292,50 @@ class TestPublishBrokerOverview:
 
 
 # ---------------------------------------------------------------------------
+# adsb exchange velocity (publish_in / publish_out)
+# ---------------------------------------------------------------------------
+
+class TestPublishExchangeStats:
+    def test_publishes_publish_in_and_publish_out_rates(self):
+        app = _wired_app()
+        exchange = {
+            "message_stats": {
+                "publish_in_details": {"rate": 501.7},
+                "publish_out_details": {"rate": 498.2},
+            }
+        }
+        app._publish_exchange_stats(exchange)
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"] == "501.7"
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "498.2"
+
+    def test_missing_message_stats_defaults_rates_to_zero(self):
+        app = _wired_app()
+        app._publish_exchange_stats({})
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"] == "0.0"
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "0.0"
+
+    def test_tolerates_none_exchange(self):
+        app = _wired_app()
+        app._publish_exchange_stats(None)
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"] == "0.0"
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "0.0"
+
+    def test_discovery_lands_on_core_device(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_adsb_exchange_publish_in_rate/config"
+        ]
+        assert payload["device"]["ids"] == CORE_DEVICE_IDENTIFIER
+        assert payload["state_topic"] == f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"
+        assert payload["unit_of_measurement"] == "msg/s"
+
+
+# ---------------------------------------------------------------------------
 # Message-processor counter mimicry
 # ---------------------------------------------------------------------------
 
@@ -556,11 +600,13 @@ class TestPollRabbitmqOnce:
         app._session.get.side_effect = Exception("connection refused")
         app._publish_queue_stats = MagicMock()
         app._publish_broker_overview = MagicMock()
+        app._publish_exchange_stats = MagicMock()
 
         app._poll_rabbitmq_once()
 
         app._publish_queue_stats.assert_not_called()
         app._publish_broker_overview.assert_not_called()
+        app._publish_exchange_stats.assert_not_called()
 
     def test_successful_poll_publishes_queue_and_broker_stats(self):
         app = _wired_app()
@@ -577,6 +623,13 @@ class TestPollRabbitmqOnce:
                      "messages_unacknowledged": 0, "state": "running"},
                     {"name": "not-skyfollowers-queue", "consumers": 0},
                 ]
+            elif url.endswith("/api/exchanges/%2F/adsb"):
+                response.json.return_value = {
+                    "message_stats": {
+                        "publish_in_details": {"rate": 512.3},
+                        "publish_out_details": {"rate": 510.1},
+                    }
+                }
             response.raise_for_status = MagicMock()
             return response
 
@@ -592,6 +645,8 @@ class TestPollRabbitmqOnce:
         # must never be published under any topic.
         assert not any("not-skyfollowers-queue" in topic for topic in published)
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/rabbitmq_connections_total"] == "4"
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"] == "512.3"
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "510.1"
 
     def test_message_processor_queues_trigger_counter_publish(self):
         app = _wired_app()
@@ -607,6 +662,8 @@ class TestPollRabbitmqOnce:
                     {"name": "skyfollower-message-processor-mp-1", "consumers": 1,
                      "messages_ready": 0, "messages_unacknowledged": 0, "state": "running"},
                 ]
+            elif url.endswith("/api/exchanges/%2F/adsb"):
+                response.json.return_value = {}
             response.raise_for_status = MagicMock()
             return response
 
