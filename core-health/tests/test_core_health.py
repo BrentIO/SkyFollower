@@ -266,6 +266,60 @@ class TestPublishQueueStats:
         assert consumers_payload["device"]["ids"] == "SkyFollower_message_processor_mp-1"
         assert consumers_payload["expire_after"] == RABBITMQ_POLL_INTERVAL_SECONDS * 3
 
+    def test_state_is_capitalized(self):
+        app = _wired_app()
+        app._publish_queue_stats(self._queue(state="running"))
+        published = _state_publishes(app._mqtt)
+        assert published[
+            f"{MQTT_ROOT}/message-processor/mp-1/statistic/state"
+        ] == "Running"
+
+    def test_flow_state_is_capitalized(self):
+        app = _wired_app()
+        app._publish_queue_stats(self._queue(state="flow"))
+        published = _state_publishes(app._mqtt)
+        assert published[
+            f"{MQTT_ROOT}/message-processor/mp-1/statistic/state"
+        ] == "Flow"
+
+    def test_message_bytes_and_memory_bytes_discovery_use_data_size_device_class(self):
+        """Byte-valued queue sensors get HA's native device_class so the
+        frontend auto-scales the raw value -- the published state itself
+        stays the raw byte integer, only the discovery config changes."""
+        app = _wired_app()
+        app._publish_queue_stats(self._queue())
+        discovery = _discovery_payloads(app._mqtt)
+        message_bytes_payload = discovery[
+            "homeassistant/sensor/SkyFollower_message_processor_mp-1_queue_message_bytes/config"
+        ]
+        memory_bytes_payload = discovery[
+            "homeassistant/sensor/SkyFollower_message_processor_mp-1_queue_memory_bytes/config"
+        ]
+        assert message_bytes_payload["device_class"] == "data_size"
+        assert message_bytes_payload["unit_of_measurement"] == "B"
+        assert memory_bytes_payload["device_class"] == "data_size"
+        assert memory_bytes_payload["unit_of_measurement"] == "B"
+        published = _state_publishes(app._mqtt)
+        # Raw byte value on the wire, unformatted -- HA's frontend does the
+        # KB/MB/GB scaling, not this component.
+        assert published[
+            f"{MQTT_ROOT}/message-processor/mp-1/statistic/message_bytes"
+        ] == "678"
+
+    def test_consumer_utilisation_display_name_uses_us_spelling(self):
+        """Field/topic name keeps the original British spelling
+        (consumer_utilisation_percent) -- only the HA display label
+        changes, since renaming the wire-level name would be a breaking
+        change for anything already polling it directly."""
+        app = _wired_app()
+        app._publish_queue_stats(self._queue())
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery[
+            "homeassistant/sensor/SkyFollower_message_processor_mp-1_queue_consumer_utilisation_percent/config"
+        ]
+        assert payload["name"] == "Queue Consumer Utilization"
+        assert payload["state_topic"].endswith("consumer_utilisation_percent")
+
 
 # ---------------------------------------------------------------------------
 # Broker-wide overview
@@ -553,6 +607,70 @@ class TestPublishRedisStats:
         app._publish_redis_stats({}, {"keys.count": 12345})
         published = _state_publishes(app._mqtt)
         assert published[f"{MQTT_ROOT}/redis/statistic/redis_keys_count"] == "12345"
+
+    def test_status_fields_are_uppercased(self):
+        app = _wired_app()
+        info = {
+            "rdb_last_bgsave_status": "ok",
+            "aof_last_bgrewrite_status": "ok",
+            "aof_last_write_status": "ok",
+        }
+        app._publish_redis_stats(info, {})
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/redis/statistic/redis_rdb_last_bgsave_status"] == "OK"
+        assert published[f"{MQTT_ROOT}/redis/statistic/redis_aof_last_bgrewrite_status"] == "OK"
+        assert published[f"{MQTT_ROOT}/redis/statistic/redis_aof_last_write_status"] == "OK"
+
+    def test_maxmemory_bytes_publishes_raw_value_zero_means_unlimited(self):
+        """maxmemory=0 is Redis's genuine "unlimited" default on this
+        deployment (no --maxmemory flag configured), confirmed correct --
+        not a reporting bug, and not special-cased to a text override."""
+        app = _wired_app()
+        app._publish_redis_stats({"maxmemory": 0}, {})
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/redis/statistic/redis_maxmemory_bytes"] == "0"
+
+    def test_maxmemory_and_used_memory_bytes_discovery_use_data_size_device_class(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        maxmemory_payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_redis_maxmemory_bytes/config"
+        ]
+        used_memory_payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_redis_used_memory_bytes/config"
+        ]
+        assert maxmemory_payload["device_class"] == "data_size"
+        assert maxmemory_payload["unit_of_measurement"] == "B"
+        assert used_memory_payload["device_class"] == "data_size"
+        assert used_memory_payload["unit_of_measurement"] == "B"
+
+    def test_maxmemory_policy_sensor_removed(self):
+        app = _wired_app()
+        app._publish_redis_stats({"maxmemory_policy": "noeviction"}, {})
+        published = _state_publishes(app._mqtt)
+        assert f"{MQTT_ROOT}/redis/statistic/redis_maxmemory_policy" not in published
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        assert "homeassistant/sensor/SkyFollower_core_health_redis_maxmemory_policy/config" not in discovery
+
+    def test_evicted_keys_sensor_removed(self):
+        app = _wired_app()
+        app._publish_redis_stats({"evicted_keys": 42}, {})
+        published = _state_publishes(app._mqtt)
+        assert f"{MQTT_ROOT}/redis/statistic/redis_evicted_keys" not in published
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        assert "homeassistant/sensor/SkyFollower_core_health_redis_evicted_keys/config" not in discovery
+
+    def test_bgsave_status_display_name_capitalizes_bgsave(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_redis_rdb_last_bgsave_status/config"
+        ]
+        assert payload["name"] == "Redis RDB Last BGSAVE Status"
 
 
 # ---------------------------------------------------------------------------
