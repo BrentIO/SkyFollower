@@ -336,6 +336,39 @@ class TestPublishExchangeStats:
 
 
 # ---------------------------------------------------------------------------
+# Archive queue missing detection
+# ---------------------------------------------------------------------------
+
+class TestPublishArchiveQueueMissing:
+    def test_present_publishes_false(self):
+        app = _wired_app()
+        app._publish_archive_queue_missing([{"name": "archive"}, {"name": "adsb-unroutable"}])
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "False"
+
+    def test_absent_publishes_true(self):
+        app = _wired_app()
+        app._publish_archive_queue_missing([{"name": "adsb-unroutable"}])
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "True"
+
+    def test_empty_queue_list_publishes_true(self):
+        app = _wired_app()
+        app._publish_archive_queue_missing([])
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "True"
+
+    def test_discovery_lands_on_core_device(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery["homeassistant/sensor/SkyFollower_core_health_archive_queue_missing/config"]
+        assert payload["device"]["ids"] == CORE_DEVICE_IDENTIFIER
+        assert payload["state_topic"] == f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"
+        assert payload["availability_topic"] == f"{MQTT_ROOT}/status"
+
+
+# ---------------------------------------------------------------------------
 # Message-processor counter mimicry
 # ---------------------------------------------------------------------------
 
@@ -601,12 +634,14 @@ class TestPollRabbitmqOnce:
         app._publish_queue_stats = MagicMock()
         app._publish_broker_overview = MagicMock()
         app._publish_exchange_stats = MagicMock()
+        app._publish_archive_queue_missing = MagicMock()
 
         app._poll_rabbitmq_once()
 
         app._publish_queue_stats.assert_not_called()
         app._publish_broker_overview.assert_not_called()
         app._publish_exchange_stats.assert_not_called()
+        app._publish_archive_queue_missing.assert_not_called()
 
     def test_successful_poll_publishes_queue_and_broker_stats(self):
         app = _wired_app()
@@ -647,6 +682,37 @@ class TestPollRabbitmqOnce:
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/rabbitmq_connections_total"] == "4"
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"] == "512.3"
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "510.1"
+        # The archive queue is present in this poll's queue list.
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "False"
+
+    def test_archive_queue_absent_publishes_missing_flag(self):
+        app = _wired_app()
+
+        def _get(url, auth, timeout):
+            response = MagicMock()
+            if url.endswith("/api/overview"):
+                response.json.return_value = {}
+            elif url.endswith("/api/nodes"):
+                response.json.return_value = []
+            elif url.endswith("/api/queues/%2F"):
+                # No "archive" queue at all -- e.g. archive-processor was
+                # never installed on this deployment.
+                response.json.return_value = [
+                    {"name": "adsb-unroutable", "consumers": 0, "messages_ready": 0,
+                     "messages_unacknowledged": 0, "state": "running"},
+                ]
+            elif url.endswith("/api/exchanges/%2F/adsb"):
+                response.json.return_value = {}
+            response.raise_for_status = MagicMock()
+            return response
+
+        app._session.get.side_effect = _get
+        app._redis.smembers.return_value = set()
+
+        app._poll_rabbitmq_once()
+
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "True"
 
     def test_message_processor_queues_trigger_counter_publish(self):
         app = _wired_app()

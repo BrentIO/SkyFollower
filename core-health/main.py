@@ -188,6 +188,7 @@ _CORE_RABBITMQ_SENSORS = [
     ("rabbitmq_disk_free_alarm", "RabbitMQ Disk Free Alarm", "mdi:alert-octagon", None, None),
     ("adsb_exchange_publish_in_rate", "ADSB Exchange Publish In Rate", "mdi:upload-network", "measurement", "msg/s"),
     ("adsb_exchange_publish_out_rate", "ADSB Exchange Publish Out Rate", "mdi:download-network", "measurement", "msg/s"),
+    ("archive_queue_missing", "Archive Queue Missing", "mdi:archive-off", None, None),
 ]
 
 _CORE_REDIS_SENSORS = [
@@ -450,6 +451,7 @@ class CoreHealth:
 
         self._publish_broker_overview(overview, nodes)
         self._publish_exchange_stats(exchange)
+        self._publish_archive_queue_missing(skyfollower_queues)
 
         pids = sorted({
             pid for q in skyfollower_queues
@@ -489,6 +491,18 @@ class CoreHealth:
         self._publish_stat(
             f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate", _rate("publish_out")
         )
+
+    def _publish_archive_queue_missing(self, skyfollower_queues: list) -> None:
+        """The archive queue is expected on every deployment eventually,
+        but a valid one may simply not have archive-processor installed
+        yet -- there's no way to tell that apart from "installed, then the
+        queue got deleted/misconfigured" via the Management API (both look
+        identical: absent from the polled queue list), and the acceptance
+        criteria doesn't require distinguishing them. A single retained
+        flag covers both, and clears itself automatically the next time
+        this queue is present in the poll."""
+        missing = not any(q.get("name") == ARCHIVE_QUEUE_NAME for q in skyfollower_queues)
+        self._publish_stat(f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing", missing)
 
     def _publish_queue_stats(self, queue: dict) -> None:
         name = queue.get("name", "")
