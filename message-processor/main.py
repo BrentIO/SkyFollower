@@ -1336,6 +1336,11 @@ class MessageProcessor:
                     properties=pika.BasicProperties(delivery_mode=2),
                     mandatory=True,
                 )
+            except pika.exceptions.UnroutableError:
+                # The archive queue doesn't exist (e.g. archive-processor
+                # not installed) -- the connection itself is healthy, so
+                # don't latch _rmq_connected False for this.
+                self._fallback.put(payload)
             except Exception:
                 self._rmq_connected = False
                 self._fallback.put(payload)
@@ -1392,7 +1397,11 @@ class MessageProcessor:
 
             done.wait()
             if "error" in outcome:
-                self._rmq_connected = False
+                # An unroutable archive queue is a healthy-connection
+                # condition, not a connection failure -- see the matching
+                # exception classification in _archive()'s publish closure.
+                if not isinstance(outcome["error"], pika.exceptions.UnroutableError):
+                    self._rmq_connected = False
                 raise outcome["error"]
 
         self._fallback.drain_in_background(publish)
