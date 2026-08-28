@@ -394,7 +394,7 @@ class _Sensor(NamedTuple):
     field: str
     name: str
     icon: str
-    state_class: str
+    state_class: Optional[str]
     unit: Optional[str] = None
     extra: Optional[dict] = None
 
@@ -1637,6 +1637,8 @@ class MessageProcessor:
         }
         base = f"SkyFollower/message-processor/{pid}/statistic"
         sensors = [
+            _Sensor("started_at", "Start Time", "mdi:clock-start", None,
+                    extra={"device_class": "timestamp"}),
             _Sensor("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
             # suggested_display_precision only rounds what Home Assistant
             # *displays* -- the retained MQTT state and any long-term
@@ -1675,8 +1677,9 @@ class MessageProcessor:
                 "object_id": f"SkyFollower_message_processor_{pid}_{sensor.field}",
                 "device": device,
                 "icon": sensor.icon,
-                "state_class": sensor.state_class,
             }
+            if sensor.state_class:
+                payload["state_class"] = sensor.state_class
             if sensor.unit:
                 payload["unit_of_measurement"] = sensor.unit
             if sensor.extra:
