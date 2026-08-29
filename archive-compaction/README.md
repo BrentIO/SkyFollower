@@ -70,9 +70,9 @@ at the top of this page.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `S3_BUCKET` | ✅ | — | S3 bucket the archive processor writes flights/index rows to |
-| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain |
-| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name |
-| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
+| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain. Shared with `archive-processor` |
+| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name. `docker-compose.archive.yaml` maps this from the `.env` key `ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID` -- a credential pair distinct from `archive-processor`'s, so this job runs under its own least-privilege IAM identity (see [AWS Setup](#aws-setup)). The Ofelia scheduled-run label maps the same key |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name. Mapped from the `.env` key `ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY` |
 | `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely |
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |

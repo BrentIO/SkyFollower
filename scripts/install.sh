@@ -1081,8 +1081,13 @@ collect_archive_env() {
   echo "-- ${role_dir} (archive) --"
   S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
-  AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)")"
-  AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)")"
+  # archive-processor and archive-compaction run under separate
+  # least-privilege IAM identities (see specs/aws/iam-policies/), so each
+  # gets its own key pair. S3_BUCKET and AWS_DEFAULT_REGION stay shared.
+  ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID "archive-processor AWS access key ID" "$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID)")"
+  ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY "archive-processor AWS secret access key" "$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY)")"
+  ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID "archive-compaction AWS access key ID" "$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID)")"
+  ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY "archive-compaction AWS secret access key" "$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY)")"
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(existing_env_value_or "$env_file" RABBITMQ_USERNAME skyfollower)")"
@@ -1101,13 +1106,19 @@ collect_archive_env() {
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# The archive bucket. AWS_* are boto3's own variable names: no credentials
-# are passed in code, so an instance role can replace the key pair later
-# by leaving these unset.
+# The archive bucket, shared by both archive services.
 S3_BUCKET=${S3_BUCKET}
 AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+
+# archive-processor and archive-compaction each authenticate as their own
+# least-privilege IAM identity (see specs/aws/iam-policies/). docker-compose
+# maps the pair for each into the container as boto3's own
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY; no credentials are passed in
+# code, so an instance role can replace a pair later by leaving it unset.
+ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID=${ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID}
+ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY=${ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY}
+ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID=${ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID}
+ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY=${ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY}
 
 RABBITMQ_HOST=${RABBITMQ_HOST}
 RABBITMQ_PORT=${RABBITMQ_PORT}

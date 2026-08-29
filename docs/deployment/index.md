@@ -177,8 +177,10 @@ for the full flow.
 |---|---|---|
 | `S3_BUCKET` | ✅ | — |
 | `AWS_DEFAULT_REGION` | ✅ | — |
-| `AWS_ACCESS_KEY_ID` | ✅ | — |
-| `AWS_SECRET_ACCESS_KEY` | ✅ | — |
+| `ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID` | ✅ | — |
+| `ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY` | ✅ | — |
+| `ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID` | ✅ | — |
+| `ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY` | ✅ | — |
 | `RABBITMQ_HOST` | ✅ | — |
 | `RABBITMQ_PORT` | ❌ | `5672` |
 | `RABBITMQ_USERNAME` | ✅ | — |
@@ -192,9 +194,17 @@ for the full flow.
 | `MQTT_PASSWORD` | ❌ | — |
 | `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
 
+`archive-processor` and `archive-compaction` authenticate to AWS as
+separate least-privilege IAM identities, so each reads its own credential
+pair from this `.env` -- `ARCHIVE_PROCESSOR_AWS_*` and
+`ARCHIVE_COMPACTION_AWS_*` respectively. `docker-compose.archive.yaml`
+maps whichever pair a service uses onto the container-side
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` that boto3 reads.
+`S3_BUCKET` and `AWS_DEFAULT_REGION` are shared.
+
 `archive-compaction` (scheduled by this same host's own `ofelia`
-instance) only needs `S3_BUCKET`/`AWS_*`/`MQTT_*`/`LOG_LEVEL` from this
-same `.env` -- no Redis, no RabbitMQ.
+instance) otherwise only needs `S3_BUCKET`/`AWS_DEFAULT_REGION`/`MQTT_*`/`LOG_LEVEL`
+from this same `.env` -- no Redis, no RabbitMQ.
 
 See the component pages for everything beyond configuration:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
