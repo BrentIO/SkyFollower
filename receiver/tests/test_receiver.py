@@ -833,7 +833,8 @@ class TestFallbackPutWrapsRoutingKey:
 
 # ---------------------------------------------------------------------------
 # Receiver._drain_fallback — and its periodic-tick trigger from
-# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger
+# _telemetry_loop's fixed-interval wait, alongside the existing
+# RabbitMQ-reconnect trigger
 # ---------------------------------------------------------------------------
 
 def _synchronous_drain_thread():
@@ -919,16 +920,16 @@ class TestDrainFallback:
 
     def _run_one_telemetry_tick(self, r) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
-        making the mocked flush-event wait set _shutdown so the loop body
-        runs once and then exits — rather than re-implementing the loop's
-        conditional in the test, which wouldn't actually exercise it.
-        _telemetry_loop waits on r._flush_event instead of
-        a plain time.sleep, so that's what gets faked out here."""
+        making the mocked wait set _shutdown so the loop body runs once and
+        then exits — rather than re-implementing the loop's conditional in
+        the test, which wouldn't actually exercise it. _telemetry_loop waits
+        on r._shutdown (purely time-based, fixed interval), so that's what
+        gets faked out here."""
         def fake_wait(timeout=None):
             r._shutdown.set()
             return False
 
-        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
+        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
              patch.object(r, "_publish_telemetry"):
             r._telemetry_loop()
 
@@ -1045,20 +1046,16 @@ class TestRateTrackerPeriodCounters:
         rt.record()  # Must not raise despite no Redis client existing anywhere.
         assert rt.lifetime_count == 1
 
-    def test_record_sets_flush_event_at_threshold(self):
-        event = threading.Event()
-        rt = _RateTracker(flush_event=event)
-        for _ in range(99):
+    def test_record_is_pure_arithmetic_regardless_of_message_count(self):
+        """No message-count threshold wakes telemetry any more -- record()
+        does nothing but in-memory counting no matter how many messages
+        arrive between flushes."""
+        rt = _RateTracker()
+        for _ in range(500):
             rt.record()
-        assert not event.is_set()
-        rt.record()
-        assert event.is_set()
-
-    def test_record_without_flush_event_does_not_raise(self):
-        rt = _RateTracker(flush_event=None)
-        for _ in range(150):
-            rt.record()
-        assert rt.lifetime_count == 150
+        assert rt.lifetime_count == 500
+        assert rt.hour_count == 500
+        assert rt.today_count == 500
 
     def _now(self, **kwargs):
         base = datetime(2026, 8, 23, 14, 30, 0, tzinfo=timezone.utc)
@@ -1832,15 +1829,16 @@ class TestFlushPeriodCounters:
 
 class TestTelemetryLoopFlushIntegration:
     """_telemetry_loop must call _flush_period_counters() only when Redis
-    is configured, and wait on the shared flush_event rather than a plain
-    time.sleep -- see the "whichever comes first" trigger design above."""
+    is configured, and wait purely on a fixed time interval
+    (_TELEMETRY_PUBLISH_INTERVAL_SECONDS) via the shutdown event -- no
+    message-count trigger any more."""
 
     def _run_one_tick(self, r):
         def fake_wait(timeout=None):
             r._shutdown.set()
             return False
 
-        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
+        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
              patch.object(r, "_publish_telemetry"):
             r._telemetry_loop()
 
@@ -1871,6 +1869,49 @@ class TestTelemetryLoopFlushIntegration:
         with patch.object(r, "_flush_period_counters") as mock_flush:
             self._run_one_tick(r)
         mock_flush.assert_not_called()
+
+    def test_telemetry_loop_waits_on_fixed_interval_not_config(self):
+        """The loop's wait timeout is the fixed module constant, not
+        telemetry_interval_seconds (which now governs only the Redis
+        heartbeat / core-health registration TTL)."""
+        import receiver.main as receiver_main
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+            "telemetry_interval_seconds": 30,
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+
+        seen = []
+
+        def fake_wait(timeout=None):
+            seen.append(timeout)
+            r._shutdown.set()
+            return False
+
+        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
+             patch.object(r, "_publish_telemetry"):
+            r._telemetry_loop()
+
+        assert seen == [receiver_main._TELEMETRY_PUBLISH_INTERVAL_SECONDS]
+        assert receiver_main._TELEMETRY_PUBLISH_INTERVAL_SECONDS == 10
+
+    def test_no_flush_event_attribute_on_receiver_or_tracker(self):
+        """The message-count wake path is gone entirely."""
+        import receiver.main as receiver_main
+        from receiver.main import Receiver, _RateTracker
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        assert not hasattr(r, "_flush_event")
+        assert not hasattr(_RateTracker(), "_flush_event")
+        assert not hasattr(_RateTracker(), "_pending_since_flush")
+        assert not hasattr(receiver_main, "_FLUSH_PENDING_THRESHOLD")
 
 
 class TestPublishTelemetryVersion:

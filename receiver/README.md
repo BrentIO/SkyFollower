@@ -31,7 +31,7 @@ Compose from this host's `.env` (written by `scripts/install.sh`).
 | `REDIS_HOST` | ❌ | — | Leave unset to disable the receiver's Redis-backed identity claim, per-connection message counters, and core-health registration entirely -- see [Receiver Identity](#receiver-identity) and [Redis-Backed Message Counters](#redis-backed-message-counters) |
 | `REDIS_PORT` | ❌ | `6379` | |
 | `REDIS_PASSWORD` | ❌ | — | |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver publishes MQTT statistic messages, refreshes its Redis identity-claim heartbeat, and (at minimum) flushes message counters to Redis |
+| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver refreshes its Redis identity-claim heartbeat and core-health registration TTL. Does **not** govern MQTT statistic publishing or Redis counter flushing -- those run on a fixed 10-second interval, independent of this knob and of message rate |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 `queue.db` (the RabbitMQ offline fallback) is always written to `/app/data`,
@@ -75,7 +75,7 @@ Because identity is either generated per instance (keyed off that instance's own
 
 With `REDIS_HOST` configured, each `sources[]` connection also gets three cumulative message counts -- `messages_{host}_{port}_total_hour`, `_total_today`, `_total_lifetime` -- for a source too sparse for the existing 30-second `messages_{host}_{port}_per_second` rate to say anything useful about.
 
-The per-message hot path (`_RateTracker.record()`) stays pure in-memory arithmetic; nothing there ever touches Redis or checks the clock. Counts are flushed to Redis from the same background thread that already handles telemetry, triggered by whichever comes first: the normal `TELEMETRY_INTERVAL_SECONDS` tick, or 100 messages accumulated since the last flush (bounds staleness for a busy connection like `1090` without waiting out a possibly-long interval). The actual increment-with-expiry-only-on-creation is `shared/lua/incr_period_counter.lua`, shared with the message processor's own equivalent counters -- called via `EVALSHA` so the exists-check, increment, and conditional `EXPIREAT` are one atomic round-trip.
+The per-message hot path (`_RateTracker.record()`) stays pure in-memory arithmetic; nothing there ever touches Redis or checks the clock. Counts are flushed to Redis from the same background thread that already handles telemetry, on a fixed 10-second interval -- flat regardless of message rate, and independent of `TELEMETRY_INTERVAL_SECONDS`. Because each flush sends only the delta since the last one, a longer gap costs one larger `INCRBY`, never a lost count. The actual increment-with-expiry-only-on-creation is `shared/lua/incr_period_counter.lua`, shared with the message processor's own equivalent counters -- called via `EVALSHA` so the exists-check, increment, and conditional `EXPIREAT` are one atomic round-trip.
 
 **Known limitation**: unlike the message processor's own hour/today counters (which read straight from Redis on every publish, so they survive a restart), the receiver publishes these three fields from its own in-memory running totals, which have no persistence layer of their own -- a receiver restart resets what it displays to zero even though the Redis-side totals (what core-health reads) keep accumulating across that restart. `lifetime_count` is the same story: it's a running total for the process's own lifetime, not since the receiver was first ever installed.
 
@@ -254,8 +254,8 @@ re-established, the fallback queue is drained oldest-first before new
 messages are forwarded. If RabbitMQ drops mid-drain, draining stops cleanly
 and resumes on the next reconnect.
 
-Draining is also attempted independently every `telemetry_interval_seconds`,
-not just on a detected reconnect. A publish failure can leave messages queued
+Draining is also attempted independently on the telemetry thread's fixed
+10-second tick, not just on a detected reconnect. A publish failure can leave messages queued
 without the underlying connection ever raising an error (a broker-side
 rejection, a channel-level error — anything short of the connection itself
 dying), in which case the reconnect-triggered drain never fires again on its
@@ -288,8 +288,8 @@ an operator inspects or discards out-of-band (`data_dir` is already a
 host-mounted volume, same as `queue.db` itself).
 
 A raw attempt count alone isn't safe: `_drain_fallback()` is called on
-every successful RabbitMQ reconnect (not just on the `telemetry_interval_seconds`
-tick), so a flapping connection reconnecting every few seconds could
+every successful RabbitMQ reconnect (not just on the telemetry thread's
+fixed 10-second tick), so a flapping connection reconnecting every few seconds could
 otherwise burn through the retry threshold within seconds — dead-lettering
 a message that was never actually poison, just unlucky enough to be at the
 head of the queue during a brief instability. `FallbackQueue` also enforces
@@ -326,7 +326,7 @@ All topics use the root `SkyFollower`.
 
 A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_connected_attributes` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two EXTERNAL feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "EXTERNAL" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_connected_attributes`.
 
-Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`, except `{host}_{port}_connected_attributes`, which is itself a small JSON payload -- Home Assistant's `json_attributes_topic` mechanism for attaching extra attributes to a sensor doesn't have a plain-value equivalent.
+Each stat is published as its own retained topic (not a combined JSON payload) on a fixed 10-second interval -- constant regardless of message rate, and independent of `telemetry_interval_seconds` -- except `{host}_{port}_connected_attributes`, which is itself a small JSON payload -- Home Assistant's `json_attributes_topic` mechanism for attaching extra attributes to a sensor doesn't have a plain-value equivalent.
 
 Home Assistant autodiscovery payloads are published to
 `homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect,

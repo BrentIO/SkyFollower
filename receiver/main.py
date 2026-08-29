@@ -62,6 +62,19 @@ logger = logging.getLogger("receiver")
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
+# How often the telemetry thread publishes its MQTT statistic set and
+# flushes Redis period counters. A fixed interval independent of
+# telemetry_interval_seconds (which is user-configurable, defaults to 30,
+# and governs the Redis identity-claim heartbeat / core-health registration
+# TTL -- not tuned for this), so telemetry cadence stays flat regardless of
+# message rate. It used to be driven partly by message count (a full
+# publish cycle every 100 messages), which made the publish rate scale with
+# traffic -- ~95 retained MQTT publishes/second at 500 msg/s -- exactly
+# backwards. 10s keeps core-health's counts fresh enough (flush_to_redis
+# sends deltas, so a longer gap just means one larger INCRBY, never loss)
+# while holding the publish rate to ~2/second worst case.
+_TELEMETRY_PUBLISH_INTERVAL_SECONDS = 10
+
 # TCP keepalive timers applied to every source socket. The receiver only
 # ever reads from these connections and never writes, so a peer that
 # vanishes without a clean FIN/RST (a killed dump978-fa process, a dropped
@@ -93,11 +106,9 @@ _UNPARSEABLE_WARNING_INTERVAL_SECONDS = 60
 # Rate tracker — 30-second rolling window (copied from message processor pattern)
 # ---------------------------------------------------------------------------
 
-_FLUSH_PENDING_THRESHOLD = 100
-
 
 class _RateTracker:
-    def __init__(self, window: int = 30, flush_event: Optional[threading.Event] = None) -> None:
+    def __init__(self, window: int = 30) -> None:
         self._window = window
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
@@ -124,19 +135,9 @@ class _RateTracker:
         self._flushed_lifetime = 0
         self._hour_bucket: Optional[datetime] = None
         self._day_bucket: Optional[datetime] = None
-        # Messages recorded since the last flush, across all three
-        # periods (they always move together) -- crossing
-        # _FLUSH_PENDING_THRESHOLD wakes the telemetry thread early
-        # instead of waiting out the full telemetry_interval_seconds.
-        # Shared across every _RateTracker the receiver owns (one Event
-        # per receiver, not per connection), so any connection crossing
-        # the threshold flushes all of them together.
-        self._pending_since_flush = 0
-        self._flush_event = flush_event
 
     def record(self) -> None:
         now = time.monotonic()
-        crossed = False
         with self._lock:
             self._timestamps.append(now)
             cutoff = now - self._window
@@ -145,11 +146,6 @@ class _RateTracker:
             self.hour_count += 1
             self.today_count += 1
             self.lifetime_count += 1
-            self._pending_since_flush += 1
-            if self._pending_since_flush >= _FLUSH_PENDING_THRESHOLD:
-                crossed = True
-        if crossed and self._flush_event is not None:
-            self._flush_event.set()
 
     def rate(self) -> float:
         now = time.monotonic()
@@ -191,8 +187,8 @@ class _RateTracker:
             # delete the key the instant it's written), and attributing it
             # to the new bucket would double-count messages that were
             # already local-only. Bounded to at most one flush cycle's
-            # worth (telemetry_interval_seconds, or _FLUSH_PENDING_THRESHOLD
-            # messages) each real rollover -- see receiver/README.md.
+            # worth (_TELEMETRY_PUBLISH_INTERVAL_SECONDS) each real
+            # rollover -- see receiver/README.md.
             if hour_bucket != self._hour_bucket:
                 hour_delta = 0
                 self.hour_count = 0
@@ -213,7 +209,6 @@ class _RateTracker:
 
             lifetime_delta = self.lifetime_count - self._flushed_lifetime
             self._flushed_lifetime = self.lifetime_count
-            self._pending_since_flush = 0
 
         if hour_delta:
             next_hour = hour_bucket + timedelta(hours=1)
@@ -322,10 +317,6 @@ class Receiver:
         # heartbeat/period-counter/core-health-registration behavior below
         # runs at all, matching the receiver's original behavior exactly
         # (random-UUID identity, no Redis interaction).
-        # Woken early (before telemetry_interval_seconds) once a
-        # connection's pending message count crosses
-        # _FLUSH_PENDING_THRESHOLD -- see _RateTracker.record().
-        self._flush_event = threading.Event()
         rc = config.get("redis") or {}
         self._redis = build_redis_client(rc) if rc.get("host") else None
         # Lazily script_load()'d on first flush rather than here -- loading
@@ -336,7 +327,7 @@ class Receiver:
 
         for src in config.get("sources", []):
             key = (src["host"], src["port"])
-            self._rates[key] = _RateTracker(flush_event=self._flush_event)
+            self._rates[key] = _RateTracker()
             self._connected[key] = False
             self._reconnect_counts[key] = 0
             self._last_message_at[key] = None
@@ -928,15 +919,13 @@ class Receiver:
     # ------------------------------------------------------------------
 
     def _telemetry_loop(self) -> None:
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            # Woken early by _RateTracker.record() crossing
-            # _FLUSH_PENDING_THRESHOLD messages since the last flush, or by
-            # the normal interval elapsing -- whichever comes first.
-            # clear() is safe even if nothing set it: wait() already
-            # returned via the timeout in that case.
-            self._flush_event.wait(timeout=interval)
-            self._flush_event.clear()
+            # Purely time-based, at a fixed interval independent of message
+            # rate -- see _TELEMETRY_PUBLISH_INTERVAL_SECONDS. Waiting on the
+            # shutdown event (rather than time.sleep) keeps a stop
+            # responsive; on shutdown wait() returns early and the
+            # while-condition ends the loop after this iteration.
+            self._shutdown.wait(timeout=_TELEMETRY_PUBLISH_INTERVAL_SECONDS)
 
             if self._redis is not None:
                 self._flush_period_counters()
