@@ -30,6 +30,8 @@ loop until shutdown
         RmqApi --> CoreHealth-- : mem_alarm, disk_free_alarm
         CoreHealth -> RmqApi++ : **Fetch every queue's stats**\n""GET /api/queues/%2F""
         RmqApi --> CoreHealth-- : queues[]
+        CoreHealth -> RmqApi++ : **Fetch adsb exchange velocity**\n""GET /api/exchanges/%2F/adsb""
+        RmqApi --> CoreHealth-- : message_stats.publish_in/publish_out
         CoreHealth -> CoreHealth : **Set RabbitMQ is connected**\n""self._rmq_connected = True""
         CoreHealth -> CoreHealth : **Filter to SkyFollower's own queues**\n""[q for q in queues if is_skyfollower_queue(q.name)]""
 
@@ -39,6 +41,7 @@ loop until shutdown
         end
 
         CoreHealth -\ MQTT : **Publish broker-wide stats**\n""SkyFollower/core-health/rabbitmq/statistic/*"" (retain=True)
+        CoreHealth -\ MQTT : **Publish adsb exchange velocity**\n""SkyFollower/core-health/rabbitmq/statistic/adsb_exchange_publish_{in,out}_rate"" (retain=True)
 
         CoreHealth -> CoreHealth : **Enumerate live message processor IDs**\n""message_processor_id_from_queue_name(queue.name)""
         loop for each message processor id

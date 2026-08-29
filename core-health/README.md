@@ -14,12 +14,15 @@ Two independent background loops, neither blocking the other:
   count), `GET /api/nodes` (per-node memory/disk alarm flags — `/api/overview`
   itself doesn't carry these despite being the endpoint originally named for
   this data point during design; polling `/api/nodes` too is what actually
-  answers it), and `GET /api/queues/%2F` (every queue in one call). The
-  queue list is filtered to SkyFollower's own queues via
-  `shared/rabbitmq_topology.py`'s `SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN` —
-  the exact same regex `scripts/install.sh`'s `provision_rabbitmq_users()`
-  uses to scope the application user's permissions, so the two definitions
-  of "what SkyFollower owns" can't drift apart (bash can't import a Python
+  answers it), `GET /api/queues/%2F` (every queue in one call), and
+  `GET /api/exchanges/%2F/adsb` (the `adsb` exchange's own aggregate
+  publish velocity — `shared/rabbitmq_topology.py`'s `ADSB_EXCHANGE`
+  constant, no discovery needed). The queue list is filtered to
+  SkyFollower's own queues via `shared/rabbitmq_topology.py`'s
+  `SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN` — the exact same regex
+  `scripts/install.sh`'s `provision_rabbitmq_users()` uses to scope the
+  application user's permissions, so the two definitions of "what
+  SkyFollower owns" can't drift apart (bash can't import a Python
   constant, so the two copies are kept identical by hand — see the comments
   at each site).
 - **Redis, every 60s**: `INFO everything` + `MEMORY STATS`, via the same
