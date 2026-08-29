@@ -418,6 +418,120 @@ class TestDeadLetterEviction:
             assert q.dead_letter_depth() == 3
 
 
+class _EnvAbsent(RuntimeError):
+    """Stands in for pika.exceptions.UnroutableError in these tests --
+    FallbackQueue is broker-agnostic and takes the type from the caller."""
+
+
+class TestNonPoisonExceptions:
+    def test_non_poison_exception_never_dead_letters_regardless_of_attempts(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(
+                td,
+                retry_threshold=3,
+                min_retry_interval_seconds=0,
+                non_poison_exceptions=(_EnvAbsent,),
+            )
+            q.put('{"_id": "flight-1"}')
+
+            for _ in range(25):  # far past retry_threshold
+                result = q.drain(lambda _p: (_ for _ in ()).throw(_EnvAbsent("no archive queue")))
+                assert result is False
+
+            assert q.dead_letter_depth() == 0
+            assert q.depth() == 1  # still retryable, nothing lost
+
+    def test_non_poison_row_still_advances_bookkeeping(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(
+                td, retry_threshold=3, min_retry_interval_seconds=0,
+                non_poison_exceptions=(_EnvAbsent,),
+            )
+            q.put("payload")
+            for expected in (1, 2, 3, 4, 5):
+                q.drain(lambda _p: (_ for _ in ()).throw(_EnvAbsent("x")))
+                conn = sqlite3.connect(os.path.join(td, "queue.db"))
+                row = conn.execute("SELECT retry_count FROM queue").fetchone()
+                conn.close()
+                assert row[0] == expected
+
+    def test_non_poison_row_drains_once_dependency_recovers(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(
+                td, retry_threshold=2, min_retry_interval_seconds=0,
+                non_poison_exceptions=(_EnvAbsent,),
+            )
+            q.put("a")
+            q.put("b")
+            for _ in range(10):
+                q.drain(lambda _p: (_ for _ in ()).throw(_EnvAbsent("x")))
+            assert q.depth() == 2
+            assert q.dead_letter_depth() == 0
+
+            drained = []
+            result = q.drain(drained.append)  # dependency now present
+            assert result is True
+            assert drained == ["a", "b"]
+            assert q.depth() == 0
+
+    def test_a_non_listed_exception_still_dead_letters_at_threshold(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(
+                td, retry_threshold=3, min_retry_interval_seconds=0,
+                non_poison_exceptions=(_EnvAbsent,),
+            )
+            q.put('{"_id": "poison"}')
+
+            for _ in range(2):
+                result = q.drain(lambda _p: (_ for _ in ()).throw(ValueError("bad payload")))
+                assert result is False
+                assert q.dead_letter_depth() == 0
+
+            result = q.drain(lambda _p: (_ for _ in ()).throw(ValueError("bad payload")))
+            assert result is True
+            assert q.dead_letter_depth() == 1
+            assert q.depth() == 0
+
+
+class TestRetryableTableSizeCap:
+    def test_oldest_row_evicted_first_when_over_cap(self):
+        with tempfile.TemporaryDirectory() as td:
+            # cap fits ~2 of these 10-byte payloads
+            q = _make_queue(td, retryable_max_bytes=25)
+            q.put("payload-01")  # 10 bytes
+            q.put("payload-02")  # 20 bytes total
+            q.put("payload-03")  # would be 30 -> evict payload-01 first
+
+            drained = []
+            q.drain(drained.append)
+            assert drained == ["payload-02", "payload-03"]
+
+    def test_cap_never_exceeded_across_many_puts(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retryable_max_bytes=100)
+            for i in range(50):
+                q.put(f"{i:020d}")  # 20 bytes each
+
+            conn = sqlite3.connect(os.path.join(td, "queue.db"))
+            total = conn.execute("SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM queue").fetchone()[0]
+            conn.close()
+            assert total <= 100
+
+    def test_no_cap_by_default_leaves_table_unbounded(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)  # no retryable_max_bytes
+            for i in range(200):
+                q.put(f"{i:020d}")
+            assert q.depth() == 200
+
+    def test_cap_eviction_is_not_dead_lettering(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retryable_max_bytes=25)
+            for i in range(10):
+                q.put(f"payload-{i:02d}")
+            assert q.dead_letter_depth() == 0
+
+
 class TestDrainInBackground:
     def test_noop_while_a_drain_is_already_in_progress(self):
         with tempfile.TemporaryDirectory() as td:

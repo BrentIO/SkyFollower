@@ -57,6 +57,21 @@ time via a relative path reference in their `requirements.txt`.
   even though it was never actually poison. See each component's own
   README (Fault Tolerance section) for how it's wired in.
 
+  A third category sits between "recoverable outage" and "poison": a
+  dependency deliberately absent in this deployment (e.g. a message
+  processor publishing completed flights with `mandatory=True` against an
+  `archive` queue no operator declared because this environment runs no
+  archiver). A caller passes the exception type(s) that signal this via
+  `non_poison_exceptions` — `FallbackQueue` stays broker-agnostic and
+  never imports the caller's library. A row failing only with those types
+  is retried forever and never dead-lettered: losing it would discard
+  legitimate primary data, and it drains automatically if the dependency
+  later appears. To keep the retryable table from growing without bound in
+  that case, a caller can also opt into `retryable_max_bytes`, a
+  ring-buffer cap on the plain `queue` table with the same oldest-first
+  eviction the dead-letter directory uses (logged as a capacity eviction,
+  not a poison classification).
+
 ## Usage
 
 ```python
