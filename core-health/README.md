@@ -60,6 +60,23 @@ Core` device. Per-queue entity `unique_id`/`object_id`s are suffixed
 so they can never collide with the owning component's own entities on the
 same device (e.g. `SkyFollower_message_processor_{id}_processing_time_hwm_ms`).
 
+### Archive queue missing detection
+
+Not every deployment installs archive-processor, so the `archive` queue
+being absent from the polled `/api/queues/%2F` list is a normal, valid
+state — not an error. But it's also indistinguishable, from an operator's
+perspective, from "core-health hasn't polled yet" unless something says so
+explicitly. Every RabbitMQ poll checks the (already-filtered)
+SkyFollower-owned queue list for `archive`'s presence and publishes
+`archive_queue_missing` (`rabbitmq_connections_total`'s sibling on the
+`SkyFollower Core` device) accordingly — `True` when it's expected but not
+found, `False` once it exists. This is scoped specifically to `archive`,
+the one queue every deployment eventually has; it deliberately does not
+attempt to distinguish "archive-processor never installed" from
+"installed, then the queue got deleted/misconfigured" — both look
+identical via the Management API, and the retained flag clears itself
+automatically the next time `archive` shows up in the poll either way.
+
 ### Counter mimicry (message-processor and the receiver)
 
 core-health also reads and publishes, on message-processor's and the
