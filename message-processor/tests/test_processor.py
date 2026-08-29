@@ -2358,6 +2358,25 @@ class TestTelemetryPayload:
         for call in mock_mqtt.publish.call_args_list:
             assert "avg_processing_time_ms" not in call[0][0]
 
+    def test_started_at_ha_discovery_matches_receiver_vernacular(self):
+        # "Start Time" + device_class: timestamp -- matching receiver's
+        # existing started_at sensor pattern exactly.
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_started_at/config"]
+        assert cfg["name"] == "Start Time"
+        assert cfg["device_class"] == "timestamp"
+        assert "state_class" not in cfg
+        assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/started_at"
+
 
 # ---------------------------------------------------------------------------
 # Telemetry -- active_flights COUNT(*) must not hold self._db_lock

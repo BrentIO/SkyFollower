@@ -867,7 +867,7 @@ class ArchiveProcessor:
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),
             ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
             ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None),
-            ("started_at", "Archive Started At", "mdi:clock", None, None),
+            ("started_at", "Start Time", "mdi:clock", None, None),
             ("version", "Archive Version", "mdi:tag", None, None),
         ]
         for name, desc, icon, state_class, unit in sensors:

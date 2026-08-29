@@ -1581,3 +1581,28 @@ class TestPublishTelemetryVersion:
 
             calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
             assert calls[self._TOPIC] == "dev"
+
+
+# ---------------------------------------------------------------------------
+# HA autodiscovery
+# ---------------------------------------------------------------------------
+
+class TestHaAutodiscoveryStartedAt:
+    def test_started_at_label_matches_receiver_vernacular(self):
+        # "Start Time" -- not the old "Archive Started At" -- matching
+        # receiver's and message-processor's label for the same field.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            cfg = configs["homeassistant/sensor/SkyFollower_archive_started_at/config"]
+            assert cfg["name"] == "Start Time"
