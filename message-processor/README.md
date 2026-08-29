@@ -456,15 +456,35 @@ force-archiving when the store already survives on its own.
 
 On startup, the message processor reopens `active_flights.db` and recovers whatever
 flights were still tracked. Recovery is driven by message timestamps, not by
-how long the container was down: an internal clock is floored at the most
-recent `last_message` among recovered flights (not wall-clock "now"), and
-only advances as RabbitMQ messages are actually consumed. This means a
-recovered flight is **not** archived just because real time passed while the
-container was stopped — if a continuation message for that aircraft is
-sitting in the RabbitMQ backlog, it resumes the same flight once the
-message processor reconnects and drains the backlog. A genuine gap longer than
-`flight_ttl_seconds` — whether it happens live or is discovered while
-replaying a backlog — still correctly splits the flight into two records.
+how long the container was down: `message_clock` (`_message_clock` in
+`main.py`) is floored at the most recent `last_message` among recovered
+flights (not wall-clock "now"), and only advances as messages are actually
+consumed — `_update_flight()` bumps it to `max(message_clock,
+msg.received_at)` on every message. `_evict_stale()` (which drives both
+eviction from the active store and, as a consequence, archiving) compares
+each flight's `last_message` against `message_clock - flight_ttl_seconds`,
+never against wall-clock time.
+
+This gating matters in two situations, both of which produce the same
+symptom — active flights sitting unevicted, `local_archive_queue_depth`
+flat — for a reason that is correct, not a stuck or broken pipeline:
+
+- **Recovering after a restart.** A recovered flight is **not** archived
+  just because real time passed while the container was stopped — if a
+  continuation message for that aircraft is sitting in the RabbitMQ
+  backlog, it resumes the same flight once the message processor
+  reconnects and drains the backlog. A genuine gap longer than
+  `flight_ttl_seconds` — whether it happens live or is discovered while
+  replaying a backlog — still correctly splits the flight into two records.
+- **Offline replay with nothing live behind it** (see
+  `tools/traffic-replayer`). If the only traffic a message processor ever
+  sees is a finite replayed capture and no live receiver is attached,
+  `message_clock` advances only as far as the capture's last message and
+  then simply stops — there is nothing left to bump it further. Flights
+  still active when the replay ends stay in the active store indefinitely,
+  neither refreshing nor expiring, until either more messages arrive (a
+  further replay, or live traffic) or the process is stopped. This can look
+  identical to a stuck archive path from the outside; it isn't one.
 
 MQTT rule notifications for messages older than
 `rule_notification_max_lag_seconds` are suppressed during backlog replay
