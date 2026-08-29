@@ -586,8 +586,10 @@ class Flight:
             self._load_positions(limit=False)
             self._load_velocities(limit=False)
 
-        # Build aircraft dict — ensure icao_hex is present
-        aircraft = dict(self.aircraft)
+        # Build aircraft dict — ensure icao_hex is present. Drop None-valued
+        # keys: aircraft is a plain dict, so a top-level exclude_none on the
+        # CompletedFlight dump can't reach inside it.
+        aircraft = {k: v for k, v in self.aircraft.items() if v is not None}
         if "icao_hex" not in aircraft:
             aircraft["icao_hex"] = self.icao_hex
 
@@ -595,10 +597,14 @@ class Flight:
         if aircraft.get("military") is False:
             aircraft.pop("military")
 
-        # Operator without source key
+        # Operator without source key, None-valued keys dropped (same
+        # plain-dict reason as aircraft above)
         operator: Optional[dict] = None
         if self.operator:
-            operator = {k: v for k, v in self.operator.items() if k != "source"}
+            operator = {
+                k: v for k, v in self.operator.items()
+                if k != "source" and v is not None
+            }
 
         return CompletedFlight(**{
             "_id": self.flight_id or generate_flight_id(),
@@ -1373,7 +1379,7 @@ class MessageProcessor:
         the connection's own thread too). The scheduled callback decides
         success/failure and falls back to self._fallback.put() itself,
         since the caller can no longer observe the outcome synchronously."""
-        payload = flight.model_dump_json(by_alias=True)
+        payload = flight.model_dump_json(by_alias=True, exclude_none=True)
 
         def _publish_on_rmq_thread() -> None:
             try:
@@ -1493,7 +1499,9 @@ class MessageProcessor:
             return
         if not (self._mqtt and self._mqtt_connected):
             return
-        notification = flight.to_completed_flight().model_dump(by_alias=True, mode="json")
+        notification = flight.to_completed_flight().model_dump(
+            by_alias=True, mode="json", exclude_none=True
+        )
         notification.pop("positions", None)
         notification.pop("velocities", None)
         notification.pop("_id", None)
