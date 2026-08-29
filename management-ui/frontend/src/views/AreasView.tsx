@@ -14,7 +14,8 @@ import { mdiExportVariant, mdiFileImportOutline, mdiShapePolygonPlus, mdiVectorP
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal, IDENTIFIER_PATTERN } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { ImportAreaModal, type ImportedFeature } from "../components/ImportAreaModal";
+import { ImportAreaModal } from "../components/ImportAreaModal";
+import { importAreasBatch, type ImportedFeature } from "../lib/areaImport";
 import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
@@ -1022,27 +1023,35 @@ export function AreasView() {
   // modal needed). `locked` is a parameter rather than always `false`
   // because imports must be able to preserve properties.locked -- every
   // other caller (draw/duplicate) still just passes `false`.
+  // `suppressToast` is set by the multi-feature import loop, which reports
+  // one summary toast for the whole batch instead of a line per feature.
+  // The return value tells that loop whether this feature was created
+  // (true) or fell through / failed (false) -- every other caller ignores
+  // it and behaves exactly as before.
   async function createAreaFromPendingFeature(
     tempId: string,
     identifier: string,
     name: string,
     locked: boolean,
     style: StyleFields,
-  ) {
+    opts?: { suppressToast?: boolean },
+  ): Promise<boolean> {
     const draw = drawRef.current;
-    if (!draw) return;
+    if (!draw) return false;
 
     const feature = draw.getSnapshotFeature(tempId);
     if (!feature) {
       // Never actually made it into the store -- addFeatures() rejected
       // it during validation (see offsetGeometry/removeFeatureIfPresent).
       // Nothing to clean up, and nothing to save.
-      showToast("error", "That shape could not be created -- its geometry was rejected.");
-      return;
+      if (!opts?.suppressToast) {
+        showToast("error", "That shape could not be created -- its geometry was rejected.");
+      }
+      return false;
     }
     if (!isAreaGeometryType(feature.geometry.type)) {
       removeFeatureIfPresent(draw, tempId);
-      return;
+      return false;
     }
 
     setSaving(true);
@@ -1068,10 +1077,16 @@ export function AreasView() {
       setDraft(clone(saved));
       setOriginal(clone(saved));
       setSelectDraggable(saved.locked);
-      showToast("success", `${geometryDisplayNoun(saved.geometry.type)} '${saved.identifier}' created.`);
+      if (!opts?.suppressToast) {
+        showToast("success", `${geometryDisplayNoun(saved.geometry.type)} '${saved.identifier}' created.`);
+      }
+      return true;
     } catch (err) {
       removeFeatureIfPresent(draw, tempId);
-      showToast("error", err instanceof ApiError ? err.message : "Failed to create area.");
+      if (!opts?.suppressToast) {
+        showToast("error", err instanceof ApiError ? err.message : "Failed to create area.");
+      }
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1087,6 +1102,63 @@ export function AreasView() {
     setPendingStyle({});
     if (!tempId) return;
     await createAreaFromPendingFeature(tempId, identifier, name, locked, style);
+  }
+
+  // Entry point from ImportAreaModal. One feature keeps the original
+  // behaviour exactly -- a single conflict is one confirm click, no reason
+  // to change it. More than one auto-resolves every identifier/name
+  // conflict on the client and creates them in a loop, so bulk import never
+  // needs a per-conflict prompt queue.
+  function handleImportFeatures(features: ImportedFeature[]) {
+    if (features.length === 1) {
+      handleImportFeature(features[0]);
+      return;
+    }
+    requestSwitch(() => {
+      void importFeaturesBatch(features);
+    });
+  }
+
+  async function importFeaturesBatch(features: ImportedFeature[]) {
+    const draw = drawRef.current;
+    if (!draw) return;
+    setDraft(null);
+    setOriginal(null);
+
+    const result = await importAreasBatch(
+      features,
+      areas.map((a) => a.identifier),
+      async (identity, feature) => {
+        const style = extractStyleFields(feature.properties ?? {});
+        const tempId = crypto.randomUUID();
+        draw.addFeatures([
+          {
+            id: tempId,
+            type: "Feature",
+            properties: { mode: geometryToModeName(feature.geometry.type), name: identity.name, ...style },
+            geometry: feature.geometry,
+          },
+        ]);
+        return createAreaFromPendingFeature(
+          tempId,
+          identity.identifier,
+          identity.name,
+          identity.locked,
+          style,
+          { suppressToast: true },
+        );
+      },
+    );
+
+    const total = features.length;
+    if (result.failed.length === 0) {
+      showToast("success", `${result.created.length} of ${total} areas imported.`);
+    } else {
+      showToast(
+        "error",
+        `${result.created.length} of ${total} areas imported; ${result.failed.length} failed.`,
+      );
+    }
   }
 
   // Places an imported feature onto the draw map exactly like a fresh draw
@@ -1509,9 +1581,9 @@ export function AreasView() {
       />
       <ImportAreaModal
         open={importModalOpen}
-        onImport={(feature) => {
+        onImport={(features) => {
           setImportModalOpen(false);
-          handleImportFeature(feature);
+          handleImportFeatures(features);
         }}
         onCancel={() => setImportModalOpen(false)}
       />
