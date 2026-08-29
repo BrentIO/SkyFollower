@@ -403,6 +403,17 @@ class TestPublishExchangeStats:
         assert payload["unique_id"] == "SkyFollower_core_health_started_at"
         assert payload["state_topic"] == f"{MQTT_ROOT}/statistic/started_at"
 
+    def test_version_sensor_removed(self):
+        """The device block already carries sw_version, so a standalone
+        version entity is redundant -- sensor and its state publish dropped."""
+        app = _wired_app()
+        app._session.get.side_effect = Exception("connection refused")
+        app._poll_rabbitmq_once()
+        published = _state_publishes(app._mqtt)
+        assert f"{MQTT_ROOT}/statistic/version" not in published
+        discovery = _discovery_payloads(app._mqtt)
+        assert "homeassistant/sensor/SkyFollower_core_health_version/config" not in discovery
+
 
 # ---------------------------------------------------------------------------
 # Archive queue missing detection
