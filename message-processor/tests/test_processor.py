@@ -916,9 +916,10 @@ class TestProcessorArchive:
         an unroutable publish -- e.g. no archive queue bound because
         archive-processor isn't installed -- makes basic_publish() raise
         pika.exceptions.UnroutableError synchronously instead of the
-        broker silently dropping the message. That must be caught the
-        same way any other publish failure is: fall back to the local
-        SQLite retry queue rather than losing the flight permanently."""
+        broker silently dropping the message. The payload must still fall
+        back to the local SQLite retry queue rather than being lost, but
+        unlike a genuine publish failure, this is not evidence the
+        connection itself is unhealthy -- _rmq_connected must stay True."""
         p, mock_channel, mock_connection = self._connected_processor()
         mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
             [MagicMock()]
@@ -926,7 +927,7 @@ class TestProcessorArchive:
 
         p._archive(self._make_completed_flight())
 
-        assert p._rmq_connected is False
+        assert p._rmq_connected is True
         assert p._fallback.depth() == 1
 
 
@@ -1016,7 +1017,9 @@ class TestProcessorDrainFallback:
     def test_drain_fallback_leaves_items_queued_when_archive_queue_does_not_exist(self):
         """Same UnroutableError contract as _archive() itself -- draining
         must not treat a missing archive queue as a successful publish and
-        drop the row."""
+        drop the row. And, mirroring _archive()'s own fix, this is not
+        evidence the connection itself is unhealthy -- _rmq_connected must
+        stay True, unlike a genuine publish failure."""
         p, mock_channel, _ = self._connected_processor_with_queued_item()
         mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
             [MagicMock()]
@@ -1026,7 +1029,7 @@ class TestProcessorDrainFallback:
         with _synchronous_drain_thread():
             p._drain_fallback()
 
-        assert p._rmq_connected is False
+        assert p._rmq_connected is True
         assert p._fallback.depth() == 1
 
     def test_drain_fallback_falls_back_when_no_connection(self):
@@ -1116,6 +1119,54 @@ class TestProcessorDrainFallback:
         self._run_one_telemetry_tick(p)
 
         assert p._fallback.depth() == 1
+
+    def test_archive_unroutable_error_does_not_disable_periodic_drain(self):
+        """Regression test: an UnroutableError from _archive()'s publish
+        means the archive queue doesn't exist (e.g. archive-processor
+        isn't installed) -- the connection itself stays healthy. Before
+        the fix, this incorrectly latched _rmq_connected False, which in
+        turn made the periodic drain tick above skip itself indefinitely
+        -- even though nothing was actually wrong with RabbitMQ, directly
+        contradicting that tick's own documented purpose of not depending
+        on the edge-triggered reconnect flag. Confirm _rmq_connected
+        stays True and the periodic sweep still drains on the very next
+        tick."""
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        completed = f.to_completed_flight()
+
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        p._rmq_connected = True
+        mock_channel.basic_publish.side_effect = pika.exceptions.UnroutableError(
+            [MagicMock()]
+        )
+
+        p._archive(completed)
+
+        assert p._rmq_connected is True
+        assert p._fallback.depth() == 1
+
+        # Archive queue is routable again by the next tick (e.g.
+        # archive-processor got installed) -- the periodic sweep must
+        # still be enabled to pick this up, since it never depended on a
+        # real reconnect happening.
+        mock_channel.basic_publish.side_effect = None
+
+        with _synchronous_drain_thread():
+            self._run_one_telemetry_tick(p)
+
+        assert p._fallback.depth() == 0
 
 
 # ---------------------------------------------------------------------------
