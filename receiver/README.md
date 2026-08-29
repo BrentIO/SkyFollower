@@ -183,6 +183,43 @@ archives as one segment, the new one starts another — and the archive
 processor's split-flight stitching merges the adjacent segments. The cost is
 degraded archive quality for a few minutes.
 
+## Detecting a Dead Source Connection
+
+The receiver only ever *reads* from a source socket — it never writes — so
+it never provokes an RST from the far end. If a source's peer vanishes
+without a clean close (a `dump978-fa` process that dies, a route that drops
+mid-stream), the read simply blocks and times out forever: `recv()` raises
+`socket.timeout`, the read loop continues, and the half-open socket is held
+indefinitely with the connection still reported as `True`. A sparse feed
+(978/UAT overnight) makes this indistinguishable from normal idle.
+
+Every source socket therefore has **TCP keepalive** enabled with tuned
+timers, applied the moment the connection opens, covering the 1090 and 978
+readers alike:
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `SO_KEEPALIVE` | on | Kernel probes an otherwise-idle connection |
+| `TCP_KEEPIDLE` | 60 s | Idle time before the first probe |
+| `TCP_KEEPINTVL` | 10 s | Interval between probes |
+| `TCP_KEEPCNT` | 3 | Unanswered probes before the socket is dropped |
+
+A dead peer is detected in roughly **60 + (10 × 3) ≈ 90 seconds** (often
+sooner — a peer with no record of the connection answers the first probe
+with an RST at ~60 s). Once the kernel tears the socket down, `recv()`
+raises `OSError` and the existing reconnect path in `_source_loop` takes
+over, logging the reconnect and incrementing `{host}_{port}_reconnect_count`.
+
+Keepalive is used rather than an application-level idle deadline precisely
+because it does **not** false-positive on a genuinely quiet-but-healthy
+feed: a live peer answers the probes, so an overnight lull with zero UAT
+traffic keeps the connection up instead of forcing needless reconnect
+churn. `TCP_KEEPIDLE`/`TCP_KEEPINTVL`/`TCP_KEEPCNT` are Linux-only socket
+options (the containers run Linux); on a non-Linux host each is skipped
+individually and only the portable `SO_KEEPALIVE` is set. The three values
+are fixed constants, not configuration — correctness tuning, not
+deployment policy.
+
 ## RabbitMQ Thread Safety
 
 `pika.BlockingConnection` (and the async transport underneath it) is not
