@@ -25,8 +25,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import receiver.main as receiver_main
 from receiver.main import (
     _RateTracker,
+    _enable_tcp_keepalive,
     _sanitize_mqtt_id,
     parse_978_line,
 )
@@ -247,6 +249,118 @@ class TestReconnectCounter:
         server.close()
 
         assert r._reconnect_counts.get(key, 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# TCP keepalive on source sockets
+#
+# A peer that vanishes without a clean FIN/RST leaves the receiver holding a
+# half-open socket forever (it only ever reads, never writes, so it never
+# provokes an RST). Keepalive makes the kernel probe an idle connection and
+# tear it down when the peer stops answering, after which _source_loop's
+# existing reconnect path takes over. The three timer values are fixed
+# module constants, not configuration.
+# ---------------------------------------------------------------------------
+
+class TestTcpKeepalive:
+    def test_keepalive_constants_match_90s_detection_budget(self):
+        # 60s idle + 3 probes * 10s = ~90s, per the issue's Fix section.
+        assert receiver_main._TCP_KEEPIDLE_SECONDS == 60
+        assert receiver_main._TCP_KEEPINTVL_SECONDS == 10
+        assert receiver_main._TCP_KEEPCNT == 3
+
+    def test_enable_tcp_keepalive_sets_so_keepalive(self):
+        # A real TCP socket -- the tuned timer options are only valid on
+        # one, and _enable_tcp_keepalive is always handed a fresh
+        # create_connection socket in production.
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _enable_tcp_keepalive(s)
+            assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+        finally:
+            s.close()
+
+    @pytest.mark.skipif(
+        not hasattr(socket, "TCP_KEEPIDLE"),
+        reason="TCP_KEEPIDLE is Linux-only",
+    )
+    def test_enable_tcp_keepalive_sets_tuned_timers_on_linux(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _enable_tcp_keepalive(s)
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 60
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL) == 10
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT) == 3
+        finally:
+            s.close()
+
+    def test_enable_tcp_keepalive_tolerates_unsupported_timer_options(self):
+        """A non-TCP socket (or a platform that rejects the timer options)
+        still gets SO_KEEPALIVE and does not raise -- the timers are
+        best-effort."""
+        a, b = socket.socketpair()
+        try:
+            _enable_tcp_keepalive(a)
+            assert a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+        finally:
+            a.close()
+            b.close()
+
+    def test_enable_tcp_keepalive_guards_each_linux_option_with_hasattr(self):
+        """With none of the Linux-only names present, only the portable
+        SO_KEEPALIVE setsockopt call is made -- the rest are skipped, not
+        errored (this is what keeps local macOS pytest working)."""
+        fake_sock = MagicMock()
+        real_hasattr = hasattr
+
+        def fake_hasattr(obj, name):
+            if obj is receiver_main.socket and name in (
+                "TCP_KEEPIDLE", "TCP_KEEPINTVL", "TCP_KEEPCNT"
+            ):
+                return False
+            return real_hasattr(obj, name)
+
+        with patch.object(receiver_main, "hasattr", fake_hasattr, create=True):
+            _enable_tcp_keepalive(fake_sock)
+
+        fake_sock.setsockopt.assert_called_once_with(
+            socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1
+        )
+
+    def test_source_loop_enables_keepalive_on_connect(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 1, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+
+        def _accept_then_close():
+            conn, _ = server.accept()
+            conn.close()
+
+        acceptor = threading.Thread(target=_accept_then_close, daemon=True)
+        acceptor.start()
+
+        seen = []
+
+        def _fake_reader(*a, **k):
+            r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        with patch("receiver.main._enable_tcp_keepalive", side_effect=seen.append):
+            r._source_loop({"host": host, "port": port, "source": "1090"})
+        acceptor.join(timeout=5)
+        server.close()
+
+        assert len(seen) == 1
+        assert isinstance(seen[0], socket.socket)
 
 
 # ---------------------------------------------------------------------------

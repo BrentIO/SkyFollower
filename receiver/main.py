@@ -62,6 +62,28 @@ logger = logging.getLogger("receiver")
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 _HEALTHCHECK_INTERVAL_SECONDS = 15
 
+# TCP keepalive timers applied to every source socket. The receiver only
+# ever reads from these connections and never writes, so a peer that
+# vanishes without a clean FIN/RST (a killed dump978-fa process, a dropped
+# route) is otherwise indistinguishable from a genuinely quiet feed -- the
+# half-open socket is held forever, no reconnect, still reported connected.
+# Keepalive makes the kernel probe an idle connection and tear it down once
+# the peer stops answering, after which recv() raises OSError and
+# _source_loop's existing reconnect path takes over -- no new reconnect
+# logic needed. Tuned far below the ~2-hour OS default: first probe after
+# 60s idle, then 3 probes 10s apart, giving a detection budget of roughly
+# 60 + (10 x 3) = 90s. Keepalive is used in preference to an
+# application-level idle deadline precisely because it does not
+# false-positive on a legitimately quiet feed (sparse overnight UAT): a
+# live peer answers the probes, so the connection is only dropped when it
+# is genuinely dead, with no needless reconnect churn inflating
+# reconnect_count. Fixed constants, not configuration -- correctness
+# tuning, same convention as _HEALTHCHECK_INTERVAL_SECONDS /
+# _UNPARSEABLE_WARNING_INTERVAL_SECONDS.
+_TCP_KEEPIDLE_SECONDS = 60
+_TCP_KEEPINTVL_SECONDS = 10
+_TCP_KEEPCNT = 3
+
 # Minimum spacing between "N unparseable lines" summary warnings, per
 # connection -- keeps a genuine format mismatch visible at default log
 # level without flooding logs at high traffic volume.
@@ -224,6 +246,35 @@ def _load_or_create_receiver_id(data_dir: str) -> str:
     with open(path, "w") as f:
         f.write(new_id)
     return new_id
+
+
+def _enable_tcp_keepalive(sock: socket.socket) -> None:
+    """Enable TCP keepalive with tuned timers on a source socket.
+
+    Called for every source connection (1090 and 978 alike) immediately
+    after it opens. ``SO_KEEPALIVE`` is the load-bearing part and is
+    portable. The three timer options are Linux-only: on macOS (where the
+    dev test suite runs) the names don't exist, so each is ``hasattr``
+    guarded; and even where a name exists it is only valid on a real TCP
+    socket, so the call is wrapped in ``try``/``except OSError`` -- a
+    non-TCP socket (a unit test's ``socketpair``) or an unusual platform
+    degrades to "keepalive on, default timers" rather than raising. A real
+    source socket from ``create_connection`` on a Linux container always
+    accepts them. See the ``_TCP_KEEPIDLE_SECONDS`` comment for the timing
+    rationale.
+    """
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for _name, _value in (
+        ("TCP_KEEPIDLE", _TCP_KEEPIDLE_SECONDS),
+        ("TCP_KEEPINTVL", _TCP_KEEPINTVL_SECONDS),
+        ("TCP_KEEPCNT", _TCP_KEEPCNT),
+    ):
+        if not hasattr(socket, _name):
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, _name), _value)
+        except OSError:
+            pass
 
 
 def _sanitize_mqtt_id(value: str) -> str:
@@ -489,6 +540,7 @@ class Receiver:
             try:
                 logger.info("Connecting to readsb at %s:%s (source=%s)…", host, port, source)
                 with socket.create_connection((host, port), timeout=10) as sock:
+                    _enable_tcp_keepalive(sock)
                     sock.settimeout(5.0)
                     self._connected[key] = True
                     logger.info("Connected to %s:%s (source=%s).", host, port, source)
