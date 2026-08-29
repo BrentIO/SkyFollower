@@ -55,12 +55,30 @@ class TestPosition:
     def test_altitude_optional(self):
         pos = Position(timestamp=0.0, latitude=0.0, longitude=0.0)
         assert pos.altitude is None
-        assert pos.to_dict()["altitude"] is None
+        # None-valued keys are omitted from to_dict(), not serialised as null
+        assert "altitude" not in pos.to_dict()
 
     def test_timestamp_conversion(self):
         pos = Position(timestamp=1717100000.0, latitude=0.0, longitude=0.0)
         d = pos.to_dict()
         assert d["timestamp"] == datetime.fromtimestamp(1717100000.0, tz=timezone.utc)
+
+    def test_coordinate_precision_capped_on_construction(self):
+        pos = Position(
+            timestamp=0.0,
+            latitude=38.913672183345678,
+            longitude=-77.036543219876543,
+            altitude=10000,
+        )
+        assert pos.latitude == 38.91367
+        assert pos.longitude == -77.03654
+
+    def test_fully_none_optional_absent_from_exclude_none_json(self):
+        import json
+
+        pos = Position(timestamp=0.0, latitude=1.0, longitude=2.0)
+        payload = json.loads(pos.model_dump_json(exclude_none=True))
+        assert "altitude" not in payload
 
 
 class TestVelocity:
@@ -75,13 +93,31 @@ class TestVelocity:
     def test_all_optional(self):
         vel = Velocity(timestamp=0.0)
         d = vel.to_dict()
-        assert d["velocity"] is None
-        assert d["heading"] is None
-        assert d["vertical_speed"] is None
+        # None-valued keys are omitted entirely
+        assert "velocity" not in d
+        assert "heading" not in d
+        assert "vertical_speed" not in d
+        assert d == {"timestamp": datetime.fromtimestamp(0.0, tz=timezone.utc)}
 
     def test_negative_vertical_speed(self):
         vel = Velocity(timestamp=0.0, vertical_speed=-1500)
         assert vel.vertical_speed == -1500
+
+    def test_heading_precision_capped_on_construction(self):
+        vel = Velocity(timestamp=0.0, heading=273.1363583683326)
+        assert vel.heading == 273.1
+
+    def test_heading_none_stays_none(self):
+        vel = Velocity(timestamp=0.0, velocity=100.0)
+        assert vel.heading is None
+
+    def test_fully_none_optional_absent_from_exclude_none_json(self):
+        import json
+
+        vel = Velocity(timestamp=0.0, velocity=100.0)
+        payload = json.loads(vel.model_dump_json(exclude_none=True))
+        assert "heading" not in payload
+        assert "vertical_speed" not in payload
 
 
 class TestGenerateFlightId:
@@ -269,3 +305,25 @@ class TestCompletedFlight:
         restored = CompletedFlight.model_validate_json(json_str)
         assert restored.ident == "DAL659"
         assert restored.origin == "KATL"
+
+    def test_fully_none_optionals_absent_from_exclude_none_json(self):
+        import json
+
+        flight = self._make()
+        payload = json.loads(flight.model_dump_json(by_alias=True, exclude_none=True))
+        for key in ("ident", "operator", "squawk", "origin", "destination"):
+            assert key not in payload
+
+    def test_positions_and_velocities_entries_omit_none_keys(self):
+        import json
+
+        # positions/velocities are list[dict] built from Position/Velocity
+        # .to_dict(), which already drops None-valued keys.
+        flight = self._make(
+            positions=[Position(timestamp=0.0, latitude=1.0, longitude=2.0).to_dict()],
+            velocities=[Velocity(timestamp=0.0, velocity=100.0).to_dict()],
+        )
+        payload = json.loads(flight.model_dump_json(by_alias=True, exclude_none=True))
+        assert "altitude" not in payload["positions"][0]
+        assert "heading" not in payload["velocities"][0]
+        assert "vertical_speed" not in payload["velocities"][0]

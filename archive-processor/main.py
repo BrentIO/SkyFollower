@@ -556,7 +556,7 @@ class ArchiveProcessor:
             # Don't ack — let the message be re-queued
             logger.error("Failed to process flight %s: %s", flight.id, exc)
             # But to avoid infinite retry loops, fall back locally and ack
-            payload = flight.model_dump_json(by_alias=True)
+            payload = flight.model_dump_json(by_alias=True, exclude_none=True)
             self._fallback.put(payload)
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -596,7 +596,7 @@ class ArchiveProcessor:
             self._archive_flight_to_s3(flight)
         else:
             # Queue the raw JSON payload for later retry
-            self._fallback.put(flight.model_dump_json(by_alias=True))
+            self._fallback.put(flight.model_dump_json(by_alias=True, exclude_none=True))
             logger.info(
                 "S3 unavailable — queued flight %s to local fallback (depth=%d).",
                 flight.id, self._fallback.depth(),
@@ -663,7 +663,7 @@ class ArchiveProcessor:
         if stitched is not None:
             flight, s3_key = stitched
 
-        payload_dict = flight.model_dump(by_alias=True, mode="json")
+        payload_dict = flight.model_dump(by_alias=True, mode="json", exclude_none=True)
         feature = build_geojson_feature(flight)
         if feature is not None:
             payload_dict["flight_path"] = feature
@@ -776,7 +776,7 @@ class ArchiveProcessor:
             )
             try:
                 self._index_fallback.put(json.dumps({
-                    "flight_json": flight.model_dump_json(by_alias=True),
+                    "flight_json": flight.model_dump_json(by_alias=True, exclude_none=True),
                     "s3_key": s3_key,
                 }))
             except Exception as queue_exc:

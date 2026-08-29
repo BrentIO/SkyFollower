@@ -38,14 +38,28 @@ class Position(BaseModel):
     longitude: float
     altitude: Optional[int] = None  # feet MSL; None when not present in message
 
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def _cap_coordinate_precision(cls, v: float) -> float:
+        # CPR-decoded lat/lon commonly carries 13+ significant digits; 5
+        # decimal places is ~1.1 m, far tighter than ADS-B accuracy itself.
+        # Capping here — the one construction site, right after pyModeS
+        # decode — means every downstream JSON representation inherits it.
+        return round(v, 5)
+
     def to_dict(self) -> dict:
-        """Return legacy-compatible dict with UTC datetime timestamp."""
-        return {
+        """Return legacy-compatible dict with UTC datetime timestamp.
+
+        Keys whose value is None are omitted rather than serialised as
+        explicit null — multiplied across every position row on every
+        flight, those nulls are a real contributor to payload size."""
+        d = {
             "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
             "latitude": self.latitude,
             "longitude": self.longitude,
             "altitude": self.altitude,
         }
+        return {k: v for k, v in d.items() if v is not None}
 
 
 class Velocity(BaseModel):
@@ -56,14 +70,26 @@ class Velocity(BaseModel):
     heading: Optional[float] = None        # degrees 0-359
     vertical_speed: Optional[int] = None   # ft/min; negative = descending
 
+    @field_validator("heading")
+    @classmethod
+    def _cap_heading_precision(cls, v: Optional[float]) -> Optional[float]:
+        # 1 decimal place on a 0-359° heading is already finer than any
+        # consumer needs; pyModeS emits far more. velocity (knots) and
+        # vertical_speed (int ft/min) have no fractional precision to cap.
+        return v if v is None else round(v, 1)
+
     def to_dict(self) -> dict:
-        """Return legacy-compatible dict with UTC datetime timestamp."""
-        return {
+        """Return legacy-compatible dict with UTC datetime timestamp.
+
+        Keys whose value is None are omitted rather than serialised as
+        explicit null (e.g. a velocity report that carried no heading)."""
+        d = {
             "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
             "velocity": self.velocity,
             "heading": self.heading,
             "vertical_speed": self.vertical_speed,
         }
+        return {k: v for k, v in d.items() if v is not None}
 
 
 # ── Enrichment models (shape matches AROI API responses) ───────────────────
