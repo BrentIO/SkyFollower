@@ -20,6 +20,13 @@ frontend bundle, and the final stage runs both uvicorn (bound to
 fallback to `index.html` for client-side routing) and proxies `/api/*` to
 uvicorn. `docker-compose.management-ui.yaml` maps `80:80`.
 
+Both base images (`node:26-slim` for the frontend stage, `python:3.14-slim`
+for the final stage) are pinned to an explicit `@sha256:<digest>` so
+Dependabot surfaces a rebuild PR when either tag is re-pushed upstream.
+Resolve a current digest with `docker buildx imagetools inspect <image>:<tag>`;
+a CI guard in `.github/workflows/run-tests.yaml` fails the build on any
+unpinned `FROM` line.
+
 ## Endpoints
 
 Per-item CRUD, not bulk replace — every rule and area is independently

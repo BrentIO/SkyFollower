@@ -22,6 +22,18 @@ writes with a fixed 3-day TTL instead of reading `REDIS_TTL_DAYS`.
 Each runner publishes a single MQTT message on completion with `records_imported`,
 `last_run_at`, and `last_run_status`.
 
+## Container image
+
+Every runner's `Dockerfile` bases on `python:3.14-slim`, pinned to an
+explicit digest: `FROM python:3.14-slim@sha256:<digest>`. The bare tag alone
+is not enough — Docker Hub re-pushes it under the same name on every
+upstream patch, and Dependabot only tracks (and opens a rebuild PR for) a
+digest that is already present in the `FROM` line. When adding a runner,
+copy the digest from an existing runner's `Dockerfile`, or resolve the
+current one with `docker buildx imagetools inspect python:3.14-slim`. A CI
+guard in `.github/workflows/run-tests.yaml` fails the build if any
+`Dockerfile` has an unpinned base image.
+
 ## Configuration
 
 Every runner reads the same three config blocks via `shared/config.py`'s

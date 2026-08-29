@@ -1,4 +1,4 @@
-FROM node:26-slim AS frontend-build
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS frontend-build
 
 WORKDIR /frontend
 
@@ -13,7 +13,7 @@ ARG VERSION=dev
 ENV VITE_VERSION=$VERSION
 RUN npm run build
 
-FROM python:3.14-slim AS base
+FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5 AS base
 
 WORKDIR /app
 
