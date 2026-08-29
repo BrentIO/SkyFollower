@@ -132,7 +132,7 @@ def receiver_registry_index_key() -> str:
     enumerate through, unlike message processors). Added to at claim time
     and re-added (idempotent SADD) on every heartbeat tick, so a restart
     that resumes an already-persisted identity (no claim call at all) still
-    ends up back in the index within one telemetry_interval_seconds. No TTL
+    ends up back in the index within one MQTT_PUBLISH_INTERVAL_SECONDS. No TTL
     on the set itself -- self-heals the same way archive_search_index_key
     does: a caller that SMEMBERS this set and finds a member's
     receiver:registration:{id} entry already expired just SREMs that stale

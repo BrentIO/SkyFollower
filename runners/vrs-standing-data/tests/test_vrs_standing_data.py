@@ -52,7 +52,7 @@ stage_data = _mod.stage_data
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 route_key = _mod.route_key
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ROUTE_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 

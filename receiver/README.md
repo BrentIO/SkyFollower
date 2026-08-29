@@ -31,8 +31,11 @@ Compose from this host's `.env` (written by `scripts/install.sh`).
 | `REDIS_HOST` | ❌ | — | Leave unset to disable the receiver's Redis-backed identity claim, per-connection message counters, and core-health registration entirely -- see [Receiver Identity](#receiver-identity) and [Redis-Backed Message Counters](#redis-backed-message-counters) |
 | `REDIS_PORT` | ❌ | `6379` | |
 | `REDIS_PASSWORD` | ❌ | — | |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the receiver publishes MQTT statistic messages, refreshes its Redis identity-claim heartbeat, and (at minimum) flushes message counters to Redis |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+Timing values (MQTT publish cadence, heartbeat refresh/TTL, reconnect
+backoff) are not environment variables -- they are fixed constants in
+`shared/timing.py`. See [Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
 
 `queue.db` (the RabbitMQ offline fallback) is always written to `/app/data`,
 a fixed, non-configurable bind mount -- see `docker-compose.receiver.yaml`.
@@ -65,7 +68,7 @@ handling on the message processor side.
 
 Each receiver container needs a stable identifier to distinguish it from any other receiver publishing to the same MQTT broker -- included in every MQTT topic it publishes (`SkyFollower/receiver/{id}/...`) and in its HA `identifiers`/`unique_id`. This used to be a manually-set `RECEIVER_ID` environment variable, which had no way to enforce that an operator actually set it, or set it uniquely.
 
-**With `REDIS_HOST` set**, `RECEIVER_NAME` itself becomes that stable identity, claimed via Redis the same way `MESSAGE_PROCESSOR_ID` is (see `message-processor/README.md`'s own identity section): on first-ever boot the receiver `SET`s `skyfollower-receiver-{RECEIVER_NAME}` with `NX`, so a second receiver misconfigured with the same name fails to start with a clear "already claimed" error instead of silently colliding. A successful claim is persisted to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in) and reused on every subsequent restart -- **that restart makes zero Redis calls to resolve its identity**, which is what lets a receiver keep capturing and locally-queueing traffic through a total Redis (and RabbitMQ) outage. Only the very first boot needs Redis reachable; if it isn't, the receiver refuses to start rather than falling back to something unverified. Once claimed, a background thread refreshes the claim's TTL every `TELEMETRY_INTERVAL_SECONDS` (mirroring the message processor's own heartbeat exactly) so a genuinely-dead receiver's name frees up for reuse while a live one never loses it.
+**With `REDIS_HOST` set**, `RECEIVER_NAME` itself becomes that stable identity, claimed via Redis the same way `MESSAGE_PROCESSOR_ID` is (see `message-processor/README.md`'s own identity section): on first-ever boot the receiver `SET`s `skyfollower-receiver-{RECEIVER_NAME}` with `NX`, so a second receiver misconfigured with the same name fails to start with a clear "already claimed" error instead of silently colliding. A successful claim is persisted to `{data_dir}/receiver_id` (the same host-mounted directory `queue.db` lives in) and reused on every subsequent restart -- **that restart makes zero Redis calls to resolve its identity**, which is what lets a receiver keep capturing and locally-queueing traffic through a total Redis (and RabbitMQ) outage. Only the very first boot needs Redis reachable; if it isn't, the receiver refuses to start rather than falling back to something unverified. Once claimed, a background thread refreshes the claim's TTL every `HEARTBEAT_INTERVAL_SECONDS` (mirroring the message processor's own heartbeat exactly) so a genuinely-dead receiver's name frees up for reuse while a live one never loses it.
 
 **With `REDIS_HOST` unset**, none of the above applies: the receiver generates a UUID on first startup and persists it to `{data_dir}/receiver_id` instead, reusing it on every subsequent restart. No configuration needed, no collision risk, and it's fully decoupled from `RECEIVER_NAME`, which stays purely cosmetic in this mode -- renaming a receiver never changes its underlying identity or orphans its MQTT/HA history.
 
@@ -75,7 +78,7 @@ Because identity is either generated per instance (keyed off that instance's own
 
 With `REDIS_HOST` configured, each `sources[]` connection also gets three cumulative message counts -- `messages_{host}_{port}_total_hour`, `_total_today`, `_total_lifetime` -- for a source too sparse for the existing 30-second `messages_{host}_{port}_per_second` rate to say anything useful about.
 
-The per-message hot path (`_RateTracker.record()`) stays pure in-memory arithmetic; nothing there ever touches Redis or checks the clock. Counts are flushed to Redis from the same background thread that already handles telemetry, triggered by whichever comes first: the normal `TELEMETRY_INTERVAL_SECONDS` tick, or 100 messages accumulated since the last flush (bounds staleness for a busy connection like `1090` without waiting out a possibly-long interval). The actual increment-with-expiry-only-on-creation is `shared/lua/incr_period_counter.lua`, shared with the message processor's own equivalent counters -- called via `EVALSHA` so the exists-check, increment, and conditional `EXPIREAT` are one atomic round-trip.
+The per-message hot path (`_RateTracker.record()`) stays pure in-memory arithmetic; nothing there ever touches Redis or checks the clock. Counts are flushed to Redis from the same background thread that already handles telemetry, on the fixed `MQTT_PUBLISH_INTERVAL_SECONDS` cadence -- purely time-based, with no message-count trigger, so a burst of traffic just produces one larger `INCRBY` on the next tick rather than an early flush. The actual increment-with-expiry-only-on-creation is `shared/lua/incr_period_counter.lua`, shared with the message processor's own equivalent counters -- called via `EVALSHA` so the exists-check, increment, and conditional `EXPIREAT` are one atomic round-trip.
 
 **Known limitation**: unlike the message processor's own hour/today counters (which read straight from Redis on every publish, so they survive a restart), the receiver publishes these three fields from its own in-memory running totals, which have no persistence layer of their own -- a receiver restart resets what it displays to zero even though the Redis-side totals (what core-health reads) keep accumulating across that restart. `lifetime_count` is the same story: it's a running total for the process's own lifetime, not since the receiver was first ever installed.
 
@@ -254,7 +257,7 @@ re-established, the fallback queue is drained oldest-first before new
 messages are forwarded. If RabbitMQ drops mid-drain, draining stops cleanly
 and resumes on the next reconnect.
 
-Draining is also attempted independently every `telemetry_interval_seconds`,
+Draining is also attempted independently every `MQTT_PUBLISH_INTERVAL_SECONDS`,
 not just on a detected reconnect. A publish failure can leave messages queued
 without the underlying connection ever raising an error (a broker-side
 rejection, a channel-level error — anything short of the connection itself
@@ -288,7 +291,7 @@ an operator inspects or discards out-of-band (`data_dir` is already a
 host-mounted volume, same as `queue.db` itself).
 
 A raw attempt count alone isn't safe: `_drain_fallback()` is called on
-every successful RabbitMQ reconnect (not just on the `telemetry_interval_seconds`
+every successful RabbitMQ reconnect (not just on the `MQTT_PUBLISH_INTERVAL_SECONDS`
 tick), so a flapping connection reconnecting every few seconds could
 otherwise burn through the retry threshold within seconds — dead-lettering
 a message that was never actually poison, just unlucky enough to be at the
@@ -326,7 +329,7 @@ All topics use the root `SkyFollower`.
 
 A `messages_{host}_{port}_per_second`, `{host}_{port}_connected`, `{host}_{port}_reconnect_count`, and (once traffic has been seen) `{host}_{port}_connected_attributes` topic are published for every connection listed in `sources[]` — keyed by connection (`host`/`port`), not by `source` tag, so two connections sharing the same tag (e.g. two EXTERNAL feeds) are tracked independently instead of being conflated. For example, `{ "host": "adsb.lol", "port": 30105, "source": "EXTERNAL" }` publishes to `messages_adsb.lol_30105_per_second`, `adsb.lol_30105_connected`, `adsb.lol_30105_reconnect_count`, and `adsb.lol_30105_connected_attributes`.
 
-Each stat is published as its own retained topic (not a combined JSON payload) every `telemetry_interval_seconds`, except `{host}_{port}_connected_attributes`, which is itself a small JSON payload -- Home Assistant's `json_attributes_topic` mechanism for attaching extra attributes to a sensor doesn't have a plain-value equivalent.
+Each stat is published as its own retained topic (not a combined JSON payload) every `MQTT_PUBLISH_INTERVAL_SECONDS`, except `{host}_{port}_connected_attributes`, which is itself a small JSON payload -- Home Assistant's `json_attributes_topic` mechanism for attaching extra attributes to a sensor doesn't have a plain-value equivalent.
 
 Home Assistant autodiscovery payloads are published to
 `homeassistant/sensor/SkyFollower_receiver_{receiver_id}_{field}/config` on MQTT connect,

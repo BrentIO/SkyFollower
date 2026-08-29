@@ -46,7 +46,7 @@ _type_check_passes = _mod._type_check_passes
 _escape_tag = _mod._escape_tag
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 

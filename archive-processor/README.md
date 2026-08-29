@@ -33,8 +33,12 @@ by Compose from this host's `.env` (written by `scripts/install.sh`).
 | `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain. Shared with `archive-compaction` |
 | `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name. `docker-compose.archive.yaml` maps this from the `.env` key `ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID` -- a credential pair distinct from `archive-compaction`'s, so the two run under their own least-privilege IAM identities |
 | `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name. Mapped from the `.env` key `ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY` |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the archive processor publishes MQTT statistic messages |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+Timing values (the MQTT publish cadence, the periodic `s3.db` drain
+cadence, reconnect backoffs, the stitch-pointer TTL) are not environment
+variables -- they are fixed constants in `shared/timing.py`. See
+[Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
 
 `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue —
 see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS
@@ -139,7 +143,7 @@ to. The archive processor detects and merges this after the fact:
   This is a known, accepted limitation: an out-of-order arrival like this
   is rare enough (it needs an S3 write failure that survives the AWS SDK's
   own internal retries, *and* a same-aircraft continuation landing within
-  one `telemetry_interval_seconds` tick of that failure) that the result —
+  one `MQTT_PUBLISH_INTERVAL_SECONDS` tick of that failure) that the result —
   two separate archived records instead of one merged one — is treated as
   an acceptable outcome rather than something worth adding cross-thread
   coordination between the live write path and the local retry queue to
@@ -249,7 +253,7 @@ object itself.
 
 Both queues are retried on the same two triggers — whenever the background
 S3-connectivity thread detects a reconnect (checked every 10 seconds), and
-independently, once per `telemetry_interval_seconds` — but the *flight*
+independently, once per `MQTT_PUBLISH_INTERVAL_SECONDS` — but the *flight*
 queue's reconnect-triggered drain works differently from every other
 drain, on purpose.
 
@@ -278,7 +282,7 @@ picking up wherever the queue was left. This same gate also covers a
 leftover backlog found at startup (e.g. after a crash mid-outage), not just
 a live reconnect, since `start()` runs it before consuming anything.
 
-Every other drain — the flight queue's periodic `telemetry_interval_seconds`
+Every other drain — the flight queue's periodic `MQTT_PUBLISH_INTERVAL_SECONDS`
 safety sweep, and the index queue on *either* trigger — still runs the way
 it always has: `drain_in_background()` spawns the actual drain on a
 background thread and returns immediately, so a slow drain never delays
@@ -331,7 +335,7 @@ out-of-band (`data_dir` is already a host-mounted volume, same as `s3.db`
 itself).
 
 A raw attempt count alone isn't safe: the flight queue's reconnect-drain
-runs on every successful S3 reconnect (not just the `telemetry_interval_seconds`
+runs on every successful S3 reconnect (not just the `MQTT_PUBLISH_INTERVAL_SECONDS`
 tick — see above), so a flapping S3 connection reconnecting every few
 seconds could otherwise burn through the retry threshold within seconds —
 dead-lettering a flight that was never actually poison, just unlucky
@@ -369,7 +373,7 @@ All topics use the root `SkyFollower`.
 | `dead_letter_index_queue_depth` | Integer as string | Parquet index rows dead-lettered after repeatedly failing to write |
 
 Each stat is published as its own retained topic (not a combined JSON
-payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
+payload) every `MQTT_PUBLISH_INTERVAL_SECONDS`. Home Assistant autodiscovery
 payloads are published to
 `homeassistant/sensor/SkyFollower_archive_{field}/config` on MQTT connect;
 each sensor's `state_topic` points directly at its own

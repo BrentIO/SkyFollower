@@ -20,9 +20,7 @@ from shared.config import (
     rabbitmq_management_config,
     receiver_config,
     redis_config,
-    runner_config,
     s3_config,
-    telemetry_config,
 )
 
 _MQTT = {
@@ -74,7 +72,7 @@ def _env(*groups: dict, **overrides: str) -> dict:
 class TestRequiredVariables:
     def test_every_missing_variable_is_reported_in_one_error(self):
         with pytest.raises(ConfigError) as excinfo:
-            load_config("rabbitmq", "mqtt", "telemetry", "receiver", environ={})
+            load_config("rabbitmq", "mqtt", "receiver", environ={})
 
         # mqtt contributes nothing here -- it's optional everywhere, so an
         # unset MQTT_HOST/USERNAME/PASSWORD is not a problem to report.
@@ -137,8 +135,8 @@ class TestRequiredVariables:
 class TestDefaults:
     def test_every_documented_default_is_applied_when_unset(self):
         cfg = load_config(
-            "mqtt", "rabbitmq", "redis", "athena", "telemetry",
-            "message_processor", "runner",
+            "mqtt", "rabbitmq", "redis", "athena",
+            "message_processor",
             environ=_env(_MQTT, _RABBITMQ, _REDIS, _MESSAGE_PROCESSOR),
         )
 
@@ -152,28 +150,21 @@ class TestDefaults:
             "database": "skyfollower",
             "table": "archive_flights",
         }
-        assert cfg["telemetry_interval_seconds"] == 30
-        assert cfg["rule_notification_max_lag_seconds"] == 30
-        assert cfg["redis_ttl_days"] == 14
 
     def test_set_values_override_defaults(self):
         cfg = load_config(
-            "mqtt", "redis", "telemetry", "runner",
+            "mqtt", "redis",
             environ=_env(
                 _MQTT, _REDIS,
                 LOG_LEVEL="debug",
                 MQTT_PORT="8883",
                 REDIS_PORT="6380",
-                TELEMETRY_INTERVAL_SECONDS="15",
-                REDIS_TTL_DAYS="7",
             ),
         )
 
         assert cfg["log_level"] == "debug"
         assert cfg["mqtt"]["port"] == 8883
         assert cfg["redis"]["port"] == 6380
-        assert cfg["telemetry_interval_seconds"] == 15
-        assert cfg["redis_ttl_days"] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +365,7 @@ class TestReceiverOptionalRedis:
 class TestShape:
     def test_receiver_shape(self):
         cfg = load_config(
-            "rabbitmq", "mqtt", "telemetry", "receiver",
+            "rabbitmq", "mqtt", "receiver",
             environ=_env(_RABBITMQ, _MQTT, _RECEIVER),
         )
         assert cfg["rabbitmq"] == {
@@ -393,17 +384,16 @@ class TestShape:
 
     def test_archive_processor_shape(self):
         cfg = load_config(
-            "rabbitmq", "redis", "mqtt", "s3", "telemetry",
+            "rabbitmq", "redis", "mqtt", "s3",
             environ=_env(_RABBITMQ, _REDIS, _MQTT, _S3),
         )
         assert set(cfg) == {
             "log_level", "rabbitmq", "redis", "mqtt", "s3",
-            "telemetry_interval_seconds",
         }
 
     def test_runner_shape(self):
-        cfg = load_config("redis", "mqtt", "runner", environ=_env(_REDIS, _MQTT))
-        assert set(cfg) == {"log_level", "redis", "mqtt", "redis_ttl_days"}
+        cfg = load_config("redis", "mqtt", environ=_env(_REDIS, _MQTT))
+        assert set(cfg) == {"log_level", "redis", "mqtt"}
 
     def test_data_dir_is_a_constant_not_a_config_field(self):
         cfg = load_config("redis", environ=_env(_REDIS))
@@ -470,13 +460,11 @@ class TestBlockHelpers:
         athena_config(loader)
         receiver_config(loader)
         message_processor_config(loader)
-        runner_config(loader)
-        telemetry_config(loader)
 
         with pytest.raises(ConfigError) as excinfo:
             loader.raise_for_problems()
 
-        # One accumulated report rather than eleven separate failures.
+        # One accumulated report rather than a separate failure per block.
         assert len(excinfo.value.problems) > 8
 
     def test_rabbitmq_management_config_requires_monitoring_credentials(self, monkeypatch):

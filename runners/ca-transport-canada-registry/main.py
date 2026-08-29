@@ -34,6 +34,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.config import ConfigError, load_config
+from shared.timing import ENRICHMENT_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
@@ -46,7 +47,6 @@ from shared.sqlite_staging import open_staging_db
 logger = logging.getLogger("ca-transport-canada-registry")
 
 DOWNLOAD_URL = "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/download/ccarcsdb.zip"
-REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/ca-transport-canada-registry"
 
 # ---------------------------------------------------------------------------
@@ -587,7 +587,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 def main() -> None:
     try:
-        cfg = load_config("redis", "mqtt", "runner")
+        cfg = load_config("redis", "mqtt")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)
@@ -598,8 +598,7 @@ def main() -> None:
     rc = cfg["redis"]
     r = build_redis_client(rc)
 
-    ttl_days = cfg.get("redis_ttl_days", 14)
-    ttl = ttl_days * 86400
+    ttl = ENRICHMENT_TTL_SECONDS
 
     db_path = "/app/data/staging.db"
 

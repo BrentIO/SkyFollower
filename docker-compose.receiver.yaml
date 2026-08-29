@@ -12,7 +12,6 @@ services:
     # so a container only ever holds the values it actually reads.
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
       RECEIVER_NAME: ${RECEIVER_NAME}
       RECEIVER_SOURCES: ${RECEIVER_SOURCES}
       RABBITMQ_HOST: ${RABBITMQ_HOST}

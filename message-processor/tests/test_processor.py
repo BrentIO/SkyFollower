@@ -57,7 +57,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _migrate_schema,
     _confirm_after_repeated_sightings,
     _PARITY_ERROR_CONFIRM_COUNT,
-    _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
+    PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     main as processor_main,
 )
 from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES  # noqa: E402
@@ -95,7 +95,6 @@ def _minimal_config() -> dict:
     return {
         "redis": {"host": "localhost"},
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-        "telemetry_interval_seconds": 30,
     }
 
 
@@ -2715,7 +2714,7 @@ class TestConfirmAfterRepeatedSightings:
 
     def test_sightings_outside_window_are_pruned(self):
         pending = {"value": "7700", "sightings": [0.0, 1.0, 2.0, 3.0]}
-        new_received_at = _PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 10
+        new_received_at = PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 10
         pending, confirmed = _confirm_after_repeated_sightings(
             pending, "7700", new_received_at,
         )
@@ -2742,7 +2741,7 @@ class TestSquawkConfirmation:
     """_update_flight's #900 two-tier squawk trust: verified source or an
     ordinary value trusts immediately; a reserved code from an unverified
     source needs _PARITY_ERROR_CONFIRM_COUNT sightings of the same value
-    within _PARITY_ERROR_CONFIRM_WINDOW_SECONDS."""
+    within PARITY_ERROR_CONFIRM_WINDOW_SECONDS."""
 
     def test_ordinary_squawk_from_unverified_source_trusts_immediately(self):
         p, mock_redis = _make_processor()
@@ -2804,7 +2803,7 @@ class TestSquawkConfirmation:
         # than the confirmation window -- every call effectively restarts
         # the count at 1.
         for i in range(_PARITY_ERROR_CONFIRM_COUNT + 5):
-            t = i * (_PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 1)
+            t = i * (PARITY_ERROR_CONFIRM_WINDOW_SECONDS + 1)
             msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(t), source="1090")
             with p._db_lock:
                 p._update_flight({"icao_hex": "A8AE7F", "squawk": "7700", "verified": False}, msg)

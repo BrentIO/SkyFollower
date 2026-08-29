@@ -30,6 +30,7 @@ from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
 from shared.config import ConfigError, load_config
+from shared.timing import ENRICHMENT_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import aircraft_registry_key, aircraft_type_key, AIRCRAFT_REGISTRY_SEARCH_INDEX
@@ -41,7 +42,6 @@ from shared.country_flags import country_flag
 logger = logging.getLogger("ch-bazl-registry")
 
 API_URL = "https://app02.bazl.admin.ch/web/bazl-backend/lfr/csv"
-REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/ch-bazl-registry"
 
 _AIRCRAFT_TYPE_MAP: dict[str, str] = {
@@ -447,7 +447,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 def main() -> None:
     try:
-        cfg = load_config("redis", "mqtt", "runner")
+        cfg = load_config("redis", "mqtt")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)
@@ -459,8 +459,7 @@ def main() -> None:
     r = build_redis_client(rc)
     _ensure_search_index(r)
 
-    ttl_days = cfg.get("redis_ttl_days", 14)
-    ttl = ttl_days * 86400
+    ttl = ENRICHMENT_TTL_SECONDS
 
     session = requests.Session()
     session.headers.update({"User-Agent": "P5Software SkyFollower"})

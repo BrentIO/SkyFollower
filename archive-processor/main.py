@@ -52,6 +52,13 @@ from shared.redis_keys import (
     metrics_flights_archived_key,
     metrics_flights_skipped_key,
 )
+from shared.timing import (
+    DEFAULT_FLIGHT_TTL_SECONDS,
+    HEALTHCHECK_INTERVAL_SECONDS,
+    MQTT_PUBLISH_INTERVAL_SECONDS,
+    RECONNECT_BACKOFF_SECONDS,
+    STITCH_POINTER_TTL_SECONDS,
+)
 
 logger = logging.getLogger("archive-processor")
 
@@ -64,15 +71,12 @@ _AWS_SETUP_TEMPLATES = {
     os.path.join(_AWS_SETUP_DIR, "iam-policies", "archive-processor.json"): "iam-policy.json",
 }
 
-# How long the "last archived segment" pointer for an aircraft is kept in
-# Redis before it expires on its own (see _try_stitch / _update_stitch_pointer).
-_STITCH_POINTER_TTL_SECONDS = 86400
-
 # tmpfs-mounted in docker-compose.archive.yaml -- these writes must never
 # hit the host's storage, only /app/data (the S3 fallback queue) is
-# durable/persistent.
+# durable/persistent. Every timing value the archive processor uses is a
+# named constant from shared/timing.py, imported above (the
+# "last archived segment" stitch pointer TTL is STITCH_POINTER_TTL_SECONDS).
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
-_HEALTHCHECK_INTERVAL_SECONDS = 15
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +362,7 @@ class ArchiveProcessor:
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
         # read once at startup and cached. Not hot-reloaded; restart to pick
         # up a changed value.
-        self._flight_ttl_seconds: int = 300
+        self._flight_ttl_seconds: int = DEFAULT_FLIGHT_TTL_SECONDS
 
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
@@ -469,7 +473,7 @@ class ArchiveProcessor:
     def _s3_reconnect_loop(self) -> None:
         """Periodically attempt to reconnect to S3 if disconnected."""
         while not self._shutdown.is_set():
-            time.sleep(10)
+            time.sleep(RECONNECT_BACKOFF_SECONDS)
             with self._s3_lock:
                 already_connected = self._s3_connected
             if not already_connected and self._connect_s3():
@@ -534,12 +538,18 @@ class ArchiveProcessor:
 
             except pika.exceptions.AMQPConnectionError as exc:
                 self._rmq_connected = False
-                logger.warning("RabbitMQ unavailable: %s. Retrying in 10s…", exc)
-                time.sleep(10)
+                logger.warning(
+                    "RabbitMQ unavailable: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
             except Exception as exc:
                 self._rmq_connected = False
-                logger.error("RabbitMQ error: %s. Retrying in 10s…", exc)
-                time.sleep(10)
+                logger.error(
+                    "RabbitMQ error: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _on_message(self, ch, method, props, body: bytes) -> None:
         try:
@@ -756,7 +766,7 @@ class ArchiveProcessor:
             self._redis.set(
                 archive_last_segment_key(icao_hex),
                 json.dumps(pointer),
-                ex=_STITCH_POINTER_TTL_SECONDS,
+                ex=STITCH_POINTER_TTL_SECONDS,
             )
         except Exception as exc:
             logger.warning("Failed to update stitch pointer for %s: %s", icao_hex, exc)
@@ -826,9 +836,9 @@ class ArchiveProcessor:
         """Touch a heartbeat file while genuinely connected to RabbitMQ, for
         Docker's HEALTHCHECK to check the mtime of. S3 deliberately isn't
         part of the condition: an S3 outage is absorbed by the fallback queue
-        by design, so it isn't an unhealthy container. A fixed interval
-        independent of telemetry_interval_seconds (which is user-configurable
-        and not tuned for this), so healthcheck timing stays predictable."""
+        by design, so it isn't an unhealthy container. Runs at
+        HEALTHCHECK_INTERVAL_SECONDS, tuned against HEALTHCHECK_MAX_AGE_SECONDS
+        (see shared/timing.py) independent of the MQTT publish cadence."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
@@ -837,7 +847,7 @@ class ArchiveProcessor:
                     heartbeat_path.touch()
                 except OSError:
                     pass
-            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
+            time.sleep(HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -895,9 +905,8 @@ class ArchiveProcessor:
     # ------------------------------------------------------------------
 
     def _telemetry_loop(self) -> None:
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            time.sleep(interval)
+            time.sleep(MQTT_PUBLISH_INTERVAL_SECONDS)
             # Independent of MQTT/_publish_telemetry below: a periodic
             # sweep of both fallback queues, not just a reaction to
             # _s3_reconnect_loop's edge-triggered "was down, now up"
@@ -1004,7 +1013,7 @@ class ArchiveProcessor:
 
 def main() -> None:
     try:
-        config = load_config("rabbitmq", "redis", "mqtt", "s3", "telemetry")
+        config = load_config("rabbitmq", "redis", "mqtt", "s3")
     except ConfigError as exc:
         # Logging isn't configured until ArchiveProcessor is constructed,
         # which is exactly what failed here.

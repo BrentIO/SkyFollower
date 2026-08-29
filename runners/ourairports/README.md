@@ -58,11 +58,11 @@ docker run --rm --network host redis:latest redis-cli JSON.GET airport:KATL | py
 }
 ```
 
-TTL: `redis_ttl_days × 86400` seconds (default 14 days).
+TTL: 14 days (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`), not operator-configurable.
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` applies to each `airport:{icao_code}` key written by this runner.
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `airport:{icao_code}` with a fixed 14-day TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`).
 
 ## MQTT
 

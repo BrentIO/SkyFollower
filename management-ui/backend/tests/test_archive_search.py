@@ -436,7 +436,7 @@ class TestBackgroundPolling:
         # Never reaches a terminal state; force the deadline to have
         # already elapsed so the poll loop's `while` body never executes,
         # going straight to the give-up path.
-        with patch.object(ui_main, "_POLL_DEADLINE_SECONDS", -1):
+        with patch.object(ui_main, "ATHENA_POLL_DEADLINE_SECONDS", -1):
             resp = _create_search(client)
         uuid = resp.json()["uuid"]
         qid = fake_athena.started_queries and list(fake_athena.executions.keys())[0]

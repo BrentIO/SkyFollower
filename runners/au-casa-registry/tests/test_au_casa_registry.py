@@ -48,7 +48,7 @@ _apply_type_lookup = _mod._apply_type_lookup
 download_registry = _mod.download_registry
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 DOWNLOAD_URL = _mod.DOWNLOAD_URL
 

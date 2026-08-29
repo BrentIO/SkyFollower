@@ -37,6 +37,7 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import ConfigError, load_config
+from shared.timing import ROUTE_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import route_key
@@ -51,11 +52,10 @@ DOWNLOAD_URL = "https://codeload.github.com/vradarserver/standing-data/tar.gz/re
 # The upstream repo's "Standing data changes" commit lands daily around
 # 03:49-03:51 UTC (verified against 30 days of commit history when this
 # runner was built), unlike the weekly cadence of the registration sources
-# this runner used to also cover. A 3-day TTL -- not the 14-day default
-# every other (weekly) runner uses via REDIS_TTL_DAYS -- keeps route data
-# from silently going stale for over a week if a run or two is missed,
-# without needing a runner-specific variable for a single value.
-REDIS_TTL = 3 * 86400  # 3 days in seconds
+# this runner used to also cover. Route keys therefore use ROUTE_TTL_SECONDS
+# (shared/timing.py) -- deliberately shorter than the ENRICHMENT_TTL_SECONDS
+# every other (weekly) runner uses -- so route data can't silently go stale
+# for over a week if a run or two is missed.
 
 MQTT_ROOT = "SkyFollower/runner/vrs-standing-data"
 
@@ -275,7 +275,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 def main() -> None:
     try:
-        cfg = load_config("redis", "mqtt", "runner")
+        cfg = load_config("redis", "mqtt")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)
@@ -294,7 +294,7 @@ def main() -> None:
     try:
         files = download_and_extract_routes(DOWNLOAD_URL)
         conn = stage_data(files, db_path)
-        records_imported = write_to_redis(conn, r, REDIS_TTL)
+        records_imported = write_to_redis(conn, r, ROUTE_TTL_SECONDS)
         conn.close()
         status = "success"
         logger.info("VRS standing-data runner completed successfully. Records imported: %d", records_imported)

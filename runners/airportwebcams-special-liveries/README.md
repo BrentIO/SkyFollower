@@ -73,7 +73,7 @@ For comparison, an aircraft with no special livery — e.g. the Delta 757 (`N659
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` applies to each `aircraft:livery:{icao_hex}` key written by this runner.
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `aircraft:livery:{icao_hex}` with a fixed 14-day TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`).
 
 ## MQTT
 

@@ -69,14 +69,26 @@ from shared.redis_keys import (
     metrics_total_messages_processed_key,
     operator_key,
 )
+from shared.timing import (
+    CONFIG_POLL_INTERVAL_SECONDS,
+    DEFAULT_FLIGHT_TTL_SECONDS,
+    HEALTHCHECK_INTERVAL_SECONDS,
+    HEARTBEAT_INTERVAL_SECONDS,
+    HEARTBEAT_TTL_SECONDS,
+    MQTT_PUBLISH_INTERVAL_SECONDS,
+    PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
+    RATE_WINDOW_SECONDS,
+    RECONNECT_BACKOFF_SECONDS,
+    RULE_NOTIFICATION_MAX_LAG_SECONDS,
+)
 
 logger = logging.getLogger("message_processor")
 
 # tmpfs-mounted in docker-compose.message-processor.yaml -- these writes must
 # never hit the host's eMMC/SD storage, only /app/data (the SQLite active
-# store) is durable/persistent.
+# store) is durable/persistent. Every timing value the message processor
+# uses is a named constant from shared/timing.py, imported above.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
-_HEALTHCHECK_INTERVAL_SECONDS = 15
 
 # Each message-processor queue has exactly one consumer (bound via the
 # consistent-hash exchange), so prefetch_count buys no fair-dispatch benefit
@@ -136,16 +148,16 @@ def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
 # sourced from a message _decode_1090 couldn't CRC-verify.
 _RESERVED_SQUAWKS = frozenset({"7500", "7600", "7700", "7777"})
 
-# Debounce window/threshold for confirming a reserved squawk or an ident
-# sourced from an unverifiable message (see #900) -- matches
-# SkyFollower-legacy's mitigation for the same false-positive pattern.
-_PARITY_ERROR_CONFIRM_WINDOW_SECONDS = 30
+# Repeat-sighting count for confirming a reserved squawk or an ident
+# sourced from an unverifiable message -- matches SkyFollower-legacy's
+# mitigation for the same false-positive pattern. The trailing time window
+# it is measured over is PARITY_ERROR_CONFIRM_WINDOW_SECONDS (shared/timing.py).
 _PARITY_ERROR_CONFIRM_COUNT = 5
 
 
 def _confirm_after_repeated_sightings(
     pending: Optional[dict], value: str, received_at: float,
-    window_seconds: float = _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
+    window_seconds: float = PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     required_count: int = _PARITY_ERROR_CONFIRM_COUNT,
 ) -> tuple[dict, bool]:
     """Track repeated sightings of `value` within a trailing time window,
@@ -282,7 +294,7 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 class _RateTracker:
-    def __init__(self, window: int = 30) -> None:
+    def __init__(self, window: int = RATE_WINDOW_SECONDS) -> None:
         self._window = window
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
@@ -715,7 +727,7 @@ class MessageProcessor:
         # _update_flight's gap check, so it must never be a synchronous
         # Redis GET on the hot path. Not hot-reloaded; restart to pick up
         # a changed value.
-        self._flight_ttl_seconds: int = 300
+        self._flight_ttl_seconds: int = DEFAULT_FLIGHT_TTL_SECONDS
 
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
@@ -752,9 +764,8 @@ class MessageProcessor:
 
     def _claim_message_processor_id(self) -> None:
         """Prevent two message processors with the same ID running simultaneously."""
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         key = message_processor_heartbeat_key(self._id)
-        claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
+        claimed = self._redis.set(key, "1", nx=True, ex=HEARTBEAT_TTL_SECONDS)
         if not claimed:
             logger.critical(
                 "MESSAGE_PROCESSOR_ID %s is already running on another instance. Exiting.", self._id
@@ -821,12 +832,18 @@ class MessageProcessor:
 
             except pika.exceptions.AMQPConnectionError as exc:
                 self._rmq_connected = False
-                logger.warning("RabbitMQ unavailable: %s. Retrying in 10s…", exc)
-                time.sleep(10)
+                logger.warning(
+                    "RabbitMQ unavailable: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
             except Exception as exc:
                 self._rmq_connected = False
-                logger.error("RabbitMQ error: %s. Retrying in 10s…", exc)
-                time.sleep(10)
+                logger.error(
+                    "RabbitMQ error: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _on_message(self, ch, method, props, body: bytes) -> None:
         try:
@@ -1488,9 +1505,8 @@ class MessageProcessor:
         self._mqtt_connected = False
 
     def _publish_rule_notification(self, flight: Flight, rule: dict, received_at: float) -> None:
-        max_lag = self._cfg.get("rule_notification_max_lag_seconds", 30)
         lag = time.time() - received_at
-        if lag > max_lag:
+        if lag > RULE_NOTIFICATION_MAX_LAG_SECONDS:
             logger.debug(
                 "Suppressing MQTT rule notification for %s (rule=%s): "
                 "message is %.1fs old (backlog replay)",
@@ -1526,9 +1542,8 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _telemetry_loop(self) -> None:
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            time.sleep(interval)
+            time.sleep(MQTT_PUBLISH_INTERVAL_SECONDS)
             # Independent of _consume_loop's reconnect-triggered drain: a
             # publish failure can pin _rmq_connected False (or leave
             # messages queued) without the underlying connection ever
@@ -1620,9 +1635,10 @@ class MessageProcessor:
         # would otherwise have used -- see message-processor/README.md.
 
         # Refresh heartbeat
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         try:
-            self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
+            self._redis.expire(
+                message_processor_heartbeat_key(self._id), HEARTBEAT_TTL_SECONDS
+            )
         except Exception:
             pass
 
@@ -1632,7 +1648,7 @@ class MessageProcessor:
 
     def _config_poll_loop(self) -> None:
         while not self._shutdown.is_set():
-            time.sleep(30)
+            time.sleep(CONFIG_POLL_INTERVAL_SECONDS)
             try:
                 self._rules_engine.reload_if_changed()
             except Exception as exc:
@@ -1654,11 +1670,12 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _heartbeat_loop(self) -> None:
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            time.sleep(interval)
+            time.sleep(HEARTBEAT_INTERVAL_SECONDS)
             try:
-                self._redis.expire(message_processor_heartbeat_key(self._id), int(interval * 2))
+                self._redis.expire(
+                    message_processor_heartbeat_key(self._id), HEARTBEAT_TTL_SECONDS
+                )
             except Exception:
                 pass
 
@@ -1669,9 +1686,9 @@ class MessageProcessor:
 
     def _healthcheck_loop(self) -> None:
         """Touch a heartbeat file while genuinely connected to RabbitMQ, for
-        Docker's HEALTHCHECK to check the mtime of. A fixed interval
-        independent of telemetry_interval_seconds (which is user-configurable
-        and not tuned for this), so healthcheck timing stays predictable."""
+        Docker's HEALTHCHECK to check the mtime of. Runs at
+        HEALTHCHECK_INTERVAL_SECONDS, tuned against HEALTHCHECK_MAX_AGE_SECONDS
+        (see shared/timing.py) independent of the MQTT publish cadence."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
@@ -1680,7 +1697,7 @@ class MessageProcessor:
                     heartbeat_path.touch()
                 except OSError:
                     pass
-            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
+            time.sleep(HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -1847,7 +1864,7 @@ class MessageProcessor:
 def main() -> None:
     try:
         config = load_config(
-            "rabbitmq", "redis", "mqtt", "telemetry", "message_processor"
+            "rabbitmq", "redis", "mqtt", "message_processor"
         )
     except ConfigError as exc:
         configure_logging()

@@ -1472,10 +1472,14 @@ def get_route(ident: str):
 # where Athena wrote them in S3 -- see _fetch_and_cache_results below.
 # ---------------------------------------------------------------------------
 
-_SEARCH_TTL_SECONDS = 7 * 86400
+# ARCHIVE_SEARCH_TTL_SECONDS must expire a search's Redis record before the
+# Athena results file it points at is aged out of the results bucket by that
+# bucket's own lifecycle policy -- otherwise a still-listed search would
+# resolve to a deleted S3 object. Keep this comfortably under that lifecycle.
+ARCHIVE_SEARCH_TTL_SECONDS = 7 * 86400
 _PAGE_SIZE = 100
-_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
-_POLL_DEADLINE_SECONDS = 120
+ATHENA_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
+ATHENA_POLL_DEADLINE_SECONDS = 120
 _RESULT_CACHE_MAX_ENTRIES = 10
 
 # Column order here is exactly what the Athena SELECT below returns, so
@@ -1571,7 +1575,7 @@ def _build_search_query(where_clause: str) -> str:
 
 def _expires_at(submitted_at_iso: str) -> str:
     submitted = datetime.fromisoformat(submitted_at_iso)
-    return (submitted + timedelta(seconds=_SEARCH_TTL_SECONDS)).isoformat()
+    return (submitted + timedelta(seconds=ARCHIVE_SEARCH_TTL_SECONDS)).isoformat()
 
 
 def _search_summary(uuid: str, record: dict) -> dict:
@@ -1661,13 +1665,13 @@ def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
     if the deadline is hit without reaching a terminal state, this gives
     up (ABORTED) independent of whether Athena itself might still be
     running."""
-    deadline = time.monotonic() + _POLL_DEADLINE_SECONDS
+    deadline = time.monotonic() + ATHENA_POLL_DEADLINE_SECONDS
     attempt = 0
     while time.monotonic() < deadline:
         delay = (
-            _POLL_BACKOFF_SECONDS[attempt]
-            if attempt < len(_POLL_BACKOFF_SECONDS)
-            else _POLL_BACKOFF_SECONDS[-1] * 2  # 30s cap, per design
+            ATHENA_POLL_BACKOFF_SECONDS[attempt]
+            if attempt < len(ATHENA_POLL_BACKOFF_SECONDS)
+            else ATHENA_POLL_BACKOFF_SECONDS[-1] * 2  # 30s cap, per design
         )
         attempt += 1
         time.sleep(min(delay, 30))
@@ -1832,7 +1836,7 @@ def create_archive_search(body: ArchiveSearchCreate):
         "submitted_at": submitted_at,
         "query_execution_id": query_execution_id,
     }
-    _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=_SEARCH_TTL_SECONDS)
+    _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=ARCHIVE_SEARCH_TTL_SECONDS)
     try:
         _redis.sadd(archive_search_index_key(), search_uuid)
     except redis_lib.RedisError as exc:

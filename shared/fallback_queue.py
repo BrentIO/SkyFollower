@@ -57,11 +57,12 @@ import time
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
+from shared.timing import FALLBACK_RETRY_BACKOFF_SECONDS
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_RETRY_THRESHOLD = 5
 DEFAULT_DEAD_LETTER_MAX_BYTES = 100 * 1024 * 1024
-DEFAULT_MIN_RETRY_INTERVAL_SECONDS = 30
 
 
 class FallbackQueue:
@@ -71,7 +72,7 @@ class FallbackQueue:
         table_name: str = "queue",
         retry_threshold: int = DEFAULT_RETRY_THRESHOLD,
         dead_letter_max_bytes: int = DEFAULT_DEAD_LETTER_MAX_BYTES,
-        min_retry_interval_seconds: float = DEFAULT_MIN_RETRY_INTERVAL_SECONDS,
+        min_retry_interval_seconds: float = FALLBACK_RETRY_BACKOFF_SECONDS,
         non_poison_exceptions: tuple[type[BaseException], ...] = (),
         retryable_max_bytes: Optional[int] = None,
     ) -> None:

@@ -76,6 +76,13 @@ by hand or checking what a generated one contains. `LOG_LEVEL` (`"debug"`
 or `"info"`, default `info`) is accepted by every role and omitted from
 each table below.
 
+Internal timing values — MQTT publish cadence, Redis heartbeat refresh and
+TTL, config-poll interval, reconnect backoffs, enrichment key TTLs — are
+**not** environment variables. They are fixed constants in
+`shared/timing.py`, documented in [Timing and cadences](/architecture/timing).
+The one operator-tunable behavioural value, `flight_ttl_seconds`, lives in
+the `config:flight_ttl_seconds` Redis key, not in any `.env`.
+
 ### Receiver
 
 | Variable | Required | Default |
@@ -93,7 +100,6 @@ each table below.
 | `REDIS_HOST` | ❌ | — |
 | `REDIS_PORT` | ❌ | `6379` |
 | `REDIS_PASSWORD` | ❌ | — |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
 
 See [Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)
 for what each variable means, `RECEIVER_SOURCES`'s `host:port:source`
@@ -112,7 +118,6 @@ format, and the multiple-receiver-instance pattern.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
-| `REDIS_TTL_DAYS` | ❌ | `14` |
 
 `RABBITMQ_USERNAME`/`PASSWORD` and `REDIS_PASSWORD` are also what every
 other role's `.env` authenticates with, so the same values must be
@@ -160,8 +165,6 @@ here rather than the `redis` service name core's own components use.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
-| `RULE_NOTIFICATION_MAX_LAG_SECONDS` | ❌ | `30` |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
 
 `MESSAGE_PROCESSOR_ID` isn't in this table: it's not read from `.env` at
 all. Each instance's ID is a literal in its generated compose service
@@ -192,7 +195,6 @@ for the full flow.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` |
 
 `archive-processor` and `archive-compaction` authenticate to AWS as
 separate least-privilege IAM identities, so each reads its own credential
