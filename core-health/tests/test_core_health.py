@@ -390,6 +390,19 @@ class TestPublishExchangeStats:
         assert payload["state_topic"] == f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_in_rate"
         assert payload["unit_of_measurement"] == "msg/s"
 
+    def test_started_at_label_matches_other_components(self):
+        """Label is the plain "Start Time" every other component uses --
+        unique_id/object_id/topic stay SkyFollower_core_health_started_at."""
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_started_at/config"
+        ]
+        assert payload["name"] == "Start Time"
+        assert payload["unique_id"] == "SkyFollower_core_health_started_at"
+        assert payload["state_topic"] == f"{MQTT_ROOT}/statistic/started_at"
+
 
 # ---------------------------------------------------------------------------
 # Archive queue missing detection
