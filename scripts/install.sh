@@ -1379,12 +1379,16 @@ offer_ofelia_and_bulk_load() {
 
   # The runner list comes from `docker compose config --services`, not a
   # hardcoded list, so it cannot drift from what's actually declared.
+  # `--profile runners` is required: every runner-* service is declared
+  # `profiles: ["runners"]`, and `config --services` filters by active
+  # profiles exactly as `up`/`pull`/`ps` do -- without it the list comes
+  # back empty and the bulk load silently no-ops.
   # Every grep below is guarded with `|| true`: under set -e, a filter
   # that legitimately matches nothing (an unusual runner set, or none at
   # all) would otherwise take the whole script down right here instead of
   # just producing an empty list.
   local all_runners mictronics rest uk_last ordered
-  all_runners="$(cd "$role_dir" && docker compose config --services | grep '^runner-' || true)"
+  all_runners="$(cd "$role_dir" && docker compose --profile runners config --services | grep '^runner-' || true)"
   mictronics="$(echo "$all_runners" | grep '^runner-mictronics$' || true)"
   uk_last="$(echo "$all_runners" | grep '^runner-uk-caa-registry$' || true)"
   rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-uk-caa-registry$' | sort || true)"
