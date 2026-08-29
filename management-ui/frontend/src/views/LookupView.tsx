@@ -148,6 +148,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
     manufacturerModel || typeDesignator
       ? joinParts([manufacturerModel, typeDesignator ? `(${typeDesignator})` : undefined])
       : undefined;
+  // The manufacturer/model line above is the generic ICAO type (from
+  // Mictronics). `model` is the specific designation a national registry
+  // published (e.g. "737-8H4" from the FAA) -- shown separately when present,
+  // absent for aircraft covered only by Mictronics.
+  const model = displayStr(data.model);
   const serialNumber = displayStr(data.serial_number);
   const seats = displayStr(data.seats);
 
@@ -156,7 +161,9 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const ppManufacturerModel = joinParts([displayStr(powerplant?.manufacturer), displayStr(powerplant?.model)]);
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 
-  const hasAircraftSection = !!(category || type || manufacturerModelLine || serialNumber || seats || hasPowerplant);
+  const hasAircraftSection = !!(
+    category || type || manufacturerModelLine || model || serialNumber || seats || hasPowerplant
+  );
 
   const dataSources = displayArray(data.data_sources);
 
@@ -200,6 +207,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
             {manufacturerModelLine && (
               <div>
                 <Label>Manufacturer/Model</Label> {manufacturerModelLine}
+              </div>
+            )}
+            {model && (
+              <div>
+                <Label>Model</Label> {model}
               </div>
             )}
             {serialNumber && (
