@@ -3,13 +3,18 @@ name: skyfollower-archive
 # Interpolated from this host's .env (written by
 # scripts/install.sh). Named one variable at a time rather than
 # `env_file: .env`, so a container only ever holds the values it reads --
-# the AWS credentials below in particular.
+# the AWS credentials in particular.
+#
+# archive-processor and archive-compaction each get their own AWS
+# credential pair, mapped per-service below from distinct .env keys
+# (ARCHIVE_PROCESSOR_AWS_* / ARCHIVE_COMPACTION_AWS_*). They run under
+# separate least-privilege IAM identities (see specs/aws/iam-policies/),
+# so the container-side AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY -- the
+# names boto3 reads -- are deliberately not part of this shared anchor.
 x-archive-environment: &archive-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   S3_BUCKET: ${S3_BUCKET}
   AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
-  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
   MQTT_HOST: ${MQTT_HOST}
   MQTT_PORT: ${MQTT_PORT:-1883}
   MQTT_USERNAME: ${MQTT_USERNAME}
@@ -22,6 +27,8 @@ services:
     restart: unless-stopped
     environment:
       <<: *archive-environment
+      AWS_ACCESS_KEY_ID: ${ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY}
       TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
       RABBITMQ_HOST: ${RABBITMQ_HOST}
       RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
@@ -48,9 +55,10 @@ services:
 
   # ---------------------------------------------------------------------------
   # Archive Compaction — scheduled by its own ofelia instance, not the
-  # core's (docker-compose.core.yaml). This job only needs S3
-  # credentials, which already live on this host via archive-processor;
-  # the core has no AWS-facing components today.
+  # core's (docker-compose.core.yaml). Runs under its own least-privilege
+  # IAM identity, distinct from archive-processor's: its credentials come
+  # from the ARCHIVE_COMPACTION_AWS_* .env keys, not the shared anchor.
+  # The core has no AWS-facing components today.
   # ---------------------------------------------------------------------------
 
   # No healthcheck -- a one-shot job that runs to completion and exits, not
@@ -62,7 +70,10 @@ services:
     image: ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-archive-compaction
     profiles: ["compaction"]
-    environment: *archive-environment
+    environment:
+      <<: *archive-environment
+      AWS_ACCESS_KEY_ID: ${ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY}
     volumes:
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
@@ -101,5 +112,10 @@ services:
       ofelia.enabled: "true"
       ofelia.job-run.archive-compaction.schedule: "0 50 4 * * *"
       ofelia.job-run.archive-compaction.image: "ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}"
-      ofelia.job-run.archive-compaction.environment: '["LOG_LEVEL=${LOG_LEVEL:-info}", "S3_BUCKET=${S3_BUCKET}", "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}", "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}", "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
+      # Credentials MUST match the archive-compaction service definition above:
+      # the ARCHIVE_COMPACTION_AWS_* keys, not archive-processor's and not a
+      # shared pair. This scheduled run and the manual
+      # `docker compose run --rm archive-compaction` path have to get the same
+      # identity -- a mismatch here breaks only the nightly run.
+      ofelia.job-run.archive-compaction.environment: '["LOG_LEVEL=${LOG_LEVEL:-info}", "S3_BUCKET=${S3_BUCKET}", "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}", "AWS_ACCESS_KEY_ID=${ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID}", "AWS_SECRET_ACCESS_KEY=${ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
       ofelia.job-run.archive-compaction.delete: "true"

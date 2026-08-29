@@ -30,9 +30,9 @@ by Compose from this host's `.env` (written by `scripts/install.sh`).
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
 | `S3_BUCKET` | ✅ | — | S3 bucket name flights are written to |
-| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain |
-| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name |
-| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
+| `AWS_DEFAULT_REGION` | ✅ | — | boto3's own variable name -- no credentials are ever passed in code, so every client picks up the default credential chain. Shared with `archive-compaction` |
+| `AWS_ACCESS_KEY_ID` | ✅ | — | boto3's own variable name. `docker-compose.archive.yaml` maps this from the `.env` key `ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID` -- a credential pair distinct from `archive-compaction`'s, so the two run under their own least-privilege IAM identities |
+| `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name. Mapped from the `.env` key `ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY` |
 | `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the archive processor publishes MQTT statistic messages |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
