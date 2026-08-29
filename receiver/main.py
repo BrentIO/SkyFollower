@@ -1037,7 +1037,7 @@ class Receiver:
         device = build_ha_device(
             identifier=f"SkyFollower_receiver_{rid}",
             name=f"SkyFollower Receiver {display}",
-            model=display,
+            model="Receiver",
             configuration_url="https://brentio.github.io/SkyFollower/components/receiver.html",
         )
         availability = {
