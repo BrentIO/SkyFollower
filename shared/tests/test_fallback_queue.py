@@ -5,7 +5,8 @@ import tempfile
 import time
 from unittest.mock import patch
 
-from shared.fallback_queue import DEFAULT_MIN_RETRY_INTERVAL_SECONDS, FallbackQueue
+from shared.fallback_queue import FallbackQueue
+from shared.timing import FALLBACK_RETRY_BACKOFF_SECONDS
 
 
 def _make_queue(tmp_dir: str, **kwargs) -> FallbackQueue:
@@ -180,7 +181,7 @@ class TestMinRetryInterval:
     actually poison -- just unlucky timing during a brief instability."""
 
     def test_default_min_retry_interval_is_thirty_seconds(self):
-        assert DEFAULT_MIN_RETRY_INTERVAL_SECONDS == 30
+        assert FALLBACK_RETRY_BACKOFF_SECONDS == 30
 
     def test_first_attempt_is_never_blocked_by_cooldown(self):
         """A freshly queued row has no last_attempted_at yet, so it's

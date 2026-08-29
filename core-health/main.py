@@ -55,6 +55,12 @@ from shared.config import ConfigError, load_config
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
+from shared.timing import (
+    HEALTHCHECK_INTERVAL_SECONDS,
+    HTTP_TIMEOUT_SECONDS,
+    RABBITMQ_POLL_INTERVAL_SECONDS,
+    REDIS_POLL_INTERVAL_SECONDS,
+)
 from shared.rabbitmq_topology import (
     ADSB_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
@@ -76,21 +82,14 @@ logger = logging.getLogger("core-health")
 MQTT_ROOT = "SkyFollower/core-health"
 CORE_DEVICE_IDENTIFIER = "SkyFollower_Core"
 
-# Settled in the issue's design discussion, not operator-tunable (unlike
-# TELEMETRY_INTERVAL_SECONDS elsewhere, which is about *publish* cadence):
-# RabbitMQ's Management API aggregates stats on its own ~5s internal
-# interval broker-side, so 10s stays fresh without re-reading unchanged
-# cached data (also the old self-polling's own cadence). Redis's signals
-# (memory, persistence status, error counts) don't move on a sub-minute
-# timescale in ways that matter here, and a keyspace SCAN/--bigkeys is
-# explicitly out of scope for the recurring loop -- INFO/MEMORY STATS alone
-# cover every field below.
-RABBITMQ_POLL_INTERVAL_SECONDS = 10
-REDIS_POLL_INTERVAL_SECONDS = 60
-
+# RabbitMQ/Redis poll cadences and the HTTP deadline are named constants in
+# shared/timing.py (re-exported here so this module's existing references
+# keep working). RabbitMQ's Management API aggregates stats on its own ~5s
+# internal interval broker-side, and Redis's signals (memory, persistence
+# status, error counts) don't move on a sub-minute timescale in ways that
+# matter here; a keyspace SCAN/--bigkeys is out of scope for the recurring
+# loop -- INFO/MEMORY STATS alone cover every field below.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
-_HEALTHCHECK_INTERVAL_SECONDS = 15
-_HTTP_TIMEOUT_SECONDS = 10
 
 
 def _capitalized(value):
@@ -438,7 +437,7 @@ class CoreHealth:
 
     def _rmq_get(self, path: str):
         response = self._session.get(
-            f"{self._rmq_base_url}{path}", auth=self._rmq_auth, timeout=_HTTP_TIMEOUT_SECONDS
+            f"{self._rmq_base_url}{path}", auth=self._rmq_auth, timeout=HTTP_TIMEOUT_SECONDS
         )
         response.raise_for_status()
         return response.json()
@@ -598,7 +597,9 @@ class CoreHealth:
                 # leaves the retained value in place without lying about
                 # freshness, and this is what actually ages the entity out
                 # to unavailable if the outage is sustained. 3x the poll
-                # interval tolerates one skipped tick without flapping.
+                # interval (now 90s) tolerates one skipped tick without
+                # flapping; the x3 relationship to the poll interval is
+                # deliberate, not a coincidence with any timing.py constant.
                 "expire_after": RABBITMQ_POLL_INTERVAL_SECONDS * 3,
             }
             if state_class:
@@ -867,7 +868,7 @@ class CoreHealth:
                     heartbeat_path.touch()
                 except OSError:
                     pass
-            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
+            time.sleep(HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # Shutdown

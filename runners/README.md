@@ -14,10 +14,11 @@ service in `docker-compose.core.yaml`, staggered across the week so runners
 hitting the same country's civil aviation authority don't collide. That file
 is the single source of truth for exact schedules.
 
-Most runners write registration/airport data to Redis with a 14-day TTL
-(`REDIS_TTL_DAYS`, default 14). `vrs-standing-data`
+Most runners write registration/airport data to Redis with a fixed 14-day
+TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`). `vrs-standing-data`
 is the one exception: its source updates daily rather than weekly, so it
-writes with a fixed 3-day TTL instead of reading `REDIS_TTL_DAYS`.
+writes with a fixed 3-day TTL (`ROUTE_TTL_SECONDS`). Neither is
+operator-configurable — see [Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
 
 Each runner publishes a single MQTT message on completion with `records_imported`,
 `last_run_at`, and `last_run_status`.
@@ -36,12 +37,13 @@ guard in `.github/workflows/run-tests.yaml` fails the build if any
 
 ## Configuration
 
-Every runner reads the same three config blocks via `shared/config.py`'s
-`load_config("redis", "mqtt", "runner")` — one call, so a runner started
-with something missing reports every missing variable together rather than
-one per restart. Each runner's own README documents only what's specific
-to it (which Redis key(s) `REDIS_TTL_DAYS` applies to, if anything);
-the variables themselves are always these:
+Every runner reads the same two config blocks via `shared/config.py`'s
+`load_config("redis", "mqtt")` — one call, so a runner started with
+something missing reports every missing variable together rather than one
+per restart. The enrichment-key TTL is not one of these variables: it is a
+fixed constant (`ENRICHMENT_TTL_SECONDS`, or `ROUTE_TTL_SECONDS` for
+`vrs-standing-data`) in `shared/timing.py`. Each runner's own README notes
+which Redis key(s) it writes.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
@@ -52,7 +54,6 @@ the variables themselves are always these:
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
-| `REDIS_TTL_DAYS` | ❌ | `14` | TTL applied to the enrichment key(s) this runner writes — see the runner's own README for exactly which key(s) |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` or `"info"` |
 
 In `docker-compose.core.yaml`, every runner service (and the `ofelia`

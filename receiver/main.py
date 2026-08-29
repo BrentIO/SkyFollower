@@ -52,52 +52,36 @@ from shared.redis_keys import (
     receiver_registration_key,
     receiver_registry_index_key,
 )
+from shared.timing import (
+    HEALTHCHECK_INTERVAL_SECONDS,
+    HEARTBEAT_INTERVAL_SECONDS,
+    HEARTBEAT_TTL_SECONDS,
+    MQTT_PUBLISH_INTERVAL_SECONDS,
+    RATE_WINDOW_SECONDS,
+    RECONNECT_BACKOFF_SECONDS,
+    TCP_KEEPALIVE_PROBES,
+    TCP_KEEPIDLE_SECONDS,
+    TCP_KEEPINTVL_SECONDS,
+    UNPARSEABLE_WARNING_INTERVAL_SECONDS,
+)
 from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
 
 # tmpfs-mounted in docker-compose.receiver.yaml -- these writes must never
 # hit the host's eMMC/SD storage, only /app/data (the fallback SQLite
-# queue) is durable/persistent.
+# queue) is durable/persistent. Every timing value the receiver uses is a
+# named constant from shared/timing.py -- imported above, not redefined here.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
-_HEALTHCHECK_INTERVAL_SECONDS = 15
-
-# TCP keepalive timers applied to every source socket. The receiver only
-# ever reads from these connections and never writes, so a peer that
-# vanishes without a clean FIN/RST (a killed dump978-fa process, a dropped
-# route) is otherwise indistinguishable from a genuinely quiet feed -- the
-# half-open socket is held forever, no reconnect, still reported connected.
-# Keepalive makes the kernel probe an idle connection and tear it down once
-# the peer stops answering, after which recv() raises OSError and
-# _source_loop's existing reconnect path takes over -- no new reconnect
-# logic needed. Tuned far below the ~2-hour OS default: first probe after
-# 60s idle, then 3 probes 10s apart, giving a detection budget of roughly
-# 60 + (10 x 3) = 90s. Keepalive is used in preference to an
-# application-level idle deadline precisely because it does not
-# false-positive on a legitimately quiet feed (sparse overnight UAT): a
-# live peer answers the probes, so the connection is only dropped when it
-# is genuinely dead, with no needless reconnect churn inflating
-# reconnect_count. Fixed constants, not configuration -- correctness
-# tuning, same convention as _HEALTHCHECK_INTERVAL_SECONDS /
-# _UNPARSEABLE_WARNING_INTERVAL_SECONDS.
-_TCP_KEEPIDLE_SECONDS = 60
-_TCP_KEEPINTVL_SECONDS = 10
-_TCP_KEEPCNT = 3
-
-# Minimum spacing between "N unparseable lines" summary warnings, per
-# connection -- keeps a genuine format mismatch visible at default log
-# level without flooding logs at high traffic volume.
-_UNPARSEABLE_WARNING_INTERVAL_SECONDS = 60
 
 # ---------------------------------------------------------------------------
-# Rate tracker — 30-second rolling window (copied from message processor pattern)
+# Rate tracker — RATE_WINDOW_SECONDS rolling window (copied from message
+# processor pattern)
 # ---------------------------------------------------------------------------
-
-_FLUSH_PENDING_THRESHOLD = 100
 
 
 class _RateTracker:
-    def __init__(self, window: int = 30, flush_event: Optional[threading.Event] = None) -> None:
+    def __init__(self, window: int = RATE_WINDOW_SECONDS) -> None:
         self._window = window
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
@@ -124,19 +108,9 @@ class _RateTracker:
         self._flushed_lifetime = 0
         self._hour_bucket: Optional[datetime] = None
         self._day_bucket: Optional[datetime] = None
-        # Messages recorded since the last flush, across all three
-        # periods (they always move together) -- crossing
-        # _FLUSH_PENDING_THRESHOLD wakes the telemetry thread early
-        # instead of waiting out the full telemetry_interval_seconds.
-        # Shared across every _RateTracker the receiver owns (one Event
-        # per receiver, not per connection), so any connection crossing
-        # the threshold flushes all of them together.
-        self._pending_since_flush = 0
-        self._flush_event = flush_event
 
     def record(self) -> None:
         now = time.monotonic()
-        crossed = False
         with self._lock:
             self._timestamps.append(now)
             cutoff = now - self._window
@@ -145,11 +119,6 @@ class _RateTracker:
             self.hour_count += 1
             self.today_count += 1
             self.lifetime_count += 1
-            self._pending_since_flush += 1
-            if self._pending_since_flush >= _FLUSH_PENDING_THRESHOLD:
-                crossed = True
-        if crossed and self._flush_event is not None:
-            self._flush_event.set()
 
     def rate(self) -> float:
         now = time.monotonic()
@@ -191,8 +160,8 @@ class _RateTracker:
             # delete the key the instant it's written), and attributing it
             # to the new bucket would double-count messages that were
             # already local-only. Bounded to at most one flush cycle's
-            # worth (telemetry_interval_seconds, or _FLUSH_PENDING_THRESHOLD
-            # messages) each real rollover -- see receiver/README.md.
+            # worth (MQTT_PUBLISH_INTERVAL_SECONDS) each real rollover --
+            # see receiver/README.md.
             if hour_bucket != self._hour_bucket:
                 hour_delta = 0
                 self.hour_count = 0
@@ -213,7 +182,6 @@ class _RateTracker:
 
             lifetime_delta = self.lifetime_count - self._flushed_lifetime
             self._flushed_lifetime = self.lifetime_count
-            self._pending_since_flush = 0
 
         if hour_delta:
             next_hour = hour_bucket + timedelta(hours=1)
@@ -260,14 +228,14 @@ def _enable_tcp_keepalive(sock: socket.socket) -> None:
     non-TCP socket (a unit test's ``socketpair``) or an unusual platform
     degrades to "keepalive on, default timers" rather than raising. A real
     source socket from ``create_connection`` on a Linux container always
-    accepts them. See the ``_TCP_KEEPIDLE_SECONDS`` comment for the timing
-    rationale.
+    accepts them. See ``shared/timing.py``'s ``TCP_KEEPIDLE_SECONDS`` block
+    for the timing rationale.
     """
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     for _name, _value in (
-        ("TCP_KEEPIDLE", _TCP_KEEPIDLE_SECONDS),
-        ("TCP_KEEPINTVL", _TCP_KEEPINTVL_SECONDS),
-        ("TCP_KEEPCNT", _TCP_KEEPCNT),
+        ("TCP_KEEPIDLE", TCP_KEEPIDLE_SECONDS),
+        ("TCP_KEEPINTVL", TCP_KEEPINTVL_SECONDS),
+        ("TCP_KEEPCNT", TCP_KEEPALIVE_PROBES),
     ):
         if not hasattr(socket, _name):
             continue
@@ -322,10 +290,6 @@ class Receiver:
         # heartbeat/period-counter/core-health-registration behavior below
         # runs at all, matching the receiver's original behavior exactly
         # (random-UUID identity, no Redis interaction).
-        # Woken early (before telemetry_interval_seconds) once a
-        # connection's pending message count crosses
-        # _FLUSH_PENDING_THRESHOLD -- see _RateTracker.record().
-        self._flush_event = threading.Event()
         rc = config.get("redis") or {}
         self._redis = build_redis_client(rc) if rc.get("host") else None
         # Lazily script_load()'d on first flush rather than here -- loading
@@ -336,7 +300,7 @@ class Receiver:
 
         for src in config.get("sources", []):
             key = (src["host"], src["port"])
-            self._rates[key] = _RateTracker(flush_event=self._flush_event)
+            self._rates[key] = _RateTracker()
             self._connected[key] = False
             self._reconnect_counts[key] = 0
             self._last_message_at[key] = None
@@ -406,10 +370,9 @@ class Receiver:
             )
             sys.exit(1)
 
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         key = receiver_heartbeat_key(configured_name)
         try:
-            claimed = self._redis.set(key, "1", nx=True, ex=int(interval * 2))
+            claimed = self._redis.set(key, "1", nx=True, ex=HEARTBEAT_TTL_SECONDS)
         except Exception as exc:
             logger.critical(
                 "Cannot reach Redis to claim receiver identity %r: %s. Exiting.",
@@ -447,31 +410,30 @@ class Receiver:
         """
         if self._redis is None:
             return
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
-        ttl = int(interval * 2)
         try:
             self._redis.sadd(receiver_registry_index_key(), self._id)
             self._redis.set(
                 receiver_registration_key(self._id),
                 json.dumps(self._cfg.get("sources", [])),
-                ex=ttl,
+                ex=HEARTBEAT_TTL_SECONDS,
             )
         except Exception:
             pass
 
     def _heartbeat_loop(self) -> None:
         """Mirrors message-processor's _heartbeat_loop exactly: sleep
-        telemetry_interval_seconds, then refresh (unconditional EXPIRE,
-        never a second SET NX) the claim key's TTL, fail-soft on any
-        Redis error. Also refreshes the core-health registration (Part 3)
-        on the same cadence -- this is what re-registers a receiver that
-        resumed an already-persisted identity (case 1 above) without ever
-        calling _register_with_core_health() at claim time."""
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
+        HEARTBEAT_INTERVAL_SECONDS, then refresh (unconditional EXPIRE,
+        never a second SET NX) the claim key's TTL to HEARTBEAT_TTL_SECONDS,
+        fail-soft on any Redis error. Also refreshes the core-health
+        registration on the same cadence -- this is what re-registers a
+        receiver that resumed an already-persisted identity (case 1 above)
+        without ever calling _register_with_core_health() at claim time."""
         while not self._shutdown.is_set():
-            time.sleep(interval)
+            time.sleep(HEARTBEAT_INTERVAL_SECONDS)
             try:
-                self._redis.expire(receiver_heartbeat_key(self._id), int(interval * 2))
+                self._redis.expire(
+                    receiver_heartbeat_key(self._id), HEARTBEAT_TTL_SECONDS
+                )
             except Exception:
                 pass
             self._register_with_core_health()
@@ -555,12 +517,14 @@ class Receiver:
             except OSError as exc:
                 self._connected[key] = False
                 logger.warning(
-                    "Cannot connect to readsb %s:%s: %s — retrying in 5s…", host, port, exc
+                    "Cannot connect to readsb %s:%s: %s — retrying in %ss…",
+                    host, port, exc, RECONNECT_BACKOFF_SECONDS,
                 )
             except Exception as exc:
                 self._connected[key] = False
                 logger.error(
-                    "Source %s:%s error: %s — retrying in 5s…", host, port, exc
+                    "Source %s:%s error: %s — retrying in %ss…",
+                    host, port, exc, RECONNECT_BACKOFF_SECONDS,
                 )
 
             if not self._shutdown.is_set():
@@ -569,7 +533,7 @@ class Receiver:
                 # stream reader returned via its closed-connection break --
                 # a clean shutdown skips this entirely via the is_set() check.
                 self._reconnect_counts[key] = self._reconnect_counts.get(key, 0) + 1
-                time.sleep(5)
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _read_1090_stream(
         self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
@@ -581,11 +545,11 @@ class Receiver:
         def _maybe_warn_unparseable() -> None:
             nonlocal unparseable_count, unparseable_window_start
             now = time.monotonic()
-            if unparseable_count and now - unparseable_window_start >= _UNPARSEABLE_WARNING_INTERVAL_SECONDS:
+            if unparseable_count and now - unparseable_window_start >= UNPARSEABLE_WARNING_INTERVAL_SECONDS:
                 logger.warning(
                     "%d unparseable 1090 message(s) from %s:%s (source=%s) in the last %ds — "
                     "check the upstream feed format.",
-                    unparseable_count, host, port, source, _UNPARSEABLE_WARNING_INTERVAL_SECONDS,
+                    unparseable_count, host, port, source, UNPARSEABLE_WARNING_INTERVAL_SECONDS,
                 )
                 unparseable_count = 0
                 unparseable_window_start = now
@@ -624,11 +588,11 @@ class Receiver:
         def _maybe_warn_unparseable() -> None:
             nonlocal unparseable_count, unparseable_window_start
             now = time.monotonic()
-            if unparseable_count and now - unparseable_window_start >= _UNPARSEABLE_WARNING_INTERVAL_SECONDS:
+            if unparseable_count and now - unparseable_window_start >= UNPARSEABLE_WARNING_INTERVAL_SECONDS:
                 logger.warning(
                     "%d unparseable 978 line(s) from %s:%s (source=%s) in the last %ds — "
                     "check the upstream feed format.",
-                    unparseable_count, host, port, source, _UNPARSEABLE_WARNING_INTERVAL_SECONDS,
+                    unparseable_count, host, port, source, UNPARSEABLE_WARNING_INTERVAL_SECONDS,
                 )
                 unparseable_count = 0
                 unparseable_window_start = now
@@ -772,9 +736,15 @@ class Receiver:
                         break
 
             except pika.exceptions.AMQPConnectionError as exc:
-                logger.warning("RabbitMQ unavailable: %s. Retrying in 10s…", exc)
+                logger.warning(
+                    "RabbitMQ unavailable: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
             except Exception as exc:
-                logger.error("RabbitMQ error: %s. Retrying in 10s…", exc)
+                logger.error(
+                    "RabbitMQ error: %s. Retrying in %ss…",
+                    exc, RECONNECT_BACKOFF_SECONDS,
+                )
             finally:
                 with self._rmq_lock:
                     self._rmq_connected = False
@@ -782,7 +752,7 @@ class Receiver:
                     self._rmq_connection = None
 
             if not self._shutdown.is_set():
-                time.sleep(10)
+                time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _pika_invoke(self, fn: Callable[[], None], timeout: float = 5.0) -> None:
         """Run fn() on the "rabbitmq" thread via pika's own thread-safe
@@ -928,15 +898,11 @@ class Receiver:
     # ------------------------------------------------------------------
 
     def _telemetry_loop(self) -> None:
-        interval = self._cfg.get("telemetry_interval_seconds", 30)
         while not self._shutdown.is_set():
-            # Woken early by _RateTracker.record() crossing
-            # _FLUSH_PENDING_THRESHOLD messages since the last flush, or by
-            # the normal interval elapsing -- whichever comes first.
-            # clear() is safe even if nothing set it: wait() already
-            # returned via the timeout in that case.
-            self._flush_event.wait(timeout=interval)
-            self._flush_event.clear()
+            # Purely time-based: telemetry publishes on a fixed cadence,
+            # never early on a message-count trigger. Waiting on _shutdown
+            # rather than sleeping lets the loop exit promptly on stop.
+            self._shutdown.wait(timeout=MQTT_PUBLISH_INTERVAL_SECONDS)
 
             if self._redis is not None:
                 self._flush_period_counters()
@@ -1056,10 +1022,9 @@ class Receiver:
 
     def _healthcheck_loop(self) -> None:
         """Touch a heartbeat file while genuinely connected to both RabbitMQ
-        and MQTT, for Docker's HEALTHCHECK to check the mtime of. A fixed
-        interval independent of telemetry_interval_seconds (which is
-        user-configurable and not tuned for this), so healthcheck timing
-        stays predictable."""
+        and MQTT, for Docker's HEALTHCHECK to check the mtime of. Runs at
+        HEALTHCHECK_INTERVAL_SECONDS, tuned against HEALTHCHECK_MAX_AGE_SECONDS
+        (see shared/timing.py) independent of the MQTT publish cadence."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
@@ -1070,7 +1035,7 @@ class Receiver:
                     heartbeat_path.touch()
                 except OSError:
                     pass
-            time.sleep(_HEALTHCHECK_INTERVAL_SECONDS)
+            time.sleep(HEALTHCHECK_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------------
     # HA autodiscovery
@@ -1190,7 +1155,7 @@ class Receiver:
 
 def main() -> None:
     try:
-        config = load_config("rabbitmq", "mqtt", "telemetry", "receiver")
+        config = load_config("rabbitmq", "mqtt", "receiver")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)

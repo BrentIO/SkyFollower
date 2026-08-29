@@ -264,10 +264,10 @@ class TestReconnectCounter:
 
 class TestTcpKeepalive:
     def test_keepalive_constants_match_90s_detection_budget(self):
-        # 60s idle + 3 probes * 10s = ~90s, per the issue's Fix section.
-        assert receiver_main._TCP_KEEPIDLE_SECONDS == 60
-        assert receiver_main._TCP_KEEPINTVL_SECONDS == 10
-        assert receiver_main._TCP_KEEPCNT == 3
+        # 60s idle + 3 probes * 10s = ~90s detection budget.
+        assert receiver_main.TCP_KEEPIDLE_SECONDS == 60
+        assert receiver_main.TCP_KEEPINTVL_SECONDS == 10
+        assert receiver_main.TCP_KEEPALIVE_PROBES == 3
 
     def test_enable_tcp_keepalive_sets_so_keepalive(self):
         # A real TCP socket -- the tuned timer options are only valid on
@@ -384,7 +384,6 @@ class TestIcaoRoutingIntegration:
         cfg = {
             "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-            "telemetry_interval_seconds": 30,
         }
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             return Receiver(cfg)
@@ -619,7 +618,7 @@ class TestUnparseableLineLogging:
         r = self._make_receiver("978")
         data = b"-badline1;\n-badline2;\n-badline3;\n"
 
-        with patch("receiver.main._UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
+        with patch("receiver.main.UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
              caplog.at_level(logging.DEBUG, logger="receiver"):
             self._run_978(r, data)
 
@@ -635,7 +634,7 @@ class TestUnparseableLineLogging:
         # Never forms a valid *hex; frame at all.
         data = b"THIS IS NOT A VALID 1090 FRAME AT ALL"
 
-        with patch("receiver.main._UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
+        with patch("receiver.main.UNPARSEABLE_WARNING_INTERVAL_SECONDS", 0), \
              caplog.at_level(logging.DEBUG, logger="receiver"):
             self._run_1090(r, data)
 
@@ -919,16 +918,16 @@ class TestDrainFallback:
 
     def _run_one_telemetry_tick(self, r) -> None:
         """Run the real _telemetry_loop for exactly one iteration, by
-        making the mocked flush-event wait set _shutdown so the loop body
-        runs once and then exits — rather than re-implementing the loop's
-        conditional in the test, which wouldn't actually exercise it.
-        _telemetry_loop waits on r._flush_event instead of
-        a plain time.sleep, so that's what gets faked out here."""
+        making the mocked shutdown-event wait set _shutdown so the loop
+        body runs once and then exits — rather than re-implementing the
+        loop's conditional in the test, which wouldn't actually exercise
+        it. _telemetry_loop waits on r._shutdown (purely time-based, no
+        message-count trigger), so that's what gets faked out here."""
         def fake_wait(timeout=None):
             r._shutdown.set()
-            return False
+            return True
 
-        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
+        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
              patch.object(r, "_publish_telemetry"):
             r._telemetry_loop()
 
@@ -1045,20 +1044,16 @@ class TestRateTrackerPeriodCounters:
         rt.record()  # Must not raise despite no Redis client existing anywhere.
         assert rt.lifetime_count == 1
 
-    def test_record_sets_flush_event_at_threshold(self):
-        event = threading.Event()
-        rt = _RateTracker(flush_event=event)
-        for _ in range(99):
+    def test_record_has_no_message_count_flush_trigger(self):
+        """Telemetry is purely time-based: recording many messages in a
+        burst must not carry any early-flush side effect -- just the
+        in-memory counters advancing."""
+        rt = _RateTracker()
+        for _ in range(500):
             rt.record()
-        assert not event.is_set()
-        rt.record()
-        assert event.is_set()
-
-    def test_record_without_flush_event_does_not_raise(self):
-        rt = _RateTracker(flush_event=None)
-        for _ in range(150):
-            rt.record()
-        assert rt.lifetime_count == 150
+        assert rt.lifetime_count == 500
+        assert not hasattr(rt, "_flush_event")
+        assert not hasattr(rt, "_pending_since_flush")
 
     def _now(self, **kwargs):
         base = datetime(2026, 8, 23, 14, 30, 0, tzinfo=timezone.utc)
@@ -1258,7 +1253,6 @@ def _make_receiver_with_redis(cfg=None, data_dir=None, mock_redis=None):
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
         "name": "ATTIC",
         "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
-        "telemetry_interval_seconds": 30,
     }
     mock_redis = mock_redis if mock_redis is not None else MagicMock()
     with patch("receiver.main.DATA_DIR", data_dir or tempfile.mkdtemp()), \
@@ -1288,7 +1282,7 @@ class TestReceiverIdentityRedisClaim:
         args, kwargs = mock_redis.set.call_args
         assert args[0] == "skyfollower-receiver-ATTIC"
         assert kwargs.get("nx") is True
-        assert kwargs.get("ex") == 60  # 2 * telemetry_interval_seconds (30)
+        assert kwargs.get("ex") == 60  # HEARTBEAT_TTL_SECONDS
 
     def test_case_2_success_persists_identity_locally(self):
         data_dir = tempfile.mkdtemp()
@@ -1711,7 +1705,6 @@ class TestPeriodCounterTelemetryAndDiscovery:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "name": "ATTIC",
             "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
-            "telemetry_interval_seconds": 30,
         }
         return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
 
@@ -1785,7 +1778,6 @@ class TestFlushPeriodCounters:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "name": "ATTIC",
             "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
-            "telemetry_interval_seconds": 30,
         }
         return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
 
@@ -1832,15 +1824,15 @@ class TestFlushPeriodCounters:
 
 class TestTelemetryLoopFlushIntegration:
     """_telemetry_loop must call _flush_period_counters() only when Redis
-    is configured, and wait on the shared flush_event rather than a plain
-    time.sleep -- see the "whichever comes first" trigger design above."""
+    is configured, on a fixed time-based cadence (MQTT_PUBLISH_INTERVAL_SECONDS)
+    with no message-count trigger."""
 
     def _run_one_tick(self, r):
         def fake_wait(timeout=None):
             r._shutdown.set()
-            return False
+            return True
 
-        with patch.object(r._flush_event, "wait", side_effect=fake_wait), \
+        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
              patch.object(r, "_publish_telemetry"):
             r._telemetry_loop()
 
@@ -1853,7 +1845,6 @@ class TestTelemetryLoopFlushIntegration:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "name": "ATTIC",
             "redis": {"host": "redis.example.com", "port": 6379, "password": "secret"},
-            "telemetry_interval_seconds": 30,
         }
         r, _ = _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
         with patch.object(r, "_flush_period_counters") as mock_flush:

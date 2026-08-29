@@ -13,7 +13,7 @@ A component names the blocks it needs:
 
     from shared.config import load_config
 
-    cfg = load_config("rabbitmq", "mqtt", "telemetry", "receiver")
+    cfg = load_config("rabbitmq", "mqtt", "receiver")
 
 Naming them is what keeps a runner from being asked for RabbitMQ
 credentials it never opens a connection with, and what lets the loader
@@ -296,27 +296,6 @@ def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
         "message_processor_id": loader.string("MESSAGE_PROCESSOR_ID"),
         "latitude": loader.number("LATITUDE"),
         "longitude": loader.number("LONGITUDE"),
-        "rule_notification_max_lag_seconds": loader.integer(
-            "RULE_NOTIFICATION_MAX_LAG_SECONDS", 30
-        ),
-    }
-    if own:
-        loader.raise_for_problems()
-    return block
-
-
-def runner_config(loader: Optional[ConfigLoader] = None) -> dict:
-    loader, own = _own_loader(loader)
-    block = {"redis_ttl_days": loader.integer("REDIS_TTL_DAYS", 14)}
-    if own:
-        loader.raise_for_problems()
-    return block
-
-
-def telemetry_config(loader: Optional[ConfigLoader] = None) -> dict:
-    loader, own = _own_loader(loader)
-    block = {
-        "telemetry_interval_seconds": loader.integer("TELEMETRY_INTERVAL_SECONDS", 30)
     }
     if own:
         loader.raise_for_problems()
@@ -337,8 +316,6 @@ _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
 _FLAT_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "receiver": receiver_config,
     "message_processor": message_processor_config,
-    "runner": runner_config,
-    "telemetry": telemetry_config,
 }
 
 

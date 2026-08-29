@@ -79,7 +79,6 @@ def _make_processor(tmp_dir: str, flight_ttl_seconds: int = 300):
         "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
         "redis": {"host": "localhost"},
         "mqtt": None,
-        "telemetry_interval_seconds": 30,
     }
 
     with patch("archive_processor.main.DATA_DIR", tmp_dir), \
@@ -157,8 +156,7 @@ class TestAwsSetupFilesWrittenOnStartup:
                 "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
                 "redis": {"host": "localhost"},
                 "mqtt": None,
-                "telemetry_interval_seconds": 30,
-            }
+                    }
             with patch("archive_processor.main.DATA_DIR", tmp_dir), \
                  patch("archive_processor.main.redis_lib.Redis"), \
                  patch("archive_processor.main.boto3.Session"):
@@ -472,8 +470,7 @@ class TestRedisCounterIncrements:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "redis": {"host": "localhost"},
             "mqtt": None,
-            "telemetry_interval_seconds": 30,
-        }
+            }
 
         with patch("archive_processor.main.DATA_DIR", tmp_dir), \
              patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
@@ -533,8 +530,7 @@ class TestIncrPeriodCounters:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "redis": {"host": "localhost"},
             "mqtt": None,
-            "telemetry_interval_seconds": 30,
-        }
+            }
         with patch("archive_processor.main.DATA_DIR", tmp_dir), \
              patch("archive_processor.main.redis_lib.Redis") as MockRedis, \
              patch("archive_processor.main.boto3.Session"):
@@ -614,8 +610,7 @@ class TestExternalOnlySkip:
             "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
             "redis": {"host": "localhost"},
             "mqtt": None,
-            "telemetry_interval_seconds": 30,
-        }
+            }
 
         with patch("archive_processor.main.DATA_DIR", tmp_dir), \
              patch("archive_processor.main.redis_lib.Redis") as MockRedis, \

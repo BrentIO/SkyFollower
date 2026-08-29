@@ -41,7 +41,7 @@ _escape_tag = _mod._escape_tag
 download_and_parse = _mod.download_and_parse
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 _PDF_URL = _mod._PDF_URL
 

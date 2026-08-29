@@ -34,11 +34,16 @@ interpolated by Compose from this host's `.env` (written by
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
-| `RULE_NOTIFICATION_MAX_LAG_SECONDS` | ❌ | `30` | Maximum age (seconds, message `received_at` vs. wall-clock time) of a message whose rule match still gets published to MQTT. Older matches (replayed from a RabbitMQ backlog after a restart) still fire and are recorded in `matched_rules`, just not pushed to MQTT — prevents flooding MQTT with backlogged notifications the instant a message processor reconnects. |
-| `TELEMETRY_INTERVAL_SECONDS` | ❌ | `30` | How often the message processor publishes MQTT statistic messages and refreshes its Redis heartbeat key |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+Timing values -- the MQTT publish cadence, the Redis heartbeat refresh and
+TTL, the config-poll interval, the rule-notification max lag, and reconnect
+backoffs -- are not environment variables. They are fixed constants in
+`shared/timing.py`; see [Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
+`flight_ttl_seconds` remains adjustable via the `config:flight_ttl_seconds`
+Redis key (see [Redis Key Dependencies](#redis-key-dependencies)).
 
 `active_flights.db` (the durable active flight store) and
 `completed_flights.db` (the RabbitMQ offline fallback) are always written
@@ -172,7 +177,7 @@ band.
 
 | Key pattern | Purpose |
 |-------------|---------|
-| `skyfollower-message-processor-{ID}` | Liveness key; claimed with `NX` on startup, TTL refreshed every `telemetry_interval_seconds × 2` |
+| `skyfollower-message-processor-{ID}` | Liveness key; claimed with `NX` on startup, refreshed every `HEARTBEAT_INTERVAL_SECONDS` with a `HEARTBEAT_TTL_SECONDS` TTL (see `shared/timing.py`) |
 | `registration:{REGISTRATION}` | Reverse-lookup index (registration → ICAO hex); written `NX` when aircraft enrichment is found and a registration exists |
 | `metrics:message_processor:{ID}:registration_misses:{hour\|today\|lifetime}` | Incremented each time an `icao_hex` aircraft enrichment lookup (`_enrich_aircraft()`) returns no result. Operator-lookup misses are **not** counted here — they have their own dedicated `operator_misses` key below. |
 | `metrics:message_processor:{ID}:operator_misses:{today\|lifetime}` | Incremented each time an `operator:{designator}` lookup (`_enrich_operator()`) returns no result. No `hour` period — operator misses are lower-volume and only tracked today/lifetime. |
@@ -379,7 +384,7 @@ behalf instead — see the "Keys written" Redis table above for the mechanism.
 metric, never incremented anywhere).
 
 Each stat is published as its own retained topic (not a combined JSON
-payload) every `telemetry_interval_seconds`. Home Assistant autodiscovery
+payload) every `MQTT_PUBLISH_INTERVAL_SECONDS`. Home Assistant autodiscovery
 payloads are published to
 `homeassistant/sensor/SkyFollower_message_processor_{ID}_{field}/config` on MQTT
 connect; each sensor's `state_topic` points directly at its own
@@ -395,7 +400,7 @@ before new messages are consumed. Redis and MQTT failures are handled
 gracefully and logged; enrichment lookups that fail leave the flight partially
 enriched rather than dropping it.
 
-Draining is also attempted independently every `telemetry_interval_seconds`,
+Draining is also attempted independently every `MQTT_PUBLISH_INTERVAL_SECONDS`,
 not just on a detected reconnect. `_archive()` queues a completed flight to
 the fallback on any publish exception without necessarily affecting
 `_rmq_connected` or the consume side at all — so a run of publish-only
@@ -435,7 +440,7 @@ an operator inspects or discards out-of-band (`data_dir` is already a
 host-mounted volume, same as `completed_flights.db` itself).
 
 A raw attempt count alone isn't safe: `_drain_fallback()` is called on
-every successful RabbitMQ reconnect (not just on the `telemetry_interval_seconds`
+every successful RabbitMQ reconnect (not just on the `MQTT_PUBLISH_INTERVAL_SECONDS`
 tick), so a flapping connection reconnecting every few seconds could
 otherwise burn through the retry threshold within seconds — dead-lettering
 a flight that was never actually poison, just unlucky enough to be at the
@@ -521,8 +526,8 @@ identity, moving the file to a replacement container with the same
 exactly `scripts/install.sh`'s "replacing an existing message processor?"
 flow -- see `MESSAGE_PROCESSOR_ID` above. One caveat: the Redis heartbeat key
 (`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, `SET NX` with a
-TTL of `2 × telemetry_interval_seconds`) must expire — or be deleted
-manually — before a replacement container can claim the same ID.
+`HEARTBEAT_TTL_SECONDS` TTL) must expire — or be deleted manually — before
+a replacement container can claim the same ID.
 
 ### Decommissioning a Message Processor
 

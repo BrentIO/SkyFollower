@@ -8,8 +8,6 @@ name: skyfollower-message-processor
 # decided by install.sh at generation time, not read from .env.
 x-message-processor-environment: &message-processor-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS:-30}
-  RULE_NOTIFICATION_MAX_LAG_SECONDS: ${RULE_NOTIFICATION_MAX_LAG_SECONDS:-30}
   LATITUDE: ${LATITUDE}
   LONGITUDE: ${LONGITUDE}
   RABBITMQ_HOST: ${RABBITMQ_HOST}

@@ -114,7 +114,7 @@ Independent of the receiver, the message processor tolerates RabbitMQ
 being unreachable on its own publish side (archiving completed flights):
 publish attempts that fail buffer to a local `completed_flights.db`
 (SQLite WAL) and drain oldest-first once RabbitMQ is reachable again — on
-reconnect, and independently every `telemetry_interval_seconds`, to catch
+reconnect, and independently every `MQTT_PUBLISH_INTERVAL_SECONDS`, to catch
 a publish-only failure that never dropped the underlying connection.
 
 [![Message processor — RabbitMQ offline fallback](./images/message-processor-offline-fallback-sequence.svg)](./images/message-processor-offline-fallback-sequence.svg)

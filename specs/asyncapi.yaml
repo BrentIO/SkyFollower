@@ -53,7 +53,7 @@ channels:
       last report -- one topic per configured connection, not per source
       tag, so two connections sharing a tag (e.g. two EXTERNAL feeds) get
       independent rates instead of a single summed value. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -71,7 +71,7 @@ channels:
       Whether the TCP connection to one specific sources[] entry's readsb
       instance is currently open -- True right after connect, False on any
       connection error or detected closed connection. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -89,7 +89,7 @@ channels:
       Number of times one specific sources[] connection has dropped and
       been re-established since process start -- distinguishes a
       rock-solid connection from one that's currently connected but
-      flapping. Published every telemetry_interval_seconds, retained.
+      flapping. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -116,7 +116,7 @@ channels:
       via Redis, but published from the receiver's own in-memory running
       total, not a Redis read -- resets on receiver restart as well as at
       the real UTC hour boundary (documented limitation, not a bug).
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -135,7 +135,7 @@ channels:
       the current UTC day began. Only published when the receiver has
       REDIS_HOST configured. Same in-memory-total/restart-resets caveat as
       the sibling _total_hour field above. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -154,7 +154,7 @@ channels:
       this process started -- not since the receiver was first installed;
       there is no persistence layer distinguishing the two. Only published
       when the receiver has REDIS_HOST configured. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -173,7 +173,7 @@ channels:
       sensor -- currently just last_message_received, the UTC ISO-8601
       timestamp of the last message processed for one specific sources[]
       connection. Not published at all until the first message on that
-      connection arrives. Published every telemetry_interval_seconds once
+      connection arrives. Published every MQTT_PUBLISH_INTERVAL_SECONDS once
       set, retained. Consumed by Home Assistant discovery's
       json_attributes_topic on the _connected sensor rather than backing a
       standalone entity.
@@ -192,7 +192,7 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
     description: >
       Number of messages queued in the local SQLite fallback (queue.db).
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -206,7 +206,7 @@ channels:
       Number of messages dead-lettered from the local SQLite fallback after
       repeatedly failing to publish -- files under dead_letters/queue/ in
       data_dir, not counted in local_queue_depth. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -218,7 +218,7 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/rabbitmq_connected'
     description: >
       Whether the receiver currently has an active RabbitMQ connection.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -230,7 +230,7 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/started_at'
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -243,7 +243,7 @@ channels:
     description: >
       Running image version, from the VERSION environment variable ("dev" if
       unset); never changes after startup. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -271,7 +271,7 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/messages_per_second'
     description: >
       Average message processing rate since last report. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -283,7 +283,7 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/processing_time_hwm_ms'
     description: >
       End-to-end message processing time high-water mark since last publish;
-      resets on publish. Published every telemetry_interval_seconds, retained.
+      resets on publish. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -304,7 +304,7 @@ channels:
       crosses the RabbitMQ hop), unlike processing_time_hwm_ms's monotonic
       clock -- sensitive to NTP drift/clock adjustments between the
       receiver and message-processor hosts. Resets on publish. Published
-      every telemetry_interval_seconds, retained.
+      every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -319,7 +319,7 @@ channels:
       nanoseconds (a single rule-evaluation pass is in-process/no-I/O and
       almost always sub-millisecond, so nanoseconds carries the signal
       millisecond resolution would lose); resets on publish. Published
-      every telemetry_interval_seconds, retained.
+      every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -331,7 +331,7 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/local_archive_queue_depth'
     description: >
       Number of completed flights queued in the local SQLite fallback
-      (completed_flights.db). Published every telemetry_interval_seconds,
+      (completed_flights.db). Published every MQTT_PUBLISH_INTERVAL_SECONDS,
       retained.
     parameters:
       message_processor_id:
@@ -346,7 +346,7 @@ channels:
       Number of completed flights dead-lettered from the local SQLite
       archive fallback after repeatedly failing to publish -- files under
       dead_letters/queue/ in data_dir, not counted in
-      local_archive_queue_depth. Published every telemetry_interval_seconds,
+      local_archive_queue_depth. Published every MQTT_PUBLISH_INTERVAL_SECONDS,
       retained.
     parameters:
       message_processor_id:
@@ -363,7 +363,7 @@ channels:
       flushes to Redis on its own telemetry cadence); core-health is the
       component that actually publishes this topic, on message processor's
       behalf, using the exact address/payload shape below. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -377,7 +377,7 @@ channels:
       Aircraft enrichment (registration) Redis cache misses today (UTC).
       Published by core-health on message processor's behalf -- see
       messageProcessorRegistrationMissesHour above. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -392,7 +392,7 @@ channels:
       process instance started (resets to 0 on container restart, not a
       true all-time total). Published by core-health on message processor's
       behalf -- see messageProcessorRegistrationMissesHour above. Published
-      every telemetry_interval_seconds, retained.
+      every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -409,7 +409,7 @@ channels:
       misses are lower-volume and only tracked today/lifetime. Published by
       core-health on message processor's behalf, using the exact
       address/payload shape message processor's own code would have used.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -424,7 +424,7 @@ channels:
       started (resets to 0 on container restart, not a true all-time
       total). Published by core-health on message processor's behalf -- see
       messageProcessorOperatorMissesToday above. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -442,7 +442,7 @@ channels:
       counts toward the current hour regardless of the messages' original
       timestamps. Published by core-health on message processor's behalf,
       using the exact address/payload shape message processor's own code
-      would have used. Published every telemetry_interval_seconds, retained.
+      would have used. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -456,7 +456,7 @@ channels:
       Every message today (UTC, wall-clock processing time) for which an
       attempt to decode was made. Published by core-health on message
       processor's behalf -- see messageProcessorTotalMessagesProcessedHour
-      above. Published every telemetry_interval_seconds, retained.
+      above. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -471,7 +471,7 @@ channels:
       attempt to decode was made (resets to 0 on container restart, not a
       true all-time total). Published by core-health on message
       processor's behalf -- see messageProcessorTotalMessagesProcessedHour
-      above. Published every telemetry_interval_seconds, retained.
+      above. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -483,7 +483,7 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/active_flights'
     description: >
       Number of flights currently tracked in the in-memory SQLite store.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -495,7 +495,7 @@ channels:
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/started_at'
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       message_processor_id:
         $ref: '#/components/parameters/MessageProcessorId'
@@ -521,7 +521,7 @@ channels:
     address: SkyFollower/archive/statistic/flights_archived_hour
     description: >
       Flights successfully written to S3 this hour. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveFlightsArchivedHourMessage:
         $ref: '#/components/messages/ArchiveFlightsArchivedHourMessage'
@@ -530,7 +530,7 @@ channels:
     address: SkyFollower/archive/statistic/flights_archived_today
     description: >
       Flights successfully written to S3 today (UTC). Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveFlightsArchivedTodayMessage:
         $ref: '#/components/messages/ArchiveFlightsArchivedTodayMessage'
@@ -539,7 +539,7 @@ channels:
     address: SkyFollower/archive/statistic/flights_skipped_hour
     description: >
       External-only flights dropped instead of archived this hour. Published
-      every telemetry_interval_seconds, retained.
+      every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveFlightsSkippedHourMessage:
         $ref: '#/components/messages/ArchiveFlightsSkippedHourMessage'
@@ -548,7 +548,7 @@ channels:
     address: SkyFollower/archive/statistic/flights_skipped_today
     description: >
       External-only flights dropped instead of archived today (UTC). Published
-      every telemetry_interval_seconds, retained.
+      every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveFlightsSkippedTodayMessage:
         $ref: '#/components/messages/ArchiveFlightsSkippedTodayMessage'
@@ -557,7 +557,7 @@ channels:
     address: SkyFollower/archive/statistic/s3_connected
     description: >
       Whether the last S3 write attempt succeeded. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveS3ConnectedMessage:
         $ref: '#/components/messages/ArchiveS3ConnectedMessage'
@@ -566,7 +566,7 @@ channels:
     address: SkyFollower/archive/statistic/local_queue_depth
     description: >
       Number of completed flights queued in the local SQLite fallback
-      (s3.db). Published every telemetry_interval_seconds, retained.
+      (s3.db). Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveLocalQueueDepthMessage:
         $ref: '#/components/messages/ArchiveLocalQueueDepthMessage'
@@ -576,7 +576,7 @@ channels:
     description: >
       Number of Parquet index rows queued for retry (index_queue table in
       s3.db) after their flight object wrote successfully but the index
-      write failed. Published every telemetry_interval_seconds, retained.
+      write failed. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveLocalIndexQueueDepthMessage:
         $ref: '#/components/messages/ArchiveLocalIndexQueueDepthMessage'
@@ -587,7 +587,7 @@ channels:
       Number of completed flights dead-lettered from the local SQLite
       fallback (s3.db) after repeatedly failing to write to S3 -- files
       under dead_letters/queue/ in data_dir, not counted in
-      local_queue_depth. Published every telemetry_interval_seconds,
+      local_queue_depth. Published every MQTT_PUBLISH_INTERVAL_SECONDS,
       retained.
     messages:
       ArchiveDeadLetterQueueDepthMessage:
@@ -599,7 +599,7 @@ channels:
       Number of Parquet index rows dead-lettered (index_queue table in
       s3.db) after repeatedly failing to write -- files under
       dead_letters/index_queue/ in data_dir, not counted in
-      local_index_queue_depth. Published every telemetry_interval_seconds,
+      local_index_queue_depth. Published every MQTT_PUBLISH_INTERVAL_SECONDS,
       retained.
     messages:
       ArchiveDeadLetterIndexQueueDepthMessage:
@@ -609,7 +609,7 @@ channels:
     address: SkyFollower/archive/statistic/started_at
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
-      Published every telemetry_interval_seconds, retained.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveStartedAtMessage:
         $ref: '#/components/messages/ArchiveStartedAtMessage'
@@ -619,7 +619,7 @@ channels:
     description: >
       Running image version, from the VERSION environment variable ("dev" if
       unset); never changes after startup. Published every
-      telemetry_interval_seconds, retained.
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     messages:
       ArchiveVersionMessage:
         $ref: '#/components/messages/ArchiveVersionMessage'

@@ -60,7 +60,7 @@ _search_by_prefix = _mod._search_by_prefix
 _get_aircraft_details = _mod._get_aircraft_details
 run_pipeline = _mod.run_pipeline
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 

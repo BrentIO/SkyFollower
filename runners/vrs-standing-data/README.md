@@ -77,11 +77,11 @@ docker run --rm --network host redis:latest redis-cli GET route:AAL1005
 "KDFW-MYNN-KDFW"
 ```
 
-TTL: fixed at 3 days, not the runner-wide `redis_ttl_days` default (14 days) used by every other runner — the upstream repository updates daily, so a shorter TTL keeps stale routes from lingering if a run is missed. See `main.py`'s `REDIS_TTL` constant.
+TTL: fixed at 3 days (`ROUTE_TTL_SECONDS` in `shared/timing.py`), not the 14-day `ENRICHMENT_TTL_SECONDS` every other runner uses — the upstream repository updates daily, so a shorter TTL keeps stale routes from lingering if a run is missed. Neither TTL is operator-configurable.
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` is not read by this runner -- see the TTL note above.
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `route:{ident}` with a fixed 3-day TTL (`ROUTE_TTL_SECONDS` in `shared/timing.py`) -- see the TTL note above.
 
 ## MQTT
 

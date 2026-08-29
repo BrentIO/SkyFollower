@@ -140,7 +140,7 @@ docker run --rm --network host redis:latest redis-cli JSON.GET aircraft:type:B76
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. `REDIS_TTL_DAYS` applies to each `aircraft:mictronics:{icao_hex}`, `operator:{designator}`, and `aircraft:type:{designator}` key written by this runner.
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `aircraft:mictronics:{icao_hex}`, `operator:{designator}`, and `aircraft:type:{designator}` with a fixed 14-day TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`).
 
 ## MQTT
 

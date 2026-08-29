@@ -50,6 +50,7 @@ export default defineConfig({
           { text: "Deployment", link: "/deployment/" },
           { text: "AWS Setup", link: "/aws-setup" },
           { text: "Architecture", link: "/architecture/" },
+          { text: "Timing & Cadences", link: "/architecture/timing" },
           { text: "Rules & Areas", link: "/rules-and-areas/" },
         ],
       },

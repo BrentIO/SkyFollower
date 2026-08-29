@@ -61,7 +61,7 @@ build_aircraft_record = _mod.build_aircraft_record
 stage_data = _mod.stage_data
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.REDIS_TTL
+REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 

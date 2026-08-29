@@ -623,11 +623,14 @@ fetch_role() {
 
 # ---------------------------------------------------------------------------
 # Per-role .env body -- the values genuinely worth an interactive prompt.
-# Everything else (LOG_LEVEL, TELEMETRY_INTERVAL_SECONDS, REDIS_TTL_DAYS,
-# RULE_NOTIFICATION_MAX_LAG_SECONDS, the Athena names) has a sensible
-# default and is written directly, matching "the installer asks for what
-# it needs" rather than every value that could theoretically be tuned --
-# an operator who wants one of those can still just edit .env afterward.
+# Everything else (LOG_LEVEL, the Athena names) has a sensible default and
+# is written directly, matching "the installer asks for what it needs"
+# rather than every value that could theoretically be tuned -- an operator
+# who wants one of those can still just edit .env afterward. Internal timing
+# values (publish cadence, key TTLs, retry backoffs) are not env vars at
+# all: they are fixed constants in shared/timing.py. flight_ttl_seconds is
+# the one tunable behavioural value and lives in the config:flight_ttl_seconds
+# Redis key, not here.
 # ---------------------------------------------------------------------------
 
 collect_receiver_env() {
@@ -688,9 +691,6 @@ MQTT_PASSWORD=${MQTT_PASSWORD}
 REDIS_HOST=${REDIS_HOST}
 REDIS_PORT=${REDIS_PORT}
 REDIS_PASSWORD=${REDIS_PASSWORD}
-
-# Seconds between telemetry publishes.
-TELEMETRY_INTERVAL_SECONDS=30
 
 # "info" or "debug".
 LOG_LEVEL=info
@@ -811,9 +811,6 @@ REDIS_PASSWORD=${REDIS_PASSWORD}
 # core-health authenticates with this same default-user credential for
 # Redis INFO/MEMORY introspection too -- no separate scoped user. See
 # core-health/README.md's Credentials section for why.
-
-# TTL applied to the enrichment keys the runners write.
-REDIS_TTL_DAYS=14
 
 MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}
@@ -1065,12 +1062,6 @@ MQTT_PORT=${MQTT_PORT}
 MQTT_USERNAME=${MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD}
 
-# How far behind live a message may be and still raise a rule notification.
-RULE_NOTIFICATION_MAX_LAG_SECONDS=30
-
-# Seconds between telemetry publishes.
-TELEMETRY_INTERVAL_SECONDS=30
-
 # "info" or "debug".
 LOG_LEVEL=info
 ENV_EOF
@@ -1133,9 +1124,6 @@ MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}
 MQTT_USERNAME=${MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD}
-
-# Seconds between telemetry publishes.
-TELEMETRY_INTERVAL_SECONDS=30
 
 # "info" or "debug".
 LOG_LEVEL=info

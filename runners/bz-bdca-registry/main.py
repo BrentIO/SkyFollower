@@ -37,6 +37,7 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
 from shared.config import ConfigError, load_config
+from shared.timing import ENRICHMENT_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
@@ -54,7 +55,6 @@ logger = logging.getLogger("bz-bdca-registry")
 REGISTER_URL = (
     "https://www.civilaviation.gov.bz/index.php/bdca-civil-aircraft-register"
 )
-REDIS_TTL = 14 * 86400
 MQTT_ROOT = "SkyFollower/runner/bz-bdca-registry"
 BATCH_SIZE = 100
 
@@ -379,7 +379,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
 
 def main() -> None:
     try:
-        cfg = load_config("redis", "mqtt", "runner")
+        cfg = load_config("redis", "mqtt")
     except ConfigError as exc:
         configure_logging()
         logger.critical("%s", exc)
@@ -390,8 +390,7 @@ def main() -> None:
     rc = cfg["redis"]
     r = build_redis_client(rc)
 
-    ttl_days = cfg.get("redis_ttl_days", 14)
-    ttl = ttl_days * 86400
+    ttl = ENRICHMENT_TTL_SECONDS
 
     session = requests.Session()
     session.headers.update({"User-Agent": "P5Software SkyFollower"})
