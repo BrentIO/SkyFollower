@@ -297,8 +297,10 @@ class TestPublishQueueStats:
         ]
         assert message_bytes_payload["device_class"] == "data_size"
         assert message_bytes_payload["unit_of_measurement"] == "B"
+        assert message_bytes_payload["suggested_unit_of_measurement"] == "MB"
         assert memory_bytes_payload["device_class"] == "data_size"
         assert memory_bytes_payload["unit_of_measurement"] == "B"
+        assert memory_bytes_payload["suggested_unit_of_measurement"] == "MB"
         published = _state_publishes(app._mqtt)
         # Raw byte value on the wire, unformatted -- HA's frontend does the
         # KB/MB/GB scaling, not this component.
@@ -641,6 +643,7 @@ class TestPublishRedisStats:
         ]
         assert used_memory_payload["device_class"] == "data_size"
         assert used_memory_payload["unit_of_measurement"] == "B"
+        assert used_memory_payload["suggested_unit_of_measurement"] == "GB"
 
     def test_maxmemory_policy_sensor_removed(self):
         app = _wired_app()
