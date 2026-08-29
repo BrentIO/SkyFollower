@@ -621,27 +621,24 @@ class TestPublishRedisStats:
         assert published[f"{MQTT_ROOT}/redis/statistic/redis_aof_last_bgrewrite_status"] == "OK"
         assert published[f"{MQTT_ROOT}/redis/statistic/redis_aof_last_write_status"] == "OK"
 
-    def test_maxmemory_bytes_publishes_raw_value_zero_means_unlimited(self):
-        """maxmemory=0 is Redis's genuine "unlimited" default on this
-        deployment (no --maxmemory flag configured), confirmed correct --
-        not a reporting bug, and not special-cased to a text override."""
+    def test_maxmemory_bytes_sensor_removed(self):
+        """Redis is deployed with no --maxmemory flag, so this always read a
+        constant 0 ("unlimited") -- no operational signal, sensor dropped."""
         app = _wired_app()
         app._publish_redis_stats({"maxmemory": 0}, {})
         published = _state_publishes(app._mqtt)
-        assert published[f"{MQTT_ROOT}/redis/statistic/redis_maxmemory_bytes"] == "0"
+        assert f"{MQTT_ROOT}/redis/statistic/redis_maxmemory_bytes" not in published
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        assert "homeassistant/sensor/SkyFollower_core_health_redis_maxmemory_bytes/config" not in discovery
 
-    def test_maxmemory_and_used_memory_bytes_discovery_use_data_size_device_class(self):
+    def test_used_memory_bytes_discovery_uses_data_size_device_class(self):
         app = _wired_app()
         app._publish_core_discovery()
         discovery = _discovery_payloads(app._mqtt)
-        maxmemory_payload = discovery[
-            "homeassistant/sensor/SkyFollower_core_health_redis_maxmemory_bytes/config"
-        ]
         used_memory_payload = discovery[
             "homeassistant/sensor/SkyFollower_core_health_redis_used_memory_bytes/config"
         ]
-        assert maxmemory_payload["device_class"] == "data_size"
-        assert maxmemory_payload["unit_of_measurement"] == "B"
         assert used_memory_payload["device_class"] == "data_size"
         assert used_memory_payload["unit_of_measurement"] == "B"
 
