@@ -217,7 +217,6 @@ _CORE_RABBITMQ_SENSORS = [
 _CORE_REDIS_SENSORS = [
     ("redis_used_memory_bytes", "Redis Memory Used", "mdi:memory", "measurement", "B", "data_size"),
     ("redis_used_memory_peak_percent", "Redis Memory Used Peak", "mdi:memory", "measurement", "%", None),
-    ("redis_maxmemory_bytes", "Redis Max Memory", "mdi:memory", "measurement", "B", "data_size"),
     ("redis_connected_clients", "Redis Connected Clients", "mdi:account-multiple", "measurement", None, None),
     ("redis_ops_per_second", "Redis Ops Per Second", "mdi:speedometer", "measurement", "ops/s", None),
     ("redis_keyspace_hits", "Redis Keyspace Hits", "mdi:target", "total_increasing", None, None),
@@ -798,7 +797,6 @@ class CoreHealth:
         values = {
             "redis_used_memory_bytes": info.get("used_memory"),
             "redis_used_memory_peak_percent": peak_percent,
-            "redis_maxmemory_bytes": info.get("maxmemory"),
             "redis_connected_clients": info.get("connected_clients"),
             "redis_ops_per_second": info.get("instantaneous_ops_per_sec"),
             "redis_keyspace_hits": hits,
