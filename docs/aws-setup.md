@@ -6,126 +6,230 @@ Processor](/components/archive-processor)'s [Parquet
 Index](/components/archive-processor#parquet-index) section) is written to
 S3 either way, but nothing can query it — via AWS Athena, against a Glue
 Catalog table, using partition projection rather than a Glue Crawler —
-until an operator manually creates that Glue database/table, an Athena
-workgroup, and three IAM identities by hand, following this page.
+until the infrastructure below is provisioned.
 
-No component in this project ever calls a Glue, IAM, or Athena
-provisioning API — table, database, workgroup, and identity creation are
-one-time (or rare) admin actions a human performs directly in the AWS
-console, using whatever access they already have. This sidesteps having to
-define, ship, or secure a new AWS credential just for provisioning.
+Provisioning is done by a **one-shot container**, `aws-setup`, that you run
+once and throw away. It deploys a CloudFormation stack from
+[`specs/aws/cloudformation.yaml`](https://github.com/BrentIO/SkyFollower/blob/main/specs/aws/cloudformation.yaml)
+and prints the resulting bucket name, region, and credentials.
+`scripts/install.sh` runs it for you and writes those values straight into
+the host `.env`. Re-running it **is** the upgrade path: a schema or policy
+change ships an updated template, and CloudFormation applies only the delta.
 
-## What each component writes instead
+## The security property this preserves
 
-`archive-processor`, `archive-compaction`, and `management-ui`'s backend
-each ship template JSON files (`specs/aws/`) baked into their own image,
-containing a literal `__BUCKET_NAME__` placeholder wherever their
-configured `s3.bucket` belongs. On every startup (`archive-processor`,
-`management-ui`) or every run (`archive-compaction`), each resolves its
-own templates against its own config and writes the result to
-`{data_dir}/aws-setup/` — pure local string substitution, no AWS API
-calls, so this needs zero AWS permissions of its own. Re-running
-(restarting) is always safe and always reflects current config: if
-`s3.bucket` ever changes, or an image upgrade ships an updated template, the
-next restart's output changes to match.
+**No SkyFollower component ever holds a credential that can create, modify,
+or delete an AWS resource.** The three IAM identities the stack issues are
+data-plane only — they can read and write specific S3 prefixes and run
+Athena queries, and nothing else. They cannot even read the CloudFormation
+control plane.
 
-| File | Written by | Destination |
-|------|-----------|-------------|
-| `specs/aws/glue-table-definition.json` | `archive-processor` (it owns the `index/` schema) | `{data_dir}/aws-setup/glue-table-definition.json` |
-| `specs/aws/iam-policies/archive-processor.json` | `archive-processor` | `{data_dir}/aws-setup/iam-policy.json` |
-| `specs/aws/iam-policies/archive-compaction.json` | `archive-compaction` | `{data_dir}/aws-setup/iam-policy.json` |
-| `specs/aws/iam-policies/management-ui.json` | `management-ui`'s backend | `{data_dir}/aws-setup/iam-policy.json` |
+Provisioning needs far broader rights (Glue, IAM, Athena, S3 admin). Those
+are **your own temporary session credentials** — access key, secret, and
+session token, as copied from the AWS access portal — passed to the
+`aws-setup` container as environment for a single `--rm` run. Nothing
+writes them to `.env` or any file, and they expire on their own.
 
-These resolved files are what you copy exact values from in the steps
-below — no risk of a typo in your own bucket name or a partition-projection
-property.
-
-## AWS resources this sets up
+## What the stack creates
 
 | Resource | Notes |
 |---|---|
-| S3 bucket | Assumed to already exist — holds `flights/*`, `index/*`, `_compaction_state/*` |
-| Glue database | Namespace for the table |
-| Glue table, with partition projection | Points at `s3://{bucket}/index/`, Parquet, year/month/day projection — no crawler |
-| Athena workgroup + query-results S3 location | Every Athena query needs somewhere to write results |
-| S3 lifecycle rule on the query-results prefix | Auto-expires old result files |
-| IAM identity for `archive-processor` | Scoped to its own S3 access only |
-| IAM identity for `archive-compaction` | A separate, narrower identity — see its README |
-| IAM identity for `management-ui`'s backend | Read-only Athena/Glue + scoped S3 access — see its README |
+| **Archive S3 bucket** | Holds `flights/`, `index/`, `_compaction_state/`. Optional — set `CreateArchiveBucket=No` to adopt one that already exists. `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain`, so a stack delete or a replacing change can never destroy flight data. No versioning, no lifecycle rule — deliberate (see below) |
+| **Athena query-results bucket** | Always created, dedicated, unnamed (CloudFormation generates the name). Whole-bucket expiry rule (`AthenaResultsExpirationDays`, default 8) plus an `AbortIncompleteMultipartUpload` rule. Safe to expire the whole bucket *because* it is dedicated |
+| **Glue database + table** | The table over `s3://{archive-bucket}/index/`, Parquet, with year/month/day **partition projection** — no crawler. All 9 index columns, in the order the data dictionary defines them |
+| **Athena workgroup** | `EnforceWorkGroupConfiguration: true`, supplying the results `OutputLocation`. management-ui never passes a `ResultConfiguration` of its own, so it is structurally impossible for a query to redirect results into the flight-data bucket |
+| **3 IAM users**, each with an inline policy and one access key | `archive-processor` (Get/Put on `flights/*` and `index/*`), `archive-compaction` (Get/Put/**Delete** on `index/*`, plus `_compaction_state/*` and bucket-level `List`), `management-ui` (read-only Athena/Glue **scoped to this workgroup/database/table**, `GetObject` on `index/*` and `flights/*`, and full access to the results bucket) |
 
-## Setup steps (console click-path — no CLI, no CloudShell)
+Inline policies rather than managed policies: 1:1 lifecycle with the user,
+and no "AWS keeps only 5 managed-policy versions" ceiling to prune on
+repeated upgrades.
 
-Every resource below has a genuine point-and-click console path.
+### Why `CreateArchiveBucket` defaults to `Yes`
 
-1. **Confirm the S3 bucket exists.** This setup assumes it already does.
+The failure modes are asymmetric:
 
-2. **Create the Glue database** (Glue console → Databases → Add database).
-   Match the `DatabaseName` in your resolved `glue-table-definition.json`
-   (default template value: `skyfollower`).
+- **Wrong-way `Yes`** (bucket already exists): `BucketAlreadyOwnedByYou`,
+  `CREATE_FAILED` within seconds, clean rollback, existing data untouched,
+  obvious fix.
+- **Wrong-way `No`** (bucket absent): the stack goes **green**. Glue
+  accepts a `Location` pointing at a nonexistent bucket; IAM accepts ARNs
+  resolving to nothing. The failure surfaces hours later, on a different
+  machine, as `archive-processor` silently spooling to its `s3.db`
+  fallback.
 
-3. **Create the Glue table** (Glue console → Tables → Add table, "manually
-   add" path — not the crawler-based wizard). Manually add each of the 9
-   columns and the partition-projection table properties as key/value
-   pairs, using your resolved `glue-table-definition.json` (written by
-   `archive-processor` to `{data_dir}/aws-setup/`) as the exact source for
-   every value — table name, S3 location, each column name/type, and the
-   `projection.*`/`storage.location.template` properties. This step is
-   tedious (the console wizard has no JSON-paste option for tables, unlike
-   IAM in step 6) but fully supported.
+### Why no versioning or lifecycle rule on the archive bucket
 
-4. **Create/configure the Athena workgroup's query-results output
-   location** (Athena console → Workgroups). A plain S3-path text field —
-   no JSON, no file needed. Pick a dedicated prefix, e.g.
-   `s3://{bucket}/athena-results/`.
+`archive-compaction` deletes every per-flight `index/*.parquet` after
+merging it into the day's compacted file. With versioning on, each
+compaction run would leave those deletes as permanently-billed noncurrent
+versions. There is deliberately **no lifecycle rule on the archive bucket,
+ever** — flight data is kept indefinitely.
 
-5. **Set an S3 lifecycle rule on the query-results prefix** (S3 console →
-   your bucket → Management → Lifecycle rules) to auto-expire old result
-   files, e.g. after 7 days. This is a genuinely separate step from (4) —
-   Athena's workgroup config and S3's lifecycle configuration are different
-   services with no combined API — but still just one more one-time,
-   console-only step.
+## Running it through `scripts/install.sh`
 
-6. **Create an IAM identity for `archive-processor`** and paste its
-   resolved `iam-policy.json` (written to `{data_dir}/aws-setup/` on that
-   component's host) directly into the console's JSON policy editor. Raw
-   JSON paste works natively for IAM policies, unlike Glue tables — the
-   fast step.
+For the `archive` and `management-ui` roles, the installer offers to
+provision before it asks for AWS values, so the stack outputs become the
+prompt defaults — you press Enter through them.
 
-7. **Create an IAM identity for `archive-compaction`**, the same way, using
-   *its own* resolved `iam-policy.json` from *its own* host's
-   `{data_dir}/aws-setup/`. Deliberately a separate identity from
-   `archive-processor`'s, not a shared or widened one — see
-   `archive-compaction`'s own README (`archive-compaction/README.md`)'s AWS
-   Setup section for why.
+```
+$ ./scripts/install.sh --role archive
+-- skyfollower-archive (archive) --
 
-8. **Create an IAM identity for `management-ui`'s backend**, the same way,
-   using *its own* resolved `iam-policy.json`. This is the identity that
-   actually runs Athena queries against the table created in step 3 and
-   reads/writes the results location from steps 4–5. Its Athena and Glue
-   permissions are `Resource: "*"` rather than scoped to a specific
-   table/workgroup ARN — a properly scoped ARN needs the AWS account ID,
-   which nothing in this project discovers or is configured with — but its
-   S3 access (the actually sensitive part) is fully scoped, same as the
-   other two identities.
+  This role needs AWS infrastructure (Glue table, Athena workgroup, IAM identities).
+  Create or update it now? [Y/n] y
 
-No IAM policy needs to be authored for steps 1–5 — those are performed
-using the human operator's own existing AWS access, not a new credential
-this project defines.
+  Paste temporary AWS credentials with permission to create these resources
+  (access key + secret + session token, as copied from the AWS access portal).
+  These are used for this one step only and are never saved.
+  AWS access key ID: ...
+  AWS secret access key: (hidden)
+  AWS session token: (hidden)
+  AWS region [us-east-1]: us-east-1
+  S3 archive bucket name: skyfollower-archive-example
+  Create this bucket? [Y/n] y
 
-## Updating a policy later
+  → Deploying CloudFormation stack 'skyfollower' (this can take a few minutes)...
+  ✓ Stack deployed.
+  ✓ AWS values captured -- the prompts below are pre-filled; press Enter to accept.
+```
 
-AWS managed policies support versioning (the console's "Edit policy" flow,
-or `create-policy-version` via the CLI if you prefer). Since the resolved
-file a component writes is always the *complete* policy — not a diff — a
-future update is just "replace the whole policy with the new full version,"
-no manual merging required. AWS only retains 5 versions of a managed
-policy, so if you update one repeatedly over time, you'll eventually need
-to prune an old version before AWS allows a new one.
+**Declining provisioning falls through to manual AWS prompts, unchanged** —
+for anyone who already has infrastructure, or wants to create it another
+way.
 
-Updating the *table* definition works the same way in spirit: a future
-image upgrade that changes the schema or partitioning ships an updated
-`glue-table-definition.json` template, the next restart writes the new
-resolved file to `{data_dir}/aws-setup/`, and you manually apply the change
-to the live Glue table via the console (Edit table) — propagating a
-changed definition into AWS is always a manual step, by design; no
-component here is ever given write access to apply it automatically.
+### The management-ui host prompts for temporary credentials too
+
+Reading a stack's outputs needs `cloudformation:DescribeStacks`, which
+**none of the three scoped identities has**. So the management-ui host
+can't read its own credentials back out of the stack using anything the
+stack issued it. It runs the same prompt flow, invoking the container with
+`--outputs-only`: paste temporary session credentials, read outputs,
+auto-fill. The elevated credential is needed twice across the two hosts,
+but it is short-lived and never stored either time.
+
+Finding a stack requires knowing its region, so the installer prompts for
+the region **before** the outputs lookup rather than taking it from the
+stack's own `AwsRegion` output.
+
+## Running the container directly
+
+`install.sh` covers the normal path. The container is also a plain
+`docker run`:
+
+```sh
+# Create or update
+docker run --rm \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... -e AWS_SESSION_TOKEN=... \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  -e ARCHIVE_BUCKET_NAME=skyfollower-archive-example \
+  -e CREATE_ARCHIVE_BUCKET=Yes \
+  ghcr.io/brentio/skyfollower-aws-setup:latest
+
+# Read an existing stack's outputs
+docker run --rm \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... -e AWS_SESSION_TOKEN=... \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  ghcr.io/brentio/skyfollower-aws-setup:latest --outputs-only
+```
+
+stdout is only `KEY=value` lines; every progress line and error goes to
+stderr.
+
+See the [aws-setup component page](/components/aws-setup) for the full
+environment-variable table.
+
+### Applying a change that replaces a resource
+
+Every run builds a CloudFormation **change set** and prints its summary. It
+executes automatically **unless the change set contains a resource
+`Replacement`** — then it stops. Re-run with `--yes` to apply it
+deliberately:
+
+```sh
+docker run --rm -e AWS_... ghcr.io/brentio/skyfollower-aws-setup:latest --yes
+```
+
+The two changes that manifest as replacements — altering
+`ResourceNamePrefix`, or `ArchiveBucketName` on an existing stack — are
+therefore impossible to trigger by accident.
+
+### Tearing down
+
+`--delete` runs `delete_stack` and waits. `install.sh` never offers this;
+it is a deliberate bare `docker run`:
+
+```sh
+docker run --rm \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... -e AWS_SESSION_TOKEN=... \
+  -e AWS_DEFAULT_REGION=us-east-1 \
+  ghcr.io/brentio/skyfollower-aws-setup:latest --delete
+```
+
+Both S3 buckets are retained, so no flight data and no query-result files
+are lost.
+
+## Upgrades and rotation
+
+**A normal stack update does not rotate credentials.** `AWS::IAM::AccessKey`
+is replaced only when its `Serial` or `UserName` changes, so schema
+changes, policy changes, and expiry changes leave every key untouched — no
+`.env` edit, no container restart. Inline policies update in place within
+seconds.
+
+**Three things rotate keys**: bumping `AccessKeySerial` (the intended
+lever), changing `ResourceNamePrefix`, and deleting the stack. Bumping
+`AccessKeySerial` opens a real downtime window between `UPDATE_COMPLETE`
+and re-running `install.sh` to pick up the new keys; during it
+`archive-processor` falls back to `s3.db` with no data loss.
+
+**Adding an index column** is an append-only change across five places:
+
+1. `specs/data-dictionary.yaml` — `archive_parquet_index.fields`
+2. `archive-processor/main.py` — `_PARQUET_INDEX_SCHEMA`
+3. `specs/aws/cloudformation.yaml` — the Glue table's `Columns`
+4. `management-ui/backend/main.py` — `_SEARCH_SELECT_COLUMNS`
+5. `management-ui/backend/main.py` — `_row_from_csv_fields`
+
+**Rule: only ever append at the end; never reorder or rename.** Parquet
+resolves columns by name, so old files backfill as `NULL`; but
+`_row_from_csv_fields` resolves Athena's result CSV *by position* and will
+silently shift every value if the order changes. The anti-drift test
+`shared/tests/test_cloudformation_template.py` enforces that the template's
+columns match the data dictionary, in order.
+
+**Never change `ArchiveBucketName` on an existing stack.** In create mode
+CloudFormation *replaces* the bucket; `UpdateReplacePolicy: Retain` keeps
+the old data, but the archive silently starts writing to a new empty
+bucket. A genuinely independent second deployment in the same account needs
+a different `STACK_NAME` **and** a different `ResourceNamePrefix` **and** a
+different `ArchiveBucketName`.
+
+## Recovering a wedged stack
+
+CloudFormation can leave a stack in a state that blocks further updates:
+
+- **`ROLLBACK_COMPLETE`** — a *first* `CREATE` failed and rolled back. The
+  stack can only be deleted, not updated. Run `aws-setup --delete` (or
+  delete it in the console), fix the cause, and run provisioning again.
+  Common cause: `CreateArchiveBucket=Yes` against a bucket name that
+  already exists.
+- **`UPDATE_ROLLBACK_COMPLETE`** — an update failed and rolled back
+  cleanly. Just fix the cause and re-run; no teardown needed.
+- **`UPDATE_ROLLBACK_FAILED` / `DELETE_FAILED`** — rare, usually an IAM or
+  S3 resource that couldn't be rolled back or removed. Resolve it from the
+  CloudFormation console (continue rollback, or skip the stuck resource),
+  then re-run.
+
+Because both buckets are `Retain`, none of these recovery paths risk
+flight data.
+
+## An obsolete local file to remove by hand
+
+Earlier versions of SkyFollower had each archive-facing component write
+resolved IAM/Glue reference files into a `data/<component>/aws-setup/`
+directory for an operator to copy into the console by hand. That workflow
+is gone. A `management-ui` host deployed before this change may still have
+a stale `data/management-ui/aws-setup/` directory — it is obsolete and safe
+to delete. `install.sh` deliberately does not remove it for you (an
+installer shouldn't delete operator-visible files from a bind mount
+unasked).

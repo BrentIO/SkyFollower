@@ -41,10 +41,8 @@ variables -- they are fixed constants in `shared/timing.py`. See
 [Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
 
 `s3.db` (the S3 offline fallback, and the Parquet-index write retry queue —
-see [Fault Tolerance](#fault-tolerance)) and `aws-setup/` (resolved AWS
-reference files — see [AWS Setup](#aws-setup)) are always written to
-`/app/data`, a fixed, non-configurable bind mount -- see
-`docker-compose.archive.yaml`.
+see [Fault Tolerance](#fault-tolerance)) is always written to `/app/data`, a
+fixed, non-configurable bind mount -- see `docker-compose.archive.yaml`.
 
 `flight_ttl_seconds` is not an environment variable — it's read from
 `config:flight_ttl_seconds` in Redis (shared with the message processor)
@@ -207,30 +205,23 @@ per-flight files into one file per partition is a separate job — see
 
 ## AWS Setup
 
-**Nothing described in this section exists yet in AWS** — no Glue
-database, no Glue table, no Athena workgroup, no IAM identity. This
-component only ever prepares *local reference files* an operator uses to
-create those resources by hand; it never calls a Glue, IAM, or Athena
-provisioning API itself, and table/database/identity creation is not
-something this project automates anywhere. Until an operator actually
-works through [docs/aws-setup.md](../docs/aws-setup.md)'s console
-click-path setup guide in their own AWS account, the archive's Parquet
-index is written to S3 but isn't queryable by anything.
+**Nothing the archive queries exists yet in a fresh AWS account** — no
+bucket, no Glue database or table, no Athena workgroup, no IAM identity.
+This component never calls a Glue, IAM, or Athena provisioning API itself;
+it only reads and writes S3 objects with the credentials it is given.
 
-On every startup, the archive processor resolves its own
-`__BUCKET_NAME__`-templated reference files (baked into its image from
-`specs/aws/`) against its configured `s3.bucket` and writes them to
-`{data_dir}/aws-setup/`:
+All of it — both S3 buckets, the Glue database/table (with partition
+projection over the [Parquet index](#parquet-index) above), the Athena
+workgroup, and this component's own least-privilege IAM identity — is
+created by the one-shot `aws-setup` container, which deploys a
+CloudFormation stack from `specs/aws/cloudformation.yaml`. Re-running it
+applies any later schema or policy change as a delta. `scripts/install.sh`
+runs it for you when you install the `archive` role. See
+[docs/aws-setup.md](../docs/aws-setup.md) for the full guide.
 
-- `glue-table-definition.json` — the Glue table definition for the
-  [Parquet index](#parquet-index) above, including partition projection
-  properties, for the console's "Add table" wizard
-- `iam-policy.json` — the least-privilege IAM policy this component
-  itself needs, for pasting into the console's JSON policy editor
-
-Re-running (restarting) always regenerates both files from the current
-config and the image's current templates — safe to do any time, and picks
-up a changed bucket name or an upgraded template on the next restart.
+`archive-processor`'s identity gets `s3:GetObject`/`s3:PutObject` on
+`flights/*` and `index/*`, plus bucket-level `s3:ListBucket` for its
+retry-scan connectivity check — and nothing else.
 
 ## Fault Tolerance
 

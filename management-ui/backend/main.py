@@ -57,7 +57,6 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from shared.aws_setup import write_aws_setup_files  # noqa: E402
 from shared.config import RECEIVER_SOURCE_TAGS, load_config  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
@@ -736,16 +735,6 @@ _LUA_DIR = pathlib.Path(_HERE) / "shared" / "lua"
 if not _LUA_DIR.is_dir():
     _LUA_DIR = pathlib.Path(_REPO_ROOT) / "shared" / "lua"
 
-# Same dual-path story as _LUA_DIR above -- the Docker image copies
-# specs/aws/ flat alongside main.py (see management-ui/Dockerfile).
-_AWS_DIR = pathlib.Path(_HERE) / "specs" / "aws"
-if not _AWS_DIR.is_dir():
-    _AWS_DIR = pathlib.Path(_REPO_ROOT) / "specs" / "aws"
-
-_AWS_SETUP_TEMPLATES = {
-    str(_AWS_DIR / "iam-policies" / "management-ui.json"): "iam-policy.json",
-}
-
 
 # Every RediSearch index management-ui queries (via _search_one() below),
 # plus enough of its schema to create it empty. Each index is otherwise
@@ -818,7 +807,6 @@ async def lifespan(app: FastAPI):
     _athena_client = session.client("athena")
     _fernet = Fernet(Fernet.generate_key())
 
-    write_aws_setup_files(_data_dir(), _s3_bucket, _AWS_SETUP_TEMPLATES)
     _reconcile_stuck_archive_searches()
 
     logger.info("Management UI backend started.")

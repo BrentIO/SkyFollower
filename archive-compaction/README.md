@@ -79,28 +79,24 @@ at the top of this page.
 | `MQTT_PASSWORD` | ❌ | — | |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
-`aws-setup/iam-policy.json` (resolved AWS reference file — see
-[AWS Setup](#aws-setup)) is always written to `/app/data`, a fixed,
-non-configurable bind mount -- see `docker-compose.archive.yaml`.
-
 ## AWS Setup
 
-**No IAM identity for this job exists yet in AWS.** It only ever prepares
-a *local reference file* an operator uses to create one by hand; it never
-calls a Glue, IAM, or Athena provisioning API itself, and identity
-creation is not something this project automates anywhere. On every run,
-it resolves its own `__BUCKET_NAME__`-templated IAM policy (baked into its
-image from `specs/aws/iam-policies/archive-compaction.json`) against its
-configured `s3.bucket` and writes it to `{data_dir}/aws-setup/iam-policy.json`,
-for pasting directly into the console's JSON policy editor. This is a
-deliberately separate identity from `archive-processor`'s — it needs
-`Delete` and bucket-level `List` permissions archive-processor doesn't,
-and no access to `flights/*` object content at all (it only lists
-`flights/*` keys for the parity check, never reads them). See
-[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
-setup guide — including the Glue database/table and Athena workgroup this
-job's own permissions assume already exist, none of which this job (or
-any other component) provisions either.
+**No IAM identity for this job exists yet in a fresh AWS account** — nor
+the bucket, Glue database/table, or Athena workgroup. All of it is created
+by the one-shot `aws-setup` container, which deploys a CloudFormation stack
+from `specs/aws/cloudformation.yaml`; `scripts/install.sh` runs it when you
+install the `archive` role. See [docs/aws-setup.md](../docs/aws-setup.md).
+
+This job's identity is deliberately separate from `archive-processor`'s: it
+needs `s3:DeleteObject` on `index/*` and bucket-level `s3:ListBucket` that
+archive-processor doesn't, and it has **no access to `flights/*` object
+content at all** — it only lists `flights/*` keys for the parity check,
+never reads them. It also gets `s3:GetObject`/`s3:PutObject` on
+`_compaction_state/*` for the watermark. That split is only actually
+reachable now that the archive host accepts two credential pairs (the
+`ARCHIVE_PROCESSOR_AWS_*` / `ARCHIVE_COMPACTION_AWS_*` keys); before, both
+services shared one credential and one of them was always over- or
+under-privileged.
 
 ## MQTT
 

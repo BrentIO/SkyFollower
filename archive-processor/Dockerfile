@@ -7,7 +7,6 @@ COPY archive-processor/requirements.txt archive_requirements.txt
 RUN pip install --no-cache-dir -r shared_requirements.txt -r archive_requirements.txt
 
 COPY shared/ ./shared/
-COPY specs/aws/ ./specs/aws/
 COPY archive-processor/ ./archive-processor/
 
 # Pinned at /app/healthcheck.py in every image that has one, so all three

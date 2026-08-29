@@ -20,7 +20,6 @@ import io
 import json
 import os
 import sys
-import tempfile
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -611,44 +610,3 @@ class TestPublishHaAutodiscovery:
         assert version_config["state_topic"] == f"{MQTT_ROOT}/statistic/version"
         assert version_config["icon"] == "mdi:tag"
         assert version_config["unique_id"] == "SkyFollower_archive_compaction_version"
-
-
-# ---------------------------------------------------------------------------
-# AWS setup reference file (see shared/aws_setup.py)
-# ---------------------------------------------------------------------------
-
-class TestAwsSetupFileWrittenOnRun:
-    def test_iam_policy_written_with_bucket_resolved(self, monkeypatch):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            data_dir = os.path.join(tmp_dir, "data")
-            for name, value in {
-                "S3_BUCKET": "test-bucket",
-                "AWS_DEFAULT_REGION": "us-east-1",
-                "AWS_ACCESS_KEY_ID": "x",
-                "AWS_SECRET_ACCESS_KEY": "x",
-                "MQTT_HOST": "localhost",
-                "MQTT_USERNAME": "u",
-                "MQTT_PASSWORD": "p",
-            }.items():
-                monkeypatch.setenv(name, value)
-            monkeypatch.setattr(_mod, "DATA_DIR", data_dir)
-
-            with patch("archive_compaction_main.connect_s3", return_value=_FakeS3()), \
-                 patch("archive_compaction_main.run_compaction",
-                       return_value={"files_compacted": 0, "files_delete_failed": 0,
-                                     "days_compacted": 0, "last_compacted_date": None,
-                                     "mismatch_date": None, "mismatch_uuids": set()}), \
-                 patch("archive_compaction_main.publish_completion_stats"):
-                try:
-                    main()
-                except SystemExit:
-                    pass
-
-            out_path = os.path.join(data_dir, "aws-setup", "iam-policy.json")
-            with open(out_path) as f:
-                policy = json.load(f)
-            assert "__BUCKET_NAME__" not in json.dumps(policy)
-            assert any(
-                "test-bucket" in stmt["Resource"]
-                for stmt in policy["Statement"]
-            )

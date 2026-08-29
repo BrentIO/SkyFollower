@@ -71,6 +71,7 @@ jobs:
               message-processor) name="message-processor" ;;
               archive-processor) name="archive" ;;
               archive-compaction) name="archive-compaction" ;;
+              aws-setup) name="aws-setup" ;;
               core-health) name="core-health" ;;
               management-ui) name="management-ui" ;;
               runners/*) name="runner-$(basename "$dir")" ;;
