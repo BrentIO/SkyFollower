@@ -451,8 +451,11 @@ time — not just a burst of rapid reconnect attempts.
 tracked flight and is committed to disk after every message. A process end —
 whether a deliberate stop (`SIGTERM`/`SIGINT`) or an ungraceful one (OOM-kill,
 `docker kill`, host crash) — is recovered identically on the next startup;
-there is no special "flush everything" shutdown path, since nothing needs
-force-archiving when the store already survives on its own.
+there is no special "flush everything" shutdown path for either of those,
+since nothing needs force-archiving when the store already survives on its
+own. That assumes the store itself survives, though — see "Decommissioning
+a Message Processor" below for the one case where it deliberately won't
+(permanently destroying the container and its volume together).
 
 On startup, the message processor reopens `active_flights.db` and recovers whatever
 flights were still tracked. Recovery is driven by message timestamps, not by
@@ -502,6 +505,54 @@ flow -- see `MESSAGE_PROCESSOR_ID` above. One caveat: the Redis heartbeat key
 (`skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, `SET NX` with a
 TTL of `2 × telemetry_interval_seconds`) must expire — or be deleted
 manually — before a replacement container can claim the same ID.
+
+### Decommissioning a Message Processor
+
+Everything above assumes `active_flights.db` survives the process ending —
+true for a restart, a crash, or moving the file to a replacement container.
+It is **not** true if the intent is to permanently remove a message
+processor: destroy its container *and* its volume together (e.g. shrinking
+the fleet — see the "treat processors as a stack" operating rule elsewhere
+in this repo). Anything still active in `active_flights.db` at that moment
+is gone for good unless it's forced through eviction/archival first.
+
+`SIGUSR1` triggers exactly that: a decommission sequence that force-evicts
+every active flight regardless of `message_clock`/TTL, waits for the local
+archive fallback queue to drain, and only then runs the same graceful
+shutdown `SIGTERM`/`SIGINT` already use. `SIGTERM`/`SIGINT` themselves are
+untouched by this — they keep meaning "restart, resume from disk," exactly
+as described above.
+
+**Procedure:**
+
+1. `docker kill -s SIGUSR1 <container>`
+2. Wait for the container to exit on its own. No further action is needed —
+   the process forces every active flight through the normal archive path,
+   waits for the local fallback queue to drain, and shuts itself down.
+3. Check the container's logs for a dead-letter warning (see below) before
+   continuing.
+4. Only once the container has exited: `docker compose down -v`, or
+   otherwise delete the data directory.
+
+**The wait in step 2 is indefinite, by design.** The process polls the local
+archive fallback queue (`local_archive_queue_depth`) until it reaches zero
+and does not give up on its own — if RabbitMQ is down, the correct
+assumption is that it eventually comes back, and a decommission racing an
+unrelated broker outage should not exit while flights are sitting only in
+local fallback storage, not yet durable anywhere else. If an operator needs
+to abandon a stuck wait (e.g. RabbitMQ is gone for good and the data loss is
+accepted), the deliberate escape hatch is a manual `docker kill -9`
+(`SIGKILL`) on the container — a conscious operator decision, not a timeout
+this tool applies automatically.
+
+**Dead-lettered flights are never waited on.** The dead-letter queue
+(`dead_letter_queue_depth`) exists specifically for items expected to never
+successfully drain via retry — waiting on it too would let a single poison
+message hang a decommission forever. If it's nonzero once the retryable
+queue has drained, the process logs the count at high severity and
+continues shutting down regardless. Those flights' contents need manual
+attention (see "Dead-Lettering Poison Flights" above) before the volume is
+destroyed, if they matter.
 
 ## Rules Engine
 

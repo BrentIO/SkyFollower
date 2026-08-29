@@ -9,6 +9,7 @@ import importlib.util
 import json
 import logging
 import os
+import signal
 import sqlite3
 import sys
 import tempfile
@@ -3016,6 +3017,259 @@ class TestMessageClockGatesEviction:
         p._evict_stale()
         f3 = Flight(p._db)
         assert f3.load("A8AE7F") is False  # now evicted
+
+
+# ---------------------------------------------------------------------------
+# SIGUSR1 decommission sequence: force-evict-all, indefinite fallback drain
+# wait, dead-letter logging, and ordinary-shutdown non-interference.
+# ---------------------------------------------------------------------------
+
+class TestForceEvictAll:
+    def _fresh_flight(self, p, icao_hex="A8AE7F") -> None:
+        """A flight with last_message == message_clock -- as fresh as
+        possible, so the ordinary TTL-gated sweep would never evict it."""
+        f = Flight(p._db)
+        f.icao_hex = icao_hex
+        f.flight_id = f"fid-{icao_hex}"
+        f.first_message = p._message_clock - 10
+        f.last_message = p._message_clock
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+    def test_force_evict_all_evicts_flights_the_ttl_check_would_not(self):
+        p, _ = _make_processor()
+        self._fresh_flight(p)
+
+        # Sanity: the ordinary TTL-gated sweep leaves this flight alone.
+        p._evict_stale()
+        assert Flight(p._db).load("A8AE7F") is True
+
+        p._force_evict_all()
+
+        assert Flight(p._db).load("A8AE7F") is False
+        assert p._fallback.depth() == 1  # archived via the normal path (not connected -> falls back)
+
+    def test_force_evict_all_evicts_every_active_flight(self):
+        p, _ = _make_processor()
+        self._fresh_flight(p, "A8AE7F")
+        self._fresh_flight(p, "A00001")
+
+        p._force_evict_all()
+
+        assert Flight(p._db).load("A8AE7F") is False
+        assert Flight(p._db).load("A00001") is False
+        assert p._fallback.depth() == 2
+
+    def test_force_evict_all_is_a_no_op_when_nothing_active(self):
+        p, _ = _make_processor()
+        p._force_evict_all()
+        assert p._fallback.depth() == 0
+
+
+class TestEvictionLoopDecommissionDispatch:
+    """_eviction_loop() must check the force-evict event each pass and
+    dispatch to _decommission() instead of adding a second, competing
+    thread."""
+
+    def test_eviction_loop_dispatches_to_decommission_when_force_evict_set(self):
+        p, _ = _make_processor()
+        p._force_evict.set()
+
+        with patch("message_processor.main.time.sleep"), \
+             patch.object(p, "_decommission") as mock_decommission, \
+             patch.object(p, "_evict_stale") as mock_evict_stale:
+            p._eviction_loop()
+
+        mock_decommission.assert_called_once()
+        mock_evict_stale.assert_not_called()
+
+    def test_eviction_loop_runs_normal_sweep_when_not_set(self):
+        p, _ = _make_processor()
+
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep), \
+             patch.object(p, "_decommission") as mock_decommission, \
+             patch.object(p, "_evict_stale") as mock_evict_stale:
+            p._eviction_loop()
+
+        mock_decommission.assert_not_called()
+        mock_evict_stale.assert_called_once()
+
+
+class TestDecommission:
+    def test_decommission_force_evicts_then_shuts_down(self):
+        p, _ = _make_processor()
+
+        with patch.object(p, "_force_evict_all") as mock_force_evict_all, \
+             patch.object(p, "shutdown") as mock_shutdown:
+            p._decommission()
+
+        mock_force_evict_all.assert_called_once()
+        mock_shutdown.assert_called_once()
+
+    def test_decommission_blocks_until_retryable_fallback_queue_drains(self):
+        """Must poll self._fallback.depth() (the retryable queue) and only
+        proceed once it reaches 0 -- simulated here by having the queue
+        drain out-of-band (as the telemetry loop's own periodic drain
+        would) during the mocked sleep."""
+        p, _ = _make_processor()
+        p._fallback.put('{"_id": "a"}')
+        assert p._fallback.depth() == 1
+
+        sleep_calls = []
+
+        def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            p._fallback.drain(lambda payload: None)
+
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep), \
+             patch.object(p, "_force_evict_all"), \
+             patch.object(p, "shutdown") as mock_shutdown:
+            p._decommission()
+
+        assert len(sleep_calls) == 1  # blocked exactly once, then proceeded
+        assert p._fallback.depth() == 0
+        mock_shutdown.assert_called_once()
+
+    def test_decommission_does_not_wait_on_dead_letter_depth(self):
+        """A nonzero dead_letter_depth() must never block the drain wait --
+        only the retryable depth() gates progress."""
+        p, _ = _make_processor()
+        assert p._fallback.depth() == 0
+
+        with patch.object(p, "_force_evict_all"), \
+             patch.object(p._fallback, "dead_letter_depth", return_value=3), \
+             patch("message_processor.main.time.sleep") as mock_sleep, \
+             patch.object(p, "shutdown") as mock_shutdown:
+            p._decommission()
+
+        mock_sleep.assert_not_called()  # retryable depth was already 0 -- no waiting at all
+        mock_shutdown.assert_called_once()
+
+    def test_decommission_logs_dead_letter_depth_at_high_severity_when_nonzero(self, caplog):
+        p, _ = _make_processor()
+
+        with patch.object(p, "_force_evict_all"), \
+             patch.object(p._fallback, "dead_letter_depth", return_value=3), \
+             patch("message_processor.main.time.sleep"), \
+             patch.object(p, "shutdown"), \
+             caplog.at_level(logging.CRITICAL, logger="message_processor.main"):
+            p._decommission()
+
+        assert any(
+            "3" in record.getMessage() and "dead" in record.getMessage().lower()
+            for record in caplog.records
+        )
+
+    def test_decommission_does_not_log_dead_letter_warning_when_zero(self, caplog):
+        p, _ = _make_processor()
+
+        with patch.object(p, "_force_evict_all"), \
+             patch("message_processor.main.time.sleep"), \
+             patch.object(p, "shutdown"), \
+             caplog.at_level(logging.CRITICAL, logger="message_processor.main"):
+            p._decommission()
+
+        assert not any("dead" in record.getMessage().lower() for record in caplog.records)
+
+
+class TestShutdownUnchangedForOrdinaryTermination:
+    """SIGTERM/SIGINT must keep meaning 'restart, resume from disk' exactly
+    as before -- shutdown() itself must never force-evict/archive anything,
+    regardless of how the SIGUSR1 decommission path now reuses it."""
+
+    def test_shutdown_does_not_evict_or_archive_active_flights(self):
+        p, _ = _make_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = p._message_clock - 10
+        f.last_message = p._message_clock
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+        with patch.object(p, "_archive") as mock_archive, \
+             patch.object(p, "_force_evict_all") as mock_force_evict_all:
+            p.shutdown()
+
+        mock_archive.assert_not_called()
+        mock_force_evict_all.assert_not_called()
+        assert p._fallback.depth() == 0
+
+    def test_shutdown_stops_consuming_directly_on_main_thread(self):
+        """Called from the main thread (as the SIGTERM/SIGINT handler
+        does), a direct call is safe -- must not go through
+        add_callback_threadsafe."""
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+
+        p.shutdown()
+
+        mock_channel.stop_consuming.assert_called_once()
+        mock_connection.add_callback_threadsafe.assert_not_called()
+
+    def test_shutdown_schedules_stop_consuming_via_callback_from_other_thread(self):
+        """Called from the eviction thread (as the SIGUSR1 decommission
+        path does), self._rmq_channel must only be touched via
+        add_callback_threadsafe, matching every other cross-thread
+        RabbitMQ touch in this module (_archive()/_drain_fallback())."""
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+
+        errors = []
+
+        def run():
+            try:
+                p.shutdown()
+            except Exception as exc:  # pragma: no cover -- surfaced via errors below
+                errors.append(exc)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=5)
+
+        assert not errors
+        mock_channel.stop_consuming.assert_not_called()
+        mock_connection.add_callback_threadsafe.assert_called_once_with(mock_channel.stop_consuming)
+
+
+class TestMainRegistersSigusr1Handler:
+    def test_sigusr1_handler_sets_force_evict_event_only(self):
+        """The signal handler itself must do nothing but flag the event --
+        the actual force-evict/drain/shutdown sequence runs on the
+        eviction thread (see MessageProcessor._eviction_loop/_decommission),
+        never inline in signal-handler context."""
+        cfg = _minimal_config()
+        cfg["message_processor_id"] = "7"
+        with patch("message_processor.main.load_config", return_value=cfg), \
+             patch("message_processor.main.MessageProcessor") as MockProcessor, \
+             patch("message_processor.main.signal.signal") as mock_signal:
+            mock_processor = MockProcessor.return_value
+            mock_processor._force_evict = threading.Event()
+            processor_main()
+
+        registered = {call.args[0]: call.args[1] for call in mock_signal.call_args_list}
+        assert signal.SIGUSR1 in registered
+        assert signal.SIGTERM in registered
+        assert signal.SIGINT in registered
+
+        assert not mock_processor._force_evict.is_set()
+        registered[signal.SIGUSR1](signal.SIGUSR1, None)
+        assert mock_processor._force_evict.is_set()
+
+        # The handler must not itself call shutdown() or exit -- that's
+        # the eviction thread's job once it notices the event.
+        mock_processor.shutdown.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

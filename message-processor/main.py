@@ -631,6 +631,10 @@ class MessageProcessor:
         self._queue_name = message_processor_queue_name(message_processor_id)
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
+        # Set by the SIGUSR1 signal handler (see main()); polled from
+        # _eviction_loop() rather than a competing thread. Triggers a
+        # one-time decommission sequence -- see _decommission().
+        self._force_evict = threading.Event()
 
         # SQLite active store — file-backed (WAL) so it survives an
         # ungraceful process death. Reopening an existing file on restart
@@ -1289,6 +1293,13 @@ class MessageProcessor:
     def _eviction_loop(self) -> None:
         while not self._shutdown.is_set():
             time.sleep(10)
+            # SIGUSR1 (see main()) only sets this event -- the actual
+            # decommission work runs here, on this existing background
+            # thread, rather than on a second competing thread or
+            # directly in the signal handler itself.
+            if self._force_evict.is_set():
+                self._decommission()
+                return
             self._evict_stale()
 
     def _evict_stale(self) -> None:
@@ -1304,15 +1315,41 @@ class MessageProcessor:
             stale = [row[0] for row in cur.fetchall()]
 
         for icao_hex in stale:
-            with self._db_lock:
-                flight = Flight(self._db)
-                if not flight.load(icao_hex, limit=False):
-                    continue
-                completed = flight.to_completed_flight(load_all=False)
-                flight.delete()
-                self._db.commit()
+            self._evict_flight(icao_hex)
 
-            self._archive(completed)
+    def _force_evict_all(self) -> None:
+        """Unconditional counterpart to _evict_stale(): force every active
+        flight through the same per-flight eviction path regardless of
+        message_clock/TTL. Used only by the SIGUSR1 decommission sequence
+        (_decommission()) -- never by the ordinary TTL-gated sweep, which
+        must keep gating on message_clock exactly as today."""
+        with self._db_lock:
+            cur = self._db.cursor()
+            cur.execute("SELECT icao_hex FROM flights")
+            active = [row[0] for row in cur.fetchall()]
+
+        logger.warning(
+            "Decommission: force-evicting %d active flight(s) regardless of TTL…",
+            len(active),
+        )
+        for icao_hex in active:
+            self._evict_flight(icao_hex)
+
+    def _evict_flight(self, icao_hex: str) -> None:
+        """Shared per-flight eviction body: load the flight, convert it to
+        a CompletedFlight, remove it from the active store, and queue it
+        for archive. Reused by both _evict_stale()'s TTL-gated sweep and
+        _force_evict_all()'s unconditional decommission sweep so the two
+        paths can't drift apart."""
+        with self._db_lock:
+            flight = Flight(self._db)
+            if not flight.load(icao_hex, limit=False):
+                return
+            completed = flight.to_completed_flight(load_all=False)
+            flight.delete()
+            self._db.commit()
+
+        self._archive(completed)
 
     def _archive(self, flight: CompletedFlight) -> None:
         """Queue a completed flight for the archive processor. May be
@@ -1700,20 +1737,81 @@ class MessageProcessor:
             )
 
     # ------------------------------------------------------------------
+    # Decommissioning (SIGUSR1)
+    # ------------------------------------------------------------------
+
+    def _decommission(self) -> None:
+        """Runs on the eviction thread once _eviction_loop() notices
+        self._force_evict is set. Force-evicts every active flight, waits
+        indefinitely for the retryable archive fallback queue to drain
+        (never for the dead-letter queue -- see module-level design notes
+        in message-processor/README.md's "Decommissioning a Message
+        Processor" section), logs a high-severity warning if anything
+        ended up dead-lettered, then hands off to the normal shutdown()
+        sequence so the process exits on its own."""
+        logger.warning(
+            "SIGUSR1 received: decommissioning -- force-evicting all active "
+            "flights and waiting for the archive queue to drain…"
+        )
+        self._force_evict_all()
+
+        while True:
+            depth = self._fallback.depth()
+            if depth == 0:
+                break
+            logger.info(
+                "Decommission: %d flight(s) still queued for archive "
+                "(retryable); waiting indefinitely for this to reach 0…",
+                depth,
+            )
+            time.sleep(10)
+
+        dead_letters = self._fallback.dead_letter_depth()
+        if dead_letters:
+            logger.critical(
+                "Decommission: %d flight(s) are DEAD-LETTERED and will "
+                "never be retried -- they require manual attention before "
+                "the volume is destroyed.",
+                dead_letters,
+            )
+
+        logger.warning("Decommission: archive queue drained -- shutting down.")
+        self.shutdown()
+
+    # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
         # No eager flush: the active store is durable, so a deliberate
         # stop and a crash are recovered identically on the next startup —
-        # nothing needs to be force-archived here.
+        # nothing needs to be force-archived here. (The SIGUSR1
+        # decommission path force-archives everything itself, up front,
+        # before ever calling this -- see _decommission().)
         logger.info("Shutdown requested…")
         self._shutdown.set()
         if self._rmq_channel:
-            try:
-                self._rmq_channel.stop_consuming()
-            except Exception:
-                pass
+            # SIGTERM/SIGINT call this from the main thread, which is the
+            # same thread blocked inside start_consuming() -- Python runs
+            # signal handlers on the main thread even when delivered while
+            # it's blocked in a C call, so a direct call is safe there.
+            # The SIGUSR1 decommission path calls this from the eviction
+            # thread instead, so it has to go through
+            # add_callback_threadsafe like every other cross-thread touch
+            # of self._rmq_channel/self._rmq_connection in this file (see
+            # _archive()/_drain_fallback()) -- stop_consuming() sends real
+            # AMQP frames and isn't safe to call concurrently with the
+            # main thread's own socket I/O.
+            if threading.current_thread() is threading.main_thread():
+                try:
+                    self._rmq_channel.stop_consuming()
+                except Exception:
+                    pass
+            elif self._rmq_connection:
+                try:
+                    self._rmq_connection.add_callback_threadsafe(self._rmq_channel.stop_consuming)
+                except Exception:
+                    pass
         if self._mqtt:
             self._mqtt.publish(
                 f"SkyFollower/message-processor/{self._id}/status", "OFFLINE", retain=True
@@ -1743,8 +1841,18 @@ def main() -> None:
         processor.shutdown()
         sys.exit(0)
 
+    def _handle_decommission(sig, frame):
+        # Deliberately minimal: just flag it and return. The actual
+        # force-evict/drain/shutdown sequence runs on the eviction thread
+        # (see MessageProcessor._eviction_loop/_decommission), not here --
+        # a signal handler runs on the main thread even when delivered
+        # while it's blocked inside start_consuming(), and that sequence
+        # can block for an unbounded time waiting on the fallback queue.
+        processor._force_evict.set()
+
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGUSR1, _handle_decommission)
 
     processor.start()
 
