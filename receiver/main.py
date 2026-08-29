@@ -252,20 +252,29 @@ def _enable_tcp_keepalive(sock: socket.socket) -> None:
     """Enable TCP keepalive with tuned timers on a source socket.
 
     Called for every source connection (1090 and 978 alike) immediately
-    after it opens. ``SO_KEEPALIVE`` itself is portable; the three timer
-    options are Linux-only -- containers run Linux, but the test suite runs
-    on macOS, where ``socket.TCP_KEEPIDLE`` and friends don't exist and a
-    bare reference raises ``AttributeError`` -- so each is guarded with
-    ``hasattr``. See the ``_TCP_KEEPIDLE_SECONDS`` comment for the timing
+    after it opens. ``SO_KEEPALIVE`` is the load-bearing part and is
+    portable. The three timer options are Linux-only: on macOS (where the
+    dev test suite runs) the names don't exist, so each is ``hasattr``
+    guarded; and even where a name exists it is only valid on a real TCP
+    socket, so the call is wrapped in ``try``/``except OSError`` -- a
+    non-TCP socket (a unit test's ``socketpair``) or an unusual platform
+    degrades to "keepalive on, default timers" rather than raising. A real
+    source socket from ``create_connection`` on a Linux container always
+    accepts them. See the ``_TCP_KEEPIDLE_SECONDS`` comment for the timing
     rationale.
     """
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    if hasattr(socket, "TCP_KEEPIDLE"):
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, _TCP_KEEPIDLE_SECONDS)
-    if hasattr(socket, "TCP_KEEPINTVL"):
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, _TCP_KEEPINTVL_SECONDS)
-    if hasattr(socket, "TCP_KEEPCNT"):
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, _TCP_KEEPCNT)
+    for _name, _value in (
+        ("TCP_KEEPIDLE", _TCP_KEEPIDLE_SECONDS),
+        ("TCP_KEEPINTVL", _TCP_KEEPINTVL_SECONDS),
+        ("TCP_KEEPCNT", _TCP_KEEPCNT),
+    ):
+        if not hasattr(socket, _name):
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, _name), _value)
+        except OSError:
+            pass
 
 
 def _sanitize_mqtt_id(value: str) -> str:

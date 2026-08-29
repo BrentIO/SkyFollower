@@ -270,25 +270,38 @@ class TestTcpKeepalive:
         assert receiver_main._TCP_KEEPCNT == 3
 
     def test_enable_tcp_keepalive_sets_so_keepalive(self):
-        a, b = socket.socketpair()
+        # A real TCP socket -- the tuned timer options are only valid on
+        # one, and _enable_tcp_keepalive is always handed a fresh
+        # create_connection socket in production.
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            _enable_tcp_keepalive(a)
-            assert a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+            _enable_tcp_keepalive(s)
+            assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
         finally:
-            a.close()
-            b.close()
+            s.close()
 
     @pytest.mark.skipif(
         not hasattr(socket, "TCP_KEEPIDLE"),
         reason="TCP_KEEPIDLE is Linux-only",
     )
     def test_enable_tcp_keepalive_sets_tuned_timers_on_linux(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _enable_tcp_keepalive(s)
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 60
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL) == 10
+            assert s.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT) == 3
+        finally:
+            s.close()
+
+    def test_enable_tcp_keepalive_tolerates_unsupported_timer_options(self):
+        """A non-TCP socket (or a platform that rejects the timer options)
+        still gets SO_KEEPALIVE and does not raise -- the timers are
+        best-effort."""
         a, b = socket.socketpair()
         try:
             _enable_tcp_keepalive(a)
-            assert a.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 60
-            assert a.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL) == 10
-            assert a.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT) == 3
+            assert a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
         finally:
             a.close()
             b.close()
