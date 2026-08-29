@@ -199,7 +199,7 @@ _QUEUE_SENSORS = [
 
 # (field, name, icon, state_class, unit, device_class)
 _CORE_GENERAL_SENSORS = [
-    ("started_at", "Core Health Started At", "mdi:clock-start", None, None, "timestamp"),
+    ("started_at", "Start Time", "mdi:clock-start", None, None, "timestamp"),
     ("version", "Core Health Version", "mdi:tag", None, None, None),
     ("rabbitmq_connected", "RabbitMQ Management API Connected", "mdi:rabbit", None, None, None),
     ("redis_connected", "Redis Monitoring Connected", "mdi:database-check", None, None, None),
