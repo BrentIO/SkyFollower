@@ -93,6 +93,21 @@ _HEALTHCHECK_INTERVAL_SECONDS = 15
 _HTTP_TIMEOUT_SECONDS = 10
 
 
+def _capitalized(value):
+    """"running" -> "Running" -- simple first-letter capitalization for a
+    plain-English status word. Applied only to strings; anything else
+    (notably None) passes through untouched so a missing reading still
+    skips publish via _publish_stat's own None check rather than raising."""
+    return value.capitalize() if isinstance(value, str) else value
+
+
+def _uppercased(value):
+    """"ok" -> "OK" -- Redis's own AOF/RDB status strings read as acronyms,
+    not regular words, so they're fully upper-cased rather than merely
+    capitalized. Same string-only guard as _capitalized above."""
+    return value.upper() if isinstance(value, str) else value
+
+
 def _sanitize_id(value: str) -> str:
     """Replace any character outside [a-zA-Z0-9_-] with '-' -- Home
     Assistant discovery requires object_id/unique_id to match
@@ -159,58 +174,64 @@ def _queue_target(queue_name: str) -> _QueueTarget:
     )
 
 
-# (field, name suffix, icon, state_class, unit)
+# (field, name suffix, icon, state_class, unit, device_class)
+# device_class "data_size" (paired with unit "B") is HA's own native
+# byte-value formatting -- the frontend auto-scales the raw byte count to
+# KB/MB/GB on its own, so the value published on the wire stays the raw
+# integer; only the discovery config gains the device_class.
 _QUEUE_SENSORS = [
-    ("consumers", "Consumers", "mdi:account-multiple", "measurement", None),
-    ("consumer_utilisation_percent", "Consumer Utilisation", "mdi:gauge", "measurement", "%"),
-    ("messages_ready", "Messages Ready", "mdi:tray-full", "measurement", None),
-    ("messages_unacknowledged", "Messages Unacknowledged", "mdi:tray-alert", "measurement", None),
-    ("publish_rate", "Publish Rate", "mdi:upload", "measurement", "msg/s"),
-    ("deliver_rate", "Deliver Rate", "mdi:download", "measurement", "msg/s"),
-    ("ack_rate", "Ack Rate", "mdi:check-circle-outline", "measurement", "msg/s"),
-    ("redeliver_rate", "Redeliver Rate", "mdi:refresh", "measurement", "msg/s"),
-    ("state", "State", "mdi:information-outline", None, None),
-    ("memory_bytes", "Memory", "mdi:memory", "measurement", "B"),
-    ("message_bytes", "Message Bytes", "mdi:file-multiple-outline", "measurement", "B"),
+    ("consumers", "Consumers", "mdi:account-multiple", "measurement", None, None),
+    # Display name uses the US spelling; the field/topic name keeps the
+    # British spelling ("utilisation") since it predates this component's
+    # very first installed base and renaming it on the wire would be a
+    # breaking change for anything already polling it directly by name.
+    ("consumer_utilisation_percent", "Consumer Utilization", "mdi:gauge", "measurement", "%", None),
+    ("messages_ready", "Messages Ready", "mdi:tray-full", "measurement", None, None),
+    ("messages_unacknowledged", "Messages Unacknowledged", "mdi:tray-alert", "measurement", None, None),
+    ("publish_rate", "Publish Rate", "mdi:upload", "measurement", "msg/s", None),
+    ("deliver_rate", "Deliver Rate", "mdi:download", "measurement", "msg/s", None),
+    ("ack_rate", "Ack Rate", "mdi:check-circle-outline", "measurement", "msg/s", None),
+    ("redeliver_rate", "Redeliver Rate", "mdi:refresh", "measurement", "msg/s", None),
+    ("state", "State", "mdi:information-outline", None, None, None),
+    ("memory_bytes", "Memory", "mdi:memory", "measurement", "B", "data_size"),
+    ("message_bytes", "Message Bytes", "mdi:file-multiple-outline", "measurement", "B", "data_size"),
 ]
 
-# (field, name, icon, state_class, unit)
+# (field, name, icon, state_class, unit, device_class)
 _CORE_GENERAL_SENSORS = [
-    ("started_at", "Core Health Started At", "mdi:clock-start", None, None),
-    ("version", "Core Health Version", "mdi:tag", None, None),
-    ("rabbitmq_connected", "RabbitMQ Management API Connected", "mdi:rabbit", None, None),
-    ("redis_connected", "Redis Monitoring Connected", "mdi:database-check", None, None),
+    ("started_at", "Core Health Started At", "mdi:clock-start", None, None, "timestamp"),
+    ("version", "Core Health Version", "mdi:tag", None, None, None),
+    ("rabbitmq_connected", "RabbitMQ Management API Connected", "mdi:rabbit", None, None, None),
+    ("redis_connected", "Redis Monitoring Connected", "mdi:database-check", None, None, None),
 ]
 
 _CORE_RABBITMQ_SENSORS = [
-    ("rabbitmq_connections_total", "RabbitMQ Connections", "mdi:lan-connect", "measurement", None),
-    ("rabbitmq_memory_alarm", "RabbitMQ Memory Alarm", "mdi:alert", None, None),
-    ("rabbitmq_disk_free_alarm", "RabbitMQ Disk Free Alarm", "mdi:alert-octagon", None, None),
-    ("adsb_exchange_publish_in_rate", "ADSB Exchange Publish In Rate", "mdi:upload-network", "measurement", "msg/s"),
-    ("adsb_exchange_publish_out_rate", "ADSB Exchange Publish Out Rate", "mdi:download-network", "measurement", "msg/s"),
-    ("archive_queue_missing", "Archive Queue Missing", "mdi:archive-off", None, None),
+    ("rabbitmq_connections_total", "RabbitMQ Connections", "mdi:lan-connect", "measurement", None, None),
+    ("rabbitmq_memory_alarm", "RabbitMQ Memory Alarm", "mdi:alert", None, None, None),
+    ("rabbitmq_disk_free_alarm", "RabbitMQ Disk Free Alarm", "mdi:alert-octagon", None, None, None),
+    ("adsb_exchange_publish_in_rate", "ADSB Exchange Publish In Rate", "mdi:upload-network", "measurement", "msg/s", None),
+    ("adsb_exchange_publish_out_rate", "ADSB Exchange Publish Out Rate", "mdi:download-network", "measurement", "msg/s", None),
+    ("archive_queue_missing", "Archive Queue Missing", "mdi:archive-off", None, None, None),
 ]
 
 _CORE_REDIS_SENSORS = [
-    ("redis_used_memory_bytes", "Redis Memory Used", "mdi:memory", "measurement", "B"),
-    ("redis_used_memory_peak_percent", "Redis Memory Used Peak", "mdi:memory", "measurement", "%"),
-    ("redis_maxmemory_bytes", "Redis Max Memory", "mdi:memory", "measurement", "B"),
-    ("redis_maxmemory_policy", "Redis Max Memory Policy", "mdi:cog-outline", None, None),
-    ("redis_connected_clients", "Redis Connected Clients", "mdi:account-multiple", "measurement", None),
-    ("redis_ops_per_second", "Redis Ops Per Second", "mdi:speedometer", "measurement", "ops/s"),
-    ("redis_keyspace_hits", "Redis Keyspace Hits", "mdi:target", "total_increasing", None),
-    ("redis_keyspace_misses", "Redis Keyspace Misses", "mdi:target", "total_increasing", None),
-    ("redis_keyspace_hit_ratio_percent", "Redis Keyspace Hit Ratio", "mdi:percent", "measurement", "%"),
-    ("redis_keys_count", "Redis Keyspace Size", "mdi:key-variant", "measurement", None),
-    ("redis_rdb_last_bgsave_status", "Redis RDB Last Bgsave Status", "mdi:content-save", None, None),
-    ("redis_aof_last_bgrewrite_status", "Redis AOF Last Bgrewrite Status", "mdi:content-save-cog", None, None),
-    ("redis_aof_last_write_status", "Redis AOF Last Write Status", "mdi:content-save-alert", None, None),
-    ("redis_role", "Redis Role", "mdi:server", None, None),
-    ("redis_connected_slaves", "Redis Connected Replicas", "mdi:server-network", "measurement", None),
-    ("redis_total_error_replies", "Redis Total Error Replies", "mdi:alert-circle-outline", "total_increasing", None),
-    ("redis_auth_error_count", "Redis Auth Error Count", "mdi:shield-alert-outline", "total_increasing", None),
-    ("redis_rejected_connections", "Redis Rejected Connections", "mdi:connection", "total_increasing", None),
-    ("redis_evicted_keys", "Redis Evicted Keys", "mdi:delete-alert-outline", "total_increasing", None),
+    ("redis_used_memory_bytes", "Redis Memory Used", "mdi:memory", "measurement", "B", "data_size"),
+    ("redis_used_memory_peak_percent", "Redis Memory Used Peak", "mdi:memory", "measurement", "%", None),
+    ("redis_maxmemory_bytes", "Redis Max Memory", "mdi:memory", "measurement", "B", "data_size"),
+    ("redis_connected_clients", "Redis Connected Clients", "mdi:account-multiple", "measurement", None, None),
+    ("redis_ops_per_second", "Redis Ops Per Second", "mdi:speedometer", "measurement", "ops/s", None),
+    ("redis_keyspace_hits", "Redis Keyspace Hits", "mdi:target", "total_increasing", None, None),
+    ("redis_keyspace_misses", "Redis Keyspace Misses", "mdi:target", "total_increasing", None, None),
+    ("redis_keyspace_hit_ratio_percent", "Redis Keyspace Hit Ratio", "mdi:percent", "measurement", "%", None),
+    ("redis_keys_count", "Redis Keyspace Size", "mdi:key-variant", "measurement", None, None),
+    ("redis_rdb_last_bgsave_status", "Redis RDB Last BGSAVE Status", "mdi:content-save", None, None, None),
+    ("redis_aof_last_bgrewrite_status", "Redis AOF Last Bgrewrite Status", "mdi:content-save-cog", None, None, None),
+    ("redis_aof_last_write_status", "Redis AOF Last Write Status", "mdi:content-save-alert", None, None, None),
+    ("redis_role", "Redis Role", "mdi:server", None, None, None),
+    ("redis_connected_slaves", "Redis Connected Replicas", "mdi:server-network", "measurement", None, None),
+    ("redis_total_error_replies", "Redis Total Error Replies", "mdi:alert-circle-outline", "total_increasing", None, None),
+    ("redis_auth_error_count", "Redis Auth Error Count", "mdi:shield-alert-outline", "total_increasing", None, None),
+    ("redis_rejected_connections", "Redis Rejected Connections", "mdi:connection", "total_increasing", None, None),
 ]
 
 # (field, period, kind, label, icon) -- mimicked message-processor counters.
@@ -376,7 +397,7 @@ class CoreHealth:
             (_CORE_REDIS_SENSORS, f"{MQTT_ROOT}/redis/statistic"),
         )
         for sensors, base in groups:
-            for field, name, icon, state_class, unit in sensors:
+            for field, name, icon, state_class, unit, device_class in sensors:
                 payload: dict = {
                     **availability,
                     "state_topic": f"{base}/{field}",
@@ -390,8 +411,8 @@ class CoreHealth:
                     payload["state_class"] = state_class
                 if unit:
                     payload["unit_of_measurement"] = unit
-                if field == "started_at":
-                    payload["device_class"] = "timestamp"
+                if device_class:
+                    payload["device_class"] = device_class
                 self._mqtt.publish(
                     f"homeassistant/sensor/SkyFollower_core_health_{field}/config",
                     json.dumps(payload),
@@ -535,7 +556,7 @@ class CoreHealth:
             "deliver_rate": _rate("deliver"),
             "ack_rate": _rate("ack"),
             "redeliver_rate": _rate("redeliver"),
-            "state": queue.get("state", "unknown"),
+            "state": _capitalized(queue.get("state", "unknown")),
             "memory_bytes": queue.get("memory", 0),
             "message_bytes": queue.get("message_bytes", 0),
         }
@@ -552,7 +573,7 @@ class CoreHealth:
             "payload_available": "ONLINE",
             "payload_not_available": "OFFLINE",
         }
-        for field, name_suffix, icon, state_class, unit in _QUEUE_SENSORS:
+        for field, name_suffix, icon, state_class, unit, device_class in _QUEUE_SENSORS:
             payload: dict = {
                 **availability,
                 "state_topic": f"{target.state_base}/{field}",
@@ -573,6 +594,8 @@ class CoreHealth:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
+            if device_class:
+                payload["device_class"] = device_class
             self._mqtt.publish(
                 f"homeassistant/sensor/{target.unique_prefix}_{field}/config",
                 json.dumps(payload),
@@ -776,22 +799,20 @@ class CoreHealth:
             "redis_used_memory_bytes": info.get("used_memory"),
             "redis_used_memory_peak_percent": peak_percent,
             "redis_maxmemory_bytes": info.get("maxmemory"),
-            "redis_maxmemory_policy": info.get("maxmemory_policy"),
             "redis_connected_clients": info.get("connected_clients"),
             "redis_ops_per_second": info.get("instantaneous_ops_per_sec"),
             "redis_keyspace_hits": hits,
             "redis_keyspace_misses": misses,
             "redis_keyspace_hit_ratio_percent": hit_ratio,
             "redis_keys_count": memory_stats.get("keys.count"),
-            "redis_rdb_last_bgsave_status": info.get("rdb_last_bgsave_status"),
-            "redis_aof_last_bgrewrite_status": info.get("aof_last_bgrewrite_status"),
-            "redis_aof_last_write_status": info.get("aof_last_write_status"),
+            "redis_rdb_last_bgsave_status": _uppercased(info.get("rdb_last_bgsave_status")),
+            "redis_aof_last_bgrewrite_status": _uppercased(info.get("aof_last_bgrewrite_status")),
+            "redis_aof_last_write_status": _uppercased(info.get("aof_last_write_status")),
             "redis_role": info.get("role"),
             "redis_connected_slaves": info.get("connected_slaves"),
             "redis_total_error_replies": info.get("total_error_replies"),
             "redis_auth_error_count": auth_errors,
             "redis_rejected_connections": info.get("rejected_connections"),
-            "redis_evicted_keys": info.get("evicted_keys"),
         }
         for field, value in values.items():
             self._publish_stat(f"{base}/{field}", value)
