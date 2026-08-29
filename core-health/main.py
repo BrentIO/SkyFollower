@@ -692,7 +692,7 @@ class CoreHealth:
         device = build_ha_device(
             identifier=f"SkyFollower_receiver_{name}",
             name=f"SkyFollower Receiver {name}",
-            model=name,
+            model="Receiver",
         )
         base = f"SkyFollower/receiver/{name}/statistic"
         for src in sources:
