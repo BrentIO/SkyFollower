@@ -14,17 +14,9 @@ import {
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { MAP_STYLE } from "../lib/maplibreSetup";
+import { classifyLookup, type LookupCategory } from "../lib/lookupClassifier";
 
-type TabKey = "aircraft" | "operator" | "airport" | "route";
-
-const TABS: { key: TabKey; label: string; placeholder: string }[] = [
-  { key: "aircraft", label: "Aircraft", placeholder: "ICAO hex (A8AE7F) or registration (N659DL)" },
-  { key: "operator", label: "Operator", placeholder: "ICAO airline designator (DAL)" },
-  { key: "airport", label: "Airport", placeholder: "ICAO (KJFK) or IATA (JFK) code" },
-  { key: "route", label: "Route", placeholder: "Flight ident (DAL2)" },
-];
-
-// Every lookup type across all four tabs is alphanumeric plus, at most,
+// Every lookup type the single search field accepts is alphanumeric plus, at most,
 // a space or hyphen (registrations like "VP-CKA", idents, designators) --
 // strips anything else as it's typed/pasted rather than merely flagging it
 // invalid after the fact.
@@ -32,36 +24,37 @@ function sanitizeQuery(raw: string): string {
   return raw.replace(/[^A-Za-z0-9 -]/g, "");
 }
 
-// 6 hex digits -> icao_hex; anything else -> registration. Registration
-// formats vary too much by country to validate further client-side --
-// non-hex input is just passed through and a 404 means "not found."
-//
-// This guess is only a starting point, not a guarantee: plenty of real
-// registrations (e.g. "CA7116", "AEE326") happen to use only [0-9A-F]
-// characters too, so a 404 on the first guess doesn't necessarily mean the
-// aircraft isn't in Redis -- it may just mean the guess was wrong. See
-// getAircraftGuessing below.
-const HEX_PATTERN = /^[0-9A-Fa-f]{6}$/;
-
-// Tries the guessed lookup type first; on a 404 (and only a 404 -- any
-// other error propagates immediately), retries as the other type before
-// giving up. Only shows "No data found" once both interpretations of the
-// input have actually missed.
-async function getAircraftGuessing(trimmed: string): Promise<AircraftRecord> {
-  const guessedHex = HEX_PATTERN.test(trimmed);
-  try {
-    return await getAircraft(guessedHex ? { icaoHex: trimmed } : { registration: trimmed });
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    return await getAircraft(guessedHex ? { registration: trimmed } : { icaoHex: trimmed });
-  }
-}
-
 type LookupResult =
   | { tab: "aircraft"; data: AircraftRecord }
   | { tab: "operator"; data: OperatorRecord }
   | { tab: "airport"; data: AirportRecord }
   | { tab: "route"; data: RouteLookup };
+
+const RESULT_LABEL: Record<LookupResult["tab"], string> = {
+  aircraft: "Aircraft",
+  operator: "Operator",
+  airport: "Airport",
+  route: "Route",
+};
+
+// Runs the one backend lookup a classified category maps to, tagging the
+// payload with its result-panel kind. "aircraft-hex" and
+// "aircraft-registration" hit the same endpoint with a different query
+// parameter; every other category is 1:1 with an endpoint.
+function lookupForCategory(category: LookupCategory, query: string): Promise<LookupResult> {
+  switch (category) {
+    case "aircraft-hex":
+      return getAircraft({ icaoHex: query }).then((data) => ({ tab: "aircraft", data }));
+    case "aircraft-registration":
+      return getAircraft({ registration: query }).then((data) => ({ tab: "aircraft", data }));
+    case "operator":
+      return getOperator(query).then((data) => ({ tab: "operator", data }));
+    case "airport":
+      return getAirport(query).then((data) => ({ tab: "airport", data }));
+    case "route":
+      return getRoute(query).then((data) => ({ tab: "route", data }));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Loose-value display helpers -- these endpoints return whatever's really in
@@ -612,88 +605,97 @@ function RouteResultView({ data }: { data: RouteLookup }) {
   );
 }
 
+function ResultPanelBody({ result }: { result: LookupResult }) {
+  switch (result.tab) {
+    case "aircraft":
+      return <AircraftResultView data={result.data} />;
+    case "operator":
+      return <OperatorResultView data={result.data} />;
+    case "airport":
+      return <AirportResultView data={result.data} />;
+    case "route":
+      return <RouteResultView data={result.data} />;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LookupView
 // ---------------------------------------------------------------------------
 
+type SearchState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "results"; results: LookupResult[] }
+  // Every category the input matched was actually queried and came back empty.
+  | { status: "not-found" }
+  // The input matched no category's shape -- nothing was queried at all.
+  | { status: "no-match" };
+
 export function LookupView() {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<TabKey>("aircraft");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<LookupResult | null>(null);
-  const [notFound, setNotFound] = useState(false);
-
-  function selectTab(next: TabKey) {
-    setTab(next);
-    setQuery("");
-    setResult(null);
-    setNotFound(false);
-  }
+  const [state, setState] = useState<SearchState>({ status: "idle" });
 
   async function handleSearch(e: FormEvent) {
     e.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) return;
 
-    setLoading(true);
-    setResult(null);
-    setNotFound(false);
-    try {
-      switch (tab) {
-        case "aircraft":
-          setResult({ tab: "aircraft", data: await getAircraftGuessing(trimmed) });
-          break;
-        case "operator":
-          setResult({ tab: "operator", data: await getOperator(trimmed) });
-          break;
-        case "airport":
-          setResult({ tab: "airport", data: await getAirport(trimmed) });
-          break;
-        case "route":
-          setResult({ tab: "route", data: await getRoute(trimmed) });
-          break;
+    const categories = classifyLookup(trimmed);
+    if (categories.length === 0) {
+      // Nothing looks like a hex, registration, designator, airport code,
+      // or flight ident -- say so immediately without touching the network.
+      setState({ status: "no-match" });
+      return;
+    }
+
+    setState({ status: "loading" });
+
+    // Every matching category is queried in parallel; an ambiguous input
+    // (e.g. "FFT" -> operator + airport, "ABC123" -> hex + route) shows one
+    // labeled panel per category that actually resolves.
+    const settled = await Promise.allSettled(
+      categories.map((category) => lookupForCategory(category, trimmed)),
+    );
+
+    const results: LookupResult[] = [];
+    let otherError: unknown = null;
+    for (const outcome of settled) {
+      if (outcome.status === "fulfilled") {
+        results.push(outcome.value);
+        continue;
       }
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        // Redis can't distinguish "never seen," "TTL expired," or "not yet
-        // enriched" -- one generic message for all three.
-        setNotFound(true);
-      } else {
-        showToast("error", err instanceof ApiError ? err.message : "Lookup failed.");
-      }
-    } finally {
-      setLoading(false);
+      const err = outcome.reason;
+      // A 404 just means that one category isn't in Redis ("never seen,"
+      // "TTL expired," or "not yet enriched" are indistinguishable) -- drop
+      // it silently. Anything else is a real failure worth surfacing.
+      if (err instanceof ApiError && err.status === 404) continue;
+      otherError = err;
+    }
+
+    if (otherError) {
+      showToast("error", otherError instanceof ApiError ? otherError.message : "Lookup failed.");
+    }
+
+    if (results.length > 0) {
+      setState({ status: "results", results });
+    } else if (otherError) {
+      setState({ status: "idle" });
+    } else {
+      setState({ status: "not-found" });
     }
   }
 
-  const activeTabInfo = TABS.find((t) => t.key === tab)!;
+  const loading = state.status === "loading";
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-2">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => selectTab(t.key)}
-            className={`rounded-md px-3 py-2 text-sm font-medium ${
-              tab === t.key
-                ? "bg-sky-600 text-white"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       <form onSubmit={handleSearch} className="flex max-w-lg gap-2">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(sanitizeQuery(e.target.value))}
-          placeholder={activeTabInfo.placeholder}
+          placeholder="ICAO hex, registration, operator, airport, or flight ident"
           className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
         />
         <button
@@ -705,13 +707,21 @@ export function LookupView() {
         </button>
       </form>
 
-      <div className="max-w-3xl">
+      <div className="flex max-w-3xl flex-col gap-8">
         {loading && <p className="text-slate-400">Searching...</p>}
-        {!loading && notFound && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
-        {!loading && result?.tab === "aircraft" && <AircraftResultView data={result.data} />}
-        {!loading && result?.tab === "operator" && <OperatorResultView data={result.data} />}
-        {!loading && result?.tab === "airport" && <AirportResultView data={result.data} />}
-        {!loading && result?.tab === "route" && <RouteResultView data={result.data} />}
+        {state.status === "no-match" && (
+          <p className="text-slate-500 dark:text-slate-400">
+            That doesn't look like an ICAO hex, registration, operator designator, airport code, or flight ident.
+          </p>
+        )}
+        {state.status === "not-found" && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
+        {state.status === "results" &&
+          state.results.map((result, i) => (
+            <div key={`${result.tab}-${i}`} className="flex flex-col gap-3">
+              <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
+              <ResultPanelBody result={result} />
+            </div>
+          ))}
       </div>
     </div>
   );
