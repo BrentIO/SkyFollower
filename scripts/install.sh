@@ -837,10 +837,15 @@ collect_management_ui_env() {
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$redis_default")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(existing_env_value_or "$env_file" REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file")"
-  S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
-  AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
-  AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)")"
-  AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)")"
+  # Reads the archive stack's outputs (via `aws-setup --outputs-only`) so
+  # bucket/region/credentials pre-fill the prompts below. Needs its own
+  # temporary credentials -- none of the three scoped identities can read
+  # the CloudFormation control plane. Declining falls through unchanged.
+  offer_aws_provisioning management-ui "$env_file"
+  S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "${AWS_PROV_S3_BUCKET:-$(existing_env_value "$env_file" S3_BUCKET)}")"
+  AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "${AWS_PROV_REGION:-$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)}")"
+  AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "${AWS_PROV_MANAGEMENT_UI_KEY_ID:-$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)}")"
+  AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "${AWS_PROV_MANAGEMENT_UI_SECRET:-$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)}")"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
 
   write_env_header "$env_file" "$role_dir"
@@ -1070,15 +1075,19 @@ ENV_EOF
 collect_archive_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (archive) --"
-  S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
-  AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
+  # Offer to create/update the CloudFormation stack first, so its outputs
+  # become the prompt defaults below. Declining falls through to the same
+  # manual prompts, unchanged, for anyone who already has infrastructure.
+  offer_aws_provisioning archive "$env_file"
+  S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "${AWS_PROV_S3_BUCKET:-$(existing_env_value "$env_file" S3_BUCKET)}")"
+  AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "${AWS_PROV_REGION:-$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)}")"
   # archive-processor and archive-compaction run under separate
-  # least-privilege IAM identities (see specs/aws/iam-policies/), so each
-  # gets its own key pair. S3_BUCKET and AWS_DEFAULT_REGION stay shared.
-  ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID "archive-processor AWS access key ID" "$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID)")"
-  ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY "archive-processor AWS secret access key" "$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY)")"
-  ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID "archive-compaction AWS access key ID" "$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID)")"
-  ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY "archive-compaction AWS secret access key" "$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY)")"
+  # least-privilege IAM identities, so each gets its own key pair.
+  # S3_BUCKET and AWS_DEFAULT_REGION stay shared.
+  ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID "archive-processor AWS access key ID" "${AWS_PROV_ARCHIVE_PROCESSOR_KEY_ID:-$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID)}")"
+  ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY "archive-processor AWS secret access key" "${AWS_PROV_ARCHIVE_PROCESSOR_SECRET:-$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY)}")"
+  ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID "archive-compaction AWS access key ID" "${AWS_PROV_ARCHIVE_COMPACTION_KEY_ID:-$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID)}")"
+  ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY "archive-compaction AWS secret access key" "${AWS_PROV_ARCHIVE_COMPACTION_SECRET:-$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY)}")"
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(existing_env_value_or "$env_file" RABBITMQ_USERNAME skyfollower)")"
@@ -1102,7 +1111,8 @@ S3_BUCKET=${S3_BUCKET}
 AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
 
 # archive-processor and archive-compaction each authenticate as their own
-# least-privilege IAM identity (see specs/aws/iam-policies/). docker-compose
+# least-privilege IAM identity (both issued by the aws-setup CloudFormation
+# stack -- see docs/aws-setup.md). docker-compose
 # maps the pair for each into the container as boto3's own
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY; no credentials are passed in
 # code, so an instance role can replace a pair later by leaving it unset.
@@ -1346,6 +1356,126 @@ provision_rabbitmq_users() {
   else
     echo "  ✗ ${role_dir}/.env is missing RabbitMQ monitoring credentials -- skipping core-health's RabbitMQ user." >&2
   fi
+}
+
+# ---------------------------------------------------------------------------
+# AWS provisioning (archive + management-ui hosts)
+# ---------------------------------------------------------------------------
+
+# Pulls one KEY=value line out of the aws-setup container's stdout. Same
+# grep/cut style as existing_env_value(); `|| true` so a legitimately
+# absent key doesn't take the script down under `set -e`.
+aws_setup_output_value() {
+  local outputs="$1" key="$2"
+  printf '%s\n' "$outputs" | grep -E "^${key}=" | tail -1 | cut -d= -f2- || true
+}
+
+# Offers to create/update the archive's CloudFormation stack (archive
+# role), or to read an already-deployed stack's outputs (management-ui
+# role), via a one-shot `docker run --rm ghcr.io/.../skyfollower-aws-setup`.
+# Modelled on provision_rabbitmq_users(): idempotent, degrades to advice
+# rather than aborting, and every failure path just falls through to the
+# manual AWS prompts unchanged.
+#
+# On success it sets AWS_PROV_* globals that collect_archive_env() /
+# collect_management_ui_env() then use as their AWS prompt defaults, so the
+# operator presses Enter through them. It never writes the elevated
+# (provisioning) credentials anywhere -- they are passed to the container
+# as environment for that single --rm run and expire on their own.
+offer_aws_provisioning() {
+  local role="$1" env_file="$2"
+
+  AWS_PROV_S3_BUCKET=""
+  AWS_PROV_REGION=""
+  AWS_PROV_ARCHIVE_PROCESSOR_KEY_ID=""
+  AWS_PROV_ARCHIVE_PROCESSOR_SECRET=""
+  AWS_PROV_ARCHIVE_COMPACTION_KEY_ID=""
+  AWS_PROV_ARCHIVE_COMPACTION_SECRET=""
+  AWS_PROV_MANAGEMENT_UI_KEY_ID=""
+  AWS_PROV_MANAGEMENT_UI_SECRET=""
+
+  # Non-interactive runs read every AWS value straight from the
+  # environment (the .env key names) -- no container step, no prompting.
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    return 0
+  fi
+
+  echo
+  echo "  This role needs AWS infrastructure (Glue table, Athena workgroup, IAM identities)."
+  local answer
+  read -r -p "  Create or update it now? [Y/n]: " answer </dev/tty
+  if [ -n "$answer" ] && ! [[ "$answer" =~ ^[Yy] ]]; then
+    return 0
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "  ✗ docker not found on PATH -- skipping provisioning; you'll be prompted for the AWS values manually." >&2
+    return 0
+  fi
+
+  echo
+  echo "  Paste temporary AWS credentials with permission to create these resources"
+  echo "  (access key + secret + session token, as copied from the AWS access portal)."
+  echo "  These are used for this one step only and are never saved."
+  local prov_key_id prov_secret prov_token prov_region
+  prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
+  prov_secret="$(prompt_password_value AWS_PROVISIONING_SECRET_ACCESS_KEY "AWS secret access key" "")"
+  prov_token="$(prompt_password_value AWS_PROVISIONING_SESSION_TOKEN "AWS session token" "")"
+  # Region must be prompted before any stack lookup: finding a stack
+  # requires knowing its region, so it can't be taken from the stack's own
+  # AwsRegion output.
+  prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
+
+  local image="ghcr.io/brentio/skyfollower-aws-setup:${IMAGE_VERSION}"
+  local outputs=""
+
+  if [ "$role" = "management-ui" ]; then
+    echo "  → Reading the archive stack's outputs..."
+    if ! outputs="$(docker run --rm \
+        -e AWS_ACCESS_KEY_ID="$prov_key_id" \
+        -e AWS_SECRET_ACCESS_KEY="$prov_secret" \
+        -e AWS_SESSION_TOKEN="$prov_token" \
+        -e AWS_DEFAULT_REGION="$prov_region" \
+        "$image" --outputs-only)"; then
+      echo "  ✗ Could not read the stack outputs -- is the archive host provisioned yet? Falling back to manual prompts." >&2
+      return 0
+    fi
+  else
+    local prov_bucket prov_create
+    prov_bucket="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
+    read -r -p "  Create this bucket? [Y/n]: " answer </dev/tty
+    if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then
+      prov_create="Yes"
+    else
+      prov_create="No"
+    fi
+    echo "  → Deploying CloudFormation stack 'skyfollower' (this can take a few minutes)..."
+    if ! outputs="$(docker run --rm \
+        -e AWS_ACCESS_KEY_ID="$prov_key_id" \
+        -e AWS_SECRET_ACCESS_KEY="$prov_secret" \
+        -e AWS_SESSION_TOKEN="$prov_token" \
+        -e AWS_DEFAULT_REGION="$prov_region" \
+        -e ARCHIVE_BUCKET_NAME="$prov_bucket" \
+        -e CREATE_ARCHIVE_BUCKET="$prov_create" \
+        "$image")"; then
+      echo "  ✗ Provisioning failed -- see the output above. Falling back to manual prompts." >&2
+      return 0
+    fi
+    echo "  ✓ Stack deployed."
+  fi
+
+  AWS_PROV_S3_BUCKET="$(aws_setup_output_value "$outputs" ArchiveBucketName)"
+  AWS_PROV_REGION="$(aws_setup_output_value "$outputs" AwsRegion)"
+  AWS_PROV_ARCHIVE_PROCESSOR_KEY_ID="$(aws_setup_output_value "$outputs" ArchiveProcessorAccessKeyId)"
+  AWS_PROV_ARCHIVE_PROCESSOR_SECRET="$(aws_setup_output_value "$outputs" ArchiveProcessorSecretAccessKey)"
+  AWS_PROV_ARCHIVE_COMPACTION_KEY_ID="$(aws_setup_output_value "$outputs" ArchiveCompactionAccessKeyId)"
+  AWS_PROV_ARCHIVE_COMPACTION_SECRET="$(aws_setup_output_value "$outputs" ArchiveCompactionSecretAccessKey)"
+  AWS_PROV_MANAGEMENT_UI_KEY_ID="$(aws_setup_output_value "$outputs" ManagementUiAccessKeyId)"
+  AWS_PROV_MANAGEMENT_UI_SECRET="$(aws_setup_output_value "$outputs" ManagementUiSecretAccessKey)"
+  # Region prompt already succeeded; keep the operator's choice if the
+  # stack output somehow came back blank.
+  [ -n "$AWS_PROV_REGION" ] || AWS_PROV_REGION="$prov_region"
+  echo "  ✓ AWS values captured -- the prompts below are pre-filled; press Enter to accept."
 }
 
 offer_ofelia_and_bulk_load() {

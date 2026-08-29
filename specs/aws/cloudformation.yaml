@@ -1,0 +1,514 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  SkyFollower archive infrastructure: the S3 archive bucket (optional), a
+  dedicated Athena query-results bucket, the Glue database and Parquet-index
+  table (with partition projection), an Athena workgroup, and three scoped
+  IAM identities (archive-processor, archive-compaction, management-ui).
+  Deployed once by the aws-setup container; re-running it applies the delta.
+  No SkyFollower component ever holds a credential this template issues that
+  can create, modify, or delete an AWS resource -- the three identities are
+  data-plane only.
+
+# ---------------------------------------------------------------------------
+# Conventions
+#
+# Full-form intrinsics only (Fn::Sub, Ref, Fn::GetAtt, Fn::If, Fn::Join,
+# Fn::Equals, Fn::Not). The exclamation-prefixed short-form tags are
+# custom YAML tags that break yaml.safe_load(), and the anti-drift test in
+# shared/tests/ parses this file without a CloudFormation-aware loader.
+#
+# One place must NOT use Fn::Sub: the Glue table's
+# storage.location.template property. Its value carries Athena projection
+# placeholders (${year}/${month}/${day}); Fn::Sub would try to resolve
+# those as CloudFormation variables and fail. Fn::Join has no escaping to
+# get wrong, so that property is built with Fn::Join.
+# ---------------------------------------------------------------------------
+
+Parameters:
+
+  ArchiveBucketName:
+    Type: String
+    Description: >-
+      Name of the S3 bucket holding flights/, index/, and
+      _compaction_state/. Never change this on an existing stack -- in
+      create mode CloudFormation replaces the bucket, and the archive
+      silently starts writing to a new empty one.
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+
+  CreateArchiveBucket:
+    Type: String
+    Description: >-
+      Yes to create the archive bucket, No to point at one that already
+      exists. Defaults to Yes because the failure modes are asymmetric: a
+      wrong Yes fails within seconds with a clean rollback, a wrong No
+      deploys green and surfaces hours later as the archive spooling to its
+      local fallback.
+    AllowedValues:
+      - "Yes"
+      - "No"
+    Default: "Yes"
+
+  GlueDatabaseName:
+    Type: String
+    Description: Glue Data Catalog database that holds the archive index table.
+    Default: skyfollower
+
+  GlueTableName:
+    Type: String
+    Description: Glue table over the archive's per-flight Parquet index.
+    Default: archive_flights
+
+  AthenaWorkGroupName:
+    Type: String
+    Description: Athena workgroup management-ui runs archive-search queries in.
+    Default: skyfollower
+
+  AthenaResultsExpirationDays:
+    Type: Number
+    Description: >-
+      Days before an Athena query-result file in the dedicated results
+      bucket is expired. Defaults to 8, deliberately one more than
+      management-ui's 7-day Redis pointer TTL so the pointer always expires
+      before the file it references.
+    Default: 8
+    MinValue: 1
+
+  ResourceNamePrefix:
+    Type: String
+    Description: >-
+      Prefix for the three IAM user names. Reads cosmetic, but changing it
+      on an existing stack REPLACES every IAM user (and therefore rotates
+      every access key), so aws-setup treats a change here as a
+      replacement and requires confirmation.
+    Default: skyfollower
+
+  AccessKeySerial:
+    Type: Number
+    Description: >-
+      Bump this to rotate all three access-key pairs. AWS::IAM::AccessKey
+      is replaced only when its Serial (or UserName) changes, so a normal
+      schema/policy/expiry update leaves keys untouched.
+    Default: 1
+
+  AthenaBytesScannedCutoffBytes:
+    Type: Number
+    Description: >-
+      Per-query scanned-bytes ceiling for the workgroup, a cost guardrail
+      (Athena bills ~$5/TB). 0 disables it (the default -- nothing changes
+      out of the box). Any non-zero value is floored at 10 MB by AWS.
+    Default: 0
+    MinValue: 0
+
+Conditions:
+
+  ShouldCreateArchiveBucket:
+    Fn::Equals:
+      - Ref: CreateArchiveBucket
+      - "Yes"
+
+  BytesScannedCutoffEnabled:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AthenaBytesScannedCutoffBytes
+          - 0
+
+Resources:
+
+  # -------------------------------------------------------------------------
+  # Buckets
+  # -------------------------------------------------------------------------
+
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateArchiveBucket
+    # Retain on both delete and replace so a stack teardown -- or an
+    # accidental replacing change -- can never destroy flight data.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName:
+        Ref: ArchiveBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # No versioning -- deliberate. archive-compaction deletes every
+      # per-flight index/*.parquet after merging, so versioning would turn
+      # each compaction run into permanently-billed noncurrent versions.
+      # No lifecycle rule ever.
+
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    # Deliberately unnamed: a named retained bucket would survive a stack
+    # delete and then block recreating the stack. Letting CloudFormation
+    # generate the name keeps teardown/recreate clean.
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          # Whole-bucket expiry is safe here precisely because the bucket
+          # is dedicated to Athena results. This also sweeps up the
+          # .csv.metadata sibling Athena writes next to every result .csv,
+          # which management-ui's delete path does not remove.
+          - Id: ExpireQueryResults
+            Status: Enabled
+            ExpirationInDays:
+              Ref: AthenaResultsExpirationDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  # -------------------------------------------------------------------------
+  # Glue catalog
+  # -------------------------------------------------------------------------
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId:
+        Ref: "AWS::AccountId"
+      DatabaseInput:
+        Name:
+          Ref: GlueDatabaseName
+        Description: SkyFollower archive Parquet index namespace.
+
+  GlueArchiveFlightsTable:
+    Type: AWS::Glue::Table
+    # CloudFormation cannot infer this from DatabaseName being a plain
+    # string parameter, so it is explicit.
+    DependsOn: GlueDatabase
+    Properties:
+      CatalogId:
+        Ref: "AWS::AccountId"
+      DatabaseName:
+        Ref: GlueDatabaseName
+      TableInput:
+        Name:
+          Ref: GlueTableName
+        Description: >-
+          Per-flight Parquet index for the SkyFollower S3 archive, one row
+          per flight, partitioned by the UTC date of the flight's
+          first_message.
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          EXTERNAL: "TRUE"
+          classification: "parquet"
+          # CloudFormation performs ZERO validation of this map. A typo
+          # here (projection.enbaled, projection.enabled: "ture", ...)
+          # deploys cleanly and yields a table that returns zero rows for
+          # every query, forever. The anti-drift test asserts these keys
+          # because AWS will not.
+          "projection.enabled": "true"
+          "projection.year.type": "integer"
+          "projection.year.range": "2022,2100"
+          "projection.month.type": "integer"
+          "projection.month.range": "1,12"
+          "projection.month.digits": "2"
+          "projection.day.type": "integer"
+          "projection.day.range": "1,31"
+          "projection.day.digits": "2"
+          "storage.location.template":
+            Fn::Join:
+              - ""
+              - - "s3://"
+                - Ref: ArchiveBucketName
+                - "/index/year=${year}/month=${month}/day=${day}/"
+        PartitionKeys:
+          - Name: year
+            Type: string
+          - Name: month
+            Type: string
+          - Name: day
+            Type: string
+        StorageDescriptor:
+          Location:
+            Fn::Sub: "s3://${ArchiveBucketName}/index/"
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          # Order is load-bearing: management-ui's _row_from_csv_fields
+          # destructures Athena's result CSV positionally. Only ever append
+          # a new column at the end; never reorder or rename.
+          Columns:
+            - Name: icao_hex
+              Type: string
+            - Name: registration
+              Type: string
+            - Name: type_designator
+              Type: string
+            - Name: military
+              Type: boolean
+            - Name: operator_designator
+              Type: string
+            - Name: ident
+              Type: string
+            - Name: first_message
+              Type: timestamp
+            - Name: last_message
+              Type: timestamp
+            - Name: s3_key
+              Type: string
+
+  # -------------------------------------------------------------------------
+  # Athena workgroup
+  # -------------------------------------------------------------------------
+
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name:
+        Ref: AthenaWorkGroupName
+      Description: SkyFollower archive-search queries.
+      State: ENABLED
+      # Deleting the stack removes the workgroup even with query history.
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        # The workgroup is the sole source of the results OutputLocation --
+        # management-ui never passes a ResultConfiguration of its own -- so
+        # enforcing it here makes it structurally impossible for a caller
+        # to redirect query output into the flight-data bucket.
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: false
+        BytesScannedCutoffPerQuery:
+          Fn::If:
+            - BytesScannedCutoffEnabled
+            - Ref: AthenaBytesScannedCutoffBytes
+            - Ref: "AWS::NoValue"
+        ResultConfiguration:
+          OutputLocation:
+            Fn::Sub: "s3://${AthenaResultsBucket}/query-results/"
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+
+  # -------------------------------------------------------------------------
+  # IAM identities -- inline policies (1:1 lifecycle with the user, and no
+  # "AWS keeps only 5 managed-policy versions" ceiling to prune)
+  # -------------------------------------------------------------------------
+
+  ArchiveProcessorUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName:
+        Fn::Sub: "${ResourceNamePrefix}-archive-processor"
+      Policies:
+        - PolicyName: archive-processor
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ConnectivityAndListForRetryScans
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}"
+              - Sid: FlightAndIndexObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/flights/*"
+                  - Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/index/*"
+
+  ArchiveProcessorAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        Ref: ArchiveProcessorUser
+      Serial:
+        Ref: AccessKeySerial
+
+  ArchiveCompactionUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName:
+        Fn::Sub: "${ResourceNamePrefix}-archive-compaction"
+      Policies:
+        - PolicyName: archive-compaction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListBucketForParityCheckAndCompaction
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}"
+              - Sid: ParquetIndexFiles
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/index/*"
+              - Sid: WatermarkState
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/_compaction_state/*"
+
+  ArchiveCompactionAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        Ref: ArchiveCompactionUser
+      Serial:
+        Ref: AccessKeySerial
+
+  ManagementUiUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName:
+        Fn::Sub: "${ResourceNamePrefix}-management-ui"
+      Policies:
+        - PolicyName: management-ui
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Inside CloudFormation the account ID is a pseudo-parameter,
+              # so these are scoped to exactly this workgroup / database /
+              # table rather than the Resource "*" the hand-written policy
+              # had to use.
+              - Sid: AthenaQueryExecution
+                Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                  - athena:StopQueryExecution
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroupName}"
+              - Sid: GlueCatalogRead
+                Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetDatabase
+                  - glue:GetPartitions
+                Resource:
+                  - Fn::Sub: "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                  - Fn::Sub: "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabaseName}"
+                  - Fn::Sub: "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabaseName}/${GlueTableName}"
+              - Sid: ArchiveIndexAndFlightObjects
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/index/*"
+                  - Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}/flights/*"
+              # s3:ListBucket stays on the ARCHIVE bucket: Athena enumerates
+              # partition prefixes with the caller's credentials. Moving
+              # this to the results bucket breaks every query.
+              - Sid: ArchiveListBucketForPartitionEnumeration
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: "arn:${AWS::Partition}:s3:::${ArchiveBucketName}"
+              - Sid: AthenaResultsObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource:
+                  Fn::Sub: "${AthenaResultsBucket.Arn}/query-results/*"
+              - Sid: AthenaResultsBucketLevel
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::GetAtt:
+                    - AthenaResultsBucket
+                    - Arn
+
+  ManagementUiAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        Ref: ManagementUiUser
+      Serial:
+        Ref: AccessKeySerial
+
+Outputs:
+
+  ArchiveBucketName:
+    Description: S3 bucket holding flights/, index/, and _compaction_state/.
+    Value:
+      Ref: ArchiveBucketName
+
+  AthenaResultsBucketName:
+    Description: Dedicated bucket Athena writes query results to.
+    Value:
+      Ref: AthenaResultsBucket
+
+  AwsRegion:
+    Description: Region this stack was deployed in.
+    Value:
+      Ref: "AWS::Region"
+
+  GlueDatabaseName:
+    Value:
+      Ref: GlueDatabaseName
+
+  GlueTableName:
+    Value:
+      Ref: GlueTableName
+
+  AthenaWorkGroupName:
+    Value:
+      Ref: AthenaWorkGroupName
+
+  ArchiveProcessorAccessKeyId:
+    Description: AWS_ACCESS_KEY_ID for archive-processor (ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID).
+    Value:
+      Ref: ArchiveProcessorAccessKey
+
+  ArchiveProcessorSecretAccessKey:
+    Description: AWS_SECRET_ACCESS_KEY for archive-processor (ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY).
+    Value:
+      Fn::GetAtt:
+        - ArchiveProcessorAccessKey
+        - SecretAccessKey
+
+  ArchiveCompactionAccessKeyId:
+    Description: AWS_ACCESS_KEY_ID for archive-compaction (ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID).
+    Value:
+      Ref: ArchiveCompactionAccessKey
+
+  ArchiveCompactionSecretAccessKey:
+    Description: AWS_SECRET_ACCESS_KEY for archive-compaction (ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY).
+    Value:
+      Fn::GetAtt:
+        - ArchiveCompactionAccessKey
+        - SecretAccessKey
+
+  ManagementUiAccessKeyId:
+    Description: AWS_ACCESS_KEY_ID for management-ui's backend.
+    Value:
+      Ref: ManagementUiAccessKey
+
+  ManagementUiSecretAccessKey:
+    Description: AWS_SECRET_ACCESS_KEY for management-ui's backend.
+    Value:
+      Fn::GetAtt:
+        - ManagementUiAccessKey
+        - SecretAccessKey

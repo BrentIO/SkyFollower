@@ -2,11 +2,11 @@ FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5
 
 WORKDIR /app
 
-COPY archive-compaction/requirements.txt .
+COPY aws-setup/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY shared/ ./shared/
-COPY archive-compaction/ ./archive-compaction/
+COPY specs/aws/ ./specs/aws/
+COPY aws-setup/ ./aws-setup/
 
 ENV PYTHONPATH=/app
 
@@ -15,4 +15,4 @@ ENV PYTHONPATH=/app
 ARG VERSION=dev
 ENV VERSION=$VERSION
 
-CMD ["python", "archive-compaction/main.py"]
+ENTRYPOINT ["python", "aws-setup/main.py"]

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pyarrow.parquet as pq
 import pytest
+import yaml
 
 # Make sure the archive-processor package is importable when running from the
 # repo root.
@@ -119,55 +120,6 @@ class _FakeS3:
 
 
 # ---------------------------------------------------------------------------
-# AWS setup reference files (see shared/aws_setup.py)
-# ---------------------------------------------------------------------------
-
-class TestAwsSetupFilesWrittenOnStartup:
-    def test_glue_table_and_iam_policy_written_with_bucket_resolved(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            _make_processor(tmp_dir)
-
-            out_dir = os.path.join(tmp_dir, "aws-setup")
-            with open(os.path.join(out_dir, "glue-table-definition.json")) as f:
-                glue_def = json.load(f)
-            with open(os.path.join(out_dir, "iam-policy.json")) as f:
-                iam_policy = json.load(f)
-
-            assert glue_def["TableInput"]["StorageDescriptor"]["Location"] == (
-                "s3://test-bucket/index/"
-            )
-            assert "__BUCKET_NAME__" not in json.dumps(glue_def)
-            assert "__BUCKET_NAME__" not in json.dumps(iam_policy)
-            assert any(
-                "test-bucket" in resource
-                for stmt in iam_policy["Statement"]
-                for resource in (
-                    stmt["Resource"] if isinstance(stmt["Resource"], list) else [stmt["Resource"]]
-                )
-            )
-
-    def test_rerun_with_new_bucket_overwrites(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            _make_processor(tmp_dir)
-
-            config = {
-                "s3": {"region": "us-east-1", "bucket": "other-bucket",
-                       "access_key_id": "x", "secret_access_key": "x"},
-                "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-                "redis": {"host": "localhost"},
-                "mqtt": None,
-                    }
-            with patch("archive_processor.main.DATA_DIR", tmp_dir), \
-                 patch("archive_processor.main.redis_lib.Redis"), \
-                 patch("archive_processor.main.boto3.Session"):
-                ArchiveProcessor(config)
-
-            out_path = os.path.join(tmp_dir, "aws-setup", "iam-policy.json")
-            with open(out_path) as f:
-                assert "other-bucket" in f.read()
-
-
-# ---------------------------------------------------------------------------
 # S3 key generation
 # ---------------------------------------------------------------------------
 
@@ -262,13 +214,21 @@ class TestBuildParquetIndexRow:
         return rows[0]
 
     def test_schema_columns_match_data_dictionary(self):
+        # specs/data-dictionary.yaml's archive_parquet_index.fields is the
+        # authoritative, ordered column list -- read it here rather than
+        # restating it, so a change there that isn't mirrored in
+        # _PARQUET_INDEX_SCHEMA fails this test.
+        dd_path = os.path.join(_REPO_ROOT, "specs", "data-dictionary.yaml")
+        with open(dd_path) as f:
+            data_dictionary = yaml.safe_load(f)
+        expected_columns = list(
+            data_dictionary["records"]["archive_parquet_index"]["fields"].keys()
+        )
+
         flight = _make_flight()
         payload = build_parquet_index_row(flight, "flights/2024/05/31/key.json.gz")
         table = pq.read_table(io.BytesIO(payload))
-        assert table.schema.names == [
-            "icao_hex", "registration", "type_designator", "military",
-            "operator_designator", "ident", "first_message", "last_message", "s3_key",
-        ]
+        assert table.schema.names == expected_columns
 
     def test_basic_field_values(self):
         flight = _make_flight()

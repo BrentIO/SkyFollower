@@ -208,6 +208,13 @@ maps whichever pair a service uses onto the container-side
 instance) otherwise only needs `S3_BUCKET`/`AWS_DEFAULT_REGION`/`MQTT_*`/`LOG_LEVEL`
 from this same `.env` -- no Redis, no RabbitMQ.
 
+The bucket, region, and both credential pairs above are created by the
+one-shot `aws-setup` container, which `scripts/install.sh` offers to run
+(prompting for your own temporary AWS credentials, never stored) before it
+asks for the AWS values on the `archive` and `management-ui` roles.
+Declining falls through to entering those values by hand. See
+[AWS Setup](/aws-setup).
+
 See the component pages for everything beyond configuration:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
 [Archive Processor](/components/archive-processor),

@@ -211,7 +211,7 @@ own components use.
 | `AWS_SECRET_ACCESS_KEY` | ✅ | — | boto3's own variable name |
 | `ATHENA_WORKGROUP` | ❌ | `skyfollower` | Athena workgroup to run queries against (see [Archive Search](#archive-search)) |
 | `ATHENA_DATABASE` | ❌ | `skyfollower` | Glue database name |
-| `ATHENA_TABLE` | ❌ | `archive_flights` | Glue table name, matching `specs/aws/glue-table-definition.json`'s default |
+| `ATHENA_TABLE` | ❌ | `archive_flights` | Glue table name, matching `specs/aws/cloudformation.yaml`'s `GlueTableName` default |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 ## Archive Search
@@ -360,21 +360,22 @@ deployment model (no horizontal scaling anywhere in its design).
 
 **Nothing described here exists yet in a fresh AWS account.** Like
 `archive-processor` and `archive-compaction`, this backend never calls a
-Glue, IAM, or Athena provisioning API itself — it only prepares a *local
-reference file* an operator uses to create its IAM identity by hand. On
-every startup, it resolves its own `__BUCKET_NAME__`-templated IAM policy
-(baked into its image from `specs/aws/iam-policies/management-ui.json`)
-against its configured `s3.bucket` and writes it to
-`$DATA_DIR/aws-setup/iam-policy.json`, for pasting directly into the
-console's JSON policy editor. Its Athena and Glue permissions are
-`Resource: "*"` rather than scoped to a specific table/workgroup ARN — a
-properly scoped ARN needs the AWS account ID, which nothing in this
-project discovers or is configured with — but its S3 access (the actually
-sensitive part) is fully scoped, same as `archive-processor`/
-`archive-compaction`'s identities. See
-[docs/aws-setup.md](../docs/aws-setup.md) for the full console click-path
-setup guide (Glue database/table, Athena workgroup + query-results
-location + lifecycle rule, and all three components' IAM identities).
+Glue, IAM, or Athena provisioning API itself. All of it — both S3 buckets,
+the Glue database/table, the Athena workgroup, and this backend's own IAM
+identity — is created by the one-shot `aws-setup` container, which deploys
+a CloudFormation stack from `specs/aws/cloudformation.yaml`.
+`scripts/install.sh` runs it (with `--outputs-only`) when you install the
+`management-ui` role, and pre-fills the AWS prompts from the stack outputs.
+See [docs/aws-setup.md](../docs/aws-setup.md).
+
+This backend's identity is **read-only** on Athena and Glue, and — because
+CloudFormation resolves `AWS::AccountId` as a pseudo-parameter — those
+statements are now **scoped to exactly this workgroup, database, and
+table**, not `Resource: "*"`. Its S3 access: `s3:GetObject` on `index/*`
+and `flights/*` in the archive bucket, bucket-level `s3:ListBucket` on the
+archive bucket (Athena enumerates partition prefixes with the caller's
+credentials — this cannot move to the results bucket), and full
+read/write/multipart access to the dedicated Athena results bucket.
 
 ## Backing up `config:rules`/`config:areas`
 
