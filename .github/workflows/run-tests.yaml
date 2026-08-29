@@ -59,6 +59,49 @@ jobs:
             exit 1
           fi
 
+  # Every Dockerfile base image must be pinned to image:tag@sha256:<digest>,
+  # not a bare floating tag. Docker Hub re-pushes tags like python:3.14-slim
+  # under the same name on every upstream Debian/Python patch, and
+  # Dependabot's docker ecosystem only opens a PR for a digest that is
+  # already present in the FROM line -- an unpinned tag gets no
+  # security/bugfix-rebuild signal at all. This job hard-fails the workflow
+  # if any Dockerfile's FROM line for an external image lacks a digest; a
+  # FROM that refers back to an earlier "AS <stage>" in the same file is an
+  # internal stage reference and is exempt.
+  check-dockerfile-digest-pins:
+    name: 🔒 Check every Dockerfile base image is digest-pinned
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: "Verify every external FROM line carries an @sha256 digest"
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r -d '' dockerfile; do
+            # Names introduced by "... AS <stage>" in this file -- a later
+            # "FROM <stage>" referring back to one of these is an internal
+            # stage reference, not an external image, and needs no digest.
+            stages=$(grep -iE '^[[:space:]]*FROM[[:space:]]+.+[[:space:]]+AS[[:space:]]+' "$dockerfile" \
+              | sed -E 's/.*[[:space:]][Aa][Ss][[:space:]]+([A-Za-z0-9_.-]+).*/\1/' | sort -u || true)
+            while IFS= read -r line; do
+              [ -n "$line" ] || continue
+              ref=$(echo "$line" | sed -E 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?([^[:space:]]+).*/\2/')
+              if [ -n "$stages" ] && echo "$stages" | grep -qxF "$ref"; then
+                continue
+              fi
+              if ! echo "$ref" | grep -q '@sha256:'; then
+                echo "::error file=$dockerfile::FROM '$ref' is not digest-pinned (expected image:tag@sha256:<digest>)."
+                fail=1
+              fi
+            done < <(grep -iE '^[[:space:]]*FROM[[:space:]]' "$dockerfile")
+          done < <(find . -name Dockerfile -not -path './.venv/*' -not -path '*/node_modules/*' -print0)
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::One or more Dockerfiles have an unpinned base image. Resolve the current digest (docker buildx imagetools inspect <image>:<tag>) and rewrite the FROM line as image:tag@sha256:<digest>."
+            exit 1
+          fi
+          echo "Every Dockerfile's external FROM line is digest-pinned."
+
   # .github/dependabot.yml is a fully-manual, one-entry-per-directory file
   # with no auto-discovery of its own (unlike this workflow's `discover` job
   # below, or build-container-images.yaml's discover-images job) -- a new
@@ -228,7 +271,7 @@ jobs:
   all-tests-passed:
     name: ✅ All component tests passed
     runs-on: ubuntu-latest
-    needs: [check-redis-image-pin, check-dependabot-sync, test]
+    needs: [check-redis-image-pin, check-dockerfile-digest-pins, check-dependabot-sync, test]
     if: always()
     steps:
       - name: Check that every required job succeeded
@@ -236,6 +279,10 @@ jobs:
           set -euo pipefail
           if [ "${{ needs.check-redis-image-pin.result }}" != "success" ]; then
             echo "::error::check-redis-image-pin did not succeed (${{ needs.check-redis-image-pin.result }})."
+            exit 1
+          fi
+          if [ "${{ needs.check-dockerfile-digest-pins.result }}" != "success" ]; then
+            echo "::error::check-dockerfile-digest-pins did not succeed (${{ needs.check-dockerfile-digest-pins.result }})."
             exit 1
           fi
           if [ "${{ needs.check-dependabot-sync.result }}" != "success" ]; then
