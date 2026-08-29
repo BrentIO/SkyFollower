@@ -1,81 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AreaGeometry } from "../api/areas";
-
-export interface ImportedFeature {
-  type: "Feature";
-  geometry: AreaGeometry;
-  properties: Record<string, unknown>;
-}
+import { parseAndValidate, type ImportedFeature } from "../lib/areaImport";
 
 interface ImportAreaModalProps {
   open: boolean;
-  onImport: (feature: ImportedFeature) => void;
+  onImport: (features: ImportedFeature[]) => void;
   onCancel: () => void;
 }
 
-const SUPPORTED_GEOMETRY_TYPES = new Set(["Polygon", "LineString", "Point"]);
-
-interface ParseResult {
-  error: string | null;
-  feature: ImportedFeature | null;
-}
-
-// Funnels both the drop zone (via a pretty-printed textbox population) and
-// direct textbox edits/pastes through the same validation, per the issue's
-// "both funnel through this" requirement. Blank input is a pristine/no-op
-// state (Import disabled, no banner) rather than a "Not valid GeoJSON"
-// error -- showing an error on a modal the user hasn't touched yet would be
-// jarring, and isn't what the acceptance criteria are actually enumerating.
-function parseAndValidate(text: string): ParseResult {
-  if (!text.trim()) return { error: null, feature: null };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { error: "Not valid GeoJSON.", feature: null };
-  }
-
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    (parsed as { type?: unknown }).type !== "FeatureCollection" ||
-    !Array.isArray((parsed as { features?: unknown }).features)
-  ) {
-    return { error: "Not valid GeoJSON.", feature: null };
-  }
-
-  const features = (parsed as { features: unknown[] }).features;
-  if (features.length !== 1) {
-    return { error: "Only one GeoJSON feature can be imported at a time.", feature: null };
-  }
-
-  const feature = features[0] as {
-    geometry?: { type?: string };
-    properties?: Record<string, unknown> | null;
-  };
-  const geometryType = feature.geometry?.type;
-  if (!geometryType || !SUPPORTED_GEOMETRY_TYPES.has(geometryType)) {
-    return { error: `Unsupported geometry type: ${geometryType ?? "unknown"}.`, feature: null };
-  }
-
-  return {
-    error: null,
-    feature: {
-      type: "Feature",
-      geometry: feature.geometry as AreaGeometry,
-      properties: feature.properties ?? {},
-    },
-  };
-}
-
 // Counterpart to AreasView.tsx's own Export/"Export all" actions -- imports
-// a single area from a GeoJSON FeatureCollection (drag-drop,
-// click/tap-to-browse, or direct paste into the textbox). Name/identifier/
-// locked resolution from the parsed feature's properties, and the
-// missing/duplicate-identifier fallback to AreaNameModal, both live in
-// AreasView.tsx (the parent) -- this component's only job is getting a
-// validated single Feature out to its onImport callback.
+// one or more areas from a GeoJSON FeatureCollection (drag-drop,
+// click/tap-to-browse, or direct paste into the textbox). Structural
+// validation (parseAndValidate) is a whole-file hard gate shared with the
+// batch importer. Per-feature identifier/name resolution -- the
+// single-feature fallback to AreaNameModal, and the multi-feature
+// auto-suffix -- lives in AreasView.tsx (the parent); this component's only
+// job is getting a validated feature array out to its onImport callback.
 export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalProps) {
   const [text, setText] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
@@ -90,7 +29,7 @@ export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalPro
     }
   }, [open]);
 
-  const { error: contentError, feature } = useMemo(() => parseAndValidate(text), [text]);
+  const { error: contentError, features } = useMemo(() => parseAndValidate(text), [text]);
   const bannerError = fileError ?? contentError;
 
   if (!open) return null;
@@ -180,9 +119,9 @@ export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalPro
           </button>
           <button
             type="button"
-            disabled={feature === null}
+            disabled={features.length === 0}
             onClick={() => {
-              if (feature) onImport(feature);
+              if (features.length > 0) onImport(features);
             }}
             className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-40"
           >

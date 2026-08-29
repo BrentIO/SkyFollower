@@ -24,8 +24,11 @@ export const IDENTIFIER_PATTERN = /^\S+$/;
 
 // Replaces spaces with underscores, then drops anything else non-whitespace
 // rules wouldn't already allow -- same auto-fill-from-Name convenience
-// RuleForm.tsx's sanitizeIdentifier gives rule identifiers.
-function sanitizeIdentifier(raw: string): string {
+// RuleForm.tsx's sanitizeIdentifier gives rule identifiers. Exported for
+// the same reason as IDENTIFIER_PATTERN: the bulk-import auto-resolver in
+// lib/areaImport.ts derives identifiers from names the same way this modal
+// does, so it shares the exact function rather than reimplementing it.
+export function sanitizeIdentifier(raw: string): string {
   return raw.replace(/\s/g, "_");
 }
 
