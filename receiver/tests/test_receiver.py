@@ -276,7 +276,9 @@ class TestTcpKeepalive:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             _enable_tcp_keepalive(s)
-            assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+            # Truthy, not == 1: macOS getsockopt reports SO_KEEPALIVE as the
+            # raw option bit (8), not a normalised boolean.
+            assert s.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
         finally:
             s.close()
 
@@ -301,7 +303,7 @@ class TestTcpKeepalive:
         a, b = socket.socketpair()
         try:
             _enable_tcp_keepalive(a)
-            assert a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+            assert a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
         finally:
             a.close()
             b.close()
