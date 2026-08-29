@@ -60,6 +60,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     main as processor_main,
 )
+from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES  # noqa: E402
 from shared.models import InboundMessage, Position, Velocity
 from shared.redis_keys import (
     message_processor_heartbeat_key,
@@ -1031,6 +1032,26 @@ class TestProcessorDrainFallback:
             p._drain_fallback()
 
         assert p._rmq_connected is True
+        assert p._fallback.depth() == 1
+
+    def test_fallback_queue_classifies_unroutable_error_as_non_poison(self):
+        """A deployment with no archive-processor never has an `archive`
+        queue, so every publish returns UnroutableError forever. That must
+        not be treated as poison -- the fallback queue is constructed with
+        UnroutableError in non_poison_exceptions and a size cap on the
+        retryable table instead of dead-lettering."""
+        p, _ = _make_processor()
+        assert pika.exceptions.UnroutableError in p._fallback._non_poison_exceptions
+        assert p._fallback._retryable_max_bytes == DEFAULT_DEAD_LETTER_MAX_BYTES
+
+        p._fallback.put('{"_id": "flight-1"}')
+        for _ in range(30):  # far past the retry threshold
+            p._fallback.drain(
+                lambda _pl: (_ for _ in ()).throw(
+                    pika.exceptions.UnroutableError([MagicMock()])
+                )
+            )
+        assert p._fallback.dead_letter_depth() == 0
         assert p._fallback.depth() == 1
 
     def test_drain_fallback_falls_back_when_no_connection(self):

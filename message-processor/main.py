@@ -40,7 +40,7 @@ from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
 from shared.redis_client import build_redis_client
-from shared.fallback_queue import FallbackQueue
+from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES, FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import (
@@ -660,8 +660,19 @@ class MessageProcessor:
         row = self._db.execute("SELECT MAX(last_message) FROM flights").fetchone()
         self._message_clock: float = row[0] if row and row[0] is not None else time.time()
 
-        # Archive fallback
-        self._fallback = FallbackQueue(os.path.join(DATA_DIR, "completed_flights.db"))
+        # Archive fallback. An unroutable `archive` queue (archive-processor
+        # not deployed in this environment -- a legitimate, permanent config
+        # choice, not a per-flight fault) is classified non-poison: those
+        # rows retry forever and are never dead-lettered. Disk growth for
+        # that case is instead bounded by a ring-buffer cap on the retryable
+        # table itself, reusing the same 100MB ceiling the dead-letter
+        # directory uses; the oldest completed flights are evicted first
+        # once an archiver-less deployment accumulates past it.
+        self._fallback = FallbackQueue(
+            os.path.join(DATA_DIR, "completed_flights.db"),
+            non_poison_exceptions=(pika.exceptions.UnroutableError,),
+            retryable_max_bytes=DEFAULT_DEAD_LETTER_MAX_BYTES,
+        )
 
         # Metrics
         self._rate = _RateTracker()

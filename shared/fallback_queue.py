@@ -28,6 +28,22 @@ single row, independent of how often the caller invokes drain(): the
 oldest row is skipped (the whole pass stops, to preserve strict
 oldest-first ordering) until at least that long has passed since its own
 last attempt.
+
+Some failures aren't poison and aren't a recoverable outage either: the
+dependency is simply not present in this environment on purpose (e.g. a
+message processor publishing completed flights with `mandatory=True`
+against an `archive` queue that no operator ever declared because this
+deployment runs no archiver). Retrying such a row forever is correct --
+dead-lettering it throws away legitimate primary data. A caller passes
+the exception type(s) that mean "environmental, not poison" via
+`non_poison_exceptions`; a row failing only with those types behaves like
+a permanent below-threshold failure and is never written to
+`dead_letters/`. To keep that from growing the retryable table without
+bound, a caller can also opt into `retryable_max_bytes`: a ring-buffer
+cap on the plain `queue` table itself (same oldest-first eviction the
+dead-letter directory already has), so an environment that never stands
+up the dependency keeps roughly its most recent cap's worth of rows and
+drains them all automatically once the dependency finally appears.
 """
 
 from __future__ import annotations
@@ -56,11 +72,23 @@ class FallbackQueue:
         retry_threshold: int = DEFAULT_RETRY_THRESHOLD,
         dead_letter_max_bytes: int = DEFAULT_DEAD_LETTER_MAX_BYTES,
         min_retry_interval_seconds: float = DEFAULT_MIN_RETRY_INTERVAL_SECONDS,
+        non_poison_exceptions: tuple[type[BaseException], ...] = (),
+        retryable_max_bytes: Optional[int] = None,
     ) -> None:
         self._table = table_name
         self._retry_threshold = retry_threshold
         self._dead_letter_max_bytes = dead_letter_max_bytes
         self._min_retry_interval_seconds = min_retry_interval_seconds
+        # Exception types that mean "this dependency isn't present in this
+        # environment on purpose" -- kept broker-agnostic: the caller
+        # supplies the concrete types (e.g. pika.exceptions.UnroutableError).
+        # A row failing only with these is retried forever, never dead-lettered.
+        self._non_poison_exceptions = non_poison_exceptions
+        # Opt-in ring-buffer cap on the plain retryable table (bytes of
+        # payload text). Only meaningful for a caller whose queue can
+        # legitimately grow unbounded because a non-poison failure keeps
+        # rows retrying forever. None = no cap (the historical behaviour).
+        self._retryable_max_bytes = retryable_max_bytes
         self._dead_letter_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "dead_letters", table_name
         )
@@ -92,11 +120,39 @@ class FallbackQueue:
 
     def put(self, payload: str) -> None:
         with self._lock:
+            if self._retryable_max_bytes is not None:
+                self._evict_retryable_over_cap_locked(len(payload))
             self._conn.execute(
                 f"INSERT INTO {self._table} (payload, queued_at, retry_count) VALUES (?, ?, 0)",
                 (payload, time.time()),
             )
             self._conn.commit()
+
+    def _evict_retryable_over_cap_locked(self, incoming_bytes: int) -> None:
+        """Ring-buffer eviction for the plain retryable table, mirroring
+        `_evict_oldest_if_over_cap()` for the dead-letter directory. Caller
+        must hold `self._lock`; the commit happens with the subsequent
+        INSERT in put(). Evicts oldest rows until the table plus the
+        incoming payload fits under the cap. This is a capacity eviction of
+        legitimate queued data, not a poison classification -- logged as
+        such, and never routed through `dead_letters/`."""
+        total = self._conn.execute(
+            f"SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM {self._table}"
+        ).fetchone()[0]
+        while total + incoming_bytes > self._retryable_max_bytes:
+            row = self._conn.execute(
+                f"SELECT id, LENGTH(payload) FROM {self._table} ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return
+            self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row[0],))
+            total -= row[1] or 0
+            logger.warning(
+                "Retryable queue %s over capacity cap (%d bytes); evicted oldest "
+                "row id=%s to make room -- capacity eviction of queued data, not a "
+                "poison classification",
+                self._table, self._retryable_max_bytes, row[0],
+            )
 
     def drain(self, process_fn: Callable[[str], None]) -> bool:
         """Drain queued items oldest-first via process_fn(payload).
@@ -111,6 +167,14 @@ class FallbackQueue:
         the pass continues to whatever's queued behind it rather than
         stopping, since that failure has already been judged permanent
         rather than a dependency that might still recover.
+
+        A row whose failure is an instance of `non_poison_exceptions` is
+        never dead-lettered no matter how many times it's attempted -- that
+        failure means the dependency isn't deployed in this environment,
+        which is a permanent config choice, not a property of the row. It
+        keeps behaving like a below-threshold failure (stop the pass, retry
+        next time); disk growth for this case is bounded by
+        `retryable_max_bytes` instead.
 
         A row attempted less than `min_retry_interval_seconds` ago is left
         alone this pass -- this caps how fast a row can accumulate retries
@@ -146,6 +210,21 @@ class FallbackQueue:
                     self._conn.commit()
             except Exception as exc:
                 new_count = retry_count + 1
+                if isinstance(exc, self._non_poison_exceptions):
+                    # Environmental, not poison: the dependency simply
+                    # isn't present in this deployment. Behave exactly like
+                    # a below-threshold failure forever -- stop the pass,
+                    # retry from the top next drain, respect the cooldown --
+                    # and never dead-letter. retry_count/last_attempted_at
+                    # still advance, purely so an operator can see how long
+                    # the row has been stuck.
+                    with self._lock:
+                        self._conn.execute(
+                            f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
+                            (new_count, time.time(), row_id),
+                        )
+                        self._conn.commit()
+                    return False
                 if new_count >= self._retry_threshold:
                     self._dead_letter(row_id, payload, new_count, exc)
                     continue
