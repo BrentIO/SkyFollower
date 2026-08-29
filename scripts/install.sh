@@ -1405,6 +1405,7 @@ do_upgrade() {
   # here -- resolving again would mean two GitHub API calls per --upgrade
   # run for the same answer.
   echo "Upgrading every role directory under ${INSTALL_ROOT} to ${REF}..."
+  echo "(runner-* images are pulled too -- they sit behind the \"runners\" compose profile)"
   local found=0
   for env_file in "${INSTALL_ROOT}"/*/.env; do
     [ -e "$env_file" ] || continue
@@ -1422,7 +1423,18 @@ do_upgrade() {
       { print }
     ' "$env_file" > "$tmp"
     (umask 077; mv "$tmp" "$env_file")
-    (cd "$role_dir" && docker compose pull && docker compose up -d)
+    # --profile runners on the pull so the runner-* services (all gated
+    # behind profiles: ["runners"] in docker-compose.core.yaml) get their
+    # images refreshed to the new tag -- without it every runner silently
+    # stays on its old image after an upgrade. Blanket for every role dir:
+    # a no-op where the compose file declares no such profile. The flag is
+    # deliberately NOT passed to `up -d`: the runner services are one-shot
+    # jobs (their CMD runs an import and exits), so `up` would kick off all
+    # of them -- including the multi-hour uk-caa-registry -- on every
+    # upgrade. Ofelia (always-on, no profile) is recreated by the `up -d`
+    # below and spawns fresh runner containers from the pulled images on
+    # schedule.
+    (cd "$role_dir" && docker compose --profile runners pull && docker compose up -d)
   done
   if [ "$found" -eq 0 ]; then
     echo "No role directories found under ${INSTALL_ROOT} (looked for */.env)." >&2
