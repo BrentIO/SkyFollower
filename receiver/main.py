@@ -122,6 +122,17 @@ _LIVE_PUBLISH_BATCH_MAX = 2_000
 # message after an idle period promptly, long enough not to busy-spin.
 _RMQ_IDLE_POLL_SECONDS = 1.0
 
+# Backlog rows the rabbitmq thread drains per pass once the live queue is
+# observed empty. Batching the SQLite delete+commit (one per batch instead
+# of one per row) is what lifts post-outage catch-up above the roughly
+# one-commit-per-row ceiling. This is a live-latency budget, not a
+# throughput knob: a live message can now be delayed by up to this many
+# basic_publish calls during a large catch-up instead of exactly one, so
+# it is deliberately kept two orders of magnitude below
+# _LIVE_PUBLISH_BATCH_MAX. The live queue is still re-checked between
+# every batch (never mid-batch).
+_FALLBACK_DRAIN_BATCH_MAX = 100
+
 # ---------------------------------------------------------------------------
 # Rate tracker — RATE_WINDOW_SECONDS rolling window (copied from message
 # processor pattern)
@@ -891,9 +902,9 @@ class Receiver:
     def _rmq_publish_loop(self, conn: pika.BlockingConnection, ch) -> None:
         """Inner loop while a connection is up: pump pika, publish live
         messages with strict priority, then -- only if the live queue is
-        empty -- advance the fallback backlog one row. Returns (so
-        _rmq_loop reconnects) on shutdown or any publish/connection
-        failure."""
+        empty -- advance the fallback backlog by one bounded batch
+        (_FALLBACK_DRAIN_BATCH_MAX rows). Returns (so _rmq_loop reconnects)
+        on shutdown or any publish/connection failure."""
         while not self._shutdown.is_set():
             # A publish failure latches _rmq_connected False without the
             # connection necessarily raising (broker blocking publishers on
@@ -924,10 +935,12 @@ class Receiver:
             if published_live:
                 continue
 
-            # Nothing waiting live -- move the backlog forward by one row,
-            # then loop straight back to re-check the live queue.
-            step = self._fallback.drain_one(
-                lambda wrapped: self._publish_fallback_row(ch, wrapped)
+            # Nothing waiting live -- move the backlog forward by one
+            # bounded batch, then loop straight back to re-check the live
+            # queue before the next batch.
+            step = self._fallback.drain_batch(
+                lambda wrapped: self._publish_fallback_row(ch, wrapped),
+                _FALLBACK_DRAIN_BATCH_MAX,
             )
             if step == DRAIN_PROGRESSED:
                 continue
@@ -990,11 +1003,11 @@ class Receiver:
             return False
 
     def _publish_fallback_row(self, ch, wrapped: str) -> None:
-        """process_fn for FallbackQueue.drain_one: unwrap the stored
+        """process_fn for FallbackQueue.drain_batch: unwrap the stored
         {routing_key, payload} and publish it on the rabbitmq thread.
-        Raises on failure so the row stays queued (drain_one owns the
-        retry/dead-letter accounting) and latches the connection unhealthy
-        so the publish loop reconnects."""
+        Raises on failure so the row stays queued (drain_batch owns the
+        retry/dead-letter accounting and stops the batch here) and latches
+        the connection unhealthy so the publish loop reconnects."""
         item = json.loads(wrapped)
         try:
             ch.basic_publish(

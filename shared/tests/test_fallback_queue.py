@@ -273,6 +273,144 @@ class TestDrainOne:
             assert q.dead_letter_depth() == 1
 
 
+class TestDrainBatch:
+    """drain_batch() is drain_one() extended to a bounded batch: same
+    outcome codes, same per-row retry / dead-letter / cooldown / strict
+    oldest-first semantics, one DELETE+commit for the whole succeeded
+    prefix."""
+
+    def test_empty_queue_returns_drain_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            assert q.drain_batch(lambda _p: None, 10) == DRAIN_EMPTY
+
+    def test_processes_up_to_max_batch_oldest_first(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            for i in range(5):
+                q.put(f"row{i}")
+
+            seen: list[str] = []
+            assert q.drain_batch(seen.append, 3) == DRAIN_PROGRESSED
+            assert seen == ["row0", "row1", "row2"]
+            assert q.depth() == 2
+
+            assert q.drain_batch(seen.append, 3) == DRAIN_PROGRESSED
+            assert seen == ["row0", "row1", "row2", "row3", "row4"]
+            assert q.drain_batch(seen.append, 3) == DRAIN_EMPTY
+
+    def test_one_delete_for_the_whole_succeeded_prefix(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            for i in range(4):
+                q.put(f"row{i}")
+
+            statements: list[str] = []
+            q._conn.set_trace_callback(statements.append)
+            q.drain_batch(lambda _p: None, 4)
+            q._conn.set_trace_callback(None)
+
+            assert q.depth() == 0
+            deletes = [s for s in statements if s.strip().upper().startswith("DELETE")]
+            assert len(deletes) == 1  # one DELETE ... WHERE id IN (...), not one per row
+
+    def test_stops_at_first_failure_publishing_the_prefix_before_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=0)
+            for i in range(5):
+                q.put(f"row{i}")
+
+            seen: list[str] = []
+
+            def process(payload: str) -> None:
+                seen.append(payload)
+                if payload == "row2":
+                    raise RuntimeError("connection died mid-batch")
+
+            assert q.drain_batch(process, 5) == DRAIN_PROGRESSED
+            assert seen == ["row0", "row1", "row2"]
+            # row0/row1 deleted; row2 stays queued with retry_count bumped;
+            # row3/row4 never attempted this pass.
+            assert q.depth() == 3
+            row = q._conn.execute(
+                "SELECT payload, retry_count FROM queue ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            assert row == ("row2", 1)
+
+    def test_first_row_fails_below_threshold_returns_stop(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=0)
+            q.put("row0")
+            q.put("row1")
+            assert q.drain_batch(
+                lambda _p: (_ for _ in ()).throw(RuntimeError()), 5
+            ) == DRAIN_STOP
+            assert q.depth() == 2
+
+    def test_mid_batch_poison_row_is_dead_lettered_and_batch_progresses(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=1, min_retry_interval_seconds=0)
+            for i in range(4):
+                q.put(f"row{i}")
+
+            def process(payload: str) -> None:
+                if payload == "row1":
+                    raise RuntimeError("poison")
+
+            assert q.drain_batch(process, 4) == DRAIN_PROGRESSED
+            # row0 published, row1 dead-lettered (threshold 1), row2/row3
+            # left for the next pass (batch stopped at the failure).
+            assert q.dead_letter_depth() == 1
+            assert [r[0] for r in q._conn.execute(
+                "SELECT payload FROM queue ORDER BY id ASC"
+            )] == ["row2", "row3"]
+
+    def test_selection_stops_at_a_cooling_down_row_not_past_it(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=999)
+            for i in range(4):
+                q.put(f"row{i}")
+            # Fail row0 once so it enters cooldown.
+            q.drain_batch(lambda _p: (_ for _ in ()).throw(RuntimeError()), 1)
+
+            seen: list[str] = []
+            # row0 is still cooling down -- the whole pass stops there,
+            # row1..row3 are NOT pulled ahead of it.
+            assert q.drain_batch(seen.append, 5) == DRAIN_STOP
+            assert seen == []
+            assert q.depth() == 4
+
+    def test_succeeded_prefix_before_a_cooling_down_row_still_drains(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=999)
+            q.put("fresh0")
+            q.put("fresh1")
+            q.put("cooling")
+            # Age only the third row into its cooldown window.
+            q._conn.execute(
+                "UPDATE queue SET last_attempted_at=? WHERE payload='cooling'",
+                (time.time(),),
+            )
+            q._conn.commit()
+
+            seen: list[str] = []
+            # fresh0/fresh1 publish and are deleted; the pass then stops at
+            # the cooling row rather than skipping it.
+            assert q.drain_batch(seen.append, 5) == DRAIN_PROGRESSED
+            assert seen == ["fresh0", "fresh1"]
+            assert q.depth() == 1
+
+    def test_rejects_max_batch_below_one(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            try:
+                q.drain_batch(lambda _p: None, 0)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("expected ValueError for max_batch=0")
+
+
 class TestMinRetryInterval:
     """Covers a false-positive dead-lettering risk: a caller whose
     own retry trigger fires in rapid bursts (e.g. a flapping RabbitMQ

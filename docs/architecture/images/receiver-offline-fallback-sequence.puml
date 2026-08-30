@@ -80,46 +80,48 @@ loop While connected
 
     alt live queue was observed empty
         note right of Rmq
-            A backlog row is only ever pulled on a pass where the live
-            queue was empty — so a drain of any size can delay a live
-            message by at most one basic_publish.
+            Backlog rows are only pulled on a pass where the live queue
+            was empty, and the live queue is re-checked between batches
+            (never mid-batch) — so a drain delays a live message by at
+            most _FALLBACK_DRAIN_BATCH_MAX (100) basic_publish calls.
         end note
-        Rmq -> ReceiverDB++ : **Get next backlog row**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 1""
-        ReceiverDB --> Rmq-- : Row (or empty)
-        alt row attempted less than 30s ago
-            break
-                Rmq -> Rmq : **Leave it this pass**\n""still cooling down — a flapping reconnect can't rush this row to the poison threshold""
-            end
-        else row eligible to retry
-            Rmq -\ AdsbX : **Publish**
-            alt basic_publish succeeds
-                Rmq -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
-                ReceiverDB --> Rmq-- : OK
-            else basic_publish raises error
-                Rmq -> Rmq : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-                Rmq -> Rmq : **Count this failure**\n""new_count = retry_count + 1""
-                alt new_count reaches the retry threshold (5)
-                    Rmq -> ReceiverDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
-                    ReceiverDB --> Rmq-- : OK
-                    Rmq -> Rmq : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
-                    note right of Rmq
-                        Judged permanently unrecoverable, not just a
-                        transient outage — draining continues to the next
-                        row instead of stopping, which is what keeps one
-                        poison message from blocking everything queued
-                        behind it forever.
-                    end note
-                else new_count still below the retry threshold
-                    Rmq -> ReceiverDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
-                    ReceiverDB --> Rmq-- : OK
+        Rmq -> ReceiverDB++ : **Select the next batch, oldest first**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 100""
+        ReceiverDB --> Rmq-- : Up to 100 rows (or empty)
+        loop For each selected row, in id order
+            alt row attempted less than 30s ago
+                break
+                    Rmq -> Rmq : **Stop the batch here**\n""cooling down — the pass never skips past it to a fresher row""
+                end
+            else row eligible to retry
+                Rmq -\ AdsbX : **Publish**\n""channel.basic_publish(exchange='adsb', routing_key=icao_hex)""
+                opt basic_publish raises
+                    Rmq -> Rmq : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+                    Rmq -> Rmq : **Count this failure**\n""new_count = retry_count + 1""
+                    alt new_count reaches the retry threshold (5)
+                        Rmq -> ReceiverDB++ : **Dead-letter this one row**\n""DELETE FROM queue WHERE id = {id}; write dead_letters/queue/{timestamp}_{id}.json""
+                        ReceiverDB --> Rmq-- : OK
+                        note right of Rmq
+                            Judged permanently unrecoverable, not a
+                            transient outage — the batch still stops here,
+                            but this row is gone rather than blocking
+                            everything behind it on the next pass.
+                        end note
+                    else new_count still below the retry threshold
+                        Rmq -> ReceiverDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                        ReceiverDB --> Rmq-- : OK
+                    end
                     break
-                        Rmq -> Rmq : **Stop this pass**\n""could still just be RabbitMQ down again""
+                        Rmq -> Rmq : **Stop the batch at the first failure**\n""next loop guard sees the latch and reconnects""
                     end
                 end
             end
         end
+        opt one or more rows published this batch
+            Rmq -> ReceiverDB++ : **Delete the whole published prefix in one commit**\n""DELETE FROM queue WHERE id IN (…succeeded ids…); COMMIT""
+            ReceiverDB --> Rmq-- : OK
+        end
     else live queue still had traffic
-        Rmq -> Rmq : **Loop — re-check the live queue before any backlog row**
+        Rmq -> Rmq : **Loop — re-check the live queue before the next batch**
     end
 end
 
@@ -150,7 +152,8 @@ loop Until reconnected
         Rmq -> Rmq : **Set RabbitMQ is Connected**\n""rmq_connected = True""
         note right of Rmq
             The publish loop above resumes — its first passes see an empty
-            live queue and drain the queue.db backlog oldest-first.
+            live queue and drain the queue.db backlog oldest-first, one
+            bounded batch per pass.
         end note
     end
 end

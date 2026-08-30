@@ -269,25 +269,101 @@ class FallbackQueue:
                 self._conn.commit()
             return DRAIN_PROGRESSED
         except Exception as exc:
-            new_count = retry_count + 1
-            if isinstance(exc, self._non_poison_exceptions):
-                # Environmental, not poison: the dependency simply isn't
-                # present in this deployment. Behave exactly like a
-                # below-threshold failure forever -- stop the pass, retry
-                # from the top next drain, respect the cooldown -- and
-                # never dead-letter. retry_count/last_attempted_at still
-                # advance, purely so an operator can see how long the row
-                # has been stuck.
-                with self._lock:
-                    self._conn.execute(
-                        f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
-                        (new_count, time.time(), row_id),
-                    )
-                    self._conn.commit()
-                return DRAIN_STOP
-            if new_count >= self._retry_threshold:
-                self._dead_letter(row_id, payload, new_count, exc)
-                return DRAIN_PROGRESSED
+            return self._record_failure(row_id, payload, retry_count, exc)
+
+    def drain_batch(self, process_fn: Callable[[str], None], max_batch: int) -> str:
+        """Process up to ``max_batch`` oldest rows in one pass, with the
+        same outcome codes and per-row semantics as ``drain_one()``:
+
+        * ``DRAIN_EMPTY``      -- the queue was empty; nothing attempted.
+        * ``DRAIN_PROGRESSED`` -- at least one row published (or judged
+          poison and dead-lettered) and removed; there may be more behind.
+        * ``DRAIN_STOP``       -- the first not-yet-processed row failed a
+          below-threshold / non-poison attempt, or is still inside its
+          retry cooldown, and nothing before it succeeded either.
+
+        Batched form of ``drain_one()`` -- for a caller that has decided a
+        bounded amount of extra latency on its higher-priority work is an
+        acceptable price for draining a large backlog far faster than one
+        commit per row. Every rule ``drain_one()`` enforces still holds:
+
+        - Strict oldest-first, within the batch and across passes.
+        - Selection **stops at the first row still inside its retry
+          cooldown** -- the pass never skips past it to fresher rows
+          (``drain_one``'s stop-rather-than-reorder rule). If that is the
+          very first row, nothing is attempted.
+        - ``process_fn`` is called per selected row in id order, stopping
+          at the first failure.
+        - Every row whose ``process_fn`` returned without raising is
+          removed in a single ``DELETE ... WHERE id IN (...)`` + one
+          commit.
+        - A row that raised gets the unchanged per-row
+          retry_count / non-poison / dead-letter handling, applied to that
+          one row; rows selected after it wait for a later pass.
+        """
+        if max_batch < 1:
+            raise ValueError("max_batch must be >= 1")
+
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT id, payload, retry_count, last_attempted_at "
+                f"FROM {self._table} ORDER BY id ASC LIMIT ?",
+                (max_batch,),
+            ).fetchall()
+        if not rows:
+            return DRAIN_EMPTY
+
+        now = time.time()
+        succeeded: list[int] = []
+        failed: Optional[tuple[int, str, int, Exception]] = None
+        cooled_down = False
+        for row_id, payload, retry_count, last_attempted_at in rows:
+            if (
+                last_attempted_at is not None
+                and (now - last_attempted_at) < self._min_retry_interval_seconds
+            ):
+                cooled_down = True
+                break
+            try:
+                process_fn(payload)
+                succeeded.append(row_id)
+            except Exception as exc:
+                failed = (row_id, payload, retry_count, exc)
+                break
+
+        if succeeded:
+            placeholders = ",".join("?" * len(succeeded))
+            with self._lock:
+                self._conn.execute(
+                    f"DELETE FROM {self._table} WHERE id IN ({placeholders})",
+                    succeeded,
+                )
+                self._conn.commit()
+
+        if failed is not None:
+            outcome = self._record_failure(*failed)
+            return DRAIN_PROGRESSED if (succeeded or outcome == DRAIN_PROGRESSED) else DRAIN_STOP
+        if cooled_down:
+            return DRAIN_PROGRESSED if succeeded else DRAIN_STOP
+        return DRAIN_PROGRESSED
+
+    def _record_failure(
+        self, row_id: int, payload: str, retry_count: int, exc: Exception
+    ) -> str:
+        """Apply the per-row outcome of a failed ``process_fn`` -- advance
+        retry_count/last_attempted_at, or dead-letter once the threshold is
+        reached. Returns ``DRAIN_PROGRESSED`` if the row was dead-lettered
+        (and so removed), ``DRAIN_STOP`` otherwise (row stays queued).
+        Shared verbatim by ``drain_one()`` and ``drain_batch()``."""
+        new_count = retry_count + 1
+        if isinstance(exc, self._non_poison_exceptions):
+            # Environmental, not poison: the dependency simply isn't
+            # present in this deployment. Behave exactly like a
+            # below-threshold failure forever -- stop the pass, retry
+            # from the top next drain, respect the cooldown -- and
+            # never dead-letter. retry_count/last_attempted_at still
+            # advance, purely so an operator can see how long the row
+            # has been stuck.
             with self._lock:
                 self._conn.execute(
                     f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
@@ -295,6 +371,16 @@ class FallbackQueue:
                 )
                 self._conn.commit()
             return DRAIN_STOP
+        if new_count >= self._retry_threshold:
+            self._dead_letter(row_id, payload, new_count, exc)
+            return DRAIN_PROGRESSED
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
+                (new_count, time.time(), row_id),
+            )
+            self._conn.commit()
+        return DRAIN_STOP
 
     def drain_in_background(
         self, process_fn: Callable[[str], None], on_done: Optional[Callable[[], None]] = None
