@@ -95,7 +95,10 @@ publishing them itself:
   source connection — discovered via one cheap `SMEMBERS` per RabbitMQ poll
   cycle against a small Redis index set of currently-claimed receiver
   names (never a keyspace scan), then one `GET` per receiver for its
-  registration entry (its source list).
+  registration entry (its source list). core-health is the **sole**
+  publisher of these three (value and HA discovery); the receiver only
+  feeds the Redis counters and never publishes the topics itself, so with
+  no Redis configured they don't exist at all.
 
 A missing period key means the count is genuinely zero, not unavailable —
 mirroring message-processor's own `_redis_counter()` precedent. This is
