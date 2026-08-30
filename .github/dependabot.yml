@@ -241,6 +241,10 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"
+    directory: "/tools/tcp-traffic-replayer"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
     directory: "/tools/traffic-recorder"
     schedule:
       interval: "weekly"
