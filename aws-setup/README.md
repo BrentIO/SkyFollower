@@ -1,4 +1,4 @@
-# aws-setup
+# AWS Setup
 
 | | |
 |---|---|
