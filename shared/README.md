@@ -55,7 +55,12 @@ time via a relative path reference in their `requirements.txt`.
   own retry trigger fires in rapid bursts (e.g. a flapping connection
   reconnecting every few seconds) could dead-letter a row within seconds,
   even though it was never actually poison. See each component's own
-  README (Fault Tolerance section) for how it's wired in.
+  README (Fault Tolerance section) for how it's wired in. `drain()` runs
+  the whole backlog in one pass; `drain_one()` exposes the same per-row
+  step (retry accounting, dead-lettering, cooldown, oldest-first) one row
+  at a time, for a caller that needs to interleave higher-priority work
+  between rows — the receiver's publisher thread uses it to keep live
+  traffic strictly ahead of backlog drain.
 
   A third category sits between "recoverable outage" and "poison": a
   dependency deliberately absent in this deployment (e.g. a message

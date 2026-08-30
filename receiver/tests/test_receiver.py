@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import re
 import socket
 import tempfile
@@ -391,14 +392,14 @@ class TestIcaoRoutingIntegration:
             return Receiver(cfg)
 
     def test_handle_message_routes_by_icao_hex(self):
-        """_handle_message calls _publish with the ICAO hex as routing key —
-        the exchange, not the receiver, decides which processor gets it."""
+        """_handle_message enqueues the message with the ICAO hex as routing
+        key — the exchange, not the receiver, decides which processor gets it."""
         r = self._make_receiver()
 
         # A real DF17 ADS-B message — pyModeS should extract ICAO from it
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
@@ -421,7 +422,7 @@ class TestIcaoRoutingIntegration:
 
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["EXTERNAL"] = _RateTracker()
 
         r._handle_message(raw_hex, "EXTERNAL", r._rates["EXTERNAL"], ("localhost", 30002))
@@ -443,7 +444,7 @@ class TestIcaoRoutingIntegration:
             "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
         )
         published: list[tuple] = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
         r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"], ("localhost", 30002))
@@ -462,7 +463,7 @@ class TestIcaoRoutingIntegration:
     def test_handle_978_message_discards_bad_icao_length(self):
         r = self._make_receiver()
         published: list = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
         r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"], ("localhost", 30002))
@@ -472,7 +473,7 @@ class TestIcaoRoutingIntegration:
         """Messages that yield no ICAO are discarded silently."""
         r = self._make_receiver()
         published: list = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         # Garbage hex — pyModeS.icao returns None
@@ -486,7 +487,7 @@ class TestIcaoRoutingIntegration:
         raw_hex = "8D4840D6202CC371C32CE0576098"
 
         published: list[tuple] = []
-        r._publish = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         for _ in range(5):
@@ -520,7 +521,7 @@ class TestIcaoRoutingIntegration:
 
     def test_handle_message_sets_last_message_at(self):
         r = self._make_receiver()
-        r._publish = lambda q, p: None
+        r._enqueue_live = lambda q, p: None
         key = ("localhost", 30002)
         r._last_message_at[key] = None
 
@@ -533,7 +534,7 @@ class TestIcaoRoutingIntegration:
         connection is alive and emitting frames -- last_message_at tracks
         traffic seen, not traffic successfully routed."""
         r = self._make_receiver()
-        r._publish = lambda q, p: None
+        r._enqueue_live = lambda q, p: None
         key = ("localhost", 30002)
         r._last_message_at[key] = None
 
@@ -543,7 +544,7 @@ class TestIcaoRoutingIntegration:
 
     def test_handle_978_message_sets_last_message_at(self):
         r = self._make_receiver()
-        r._publish = lambda q, p: None
+        r._enqueue_live = lambda q, p: None
         key = ("localhost", 30978)
         r._last_message_at[key] = None
         raw_hex, icao_hex, received_at = parse_978_line(
@@ -578,7 +579,7 @@ class TestUnparseableLineLogging:
         }
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             r = Receiver(cfg)
-        r._publish = lambda q, p: None
+        r._enqueue_live = lambda q, p: None
         return r
 
     def _run_978(self, r, data: bytes):
@@ -659,15 +660,17 @@ class TestUnparseableLineLogging:
 
 
 # ---------------------------------------------------------------------------
-# SQLite fallback queue
+# Live publish path — the source threads hand each parsed message to an
+# in-memory queue and loop straight back to sock.recv(); nothing on that
+# path ever touches pika or waits on the broker.
 # ---------------------------------------------------------------------------
 
-class TestPikaInvoke:
-    """_pika_invoke is the only sanctioned way any thread other than
-    "rabbitmq" itself may reach into pika's connection/channel -- every
-    actual channel.basic_publish() call must be scheduled through it via
-    pika's own add_callback_threadsafe, never called directly, or
-    concurrent threads can corrupt pika's transport buffers (see #844)."""
+class TestEnqueueLive:
+    """_enqueue_live() is the entire live path off the source threads:
+    drop the message on the in-memory queue and return. A full queue
+    spills to the durable SQLite fallback rather than blocking the caller,
+    so getting messages off the TCP socket is never delayed by the broker
+    or by backlog drain."""
 
     def _make_receiver(self):
         from receiver.main import Receiver
@@ -678,43 +681,85 @@ class TestPikaInvoke:
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             return Receiver(cfg)
 
-    def test_raises_when_no_connection(self):
+    def test_hands_message_to_the_in_memory_queue(self):
+        r = self._make_receiver()
+        r._enqueue_live("4B1900", '{"raw": "AA"}')
+        assert r._live_queue.get_nowait() == ("4B1900", '{"raw": "AA"}')
+        assert r._fallback.depth() == 0
+
+    def test_never_touches_rabbitmq(self):
+        """No connection, no channel, broker unreachable -- the source
+        thread must still return at once with the message buffered."""
         r = self._make_receiver()
         r._rmq_connection = None
-        with pytest.raises(RuntimeError, match="No RabbitMQ connection"):
-            r._pika_invoke(lambda: None)
+        r._rmq_channel = None
+        r._rmq_connected = False
+        r._enqueue_live("4B1900", "x")
+        assert r._live_queue.qsize() == 1
+        assert r._fallback.depth() == 0
 
-    def test_runs_fn_via_add_callback_threadsafe(self):
+    def test_full_queue_spills_to_fallback_without_blocking(self):
         r = self._make_receiver()
-        r._rmq_connection = _synchronous_rmq_connection()
-        calls = []
-        r._pika_invoke(lambda: calls.append("ran"))
-        assert calls == ["ran"]
-        r._rmq_connection.add_callback_threadsafe.assert_called_once()
+        r._live_queue = queue.Queue(maxsize=2)
+        r._enqueue_live("A", "1")
+        r._enqueue_live("B", "2")
 
-    def test_reraises_fns_exception_in_caller(self):
+        completed = threading.Event()
+
+        def _enqueue_third():
+            r._enqueue_live("C", "3")  # queue full -- must go to SQLite
+            completed.set()
+
+        t = threading.Thread(target=_enqueue_third)
+        t.start()
+        t.join(timeout=2)
+
+        assert completed.is_set(), "_enqueue_live blocked on a full queue"
+        assert r._live_queue.qsize() == 2
+        assert r._fallback.depth() == 1
+
+    def test_route_message_uses_enqueue_live(self):
         r = self._make_receiver()
-        r._rmq_connection = _synchronous_rmq_connection()
+        seen = []
+        r._enqueue_live = lambda q, p: seen.append((q, p))
+        r._route_message(
+            "8D4840D6202CC371C32CE0576098", "4CA1FA", 1.0, "1090", _RateTracker()
+        )
+        assert len(seen) == 1
+        assert seen[0][0] == "4CA1FA"
 
-        def fail():
-            raise ValueError("boom")
-
-        with pytest.raises(ValueError, match="boom"):
-            r._pika_invoke(fail)
-
-    def test_times_out_if_callback_never_fires(self):
-        """Simulates the connection dying between being captured and the
-        scheduled callback actually running -- add_callback_threadsafe is
-        called but never invokes the callback."""
+    def test_source_read_loop_does_not_block_when_broker_is_gone(self):
+        """A full read of a socket's worth of frames completes even with no
+        RabbitMQ connection at all -- the read loop never calls a pika
+        method, so a stalled broker cannot back-pressure sock.recv()."""
         r = self._make_receiver()
-        conn = MagicMock()
-        conn.add_callback_threadsafe.side_effect = lambda fn: None  # never runs fn
-        r._rmq_connection = conn
-        with pytest.raises(TimeoutError):
-            r._pika_invoke(lambda: None, timeout=0.05)
+        r._rmq_connected = False
+        r._rmq_connection = None
+        client, server = socket.socketpair()
+        client.sendall(b"*8D4840D6202CC371C32CE0576098;\n" * 50)
+        client.close()
+
+        done = threading.Event()
+
+        def _run():
+            r._read_1090_stream(server, "localhost", 30002, "1090", _RateTracker())
+            done.set()
+
+        t = threading.Thread(target=_run)
+        t.start()
+        t.join(timeout=5)
+        server.close()
+
+        assert done.is_set(), "read loop blocked with the broker unavailable"
+        assert r._live_queue.qsize() == 50
 
 
-class TestDoPublish:
+class TestPublishOne:
+    """_publish_one() runs only on the rabbitmq thread and calls
+    channel.basic_publish directly -- no cross-thread hand-off. A failure
+    must persist the message to SQLite (never a silent drop) and latch the
+    connection unhealthy so _rmq_loop reconnects and re-validates."""
+
     def _make_receiver(self):
         from receiver.main import Receiver
         cfg = {
@@ -724,86 +769,33 @@ class TestDoPublish:
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             return Receiver(cfg)
 
-    def test_raises_when_channel_gone(self):
+    def test_publishes_with_expected_args(self):
         r = self._make_receiver()
-        r._rmq_channel = None
-        with pytest.raises(RuntimeError, match="RabbitMQ channel gone"):
-            r._do_publish("4B1900", '{"raw": "AA"}')
-
-    def test_calls_basic_publish_with_expected_args(self):
-        r = self._make_receiver()
-        mock_channel = MagicMock()
-        r._rmq_channel = mock_channel
-        r._do_publish("4B1900", '{"raw": "AA"}')
-        mock_channel.basic_publish.assert_called_once()
-        kwargs = mock_channel.basic_publish.call_args.kwargs
+        ch = MagicMock()
+        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}') is True
+        kwargs = ch.basic_publish.call_args.kwargs
         assert kwargs["exchange"] == "adsb"
         assert kwargs["routing_key"] == "4B1900"
         assert kwargs["body"] == b'{"raw": "AA"}'
 
-
-class TestPublishRoutesThroughPikaInvoke:
-    """_publish() (the live per-message publish path, as opposed to the
-    fallback-drain path covered by TestDrainFallback) must go through
-    _pika_invoke rather than touching the channel directly -- confirms the
-    thread-safety fix actually wires the real call path, not just that
-    _pika_invoke/_do_publish work in isolation."""
-
-    def _make_receiver(self):
-        from receiver.main import Receiver
-        cfg = {
-            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-        }
-        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
-            return Receiver(cfg)
-
-    def test_publish_success_does_not_fall_back(self):
+    def test_failure_routes_to_fallback_and_latches_disconnected(self):
         r = self._make_receiver()
         r._rmq_connected = True
-        r._rmq_channel = MagicMock()
-        r._rmq_connection = _synchronous_rmq_connection()
-
-        r._publish("4B1900", '{"raw": "AA"}')
-
-        assert r._fallback.depth() == 0
-        r._rmq_channel.basic_publish.assert_called_once()
-
-    def test_publish_falls_back_and_marks_disconnected_on_pika_invoke_failure(self):
-        r = self._make_receiver()
-        r._rmq_connected = True
-        r._rmq_channel = MagicMock()
-        r._rmq_channel.basic_publish.side_effect = RuntimeError("boom")
-        r._rmq_connection = _synchronous_rmq_connection()
-
-        r._publish("4B1900", '{"raw": "AA"}')
-
+        ch = MagicMock()
+        ch.basic_publish.side_effect = RuntimeError("boom")
+        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}') is False
         assert r._fallback.depth() == 1
         assert r._rmq_connected is False
 
-    def test_publish_goes_straight_to_fallback_when_not_connected(self):
-        r = self._make_receiver()
-        r._rmq_connected = False
-        r._rmq_connection = None
-
-        r._publish("4B1900", '{"raw": "AA"}')
-
-        assert r._fallback.depth() == 1
-
-    def test_publish_never_calls_basic_publish_directly_bypassing_pika_invoke(self):
-        """A regression guard for the exact bug in #844: _publish must
-        route through _pika_invoke (which pika's add_callback_threadsafe
-        marshals onto the rabbitmq thread), never call channel methods
-        from the calling thread directly."""
+    def test_fallback_row_publish_failure_reraises_and_latches(self):
         r = self._make_receiver()
         r._rmq_connected = True
-        r._rmq_channel = MagicMock()
-        r._rmq_connection = _synchronous_rmq_connection()
-
-        with patch.object(r, "_pika_invoke", wraps=r._pika_invoke) as mock_invoke:
-            r._publish("4B1900", '{"raw": "AA"}')
-
-        mock_invoke.assert_called_once()
+        ch = MagicMock()
+        ch.basic_publish.side_effect = RuntimeError("boom")
+        wrapped = json.dumps({"routing_key": "4B1900", "payload": "x"})
+        with pytest.raises(RuntimeError, match="boom"):
+            r._publish_fallback_row(ch, wrapped)
+        assert r._rmq_connected is False
 
 
 class TestFallbackPutWrapsRoutingKey:
@@ -833,40 +825,12 @@ class TestFallbackPutWrapsRoutingKey:
 
 
 # ---------------------------------------------------------------------------
-# Receiver._drain_fallback — and its periodic-tick trigger from
-# _telemetry_loop, alongside the existing RabbitMQ-reconnect trigger
+# _rmq_publish_loop — the sole publishing thread. Strict priority for live
+# messages off the sockets; the fallback backlog is advanced one row at a
+# time, and only when nothing is waiting to go out live.
 # ---------------------------------------------------------------------------
 
-def _synchronous_drain_thread():
-    """Patch threading.Thread so drain_in_background's spawned thread runs
-    synchronously in the caller's thread instead of racing the test's own
-    assertions against a real background thread. Production code still
-    spawns a genuine thread; this only affects the test."""
-    class _ImmediateThread:
-        def __init__(self, target=None, daemon=None, name=None):
-            self._target = target
-
-        def start(self):
-            if self._target:
-                self._target()
-
-    return patch("receiver.main.threading.Thread", _ImmediateThread)
-
-
-def _synchronous_rmq_connection() -> MagicMock:
-    """A mock pika connection whose add_callback_threadsafe runs the given
-    callback immediately in the calling thread, instead of actually
-    marshalling it onto a separate thread the way pika really does --
-    mirrors how _synchronous_drain_thread() collapses the real background
-    thread for test determinism. _pika_invoke() (receiver/main.py) requires
-    a non-None self._rmq_connection to schedule against; production code
-    always has one whenever self._rmq_connected is True."""
-    conn = MagicMock()
-    conn.add_callback_threadsafe.side_effect = lambda fn: fn()
-    return conn
-
-
-class TestDrainFallback:
+class TestRmqPublishLoop:
     def _make_receiver(self):
         from receiver.main import Receiver
         cfg = {
@@ -876,93 +840,121 @@ class TestDrainFallback:
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             return Receiver(cfg)
 
-    def test_drain_fallback_publishes_queued_items(self):
+    def test_publishes_queued_live_messages(self):
         r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
-        mock_channel = MagicMock()
-        r._rmq_channel = mock_channel
-        r._rmq_connection = _synchronous_rmq_connection()
-
-        with _synchronous_drain_thread():
-            r._drain_fallback()
-
-        assert r._fallback.depth() == 0
-        mock_channel.basic_publish.assert_called_once()
-        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "4B1900"
-
-    def test_drain_fallback_leaves_items_queued_if_channel_gone(self):
-        r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
-        r._rmq_channel = None
-
-        with _synchronous_drain_thread():
-            r._drain_fallback()
-
-        assert r._fallback.depth() == 1
-
-    def test_drain_fallback_resets_rmq_connected_on_publish_failure(self):
-        """A failed basic_publish during draining is just as much evidence
-        the connection is broken as a failed live-path publish — mirror
-        _publish()'s handling."""
-        r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
-        mock_channel = MagicMock()
-        mock_channel.basic_publish.side_effect = RuntimeError("boom")
-        r._rmq_channel = mock_channel
-        r._rmq_connection = _synchronous_rmq_connection()
         r._rmq_connected = True
+        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}'))
 
-        with _synchronous_drain_thread():
-            r._drain_fallback()
+        published = []
+        ch = MagicMock()
+
+        def record(**kw):
+            published.append(kw["routing_key"])
+            r._shutdown.set()
+
+        ch.basic_publish.side_effect = record
+        r._rmq_publish_loop(MagicMock(), ch)
+
+        assert published == ["4B1900"]
+        assert ch.basic_publish.call_args.kwargs["exchange"] == "adsb"
+
+    def test_live_messages_publish_before_any_backlog_row(self):
+        """Strict priority: everything queued off the sockets goes out
+        before a single fallback-backlog row is touched."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        for i in range(3):
+            r._fallback_put(f"BACK{i}", "x")
+        r._live_queue.put_nowait(("LIVE0", "y"))
+        r._live_queue.put_nowait(("LIVE1", "y"))
+
+        published = []
+        ch = MagicMock()
+
+        def record(**kw):
+            published.append(kw["routing_key"])
+            if len(published) >= 5:
+                r._shutdown.set()
+
+        ch.basic_publish.side_effect = record
+        r._rmq_publish_loop(MagicMock(), ch)
+
+        assert published[:2] == ["LIVE0", "LIVE1"]
+        assert set(published[2:]) == {"BACK0", "BACK1", "BACK2"}
+
+    def test_live_message_arriving_mid_drain_jumps_ahead_of_backlog(self):
+        """A large backlog is draining, no live traffic -- then one live
+        message arrives. It must publish before the next backlog row, not
+        wait behind the rest of the backlog."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        for i in range(3):
+            r._fallback_put(f"BACK{i}", "x")
+
+        published = []
+        ch = MagicMock()
+
+        def record(**kw):
+            rk = kw["routing_key"]
+            published.append(rk)
+            if rk == "BACK0":
+                r._live_queue.put_nowait(("LIVE", "y"))
+            if len(published) >= 4:
+                r._shutdown.set()
+
+        ch.basic_publish.side_effect = record
+        r._rmq_publish_loop(MagicMock(), ch)
+
+        assert published.index("LIVE") < published.index("BACK1")
+
+    def test_publish_failure_returns_and_persists_the_message(self):
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._live_queue.put_nowait(("4B1900", "y"))
+        ch = MagicMock()
+        ch.basic_publish.side_effect = RuntimeError("boom")
+
+        # Returns rather than spinning -- _rmq_loop then reconnects.
+        r._rmq_publish_loop(MagicMock(), ch)
 
         assert r._rmq_connected is False
         assert r._fallback.depth() == 1
 
-    def _run_one_telemetry_tick(self, r) -> None:
-        """Run the real _telemetry_loop for exactly one iteration, by
-        making the mocked shutdown-event wait set _shutdown so the loop
-        body runs once and then exits — rather than re-implementing the
-        loop's conditional in the test, which wouldn't actually exercise
-        it. _telemetry_loop waits on r._shutdown (purely time-based, no
-        message-count trigger), so that's what gets faked out here."""
-        def fake_wait(timeout=None):
-            r._shutdown.set()
-            return True
-
-        with patch.object(r._shutdown, "wait", side_effect=fake_wait), \
-             patch.object(r, "_publish_telemetry"):
-            r._telemetry_loop()
-
-    def test_telemetry_loop_drains_when_connected(self):
-        """The periodic tick must attempt a drain when RabbitMQ is
-        connected — this is what lets a stuck/missed reconnect-triggered
-        drain still recover on the next tick."""
+    def test_returns_when_rmq_connected_is_latched_false(self):
         r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
-        r._rmq_channel = MagicMock()
-        r._rmq_connection = _synchronous_rmq_connection()
+        r._rmq_connected = False
+        # No shutdown set: the latch alone must end the loop.
+        r._rmq_publish_loop(MagicMock(), MagicMock())
+
+    def test_idle_loop_wakes_and_publishes_the_next_live_message(self):
+        r = self._make_receiver()
         r._rmq_connected = True
 
-        with _synchronous_drain_thread():
-            self._run_one_telemetry_tick(r)
+        published = []
+        ch = MagicMock()
 
-        assert r._fallback.depth() == 0
+        def record(**kw):
+            published.append(kw["routing_key"])
+            r._shutdown.set()
 
-    def test_telemetry_tick_does_not_drain_when_disconnected(self):
-        r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
-        r._rmq_connected = False
+        ch.basic_publish.side_effect = record
 
-        self._run_one_telemetry_tick(r)
+        def _feed():
+            time.sleep(0.05)
+            r._live_queue.put_nowait(("LATE", "y"))
 
-        assert r._fallback.depth() == 1
+        with patch("receiver.main._RMQ_IDLE_POLL_SECONDS", 0.5):
+            threading.Thread(target=_feed).start()
+            r._rmq_publish_loop(MagicMock(), ch)
+
+        assert published == ["LATE"]
 
 
 # ---------------------------------------------------------------------------
-# _rmq_loop must recover when the publish path latches _rmq_connected False
-# without process_data_events ever raising -- the broker blocking publishers
-# (disk-free alarm) is exactly this: basic_publish times out but the TCP
-# connection stays up, so the connection-liveness proxy keeps succeeding.
+# _rmq_loop must rebuild the connection when the publish path latches
+# _rmq_connected False -- the broker blocking publishers (resource alarm) is
+# exactly this: basic_publish fails but process_data_events keeps
+# succeeding. Preserves the #1136 fix intent under the sole-publisher model.
 # ---------------------------------------------------------------------------
 
 
@@ -976,8 +968,9 @@ class TestRmqLoopRecoversFromLatchedDisconnect:
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             return Receiver(cfg)
 
-    def test_publish_timeout_on_healthy_connection_forces_reconnect_and_recovers(self):
+    def test_publish_failure_on_healthy_connection_forces_reconnect_and_recovers(self):
         r = self._make_receiver()
+        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}'))
 
         state: dict = {"connects": 0}
 
@@ -987,38 +980,32 @@ class TestRmqLoopRecoversFromLatchedDisconnect:
             conn = MagicMock()
             channel = MagicMock()
             conn.channel.return_value = channel
-            conn.add_callback_threadsafe.side_effect = lambda fn: fn()
+            conn.process_data_events.side_effect = lambda **_kw: None
             if n == 1:
-                # Broker has publishers blocked: every publish attempt
-                # times out, but process_data_events keeps succeeding.
+                # Broker has publishers blocked: publish fails, the
+                # connection itself keeps answering process_data_events.
                 channel.basic_publish.side_effect = TimeoutError("blocked")
-
-            def process_data_events(**_kw):
-                if state["connects"] == 1:
-                    # Live publish path fails against the blocked broker:
-                    # it latches _rmq_connected False and queues to SQLite,
-                    # without this connection ever raising.
-                    r._publish("4B1900", '{"raw": "AA"}')
-                elif state["connects"] >= 2:
+            else:
+                def ok(**_kw):
                     state["connected_on_reconnect"] = r._rmq_connected
-                    state["depth_on_reconnect"] = r._fallback.depth()
                     r._shutdown.set()
 
-            conn.process_data_events.side_effect = process_data_events
+                channel.basic_publish.side_effect = ok
             return conn
 
         with patch("receiver.main.pika.BlockingConnection", side_effect=make_conn), \
-             patch("receiver.main.time.sleep", lambda _s: None), \
-             _synchronous_drain_thread():
+             patch("receiver.main.time.sleep", lambda _s: None):
             r._rmq_loop()
 
-        # It did not stay latched on the first connection: a fresh connect
-        # was forced even though process_data_events never raised.
+        # The first connection did not stay latched False forever: a fresh
+        # connect was forced even though process_data_events never raised.
         assert state["connects"] >= 2
-        # Once publishing works again the flag is re-validated True...
+        # Publishing works again -> the flag is re-validated True...
         assert state["connected_on_reconnect"] is True
-        # ...and the backlog drains without a restart.
-        assert state["depth_on_reconnect"] == 0
+        # ...and the message that failed on connection 1 drained from the
+        # SQLite fallback on connection 2, no restart.
+        assert r._fallback.depth() == 0
+        assert r._live_queue.qsize() == 0
 
 
 # ---------------------------------------------------------------------------

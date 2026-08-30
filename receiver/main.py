@@ -21,6 +21,7 @@ import logging
 import logging.handlers
 import os
 import pathlib
+import queue
 import re
 import signal
 import socket
@@ -39,7 +40,7 @@ import redis as redis_lib
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.config import DATA_DIR, ConfigError, load_config
-from shared.fallback_queue import FallbackQueue
+from shared.fallback_queue import DRAIN_PROGRESSED, FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
@@ -57,6 +58,7 @@ from shared.timing import (
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
     MQTT_PUBLISH_INTERVAL_SECONDS,
+    RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
     RATE_WINDOW_SECONDS,
     RECONNECT_BACKOFF_SECONDS,
     TCP_KEEPALIVE_PROBES,
@@ -73,6 +75,30 @@ logger = logging.getLogger("receiver")
 # queue) is durable/persistent. Every timing value the receiver uses is a
 # named constant from shared/timing.py -- imported above, not redefined here.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
+
+# In-memory hand-off between the socket-read threads and the sole
+# "rabbitmq" publishing thread. A source thread parses a message, drops it
+# here, and loops straight back to sock.recv() -- it never touches pika and
+# never waits on the broker, so backlog drain can't delay live intake. The
+# bound keeps a broker outage from growing this without limit: once it's
+# full, a source thread routes straight to the durable SQLite fallback
+# instead (still without blocking). ~10k messages is a few seconds of
+# buffer at the reference message rate and a small, bounded amount of RAM
+# to lose on a hard crash mid-outage (a clean reconnect drains it first).
+_LIVE_QUEUE_MAXSIZE = 10_000
+
+# Cap on how many live messages the rabbitmq thread publishes in one pass
+# before returning to process_data_events -- purely so heartbeats and the
+# broker's blocked/unblocked signals still get serviced under sustained
+# load. Whatever is left stays queued and is taken on the next pass, still
+# ahead of any fallback-drain row.
+_LIVE_PUBLISH_BATCH_MAX = 2_000
+
+# How long the rabbitmq thread blocks waiting for the next live message
+# when both the live queue and the fallback backlog are empty -- short
+# enough to keep pika's heartbeat serviced and to pick up the first
+# message after an idle period promptly, long enough not to busy-spin.
+_RMQ_IDLE_POLL_SECONDS = 1.0
 
 # ---------------------------------------------------------------------------
 # Rate tracker — RATE_WINDOW_SECONDS rolling window (copied from message
@@ -324,6 +350,12 @@ class Receiver:
         self._rmq_channel = None
         self._rmq_connected = False
         self._rmq_lock = threading.Lock()
+
+        # Live messages parsed off the source sockets, waiting for the
+        # "rabbitmq" thread to publish them -- see _LIVE_QUEUE_MAXSIZE.
+        self._live_queue: queue.Queue[tuple[str, str]] = queue.Queue(
+            maxsize=_LIVE_QUEUE_MAXSIZE
+        )
 
         # MQTT state
         self._mqtt: Optional[mqtt.Client] = None
@@ -689,7 +721,18 @@ class Receiver:
         payload = msg.model_dump_json()
 
         rate_tracker.record()
-        self._publish(icao_hex, payload)
+        self._enqueue_live(icao_hex, payload)
+
+    def _enqueue_live(self, routing_key: str, payload: str) -> None:
+        """Hand a parsed message to the in-memory publish queue and return
+        at once -- the source thread never blocks on RabbitMQ. If the queue
+        is full (the broker has been unreachable long enough that even this
+        buffer backed up), the message goes straight to the durable SQLite
+        fallback rather than stalling the socket read behind the backlog."""
+        try:
+            self._live_queue.put_nowait((routing_key, payload))
+        except queue.Full:
+            self._fallback_put(routing_key, payload)
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -703,10 +746,20 @@ class Receiver:
             port=rc.get("port", 5672),
             credentials=creds,
             heartbeat=60,
+            # The publishing thread calls basic_publish directly; a broker
+            # resource alarm (disk-free / high memory) blocks publishers
+            # while leaving the TCP connection up, so without this a publish
+            # would wedge forever. pika tears the connection down when the
+            # blocked state outlasts this, and _rmq_loop reconnects.
+            blocked_connection_timeout=RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
         )
 
     def _rmq_loop(self) -> None:
-        """Maintain a persistent RabbitMQ connection, reconnecting on failure."""
+        """Own the RabbitMQ connection and be the *only* thread that ever
+        touches its channel. Source threads drop parsed messages into
+        self._live_queue and never wait on the broker; this loop publishes
+        them, and only advances the SQLite fallback backlog when nothing is
+        waiting to go out live. Reconnects on any failure."""
         while not self._shutdown.is_set():
             conn = None
             try:
@@ -722,37 +775,7 @@ class Receiver:
                     self._rmq_connected = True
 
                 logger.info("RabbitMQ connected.")
-
-                # _drain_fallback() spawns its own background thread (or
-                # skips if one is already running) -- see drain_in_background.
-                self._drain_fallback()
-
-                # Keep the connection alive with process_data_events
-                while not self._shutdown.is_set():
-                    # The publish path (_publish / _drain_fallback) is a
-                    # separate source of truth for connectivity: it flips
-                    # _rmq_connected False on any publish failure, including
-                    # a _pika_invoke timeout while the broker has publishers
-                    # blocked (disk-free alarm) but the TCP connection stays
-                    # up. process_data_events keeps succeeding in that case,
-                    # so without this check the flag would stay latched
-                    # False forever and every message would route to the
-                    # SQLite fallback. Tear the connection down and rebuild
-                    # it so the flag gets re-validated on the next connect.
-                    with self._rmq_lock:
-                        publish_healthy = self._rmq_connected
-                    if not publish_healthy:
-                        logger.warning(
-                            "RabbitMQ publish path reported a failure; "
-                            "reconnecting to re-validate."
-                        )
-                        break
-                    try:
-                        conn.process_data_events(time_limit=1)
-                    except pika.exceptions.AMQPConnectionError:
-                        break
-                    except Exception:
-                        break
+                self._rmq_publish_loop(conn, ch)
 
             except pika.exceptions.AMQPConnectionError as exc:
                 logger.warning(
@@ -778,84 +801,125 @@ class Receiver:
             if not self._shutdown.is_set():
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
-    def _pika_invoke(self, fn: Callable[[], None], timeout: float = 5.0) -> None:
-        """Run fn() on the "rabbitmq" thread via pika's own thread-safe
-        callback hand-off, blocking the calling thread until fn() completes
-        or raises.
+    def _rmq_publish_loop(self, conn: pika.BlockingConnection, ch) -> None:
+        """Inner loop while a connection is up: pump pika, publish live
+        messages with strict priority, then -- only if the live queue is
+        empty -- advance the fallback backlog one row. Returns (so
+        _rmq_loop reconnects) on shutdown or any publish/connection
+        failure."""
+        while not self._shutdown.is_set():
+            # A publish failure latches _rmq_connected False without the
+            # connection necessarily raising (broker blocking publishers on
+            # a resource alarm). Reconnect to re-validate rather than
+            # looping forever routing everything to the fallback.
+            with self._rmq_lock:
+                if not self._rmq_connected:
+                    logger.warning(
+                        "RabbitMQ publish path reported a failure; "
+                        "reconnecting to re-validate."
+                    )
+                    return
 
-        pika.BlockingConnection (and the async transport underneath it) is
-        not safe to call concurrently from multiple threads -- every actual
-        channel/connection call (basic_publish, process_data_events,
-        queue_declare, ...) must happen from a single thread. _rmq_loop
-        already owns the connection and drives process_data_events() from
-        the dedicated "rabbitmq" thread; every *other* thread (a source
-        thread publishing a live message, the fallback-drain thread
-        replaying a backlog) must route its pika calls through here instead
-        of touching the channel directly, or two threads can end up inside
-        pika's transport internals at the same moment, corrupting its
-        buffers and crashing the connection.
-
-        Raises RuntimeError if there's no live connection to schedule
-        against, TimeoutError if the rabbitmq thread doesn't run fn()
-        within `timeout` seconds (e.g. the connection died between being
-        captured here and the callback actually running), or whatever fn()
-        itself raised, re-raised in the calling thread.
-        """
-        with self._rmq_lock:
-            conn = self._rmq_connection
-
-        if conn is None:
-            raise RuntimeError("No RabbitMQ connection")
-
-        done = threading.Event()
-        outcome: dict = {}
-
-        def _runner() -> None:
+            # Service heartbeats and the broker's blocked/unblocked signals.
             try:
-                fn()
-            except Exception as exc:
-                outcome["exc"] = exc
-            finally:
-                done.set()
-
-        conn.add_callback_threadsafe(_runner)
-
-        if not done.wait(timeout=timeout):
-            raise TimeoutError("Timed out waiting for the rabbitmq thread to run a pika call")
-
-        if "exc" in outcome:
-            raise outcome["exc"]
-
-    def _do_publish(self, routing_key: str, payload: str) -> None:
-        """The only place that actually calls channel.basic_publish().
-        Must only ever run on the rabbitmq thread -- callers reach this via
-        _pika_invoke(), never directly."""
-        with self._rmq_lock:
-            channel = self._rmq_channel
-        if channel is None:
-            raise RuntimeError("RabbitMQ channel gone")
-        channel.basic_publish(
-            exchange=ADSB_EXCHANGE,
-            routing_key=routing_key,
-            body=payload.encode(),
-            properties=pika.BasicProperties(delivery_mode=2),
-        )
-
-    def _publish(self, routing_key: str, payload: str) -> None:
-        """Publish to RabbitMQ; fall back to SQLite on failure."""
-        with self._rmq_lock:
-            connected = self._rmq_connected
-
-        if connected:
-            try:
-                self._pika_invoke(lambda: self._do_publish(routing_key, payload))
+                conn.process_data_events(time_limit=0)
+            except pika.exceptions.AMQPConnectionError:
                 return
-            except Exception as exc:
-                logger.debug("RabbitMQ publish failed: %s — writing to fallback.", exc)
-                with self._rmq_lock:
-                    self._rmq_connected = False
+            except Exception:
+                return
 
-        self._fallback_put(routing_key, payload)
+            # Strict priority: everything queued off the sockets goes out
+            # before a single backlog row is touched.
+            published_live = self._publish_live_batch(ch)
+            with self._rmq_lock:
+                if not self._rmq_connected:
+                    return
+            if published_live:
+                continue
+
+            # Nothing waiting live -- move the backlog forward by one row,
+            # then loop straight back to re-check the live queue.
+            step = self._fallback.drain_one(
+                lambda wrapped: self._publish_fallback_row(ch, wrapped)
+            )
+            if step == DRAIN_PROGRESSED:
+                continue
+
+            # A backlog row that failed to publish latches the connection
+            # unhealthy -- go straight back to the top to reconnect rather
+            # than idling first.
+            with self._rmq_lock:
+                if not self._rmq_connected:
+                    continue
+
+            # Fully idle, or the head-of-queue row is in its retry cooldown.
+            # Wait for the next live message rather than busy-spinning, but
+            # wake often enough to keep pika's heartbeat serviced.
+            if self._shutdown.is_set():
+                return
+            try:
+                routing_key, payload = self._live_queue.get(
+                    timeout=_RMQ_IDLE_POLL_SECONDS
+                )
+            except queue.Empty:
+                continue
+            self._publish_one(ch, routing_key, payload)
+
+    def _publish_live_batch(self, ch) -> bool:
+        """Publish up to _LIVE_PUBLISH_BATCH_MAX queued live messages,
+        oldest-first. Returns True if at least one was dequeued this call
+        (whether or not it published cleanly -- a failure latches
+        _rmq_connected False, which the caller checks). Stops early on the
+        first failure so the caller can reconnect promptly."""
+        published = 0
+        while published < _LIVE_PUBLISH_BATCH_MAX:
+            try:
+                routing_key, payload = self._live_queue.get_nowait()
+            except queue.Empty:
+                break
+            published += 1
+            if not self._publish_one(ch, routing_key, payload):
+                break
+        return published > 0
+
+    def _publish_one(self, ch, routing_key: str, payload: str) -> bool:
+        """basic_publish one message directly on the rabbitmq thread. On
+        failure, latch the connection unhealthy and persist the message to
+        the SQLite fallback so it is never dropped. Returns False on
+        failure."""
+        try:
+            ch.basic_publish(
+                exchange=ADSB_EXCHANGE,
+                routing_key=routing_key,
+                body=payload.encode(),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+            return True
+        except Exception as exc:
+            logger.debug("RabbitMQ publish failed: %s — writing to fallback.", exc)
+            with self._rmq_lock:
+                self._rmq_connected = False
+            self._fallback_put(routing_key, payload)
+            return False
+
+    def _publish_fallback_row(self, ch, wrapped: str) -> None:
+        """process_fn for FallbackQueue.drain_one: unwrap the stored
+        {routing_key, payload} and publish it on the rabbitmq thread.
+        Raises on failure so the row stays queued (drain_one owns the
+        retry/dead-letter accounting) and latches the connection unhealthy
+        so the publish loop reconnects."""
+        item = json.loads(wrapped)
+        try:
+            ch.basic_publish(
+                exchange=ADSB_EXCHANGE,
+                routing_key=item["routing_key"],
+                body=item["payload"].encode(),
+                properties=pika.BasicProperties(delivery_mode=2),
+            )
+        except Exception:
+            with self._rmq_lock:
+                self._rmq_connected = False
+            raise
 
     def _fallback_put(self, routing_key: str, payload: str) -> None:
         """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
@@ -864,23 +928,8 @@ class Receiver:
         alongside the payload keeps the drain path identical to the live
         publish path, with no need to re-parse a stored message body to
         work out where it was going -- so it's wrapped into one JSON string
-        here and unwrapped again in _drain_fallback's process_fn."""
+        here and unwrapped again in _publish_fallback_row."""
         self._fallback.put(json.dumps({"routing_key": routing_key, "payload": payload}))
-
-    def _drain_fallback(self) -> None:
-        def process_fn(wrapped: str) -> None:
-            item = json.loads(wrapped)
-            routing_key = item["routing_key"]
-            payload = item["payload"]
-
-            try:
-                self._pika_invoke(lambda: self._do_publish(routing_key, payload))
-            except Exception:
-                with self._rmq_lock:
-                    self._rmq_connected = False
-                raise
-
-        self._fallback.drain_in_background(process_fn)
 
     # ------------------------------------------------------------------
     # MQTT
@@ -931,22 +980,10 @@ class Receiver:
             if self._redis is not None:
                 self._flush_period_counters()
 
-            # Independent of _rmq_loop's reconnect-triggered drain: a
-            # publish failure can leave messages queued without the
-            # underlying connection ever raising AMQPConnectionError.
-            # _rmq_loop's inner loop now breaks to a fresh connect when
-            # the publish path latches _rmq_connected False, but this
-            # periodic sweep is a cheap no-op when the queue is empty and
-            # a second line of defence that doesn't depend on that
-            # detection firing. _drain_fallback()
-            # itself spawns the actual drain in the background (or skips
-            # if one's already running from the reconnect path), so this
-            # call returns immediately and never delays the telemetry
-            # publish below it.
-            with self._rmq_lock:
-                rmq_connected = self._rmq_connected
-            if rmq_connected:
-                self._drain_fallback()
+            # Draining the fallback backlog is intrinsic to _rmq_publish_loop
+            # -- it works a backlog row whenever no live message is waiting,
+            # every iteration, for as long as the connection holds -- so
+            # there is no separate drain trigger to fire here.
             self._publish_telemetry()
 
     def _flush_period_counters(self) -> None:
@@ -1034,7 +1071,12 @@ class Receiver:
                         str(count),
                         retain=True,
                     )
-        self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
+        # Both backlogs an operator cares about: the durable SQLite queue
+        # plus whatever is still buffered in memory waiting for the
+        # rabbitmq thread, so a broker blip absorbed entirely in RAM is
+        # still visible rather than reading as zero.
+        local_queue_depth = self._fallback.depth() + self._live_queue.qsize()
+        self._mqtt.publish(f"{base}/local_queue_depth", str(local_queue_depth), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )

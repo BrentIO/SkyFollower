@@ -4,7 +4,9 @@
 title Receiver — RabbitMQ Offline Fallback
 
 box "Receiver" $OnPrem
-    participant "Receiver" as Receiver
+    participant "Source thread\n(per readsb feed)" as Src
+    participant "In-memory\nlive queue" as LiveQ
+    participant "RabbitMQ thread" as Rmq
     database "queue.db" as ReceiverDB
 end box
 
@@ -12,74 +14,71 @@ box "RabbitMQ" $OnPrem
     entity "adsb exchange\n(x-consistent-hash)" as AdsbX
 end box
 
-== Normal operation ==
+== Source thread — never blocks on RabbitMQ ==
 
-Receiver -> AdsbX++ : **Connect**
-AdsbX --> Receiver-- : Connected
-Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
-Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
-alt connected
-    Receiver -\ AdsbX : **Publish**
-    opt channel already closed locally
-        Receiver -> Receiver : **Local publish failure**\n""basic_publish() raises""
-        Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
-        ReceiverDB --> Receiver-- : OK
+loop For each parsed message
+    Src -> LiveQ++ : **Hand off the parsed message**\n""live_queue.put_nowait((icao_hex, message_json))""
+    alt queue has room
+        LiveQ --> Src-- : Buffered
+    else queue full (broker unreachable long enough to back it up)
+        LiveQ --> Src-- : Full
+        Src -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
+        ReceiverDB --> Src-- : OK
     end
-else not connected
-    Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
-    ReceiverDB --> Receiver-- : OK
+    Src -> Src : **Return straight to the socket**\n""sock.recv() — no pika call, no broker wait""
 end
 
-== RabbitMQ connection drops ==
+== RabbitMQ thread — sole publisher, live traffic first ==
 
-AdsbX ->x Receiver : **Connection lost**
-Receiver -> Receiver : **Connection monitoring detects the drop**\n""conn.process_data_events() raises""
-Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+Rmq -> AdsbX++ : **Connect**
+AdsbX --> Rmq-- : Connected
+Rmq -> Rmq : **Set RabbitMQ is Connected**\n""rmq_connected = True""
 
-loop Until reconnected
-    alt Connection fails
-        Receiver ->x AdsbX : **Connect**
-        Receiver -> Receiver : **Sleep 10 seconds**
-    else Connection succeeds
-        Receiver -> AdsbX++ : **Connect**
-        AdsbX --> Receiver-- : Connected
-        Receiver -> Receiver : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+loop While connected
+    Rmq -> Rmq : **Publish path latched a failure?**\n""if not rmq_connected: break to reconnect""
+    Rmq -> Rmq : **Service the connection**\n""conn.process_data_events(time_limit=0) — heartbeats, blocked/unblocked""
+
+    group Strict priority — empty the live queue first
+        loop While the live queue is non-empty (bounded per pass)
+            Rmq -> LiveQ++ : **Take next live message**\n""live_queue.get_nowait()""
+            LiveQ --> Rmq-- : (routing_key, message_json)
+            Rmq -\ AdsbX : **Publish**\n""channel.basic_publish(exchange='adsb', routing_key=icao_hex)""
+            opt basic_publish raises
+                Rmq -> Rmq : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+                Rmq -> ReceiverDB++ : **Persist the message**\n""INSERT INTO queue {routing_key, message_json}""
+                ReceiverDB --> Rmq-- : OK
+                break
+                    Rmq -> Rmq : **Stop the pass**\n""next loop guard sees the latch and reconnects""
+                end
+            end
+        end
     end
-end
 
-opt Message arrives while disconnected from RabbitMQ
-    loop For each message
-        Receiver -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
-        ReceiverDB --> Receiver-- : OK
-    end
-end
-
-== Draining queue.db (reconnect-triggered) ==
-
-Receiver -> Receiver : **Attempt to claim the drain guard**\n""_drain_lock.acquire(blocking=False)""
-alt guard acquired
-    Receiver -\ Receiver : **Spawn background drain thread**\n""threading.Thread(target=drain).start()""
-    loop For each row in database
-        Receiver -> ReceiverDB++ : **Get next row**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 1""
-        ReceiverDB --> Receiver-- : Record
+    alt live queue was observed empty
+        note right of Rmq
+            A backlog row is only ever pulled on a pass where the live
+            queue was empty — so a drain of any size can delay a live
+            message by at most one basic_publish.
+        end note
+        Rmq -> ReceiverDB++ : **Get next backlog row**\n""SELECT id, payload, retry_count, last_attempted_at FROM queue ORDER BY id ASC LIMIT 1""
+        ReceiverDB --> Rmq-- : Row (or empty)
         alt row attempted less than 30s ago
             break
-                Receiver -> Receiver : **Stop draining**\n""still cooling down — a flapping reconnect can't rush this row to the poison threshold""
+                Rmq -> Rmq : **Leave it this pass**\n""still cooling down — a flapping reconnect can't rush this row to the poison threshold""
             end
         else row eligible to retry
-            Receiver -\ AdsbX : **Publish**
+            Rmq -\ AdsbX : **Publish**
             alt basic_publish succeeds
-                Receiver -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
-                ReceiverDB --> Receiver-- : OK
+                Rmq -> ReceiverDB++ : **Delete published row**\n""DELETE FROM queue WHERE id = {id}""
+                ReceiverDB --> Rmq-- : OK
             else basic_publish raises error
-                Receiver -> Receiver : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
-                Receiver -> Receiver : **Count this failure**\n""new_count = retry_count + 1""
+                Rmq -> Rmq : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+                Rmq -> Rmq : **Count this failure**\n""new_count = retry_count + 1""
                 alt new_count reaches the retry threshold (5)
-                    Receiver -> ReceiverDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
-                    ReceiverDB --> Receiver-- : OK
-                    Receiver -> Receiver : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
-                    note right of Receiver
+                    Rmq -> ReceiverDB++ : **Delete the poison row**\n""DELETE FROM queue WHERE id = {id}""
+                    ReceiverDB --> Rmq-- : OK
+                    Rmq -> Rmq : **Dead-letter the payload**\n""write dead_letters/queue/{timestamp}_{id}.json""
+                    note right of Rmq
                         Judged permanently unrecoverable, not just a
                         transient outage — draining continues to the next
                         row instead of stopping, which is what keeps one
@@ -87,31 +86,49 @@ alt guard acquired
                         behind it forever.
                     end note
                 else new_count still below the retry threshold
-                    Receiver -> ReceiverDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
-                    ReceiverDB --> Receiver-- : OK
+                    Rmq -> ReceiverDB++ : **Record the failed attempt**\n""UPDATE queue SET retry_count = {new_count}, last_attempted_at = {now} WHERE id = {id}""
+                    ReceiverDB --> Rmq-- : OK
                     break
-                        Receiver -> Receiver : **Stop draining**\n""could still just be RabbitMQ down again""
+                        Rmq -> Rmq : **Stop this pass**\n""could still just be RabbitMQ down again""
                     end
                 end
             end
         end
+    else live queue still had traffic
+        Rmq -> Rmq : **Loop — re-check the live queue before any backlog row**
     end
-    Receiver -> Receiver : **Release the drain guard**\n""_drain_lock.release()""
-else guard already held
-    Receiver -> Receiver : **Skip — a drain is already in progress**
 end
 
-== Independently, every telemetry_interval_seconds (catches failures that never dropped the connection) ==
+== Connection drops, or a publish latched it unhealthy ==
 
-Receiver -> Receiver : **Check if RabbitMQ is connected**\n""if rmq_connected:""
-alt connected
-    note right of Receiver
-        Refer to //Draining queue.db (reconnect-triggered)// above —
-        this trigger calls the identical ""_drain_fallback()"",
-        including its single-flight guard.
+alt the connection itself failed
+    AdsbX ->x Rmq : **Connection lost**
+    Rmq -> Rmq : **Connection monitoring detects the drop**\n""conn.process_data_events() raises AMQPConnectionError""
+else a publish failed but the socket stayed up
+    Rmq -> Rmq : **Inner loop sees the latch**\n""if not rmq_connected: break""
+    note right of Rmq
+        A broker blocking publishers on a resource alarm keeps
+        process_data_events() succeeding — the latched flag, not a
+        connection exception, is what forces the reconnect.
+        blocked_connection_timeout bounds how long a publish can wedge
+        before pika tears the connection down.
     end note
-else not connected
-    Receiver -> Receiver : **Skip — nothing to do this tick**
+end
+Rmq -> Rmq : **Set RabbitMQ is Disconnected**\n""rmq_connected = False""
+
+loop Until reconnected
+    alt Connection fails
+        Rmq ->x AdsbX : **Connect**
+        Rmq -> Rmq : **Sleep 10 seconds**
+    else Connection succeeds
+        Rmq -> AdsbX++ : **Connect**
+        AdsbX --> Rmq-- : Connected
+        Rmq -> Rmq : **Set RabbitMQ is Connected**\n""rmq_connected = True""
+        note right of Rmq
+            The publish loop above resumes — its first passes see an empty
+            live queue and drain the queue.db backlog oldest-first.
+        end note
+    end
 end
 
 @enduml

@@ -102,9 +102,13 @@ the container was down.
 ## Receiver — RabbitMQ Offline Fallback
 
 Independent of whether a message processor is up, the receiver itself tolerates
-RabbitMQ being unreachable: publish attempts that fail buffer to a local
-`queue.db` (SQLite WAL) and drain oldest-first once RabbitMQ is reachable
-again.
+RabbitMQ being unreachable. The threads reading the readsb sockets never
+publish directly — they drop each parsed message on a bounded in-memory
+queue and return straight to the socket, so intake is never blocked by the
+broker or by backlog drain. A single dedicated thread publishes from that
+queue, always draining live traffic before advancing the on-disk backlog by
+one row; a publish that fails buffers to a local `queue.db` (SQLite WAL) and
+the backlog drains oldest-first once RabbitMQ is reachable again.
 
 [![Receiver — RabbitMQ offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
 
