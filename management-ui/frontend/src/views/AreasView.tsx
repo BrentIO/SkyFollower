@@ -1356,7 +1356,11 @@ export function AreasView() {
           <ul
             className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
           >
-            {areas.map((area) => {
+            {[...areas]
+              .sort((a, b) =>
+                (a.name || a.identifier).localeCompare(b.name || b.identifier),
+              )
+              .map((area) => {
               const isSelected = draft?.identifier === area.identifier;
               return (
                 <li
