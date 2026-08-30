@@ -1,0 +1,4 @@
+# This tool has no third-party dependencies - it is Python standard library
+# only (socket, threading, argparse, json, gzip). The file is kept so the
+# tool is picked up by the test matrix and dependency tooling the same way
+# the other tools/ scripts are.
