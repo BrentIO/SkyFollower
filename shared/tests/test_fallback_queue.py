@@ -5,7 +5,12 @@ import tempfile
 import time
 from unittest.mock import patch
 
-from shared.fallback_queue import FallbackQueue
+from shared.fallback_queue import (
+    DRAIN_EMPTY,
+    DRAIN_PROGRESSED,
+    DRAIN_STOP,
+    FallbackQueue,
+)
 from shared.timing import FALLBACK_RETRY_BACKOFF_SECONDS
 
 
@@ -170,6 +175,58 @@ class TestDrainOrderingAndBackoff:
                 row = conn.execute("SELECT retry_count FROM queue").fetchone()
                 conn.close()
                 assert row[0] == expected
+
+
+class TestDrainOne:
+    """drain_one() exposes drain()'s per-row step so a caller can
+    interleave higher-priority work between rows. Same retry / dead-letter
+    / cooldown / oldest-first semantics, one row at a time."""
+
+    def test_empty_queue_returns_drain_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            assert q.drain_one(lambda _p: None) == DRAIN_EMPTY
+
+    def test_one_call_processes_exactly_one_row_oldest_first(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            q.put("first")
+            q.put("second")
+
+            seen = []
+            assert q.drain_one(seen.append) == DRAIN_PROGRESSED
+            assert seen == ["first"]
+            assert q.depth() == 1
+
+            assert q.drain_one(seen.append) == DRAIN_PROGRESSED
+            assert seen == ["first", "second"]
+            assert q.drain_one(seen.append) == DRAIN_EMPTY
+
+    def test_failure_below_threshold_returns_stop_and_keeps_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5)
+            q.put("x")
+            assert q.drain_one(lambda _p: (_ for _ in ()).throw(RuntimeError())) == DRAIN_STOP
+            assert q.depth() == 1
+
+    def test_row_in_retry_cooldown_returns_stop(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=999)
+            q.put("x")
+            q.drain_one(lambda _p: (_ for _ in ()).throw(RuntimeError()))
+            # Second call, still inside the cooldown -- process_fn must not
+            # even be invoked.
+            calls = []
+            assert q.drain_one(calls.append) == DRAIN_STOP
+            assert calls == []
+
+    def test_poison_row_is_dead_lettered_and_returns_progressed(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td, retry_threshold=1, min_retry_interval_seconds=0)
+            q.put("poison")
+            assert q.drain_one(lambda _p: (_ for _ in ()).throw(RuntimeError())) == DRAIN_PROGRESSED
+            assert q.depth() == 0
+            assert q.dead_letter_depth() == 1
 
 
 class TestMinRetryInterval:

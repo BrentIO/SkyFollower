@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETRY_THRESHOLD = 5
 DEFAULT_DEAD_LETTER_MAX_BYTES = 100 * 1024 * 1024
 
+# drain_one() outcomes.
+DRAIN_EMPTY = "empty"        # nothing queued
+DRAIN_PROGRESSED = "progressed"  # one row published (or dead-lettered) and removed
+DRAIN_STOP = "stop"         # oldest row failed or is in its retry cooldown
+
 
 class FallbackQueue:
     def __init__(
@@ -188,54 +193,79 @@ class FallbackQueue:
         ahead to a newer row, to preserve strict oldest-first ordering.
         """
         while True:
-            with self._lock:
-                cur = self._conn.execute(
-                    f"SELECT id, payload, retry_count, last_attempted_at "
-                    f"FROM {self._table} ORDER BY id ASC LIMIT 1"
-                )
-                row = cur.fetchone()
-                if row is None:
-                    return True
-                row_id, payload, retry_count, last_attempted_at = row
-
-            if (
-                last_attempted_at is not None
-                and (time.time() - last_attempted_at) < self._min_retry_interval_seconds
-            ):
+            step = self.drain_one(process_fn)
+            if step == DRAIN_EMPTY:
+                return True
+            if step == DRAIN_STOP:
                 return False
+            # DRAIN_PROGRESSED -- keep going to whatever's queued behind it.
 
-            try:
-                process_fn(payload)
-                with self._lock:
-                    self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row_id,))
-                    self._conn.commit()
-            except Exception as exc:
-                new_count = retry_count + 1
-                if isinstance(exc, self._non_poison_exceptions):
-                    # Environmental, not poison: the dependency simply
-                    # isn't present in this deployment. Behave exactly like
-                    # a below-threshold failure forever -- stop the pass,
-                    # retry from the top next drain, respect the cooldown --
-                    # and never dead-letter. retry_count/last_attempted_at
-                    # still advance, purely so an operator can see how long
-                    # the row has been stuck.
-                    with self._lock:
-                        self._conn.execute(
-                            f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
-                            (new_count, time.time(), row_id),
-                        )
-                        self._conn.commit()
-                    return False
-                if new_count >= self._retry_threshold:
-                    self._dead_letter(row_id, payload, new_count, exc)
-                    continue
+    def drain_one(self, process_fn: Callable[[str], None]) -> str:
+        """Process at most one row -- the oldest -- and return one of:
+
+        * ``DRAIN_EMPTY``      -- the queue is empty, nothing was attempted.
+        * ``DRAIN_PROGRESSED`` -- the oldest row was published (or judged
+          poison and dead-lettered) and removed; there may be more behind it.
+        * ``DRAIN_STOP``       -- the oldest row failed a below-threshold
+          attempt, hit a non-poison failure, or is still inside its
+          retry cooldown; it stays queued and the caller should back off
+          before retrying.
+
+        Same per-row semantics as ``drain()`` -- retry counting,
+        dead-lettering, the non-poison carve-out, strict oldest-first
+        ordering -- exposed one row at a time so a caller can interleave
+        higher-priority work between rows instead of running the whole
+        backlog in one uninterruptible pass. ``drain()`` is this in a loop.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT id, payload, retry_count, last_attempted_at "
+                f"FROM {self._table} ORDER BY id ASC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row is None:
+                return DRAIN_EMPTY
+            row_id, payload, retry_count, last_attempted_at = row
+
+        if (
+            last_attempted_at is not None
+            and (time.time() - last_attempted_at) < self._min_retry_interval_seconds
+        ):
+            return DRAIN_STOP
+
+        try:
+            process_fn(payload)
+            with self._lock:
+                self._conn.execute(f"DELETE FROM {self._table} WHERE id=?", (row_id,))
+                self._conn.commit()
+            return DRAIN_PROGRESSED
+        except Exception as exc:
+            new_count = retry_count + 1
+            if isinstance(exc, self._non_poison_exceptions):
+                # Environmental, not poison: the dependency simply isn't
+                # present in this deployment. Behave exactly like a
+                # below-threshold failure forever -- stop the pass, retry
+                # from the top next drain, respect the cooldown -- and
+                # never dead-letter. retry_count/last_attempted_at still
+                # advance, purely so an operator can see how long the row
+                # has been stuck.
                 with self._lock:
                     self._conn.execute(
                         f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
                         (new_count, time.time(), row_id),
                     )
                     self._conn.commit()
-                return False
+                return DRAIN_STOP
+            if new_count >= self._retry_threshold:
+                self._dead_letter(row_id, payload, new_count, exc)
+                return DRAIN_PROGRESSED
+            with self._lock:
+                self._conn.execute(
+                    f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
+                    (new_count, time.time(), row_id),
+                )
+                self._conn.commit()
+            return DRAIN_STOP
 
     def drain_in_background(
         self, process_fn: Callable[[str], None], on_done: Optional[Callable[[], None]] = None

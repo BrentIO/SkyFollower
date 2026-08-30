@@ -2,11 +2,15 @@
 
 The receiver connects to one or more readsb TCP streams (raw ADS-B format),
 parses each frame to extract the ICAO hex identifier, wraps the message in a
-typed `InboundMessage` envelope, and publishes it to RabbitMQ's consistent-hash
-exchange keyed by that hex. When RabbitMQ is unavailable the
-receiver writes to a local SQLite fallback queue and drains it automatically on
-reconnect. One receiver container handles all configured sources concurrently
-(one thread per source).
+typed `InboundMessage` envelope, and hands it to a single dedicated thread
+that publishes it to RabbitMQ's consistent-hash exchange keyed by that hex.
+The source threads never touch RabbitMQ themselves — they drop each parsed
+message on an in-memory queue and loop straight back to the socket, so
+getting messages off the wire is never delayed by the broker or by backlog
+drain. When RabbitMQ is unavailable the receiver writes to a local SQLite
+fallback queue and drains it automatically on reconnect. One receiver
+container handles all configured sources concurrently (one thread per
+source).
 
 ![Receiver architecture](./receiver.svg)
 
@@ -223,25 +227,38 @@ individually and only the portable `SO_KEEPALIVE` is set. The three values
 are fixed constants, not configuration — correctness tuning, not
 deployment policy.
 
-## RabbitMQ Thread Safety
+## Publish Path and Thread Safety
 
 `pika.BlockingConnection` (and the async transport underneath it) is not
-safe to call concurrently from more than one thread. The receiver has
-several threads that need to publish -- one per configured `sources[]`
-connection, plus the fallback-drain background thread -- but only one
-thread, `rabbitmq` (running `_rmq_loop`), actually owns the connection and
-drives `process_data_events()`.
+safe to call concurrently from more than one thread. Exactly one thread,
+`rabbitmq` (running `_rmq_loop`), ever touches the connection or channel —
+it owns `process_data_events()` **and** every `basic_publish()` call.
 
-Every other thread reaches the connection only through `_pika_invoke()`,
-which uses pika's own thread-safe hand-off (`add_callback_threadsafe`) to
-run the real `channel.basic_publish()` call on the `rabbitmq` thread,
-while still blocking the calling thread for a synchronous success/failure
-result -- so `_publish()`'s fallback-on-failure behavior works exactly as
-if the call had been made directly. **No code should ever call a pika
-channel or connection method directly from any thread other than
-`rabbitmq`** -- doing so reintroduces the exact bug this exists to
-prevent: two threads simultaneously inside pika's transport internals,
-corrupting its buffers and crashing the connection.
+The source threads (one per configured `sources[]` connection) don't
+publish. Each parses a frame, drops `(routing_key, payload)` on a bounded
+in-memory `queue.Queue`, and immediately returns to `sock.recv()`. It
+never calls a pika method and never waits on the broker, so a slow, blocked
+or unreachable RabbitMQ cannot back-pressure the TCP socket and make readsb
+shed messages upstream. If the in-memory queue is full (the broker has been
+unreachable long enough that even this buffer backed up), the source thread
+writes straight to the SQLite fallback instead — still without blocking.
+
+The `rabbitmq` thread's inner loop, while the connection is up:
+
+1. Pumps `process_data_events(time_limit=0)` — heartbeats, and the
+   broker's `Connection.Blocked`/`Unblocked` signals.
+2. Publishes **everything** waiting on the in-memory queue (bounded per
+   pass only so step 1 keeps running under sustained load).
+3. Only when nothing is waiting live, advances the SQLite fallback backlog
+   by **one** row, then loops straight back to step 2.
+
+This is a strict priority, not a time-slice or a fair share: a backlog
+drain of any size can never delay a live message by more than a single
+`basic_publish()`, because a backlog row is only ever pulled on a pass
+where the live queue was observed empty. `blocked_connection_timeout` on
+the connection bounds the one case pika can still stall in — the broker
+holding publishers blocked on a resource alarm while the socket stays up —
+by tearing the connection down so the loop reconnects and re-validates.
 
 ## Fault Tolerance
 
@@ -252,26 +269,24 @@ class is payload-only, the receiver wraps `{routing_key, payload}` into one
 JSON string before queueing it, and unwraps it again on drain — persisting
 the routing key alongside the payload keeps the drain path identical to the
 live publish path, with no need to re-parse a stored message body to work
-out where it was going. When the RabbitMQ connection is
-re-established, the fallback queue is drained oldest-first before new
-messages are forwarded. If RabbitMQ drops mid-drain, draining stops cleanly
-and resumes on the next reconnect.
+out where it was going.
 
-Draining is also attempted independently every `MQTT_PUBLISH_INTERVAL_SECONDS`,
-not just on a detected reconnect. A publish failure can leave messages queued
-without the underlying connection ever raising an error (a broker-side
-rejection, a channel-level error — anything short of the connection itself
-dying), in which case the reconnect-triggered drain never fires again on its
-own. The periodic check is a cheap no-op when the queue is already empty.
+A publish failure — whether of a live message or a backlog row — persists
+that message to `queue.db` and latches the connection unhealthy; the
+`rabbitmq` thread then tears the connection down and reconnects,
+re-validating the flag (a broker holding publishers blocked keeps
+`process_data_events()` succeeding, so the flag, not a connection
+exception, is what drives the reconnect). Draining is intrinsic to the
+publish loop — it works a backlog row on every pass where no live message
+is waiting, for as long as the connection holds — so there is no separate
+periodic drain trigger. If RabbitMQ drops mid-drain, draining stops
+cleanly and resumes on the next reconnect.
 
-Both triggers go through the same `drain_in_background()`: it spawns the
-actual drain on a background thread and returns immediately, so a slow
-drain (e.g. a large backlog) never delays that telemetry cycle's publish.
-A single-flight guard (a non-blocking lock) ensures only one drain is ever
-in progress at a time regardless of which trigger started it — if the
-periodic tick fires while the reconnect-triggered drain is still running,
-it's a no-op rather than a second overlapping drain, which could otherwise
-select the same queued row twice and publish it twice.
+Messages buffered in the in-memory queue during a brief outage are lost if
+the process is killed before it reconnects (a bounded amount — see
+`_LIVE_QUEUE_MAXSIZE`); once that buffer fills, further messages spill to
+the durable `queue.db` and a clean reconnect drains the in-memory buffer
+ahead of the disk backlog.
 
 ### Dead-Lettering Poison Messages
 
@@ -290,14 +305,13 @@ There's no automated replay path — a dead-lettered file is purely something
 an operator inspects or discards out-of-band (`data_dir` is already a
 host-mounted volume, same as `queue.db` itself).
 
-A raw attempt count alone isn't safe: `_drain_fallback()` is called on
-every successful RabbitMQ reconnect (not just on the `MQTT_PUBLISH_INTERVAL_SECONDS`
-tick), so a flapping connection reconnecting every few seconds could
-otherwise burn through the retry threshold within seconds — dead-lettering
-a message that was never actually poison, just unlucky enough to be at the
-head of the queue during a brief instability. `FallbackQueue` also enforces
-a minimum time between attempts on the same row (30 seconds, hardcoded,
-independent of how often `_drain_fallback()` itself gets called), so
+A raw attempt count alone isn't safe: the publish loop retries the head of
+the backlog on every reconnect, so a flapping connection reconnecting every
+few seconds could otherwise burn through the retry threshold within
+seconds — dead-lettering a message that was never actually poison, just
+unlucky enough to be at the head of the queue during a brief instability.
+`FallbackQueue` also enforces a minimum time between attempts on the same
+row (30 seconds, hardcoded, independent of how often it is re-drained), so
 reaching the threshold always takes a real, bounded amount of elapsed
 time — not just a burst of rapid reconnect attempts.
 
@@ -321,7 +335,7 @@ All topics use the root `SkyFollower`.
 | `{host}_{port}_connected` | `True` or `False` | Whether the TCP connection to that specific `sources[]` entry's readsb instance is currently open |
 | `{host}_{port}_reconnect_count` | Integer as string | Number of times that specific `sources[]` connection has dropped and been re-established since process start |
 | `{host}_{port}_connected_attributes` | JSON, e.g. `{"last_message_received": "2026-01-15T10:00:00+00:00"}` | Home Assistant `json_attributes_topic` for the sibling `{host}_{port}_connected` sensor; carries when that specific `sources[]` connection last processed a message. Not published at all until the first message on that connection arrives |
-| `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) |
+| `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) plus any still buffered in memory awaiting the publisher thread |
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |

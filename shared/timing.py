@@ -82,6 +82,16 @@ CONFIG_POLL_INTERVAL_SECONDS = 30
 # Wait between reconnect attempts to RabbitMQ / Redis / S3 after a drop.
 RECONNECT_BACKOFF_SECONDS = 10
 
+# Deadline on a RabbitMQ connection sitting in the broker's blocked state --
+# publishers halted by a resource alarm (disk-free or high memory) while the
+# TCP connection itself stays up. pika tears the connection down once this
+# elapses, so the receiver's sole publishing thread reconnects and
+# re-validates instead of staying wedged inside a basic_publish that will
+# never return. Comfortably longer than a brief alarm flap, short enough
+# that a genuinely stuck alarm cannot hide behind a healthy-looking
+# connection.
+RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS = 30
+
 # Minimum spacing between drain attempts against a single fallback-queue
 # row, independent of how often the caller invokes drain() -- keeps a
 # flapping connection from burning through the retry threshold in well
