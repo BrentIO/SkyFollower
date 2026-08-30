@@ -92,7 +92,7 @@ checking whether anything is still publishing.
 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
-| `--input` | Yes | — | Path to the NDJSON capture file to replay (see `tools/traffic-recorder`'s README for the file format). |
+| `--input` | Yes | — | Path to the capture file to replay (see `tools/traffic-recorder`'s README for the file format). Either a plain `.ndjson` file or a gzip-compressed `.ndjson.gz` file is accepted; the compressed form is detected by the `.gz` extension and decompressed on the fly, so a large capture never has to be `gunzip`ped to a temp file first. A file with a `.gz` extension that isn't actually a valid gzip stream fails immediately with a clear error. |
 | `--mode` | Yes | — | `relative` or `stress` (see [Modes](#modes) above). |
 | `--rabbitmq-host` | Yes | — | RabbitMQ hostname or IP. |
 | `--rabbitmq-port` | No | `5672` | RabbitMQ AMQP port. |
@@ -117,17 +117,21 @@ fallen behind schedule, that every message goes to the `adsb` exchange keyed
 by its own ICAO hex (never to the default exchange), and that setting
 `stop_event` before starting halts replay immediately.
 
+`_load_capture()` — extension-based gzip detection, decompression, blank-line
+skipping, the malformed-line skip, and the clear error a `.gz` file that
+isn't really gzip must produce instead of a per-line warning storm — is
+covered directly, including that a gzip-compressed capture parses to exactly
+the same message list as its uncompressed equivalent.
+
 `main()` itself — argument parsing, opening the real `pika` connection, and
-loading/sorting the capture file — is intentionally not covered by a
-separate test. It is thin sequential glue with no branching logic of its own
-beyond what's already exercised above (file loading has no interesting logic
-except the malformed-line skip, which is a two-line `try`/`except` around
-`json.loads`); the only way to meaningfully test it further would be to fake
-the `pika.BlockingConnection` itself, which would mostly be asserting that
-`main()` calls the functions it obviously calls. This is why, unlike
-`traffic-recorder`, this tool went undocumented as having "no tests" before
-now: its core logic (`replay()`) was always unit-testable, it simply hadn't
-been done yet.
+sorting the loaded capture — is intentionally not covered by a separate
+test. It is thin sequential glue with no branching logic of its own beyond
+what's already exercised above; the only way to meaningfully test it further
+would be to fake the `pika.BlockingConnection` itself, which would mostly be
+asserting that `main()` calls the functions it obviously calls. This is why,
+unlike `traffic-recorder`, this tool went undocumented as having "no tests"
+before now: its core logic (`replay()`) was always unit-testable, it simply
+hadn't been done yet.
 
 ## Documentation Site
 
