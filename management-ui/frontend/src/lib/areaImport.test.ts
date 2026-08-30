@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  IMPORT_COORDINATE_PRECISION,
   importAreasBatch,
   parseAndValidate,
   resolveFeatureIdentity,
+  roundGeometryPrecision,
   type ImportedFeature,
 } from "./areaImport";
 
@@ -83,6 +85,59 @@ describe("parseAndValidate — structural whole-file gate", () => {
     );
     expect(result.error).toBe('Feature 2: unsupported geometry type "unknown".');
     expect(result.features).toEqual([]);
+  });
+});
+
+describe("roundGeometryPrecision — Terra Draw coordinatePrecision guard", () => {
+  const places = (n: number): number => {
+    const s = String(n);
+    const dot = s.indexOf(".");
+    return dot === -1 ? 0 : s.length - dot - 1;
+  };
+
+  it("rounds a Polygon's 15-decimal-place coordinates to 5 (the case that was silently dropped)", () => {
+    const rounded = roundGeometryPrecision({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-80.123456789012345, 28.622211227100983],
+          [-80.223456789012345, 28.722211227100983],
+          [-80.323456789012345, 28.822211227100983],
+          [-80.123456789012345, 28.622211227100983],
+        ],
+      ],
+    });
+    for (const [lng, lat] of (rounded as { coordinates: number[][][] }).coordinates[0]) {
+      expect(places(lng)).toBeLessThanOrEqual(IMPORT_COORDINATE_PRECISION);
+      expect(places(lat)).toBeLessThanOrEqual(IMPORT_COORDINATE_PRECISION);
+    }
+    expect((rounded as { coordinates: number[][][] }).coordinates[0][0]).toEqual([-80.12346, 28.62221]);
+  });
+
+  it("rounds a LineString and a Point the same way", () => {
+    expect(
+      roundGeometryPrecision({ type: "LineString", coordinates: [[1.123456789, 2.987654321]] }),
+    ).toEqual({ type: "LineString", coordinates: [[1.12346, 2.98765]] });
+    expect(roundGeometryPrecision({ type: "Point", coordinates: [28.622211227100983, -80.5] })).toEqual({
+      type: "Point",
+      coordinates: [28.62221, -80.5],
+    });
+  });
+
+  it("leaves already-low-precision coordinates untouched and preserves a Z ordinate", () => {
+    expect(roundGeometryPrecision({ type: "Point", coordinates: [1.5, 2.25, 137.4] })).toEqual({
+      type: "Point",
+      coordinates: [1.5, 2.25, 137.4],
+    });
+  });
+
+  it("does not mutate the input geometry", () => {
+    const input: ImportedFeature["geometry"] = {
+      type: "Point",
+      coordinates: [28.622211227100983, -80.123456789],
+    };
+    roundGeometryPrecision(input);
+    expect(input.coordinates).toEqual([28.622211227100983, -80.123456789]);
   });
 });
 

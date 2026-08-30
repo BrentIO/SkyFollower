@@ -77,6 +77,43 @@ export function parseAndValidate(text: string): ParseResult {
   return { error: null, features };
 }
 
+// Precision (decimal places) every imported coordinate is rounded to
+// before the feature reaches Terra Draw's draw.addFeatures(). Mapping tools
+// routinely export 15-decimal-place coordinates; Terra Draw silently drops
+// (does not throw for) any feature whose coordinates exceed its
+// coordinatePrecision ceiling, which defaults to 9 -- the same rejection
+// AreasView's offsetGeometry already rounds to avoid for duplicated areas.
+// 5 places (~1.1 m at mid latitudes) matches shared/models.py's
+// Position._cap_coordinate_precision, the cap the pipeline imposes on every
+// ingested ADS-B position -- one coordinate-precision convention app-wide.
+export const IMPORT_COORDINATE_PRECISION = 5;
+
+function roundToPrecision(value: number, precision: number): number {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+// Returns a copy of `geometry` with every coordinate's longitude and
+// latitude rounded to IMPORT_COORDINATE_PRECISION. Any third ordinate
+// (elevation) is preserved untouched. Pure -- does not mutate the input.
+// Applied by both of AreasView's import entry points (single-feature and
+// batch) before the feature is handed to Terra Draw.
+export function roundGeometryPrecision(geometry: AreaGeometry): AreaGeometry {
+  const round = (c: number[]): number[] => [
+    roundToPrecision(c[0], IMPORT_COORDINATE_PRECISION),
+    roundToPrecision(c[1], IMPORT_COORDINATE_PRECISION),
+    ...c.slice(2),
+  ];
+  switch (geometry.type) {
+    case "Polygon":
+      return { ...geometry, coordinates: geometry.coordinates.map((ring) => ring.map(round)) };
+    case "LineString":
+      return { ...geometry, coordinates: geometry.coordinates.map(round) };
+    case "Point":
+      return { ...geometry, coordinates: round(geometry.coordinates) };
+  }
+}
+
 // Lower-case noun used only when synthesising a name/identifier for a
 // feature that carries neither -- e.g. "Imported polygon 1". Distinct from
 // api/areas' geometryDisplayNoun ("Area"/"Line"/"Point"), which is the

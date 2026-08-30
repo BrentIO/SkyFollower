@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { AreaNameModal, IDENTIFIER_PATTERN } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ImportAreaModal } from "../components/ImportAreaModal";
-import { importAreasBatch, type ImportedFeature } from "../lib/areaImport";
+import { importAreasBatch, roundGeometryPrecision, type ImportedFeature } from "../lib/areaImport";
 import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
@@ -456,8 +456,8 @@ const MIN_OFFSET_DEGREES = 0.0008;
 // exactly. Round well under that ceiling so this never collides with it.
 const OFFSET_COORDINATE_PRECISION = 7;
 
-function roundCoordinate(value: number): number {
-  const factor = 10 ** OFFSET_COORDINATE_PRECISION;
+function roundCoordinate(value: number, precision: number): number {
+  const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
 }
 
@@ -493,8 +493,8 @@ function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
   const dLng = Math.max((maxLng - minLng) * 0.15, MIN_OFFSET_DEGREES);
   const dLat = Math.max((maxLat - minLat) * 0.15, MIN_OFFSET_DEGREES);
   return mapCoordinates(geometry, ([lng, lat]) => [
-    roundCoordinate(lng + dLng),
-    roundCoordinate(lat + dLat),
+    roundCoordinate(lng + dLng, OFFSET_COORDINATE_PRECISION),
+    roundCoordinate(lat + dLat, OFFSET_COORDINATE_PRECISION),
   ]);
 }
 
@@ -1137,7 +1137,7 @@ export function AreasView() {
             id: tempId,
             type: "Feature",
             properties: { mode: geometryToModeName(feature.geometry.type), name: identity.name, ...style },
-            geometry: feature.geometry,
+            geometry: roundGeometryPrecision(feature.geometry),
           },
         ]);
         return createAreaFromPendingFeature(
@@ -1188,7 +1188,7 @@ export function AreasView() {
           id: tempId,
           type: "Feature",
           properties: { mode: geometryToModeName(feature.geometry.type), name: rawName, ...rawStyle },
-          geometry: feature.geometry,
+          geometry: roundGeometryPrecision(feature.geometry),
         },
       ]);
       setDraft(null);
