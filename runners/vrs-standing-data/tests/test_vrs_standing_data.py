@@ -229,6 +229,46 @@ class TestStageData:
             assert cur.fetchone()[0] == 1
             conn.close()
 
+    def test_zero_padded_ident_normalized_on_stage(self):
+        """The source CSV's own zero-padding convention isn't trusted -- an
+        ident is normalized to its canonical (unpadded numeric) form before
+        it's staged, so the eventual route:{ident} key matches a normalized
+        query regardless of which side the padding was on."""
+        files = {"routes/schema-01/A/AFR-all.csv": (
+            "Callsign,Code,Number,AirlineCode,AirportCodes\n"
+            "AFR0096,AFR,0096,AFR,LFPG-KJFK\n"
+            "VIR096K,VIR,096,VIR,EGLL-KJFK\n"
+        ).encode()}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute("SELECT ident FROM routes ORDER BY ident")
+            assert [r["ident"] for r in cur.fetchall()] == ["AFR96", "VIR96K"]
+            conn.close()
+
+    def test_padding_only_difference_collapses_to_one_route(self):
+        """Two CSV rows for what's really the same route, differing only by
+        the source's zero-padding, must collapse into a single staged key
+        (last write wins) rather than two divergent keys."""
+        files = {
+            "routes/schema-01/A/AFR-all.csv": (
+                "Callsign,Code,Number,AirlineCode,AirportCodes\n"
+                "AFR0096,AFR,0096,AFR,LFPG-KJFK\n"
+            ).encode(),
+            "routes/schema-01/A/AFR2-all.csv": (
+                "Callsign,Code,Number,AirlineCode,AirportCodes\n"
+                "AFR96,AFR,96,AFR,LFPG-KBOS\n"
+            ).encode(),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute("SELECT ident, route FROM routes")
+            rows = cur.fetchall()
+            assert len(rows) == 1
+            assert rows[0]["ident"] == "AFR96"
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Tests: write_to_redis (mocked)

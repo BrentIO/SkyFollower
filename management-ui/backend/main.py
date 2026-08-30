@@ -72,6 +72,7 @@ from shared.redis_keys import (  # noqa: E402
     config_areas_version_key,
     config_rules_key,
     config_rules_version_key,
+    normalize_flight_ident,
     operator_key,
 )
 
@@ -1426,7 +1427,7 @@ def get_airport(code: str):
     responses={**_NOT_FOUND, **_REDIS_ERROR},
 )
 def get_route(ident: str):
-    raw = _redis_evalsha(_route_airports_sha, ident.upper())
+    raw = _redis_evalsha(_route_airports_sha, normalize_flight_ident(ident.upper()))
     airports = json.loads(raw) if raw else []
     if not airports:
         raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")

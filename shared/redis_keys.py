@@ -6,6 +6,8 @@ codebase. Functions are used instead of string constants so that parameters
 are always explicit and typos in key names are caught by the type checker.
 """
 
+import re
+
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
 _VALID_OPERATOR_MISSES_PERIODS = frozenset({"today", "lifetime"})
@@ -51,6 +53,28 @@ def operator_key(designator: str) -> str:
 def aircraft_type_key(designator: str) -> str:
     """Aircraft type-designator reference record. aircraft:type:{designator}"""
     return f"aircraft:type:{designator.upper()}"
+
+
+_FLIGHT_IDENT_PATTERN = re.compile(r"^([A-Za-z]+)(\d+)([A-Za-z]*)$")
+
+
+def normalize_flight_ident(ident: str) -> str:
+    """Strips leading zeros from a flight ident's numeric portion by
+    round-tripping it through int() -- "AFR0096" -> "AFR96", "IBE0339" ->
+    "IBE339", "VIR096K" -> "VIR96K". Idents that don't match the
+    operator-prefix + flight-number (+ optional trailing suffix letter)
+    shape (e.g. a hyphenated registration used as ident) are returned
+    unchanged -- this is purely a route-lookup key normalization, never
+    applied to the stored/displayed ident itself. Idempotent: an
+    already-unpadded ident passes through unchanged, so it's safe to apply
+    on both the write side (VRS ingestion) and the read side (every
+    lookup) without the two ever disagreeing.
+    """
+    match = _FLIGHT_IDENT_PATTERN.match(ident)
+    if not match:
+        return ident
+    prefix, digits, suffix = match.groups()
+    return f"{prefix}{int(digits)}{suffix}"
 
 
 def route_key(ident: str) -> str:

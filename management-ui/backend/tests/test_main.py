@@ -1145,6 +1145,23 @@ class TestRouteLookup:
         assert resp.status_code == 200
         assert resp.json()["ident"] == "AAL15"
 
+    def test_zero_padded_query_resolves_unpadded_stored_route(self, client, fake_redis):
+        fake_redis.store["route:AFR96"] = "LFPG-KJFK"
+        fake_redis.store["airport:LFPG"] = json.dumps({"icao_code": "LFPG", "name": "Charles de Gaulle"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        resp = client.get("/api/routes/AFR096")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["origin"]["icao_code"] == "LFPG"
+        assert body["destination"]["icao_code"] == "KJFK"
+
+    def test_suffix_lettered_ident_normalized_both_directions(self, client, fake_redis):
+        fake_redis.store["route:VIR96K"] = "EGLL-KJFK"
+        fake_redis.store["airport:EGLL"] = json.dumps({"icao_code": "EGLL", "name": "Heathrow"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        assert client.get("/api/routes/VIR096K").status_code == 200
+        assert client.get("/api/routes/vir96k").status_code == 200
+
     def test_no_route_returns_404(self, client):
         resp = client.get("/api/routes/UNKNOWN1")
         assert resp.status_code == 404
