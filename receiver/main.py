@@ -1157,20 +1157,13 @@ class Receiver:
                     json.dumps({"last_message_received": last_message_at}),
                     retain=True,
                 )
-            if self._redis is not None:
-                # Local running totals, not a Redis read -- see
-                # _RateTracker's docstring on why these reset on receiver
-                # restart even though Redis (core-health's source) doesn't.
-                for period, count in (
-                    ("hour", tracker.hour_count),
-                    ("today", tracker.today_count),
-                    ("lifetime", tracker.lifetime_count),
-                ):
-                    self._mqtt.publish(
-                        f"{base}/messages_{mqtt_host}_{mqtt_port}_total_{period}",
-                        str(count),
-                        retain=True,
-                    )
+            # messages_*_total_{hour,today,lifetime} is NOT published here:
+            # core-health owns those topics, publishing the cross-restart-
+            # durable Redis counters this receiver's flush feeds. The
+            # receiver only publishes what core-health doesn't. With
+            # REDIS_HOST unset there is no core-health path, so those three
+            # sensors simply don't exist -- see _RateTracker's docstring and
+            # receiver/README.md.
         # Every backlog an operator cares about: the durable SQLite queue
         # plus whatever is still buffered in memory -- the live queue
         # waiting on the rabbitmq thread and the overflow queue waiting on
@@ -1252,13 +1245,10 @@ class Receiver:
                              f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes"))
             sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None, None))
-            if self._redis is not None:
-                for period, label in (("hour", "Hour"), ("today", "Today"), ("lifetime", "Lifetime")):
-                    sensors.append((
-                        f"messages_{mqtt_host}_{mqtt_port}_total_{period}",
-                        f"{host}:{port} {source} Messages ({label})",
-                        "mdi:counter", "total_increasing", None, None,
-                    ))
+            # No discovery for messages_*_total_{hour,today,lifetime}:
+            # core-health is the sole publisher of both the value and the
+            # discovery config for those, so the receiver doesn't compete
+            # for the same unique_id -- see _publish_telemetry.
         sensors += [
             ("started_at", "Start Time",
              "mdi:clock-start", None, None, None),

@@ -1916,7 +1916,14 @@ class TestPeriodCounterTelemetryAndDiscovery:
         }
         return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
 
-    def test_publish_telemetry_includes_period_counters_when_redis_configured(self):
+    # core-health is the sole publisher of messages_*_total_{hour,today,
+    # lifetime} (value and HA discovery), reading the cross-restart-durable
+    # Redis counters the receiver's flush feeds. The receiver must not
+    # publish those topics itself -- doing so caused two retained publishers
+    # on one topic to alternate their values. This holds whether or not
+    # REDIS_HOST is set; with it unset, those sensors simply don't exist.
+
+    def test_publish_telemetry_never_publishes_period_counter_totals(self):
         mock_redis = MagicMock()
         mock_redis.set.return_value = True
         r, _ = self._make_receiver(mock_redis=mock_redis)
@@ -1927,28 +1934,15 @@ class TestPeriodCounterTelemetryAndDiscovery:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-        base = f"SkyFollower/receiver/{r._id}/statistic"
-        assert calls[f"{base}/messages_localhost_30002_total_hour"] == "3"
-        assert calls[f"{base}/messages_localhost_30002_total_today"] == "7"
-        assert calls[f"{base}/messages_localhost_30002_total_lifetime"] == "42"
-
-    def test_publish_telemetry_omits_period_counters_without_redis(self):
-        from receiver.main import Receiver
-        cfg = {
-            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-        }
-        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
-            r = Receiver(cfg)
-        mock_mqtt = MagicMock()
-        r._mqtt = mock_mqtt
-        r._mqtt_connected = True
-        r._publish_telemetry()
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        assert not any("_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics)
+        assert not any(
+            "_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics
+        )
+        # The per-second rate and connection topics are still published.
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert f"{base}/messages_localhost_30002_per_second" in topics
 
-    def test_ha_autodiscovery_includes_period_counter_sensors_when_redis_configured(self):
+    def test_ha_autodiscovery_never_publishes_period_counter_sensors(self):
         mock_redis = MagicMock()
         mock_redis.set.return_value = True
         r, _ = self._make_receiver(mock_redis=mock_redis)
@@ -1957,26 +1951,11 @@ class TestPeriodCounterTelemetryAndDiscovery:
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
         topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        for period in ("hour", "today", "lifetime"):
-            assert (
-                f"homeassistant/sensor/SkyFollower_receiver_ATTIC_messages_localhost_30002_total_{period}/config"
-                in topics
-            )
-
-    def test_ha_autodiscovery_omits_period_counter_sensors_without_redis(self):
-        from receiver.main import Receiver
-        cfg = {
-            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
-            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
-        }
-        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
-            r = Receiver(cfg)
-        mock_mqtt = MagicMock()
-        r._mqtt = mock_mqtt
-        r._mqtt_connected = True
-        r._publish_ha_autodiscovery()
-        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        assert not any("_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics)
+        assert not any(
+            "_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics
+        )
+        # The per-connection sensors it does own are still there.
+        assert any("_per_second/config" in t for t in topics)
 
 
 class TestFlushPeriodCounters:
