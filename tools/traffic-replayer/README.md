@@ -26,6 +26,29 @@ python main.py --input capture.ndjson --mode stress \
     --rabbitmq-user skyfollower --rabbitmq-password secret
 ```
 
+### Sample captures
+
+Four ready-to-use captures are checked into the repo alongside this tool, so
+you don't need to record your own to exercise the pipeline:
+
+| File | Messages | Compressed size |
+|------|----------|-----------------|
+| `tools/100K.ndjson.gz` | ~100,000 | 1.3 MB |
+| `tools/1M.ndjson.gz` | ~1,000,000 | 14 MB |
+| `tools/3M.ndjson.gz` | ~3,000,000 | 42 MB |
+| `tools/5M.ndjson.gz` | ~5,000,000 | 70 MB |
+
+They are passed straight to `--input` — the `.gz` is decompressed on the fly,
+no `gunzip` step:
+
+```bash
+python main.py --input ../100K.ndjson.gz --mode stress \
+    --rabbitmq-host 192.168.1.10
+```
+
+Start with `100K` for a quick end-to-end check; use `3M`/`5M` in `stress`
+mode for throughput and soak testing.
+
 The full capture file is loaded into memory and sorted by `received_at`
 before anything is published, so replay order is always chronological
 regardless of the order messages happen to appear in the file (e.g. a
