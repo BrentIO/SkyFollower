@@ -73,8 +73,9 @@ that an `EXTERNAL`-tagged source is routed through the same decode path as
 
 ## Documentation Site
 
-This tool is deliberately repo-only documentation — it is developer/testing
-tooling, not one of the deployed pipeline components the
-[documentation site](https://brentio.github.io/SkyFollower/) covers
-(deployment topology, running components, and their configuration
-reference). `docs/scripts/discover.mjs` does not include `tools/*`.
+Tool directories under `tools/` are picked up automatically by the
+[documentation site](https://brentio.github.io/SkyFollower/)'s
+`docs/scripts/discover.mjs` `tools/*` scan, which generates a page per tool
+from this README with no change to `discover.mjs` needed. The hand-authored
+`docs/tools/index.md` overview page lists each tool by name and is updated
+alongside this file.
