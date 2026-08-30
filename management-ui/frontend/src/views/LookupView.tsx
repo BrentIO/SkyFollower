@@ -14,7 +14,7 @@ import {
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { MAP_STYLE } from "../lib/maplibreSetup";
-import { classifyLookup, type LookupCategory } from "../lib/lookupClassifier";
+import { categoriesToQuery, type LookupCategory } from "../lib/lookupClassifier";
 
 // Every lookup type the single search field accepts is alphanumeric plus, at most,
 // a space or hyphen (registrations like "VP-CKA", idents, designators) --
@@ -644,10 +644,9 @@ type SearchState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "results"; results: LookupResult[] }
-  // Every category the input matched was actually queried and came back empty.
-  | { status: "not-found" }
-  // The input matched no category's shape -- nothing was queried at all.
-  | { status: "no-match" };
+  // Every category tried (the matched ones, or a route-only fallback when
+  // nothing matched) was queried and came back empty.
+  | { status: "not-found" };
 
 export function LookupView() {
   const { showToast } = useToast();
@@ -659,13 +658,7 @@ export function LookupView() {
     const trimmed = query.trim();
     if (!trimmed) return;
 
-    const categories = classifyLookup(trimmed);
-    if (categories.length === 0) {
-      // Nothing looks like a hex, registration, designator, airport code,
-      // or flight ident -- say so immediately without touching the network.
-      setState({ status: "no-match" });
-      return;
-    }
+    const toQuery = categoriesToQuery(trimmed);
 
     setState({ status: "loading" });
 
@@ -673,7 +666,7 @@ export function LookupView() {
     // (e.g. "FFT" -> operator + airport, "ABC123" -> hex + route) shows one
     // labeled panel per category that actually resolves.
     const settled = await Promise.allSettled(
-      categories.map((category) => lookupForCategory(category, trimmed)),
+      toQuery.map((category) => lookupForCategory(category, trimmed)),
     );
 
     const results: LookupResult[] = [];
@@ -727,11 +720,6 @@ export function LookupView() {
 
       <div className="flex max-w-3xl flex-col gap-8">
         {loading && <p className="text-slate-400">Searching...</p>}
-        {state.status === "no-match" && (
-          <p className="text-slate-500 dark:text-slate-400">
-            That doesn't look like an ICAO hex, registration, operator designator, airport code, or flight ident.
-          </p>
-        )}
         {state.status === "not-found" && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
         {state.status === "results" &&
           state.results.map((result, i) => (
