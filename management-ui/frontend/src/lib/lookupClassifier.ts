@@ -24,18 +24,27 @@ const NO_HYPHEN_REGISTRATION_PREFIX = /^(N|HL|JA)/i;
 
 const HAS_DIGIT = /\d/;
 
-// Alpha-only, 2-3 characters -- the codebase's existing precedent for
-// "looks like an ICAO/IATA-style airline designator."
-const OPERATOR_PATTERN = /^[A-Za-z]{2,3}$/;
+// 2-3 characters, at least one a letter -- ICAO/IATA-style airline
+// designator. /api/operators/{designator} does no shape check of its own,
+// so this only needs to be loose enough not to miss real codes: real
+// 2-char IATA codes routinely carry a digit ("5X", "9E", "0B"). The
+// "at least one letter" clause keeps a bare 2-3 digit number, implausible
+// as any designator, from triggering an operator lookup on every numeric
+// guess.
+const OPERATOR_PATTERN = /^(?=.*[A-Za-z])[A-Za-z0-9]{2,3}$/;
 
-// Alpha-only, exactly 3 (IATA) or exactly 4 (ICAO) characters. Alpha-only
-// is stricter than the backend's own /api/airports/{code}, deliberately:
-// it keeps a route ident like "DAL2" (letters + a digit) from also being
-// tried as a 4-character airport code.
-const AIRPORT_PATTERN = /^[A-Za-z]{3,4}$/;
+// 3 (IATA) or 4 (ICAO) alphanumeric characters. /api/airports/{code}
+// branches purely on length -- 4 tries a direct ICAO-keyed lookup, 3 an
+// IATA search -- with no alpha restriction, so real FAA-LID-derived codes
+// with digits ("KX14", "0S9") must be allowed here too.
+const AIRPORT_PATTERN = /^[A-Za-z0-9]{3,4}$/;
 
-// 3 letters followed by one or more digits, e.g. "DAL2".
-const ROUTE_PATTERN = /^[A-Za-z]{3}\d+$/;
+// One or more letters, one or more digits, then an optional trailing
+// letter suffix -- e.g. "DAL2", "AA100", "VIR92MC". This is exactly
+// shared/redis_keys.py's _FLIGHT_IDENT_PATTERN, the backend's own
+// authoritative flight-ident shape, so the frontend guess and the
+// backend's parsing agree.
+const ROUTE_PATTERN = /^[A-Za-z]+\d+[A-Za-z]*$/;
 
 export function isHex(value: string): boolean {
   return HEX_PATTERN.test(value);
@@ -76,19 +85,37 @@ export type LookupCategory =
 
 // Returns every category whose shape the trimmed input matches, in a
 // stable order (aircraft, operator, airport, route). An empty array means
-// the input matches nothing and no network call should be made at all.
+// nothing matched -- the caller still tries a route lookup anyway (a
+// flight ident is the shape most likely to have a form nobody anticipated,
+// and the query is cheap and 404s silently if wrong).
 export function classifyLookup(raw: string): LookupCategory[] {
   const value = raw.trim();
   if (!value) return [];
 
   const categories: LookupCategory[] = [];
 
+  const registration = !isHex(value) && isRegistration(value);
   if (isHex(value)) categories.push("aircraft-hex");
-  else if (isRegistration(value)) categories.push("aircraft-registration");
+  else if (registration) categories.push("aircraft-registration");
 
   if (isOperator(value)) categories.push("operator");
   if (isAirport(value)) categories.push("airport");
-  if (isRoute(value)) categories.push("route");
+  // The relaxed route shape (letters + digits + optional trailing letters)
+  // would otherwise also match a no-hyphen registration like "N659DL" or
+  // "HL7771". A string that already looks like a registration isn't
+  // plausibly a flight ident, so don't spend a lookup on it.
+  if (!registration && isRoute(value)) categories.push("route");
 
   return categories;
+}
+
+// The categories LookupView actually queries for a non-empty input: every
+// category classifyLookup matched, or -- when it matched nothing -- a
+// route-only fallback, so a query with an unanticipated shape still gets
+// one cheap, silently-404ing attempt instead of no network call at all.
+// Empty/whitespace input returns [] (the caller guards against it anyway).
+export function categoriesToQuery(raw: string): LookupCategory[] {
+  if (!raw.trim()) return [];
+  const matched = classifyLookup(raw);
+  return matched.length > 0 ? matched : ["route"];
 }
