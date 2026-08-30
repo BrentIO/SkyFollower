@@ -101,6 +101,16 @@ class FallbackQueue:
 
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # WAL + NORMAL: a commit no longer fsyncs on every call, only at a
+        # checkpoint. A plain process crash (SIGKILL, OOM, container stop)
+        # still loses nothing -- the WAL is intact and replays on reopen;
+        # only a host power loss or kernel panic can drop the last few
+        # committed rows. That trade buys an order-of-magnitude cheaper
+        # put()/put_many(), which matters because these writes land on hot
+        # paths during an outage (the receiver's socket-read overflow, the
+        # archive processor's S3-down backlog). Same choice the message
+        # processor makes for its own WAL active store.
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(
             f"CREATE TABLE IF NOT EXISTS {self._table} "
             "(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT, "
@@ -131,6 +141,25 @@ class FallbackQueue:
             self._conn.execute(
                 f"INSERT INTO {self._table} (payload, queued_at, retry_count) VALUES (?, ?, 0)",
                 (payload, time.time()),
+            )
+            self._conn.commit()
+
+    def put_many(self, payloads: list[str]) -> None:
+        """Batch form of put(): one executemany plus a single commit for the
+        whole list, so a burst of queued writes costs one commit instead of
+        one per message. Rows keep their list order (AUTOINCREMENT id), so a
+        later oldest-first drain sees them in the order they were handed in.
+        An empty list is a no-op."""
+        if not payloads:
+            return
+        now = time.time()
+        with self._lock:
+            if self._retryable_max_bytes is not None:
+                for payload in payloads:
+                    self._evict_retryable_over_cap_locked(len(payload))
+            self._conn.executemany(
+                f"INSERT INTO {self._table} (payload, queued_at, retry_count) VALUES (?, ?, 0)",
+                [(payload, now) for payload in payloads],
             )
             self._conn.commit()
 

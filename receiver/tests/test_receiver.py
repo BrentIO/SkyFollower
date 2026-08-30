@@ -698,7 +698,10 @@ class TestEnqueueLive:
         assert r._live_queue.qsize() == 1
         assert r._fallback.depth() == 0
 
-    def test_full_queue_spills_to_fallback_without_blocking(self):
+    def test_full_live_queue_spills_to_the_overflow_queue_not_disk(self):
+        """A full live queue hands the message to the in-memory overflow
+        queue -- the SQLite write is the overflow-writer thread's job, never
+        the source thread's."""
         r = self._make_receiver()
         r._live_queue = queue.Queue(maxsize=2)
         r._enqueue_live("A", "1")
@@ -707,7 +710,7 @@ class TestEnqueueLive:
         completed = threading.Event()
 
         def _enqueue_third():
-            r._enqueue_live("C", "3")  # queue full -- must go to SQLite
+            r._enqueue_live("C", "3")  # live queue full -- goes to overflow
             completed.set()
 
         t = threading.Thread(target=_enqueue_third)
@@ -716,7 +719,34 @@ class TestEnqueueLive:
 
         assert completed.is_set(), "_enqueue_live blocked on a full queue"
         assert r._live_queue.qsize() == 2
+        assert r._overflow_queue.get_nowait() == ("C", "3")
+        assert r._fallback.depth() == 0
+
+    def test_both_queues_full_falls_back_to_a_direct_disk_write(self):
+        """Last-resort pressure valve: only when the overflow queue has
+        also filled does a source thread take the synchronous SQLite write
+        itself -- still without blocking or dropping."""
+        r = self._make_receiver()
+        r._live_queue = queue.Queue(maxsize=1)
+        r._overflow_queue = queue.Queue(maxsize=1)
+        r._enqueue_live("A", "1")  # fills live queue
+        r._enqueue_live("B", "2")  # fills overflow queue
+
+        completed = threading.Event()
+
+        def _enqueue_third():
+            r._enqueue_live("C", "3")
+            completed.set()
+
+        t = threading.Thread(target=_enqueue_third)
+        t.start()
+        t.join(timeout=2)
+
+        assert completed.is_set(), "_enqueue_live blocked with both queues full"
         assert r._fallback.depth() == 1
+        captured: list[str] = []
+        r._fallback.drain(captured.append)
+        assert json.loads(captured[0]) == {"routing_key": "C", "payload": "3"}
 
     def test_route_message_uses_enqueue_live(self):
         r = self._make_receiver()
@@ -752,6 +782,101 @@ class TestEnqueueLive:
 
         assert done.is_set(), "read loop blocked with the broker unavailable"
         assert r._live_queue.qsize() == 50
+
+
+class TestOverflowWriter:
+    """The overflow-writer thread is the sole consumer of _overflow_queue:
+    it batches overflow messages into the durable SQLite fallback with one
+    commit per pass, so a sustained outage never puts a per-message
+    fsync-class write on a socket-read thread."""
+
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
+
+    def test_flush_batches_the_whole_queue_into_one_put_many(self):
+        r = self._make_receiver()
+        for i in range(2000):
+            r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i)))
+
+        with patch.object(r._fallback, "put_many", wraps=r._fallback.put_many) as pm:
+            r._flush_overflow_batch(None)
+
+        assert pm.call_count == 1
+        assert r._fallback.depth() == 2000
+        assert r._overflow_queue.empty()
+
+    def test_flush_preserves_order_and_the_routing_key_wrap(self):
+        r = self._make_receiver()
+        r._overflow_queue.put_nowait(("AAA111", "first"))
+        r._overflow_queue.put_nowait(("BBB222", "second"))
+
+        r._flush_overflow_batch(None)
+
+        captured: list[str] = []
+        r._fallback.drain(captured.append)
+        assert [json.loads(c) for c in captured] == [
+            {"routing_key": "AAA111", "payload": "first"},
+            {"routing_key": "BBB222", "payload": "second"},
+        ]
+
+    def test_flush_caps_a_single_pass_at_the_batch_max(self):
+        r = self._make_receiver()
+        with patch("receiver.main._OVERFLOW_WRITE_BATCH_MAX", 10):
+            for i in range(25):
+                r._overflow_queue.put_nowait((f"H{i}", str(i)))
+            r._flush_overflow_batch(None)
+
+        assert r._fallback.depth() == 10
+        assert r._overflow_queue.qsize() == 15
+
+    def test_flush_is_a_noop_on_an_empty_queue(self):
+        r = self._make_receiver()
+        with patch.object(r._fallback, "put_many") as pm:
+            r._flush_overflow_batch(None)
+        pm.assert_not_called()
+
+    def test_writer_loop_drains_a_final_time_on_shutdown(self):
+        """Nothing buffered in RAM is dropped on a clean stop -- the loop
+        makes one last flush pass after _shutdown is set."""
+        r = self._make_receiver()
+        r._overflow_queue.put_nowait(("LATE01", "x"))
+        r._shutdown.set()
+
+        r._overflow_writer_loop()  # returns at once: _shutdown already set
+
+        assert r._fallback.depth() == 1
+
+    def test_writer_loop_persists_messages_arriving_while_it_runs(self):
+        r = self._make_receiver()
+
+        t = threading.Thread(target=r._overflow_writer_loop, name="overflow-writer")
+        t.start()
+        try:
+            for i in range(500):
+                r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i)))
+            deadline = time.time() + 3
+            while r._fallback.depth() < 500 and time.time() < deadline:
+                time.sleep(0.02)
+        finally:
+            r._shutdown.set()
+            t.join(timeout=3)
+
+        assert r._fallback.depth() == 500
+
+    def test_start_wires_the_overflow_writer_thread(self):
+        r = self._make_receiver()
+        r._shutdown.set()  # start() ends on self._shutdown.wait()
+        with patch.object(r, "_connect_mqtt"), \
+             patch("receiver.main.threading.Thread") as MockThread:
+            r.start()
+        thread_names = [c.kwargs.get("name") for c in MockThread.call_args_list]
+        assert "overflow-writer" in thread_names
 
 
 class TestPublishOne:

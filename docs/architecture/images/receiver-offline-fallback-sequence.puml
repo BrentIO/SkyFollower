@@ -6,6 +6,8 @@ title Receiver — RabbitMQ Offline Fallback
 box "Receiver" $OnPrem
     participant "Source thread\n(per readsb feed)" as Src
     participant "In-memory\nlive queue" as LiveQ
+    participant "In-memory\noverflow queue" as OverQ
+    participant "Overflow-writer\nthread" as OWrite
     participant "RabbitMQ thread" as Rmq
     database "queue.db" as ReceiverDB
 end box
@@ -14,19 +16,41 @@ box "RabbitMQ" $OnPrem
     entity "adsb exchange\n(x-consistent-hash)" as AdsbX
 end box
 
-== Source thread — never blocks on RabbitMQ ==
+== Source thread — never blocks on RabbitMQ, never writes to disk ==
 
 loop For each parsed message
     Src -> LiveQ++ : **Hand off the parsed message**\n""live_queue.put_nowait((icao_hex, message_json))""
-    alt queue has room
+    alt live queue has room
         LiveQ --> Src-- : Buffered
-    else queue full (broker unreachable long enough to back it up)
+    else live queue full (broker unreachable long enough to back it up)
         LiveQ --> Src-- : Full
-        Src -> ReceiverDB++ : **Write database entry**\n""INSERT INTO queue {routing_key, message_json}""
-        ReceiverDB --> Src-- : OK
+        Src -> OverQ++ : **Hand off to the overflow queue**\n""overflow_queue.put_nowait((icao_hex, message_json))""
+        alt overflow queue has room
+            OverQ --> Src-- : Buffered
+        else overflow queue also full (last-resort pressure valve)
+            OverQ --> Src-- : Full
+            Src -> ReceiverDB++ : **Write one row directly**\n""INSERT INTO queue {routing_key, message_json}""
+            ReceiverDB --> Src-- : OK
+        end
     end
     Src -> Src : **Return straight to the socket**\n""sock.recv() — no pika call, no broker wait""
 end
+
+== Overflow-writer thread — batches overflow to disk, off the socket-read path ==
+
+loop While running
+    OWrite -> OverQ++ : **Wait for the next overflow message**\n""overflow_queue.get(timeout=1s)""
+    OverQ --> OWrite-- : (routing_key, message_json)
+    OWrite -> OverQ++ : **Take whatever else is queued, up to the batch cap**\n""overflow_queue.get_nowait() until empty or _OVERFLOW_WRITE_BATCH_MAX""
+    OverQ --> OWrite-- : Batch of messages
+    OWrite -> ReceiverDB++ : **Persist the whole batch in one commit**\n""executemany INSERT INTO queue …; COMMIT (synchronous=NORMAL, WAL)""
+    ReceiverDB --> OWrite-- : OK
+end
+
+note over OverQ, OWrite
+    On shutdown the writer makes one final pass, so messages still
+    buffered in the overflow queue are persisted rather than lost.
+end note
 
 == RabbitMQ thread — sole publisher, live traffic first ==
 

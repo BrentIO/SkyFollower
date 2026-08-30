@@ -60,7 +60,18 @@ time via a relative path reference in their `requirements.txt`.
   step (retry accounting, dead-lettering, cooldown, oldest-first) one row
   at a time, for a caller that needs to interleave higher-priority work
   between rows — the receiver's publisher thread uses it to keep live
-  traffic strictly ahead of backlog drain.
+  traffic strictly ahead of backlog drain. `put_many()` inserts a whole
+  list under a single commit, for a caller batching a burst of queued
+  writes (the receiver's overflow-writer thread) rather than paying a
+  commit per message.
+
+  The connection runs `journal_mode=WAL` with `synchronous=NORMAL`: a
+  commit no longer fsyncs on every call, so `put()`/`put_many()` are cheap
+  enough to sit on a hot path during an outage. A plain process crash
+  (SIGKILL, OOM, `docker stop`) still loses nothing — the WAL replays
+  intact on reopen; only a host power loss or kernel panic can drop the
+  last few committed rows, the same trade the message processor's WAL
+  active store already makes.
 
   A third category sits between "recoverable outage" and "poison": a
   dependency deliberately absent in this deployment (e.g. a message

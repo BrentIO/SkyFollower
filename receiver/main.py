@@ -81,11 +81,33 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # here, and loops straight back to sock.recv() -- it never touches pika and
 # never waits on the broker, so backlog drain can't delay live intake. The
 # bound keeps a broker outage from growing this without limit: once it's
-# full, a source thread routes straight to the durable SQLite fallback
-# instead (still without blocking). ~10k messages is a few seconds of
-# buffer at the reference message rate and a small, bounded amount of RAM
-# to lose on a hard crash mid-outage (a clean reconnect drains it first).
+# full, a source thread hands the message to the overflow queue below
+# (still without blocking). ~10k messages is a few seconds of buffer at the
+# reference message rate and a small, bounded amount of RAM to lose on a
+# hard crash mid-outage (a clean reconnect drains it first).
 _LIVE_QUEUE_MAXSIZE = 10_000
+
+# Second-stage in-memory buffer for messages parsed while _live_queue is
+# already full -- i.e. RabbitMQ has been unreachable long enough that the
+# few-second live buffer backed up. A source thread hands a message here
+# with the same non-blocking put_nowait it uses for the live queue and
+# returns to the socket at once; it never does the SQLite write itself. The
+# dedicated "overflow-writer" thread is the sole consumer, batching these
+# into the durable FallbackQueue with one commit per pass -- keeping the
+# fsync-class disk write off every socket-read thread, the same way the
+# live queue keeps the pika hand-off off it. Only if this buffer ALSO fills
+# (the writer somehow can't keep pace) does a source thread fall back to a
+# direct synchronous FallbackQueue write -- a last-resort pressure valve,
+# not the steady state a sustained outage settles into.
+_OVERFLOW_QUEUE_MAXSIZE = 50_000
+
+# Rows the overflow-writer pulls into a single executemany + commit.
+_OVERFLOW_WRITE_BATCH_MAX = 5_000
+
+# How long the overflow-writer blocks for the first message when the
+# overflow queue is empty -- short enough to exit promptly on shutdown,
+# long enough not to busy-spin while the (normal) no-outage state holds.
+_OVERFLOW_WRITER_IDLE_SECONDS = 1.0
 
 # Cap on how many live messages the rabbitmq thread publishes in one pass
 # before returning to process_data_events -- purely so heartbeats and the
@@ -357,6 +379,13 @@ class Receiver:
             maxsize=_LIVE_QUEUE_MAXSIZE
         )
 
+        # Overflow parsed while _live_queue is full, waiting for the
+        # "overflow-writer" thread to batch it into the SQLite fallback --
+        # see _OVERFLOW_QUEUE_MAXSIZE.
+        self._overflow_queue: queue.Queue[tuple[str, str]] = queue.Queue(
+            maxsize=_OVERFLOW_QUEUE_MAXSIZE
+        )
+
         # MQTT state
         self._mqtt: Optional[mqtt.Client] = None
         self._mqtt_connected = False
@@ -488,6 +517,12 @@ class Receiver:
         # Start RabbitMQ connection in a background thread
         threading.Thread(
             target=self._rmq_loop, daemon=True, name="rabbitmq"
+        ).start()
+
+        # Start the overflow-writer -- batches live-queue overflow into the
+        # SQLite fallback so that write never lands on a source thread.
+        threading.Thread(
+            target=self._overflow_writer_loop, daemon=True, name="overflow-writer"
         ).start()
 
         # Start telemetry loop
@@ -725,14 +760,66 @@ class Receiver:
 
     def _enqueue_live(self, routing_key: str, payload: str) -> None:
         """Hand a parsed message to the in-memory publish queue and return
-        at once -- the source thread never blocks on RabbitMQ. If the queue
-        is full (the broker has been unreachable long enough that even this
-        buffer backed up), the message goes straight to the durable SQLite
-        fallback rather than stalling the socket read behind the backlog."""
+        at once -- the source thread never blocks on RabbitMQ and never
+        does a disk write. If the live queue is full (the broker has been
+        unreachable long enough that even that buffer backed up), the
+        message goes to the overflow queue, which the overflow-writer thread
+        batches into the durable SQLite fallback. Only if the overflow queue
+        is ALSO full does this take a direct synchronous fallback write --
+        the last-resort pressure valve, not the path a normal outage uses."""
         try:
             self._live_queue.put_nowait((routing_key, payload))
+            return
+        except queue.Full:
+            pass
+        try:
+            self._overflow_queue.put_nowait((routing_key, payload))
         except queue.Full:
             self._fallback_put(routing_key, payload)
+
+    def _overflow_writer_loop(self) -> None:
+        """Sole consumer of self._overflow_queue. Batches overflow messages
+        into the durable SQLite fallback with one commit per pass, so the
+        fsync-class write stays off every socket-read thread -- the disk
+        analogue of what the rabbitmq thread does for the live queue. On
+        shutdown it makes one final pass so nothing buffered in RAM is
+        dropped on a clean stop."""
+        while not self._shutdown.is_set():
+            try:
+                first = self._overflow_queue.get(
+                    timeout=_OVERFLOW_WRITER_IDLE_SECONDS
+                )
+            except queue.Empty:
+                continue
+            self._flush_overflow_batch(first)
+        # Final drain -- flush whatever the source threads left buffered.
+        self._flush_overflow_batch(None)
+
+    def _flush_overflow_batch(self, first: Optional[tuple[str, str]]) -> None:
+        """Collect up to _OVERFLOW_WRITE_BATCH_MAX queued overflow messages
+        (starting with `first`, if the caller already dequeued one) and
+        persist them in a single FallbackQueue.put_many() -- one commit for
+        the whole batch."""
+        batch: list[tuple[str, str]] = []
+        if first is not None:
+            batch.append(first)
+        while len(batch) < _OVERFLOW_WRITE_BATCH_MAX:
+            try:
+                batch.append(self._overflow_queue.get_nowait())
+            except queue.Empty:
+                break
+        if not batch:
+            return
+        wrapped = [
+            json.dumps({"routing_key": rk, "payload": p}) for rk, p in batch
+        ]
+        try:
+            self._fallback.put_many(wrapped)
+        except Exception as exc:
+            logger.error(
+                "Overflow writer could not persist %d message(s): %s",
+                len(wrapped), exc,
+            )
 
     # ------------------------------------------------------------------
     # RabbitMQ
@@ -1071,11 +1158,16 @@ class Receiver:
                         str(count),
                         retain=True,
                     )
-        # Both backlogs an operator cares about: the durable SQLite queue
-        # plus whatever is still buffered in memory waiting for the
-        # rabbitmq thread, so a broker blip absorbed entirely in RAM is
-        # still visible rather than reading as zero.
-        local_queue_depth = self._fallback.depth() + self._live_queue.qsize()
+        # Every backlog an operator cares about: the durable SQLite queue
+        # plus whatever is still buffered in memory -- the live queue
+        # waiting on the rabbitmq thread and the overflow queue waiting on
+        # the overflow-writer -- so a broker blip absorbed entirely in RAM
+        # is still visible rather than reading as zero.
+        local_queue_depth = (
+            self._fallback.depth()
+            + self._live_queue.qsize()
+            + self._overflow_queue.qsize()
+        )
         self._mqtt.publish(f"{base}/local_queue_depth", str(local_queue_depth), retain=True)
         self._mqtt.publish(
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
