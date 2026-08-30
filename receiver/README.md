@@ -235,13 +235,26 @@ safe to call concurrently from more than one thread. Exactly one thread,
 it owns `process_data_events()` **and** every `basic_publish()` call.
 
 The source threads (one per configured `sources[]` connection) don't
-publish. Each parses a frame, drops `(routing_key, payload)` on a bounded
-in-memory `queue.Queue`, and immediately returns to `sock.recv()`. It
-never calls a pika method and never waits on the broker, so a slow, blocked
-or unreachable RabbitMQ cannot back-pressure the TCP socket and make readsb
-shed messages upstream. If the in-memory queue is full (the broker has been
-unreachable long enough that even this buffer backed up), the source thread
-writes straight to the SQLite fallback instead — still without blocking.
+publish, and never do a disk write. Each parses a frame, drops
+`(routing_key, payload)` on a bounded in-memory `queue.Queue`, and
+immediately returns to `sock.recv()`. It never calls a pika method and
+never waits on the broker, so a slow, blocked or unreachable RabbitMQ
+cannot back-pressure the TCP socket and make readsb shed messages
+upstream.
+
+If the live queue is full (the broker has been unreachable long enough
+that even that few-second buffer backed up), the source thread hands the
+message to a second bounded in-memory queue — the **overflow queue** —
+with the same non-blocking `put_nowait`, and still returns to the socket
+at once. A dedicated `overflow-writer` thread is the sole consumer: it
+batches overflow messages into the SQLite fallback with one
+`executemany` + one commit per pass, so the fsync-class disk write stays
+off every socket-read thread — the disk analogue of what the `rabbitmq`
+thread does for the live queue. Only if the overflow queue *also* fills
+(the writer somehow can't keep pace) does a source thread take a direct
+synchronous fallback write itself — a last-resort pressure valve that a
+sustained outage does not normally reach, not the steady state it settles
+into.
 
 The `rabbitmq` thread's inner loop, while the connection is up:
 
@@ -282,11 +295,16 @@ is waiting, for as long as the connection holds — so there is no separate
 periodic drain trigger. If RabbitMQ drops mid-drain, draining stops
 cleanly and resumes on the next reconnect.
 
-Messages buffered in the in-memory queue during a brief outage are lost if
-the process is killed before it reconnects (a bounded amount — see
-`_LIVE_QUEUE_MAXSIZE`); once that buffer fills, further messages spill to
-the durable `queue.db` and a clean reconnect drains the in-memory buffer
-ahead of the disk backlog.
+Messages buffered in the in-memory live queue during a brief outage are
+lost if the process is killed before it reconnects (a bounded amount —
+see `_LIVE_QUEUE_MAXSIZE`). Once that buffer fills, further messages go to
+the overflow queue and the `overflow-writer` thread persists them to the
+durable `queue.db` in batches; on a clean shutdown the writer makes one
+final pass so nothing still buffered in the overflow queue is dropped. A
+clean reconnect drains the in-memory live queue ahead of the disk
+backlog. `FallbackQueue` runs `synchronous=NORMAL` (WAL): a plain process
+crash still replays every committed row, only a host power loss can drop
+the last few — see [shared/README.md](../shared/README.md).
 
 ### Dead-Lettering Poison Messages
 
@@ -335,7 +353,7 @@ All topics use the root `SkyFollower`.
 | `{host}_{port}_connected` | `True` or `False` | Whether the TCP connection to that specific `sources[]` entry's readsb instance is currently open |
 | `{host}_{port}_reconnect_count` | Integer as string | Number of times that specific `sources[]` connection has dropped and been re-established since process start |
 | `{host}_{port}_connected_attributes` | JSON, e.g. `{"last_message_received": "2026-01-15T10:00:00+00:00"}` | Home Assistant `json_attributes_topic` for the sibling `{host}_{port}_connected` sensor; carries when that specific `sources[]` connection last processed a message. Not published at all until the first message on that connection arrives |
-| `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) plus any still buffered in memory awaiting the publisher thread |
+| `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) plus any still buffered in memory — the live queue awaiting the publisher thread and the overflow queue awaiting the `overflow-writer` thread |
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |

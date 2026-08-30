@@ -45,6 +45,50 @@ class TestPutAndDepth:
             conn.close()
             assert row[0] == "wal"
 
+    def test_synchronous_is_normal(self):
+        """WAL + synchronous=NORMAL: commits stop fsyncing per call (much
+        cheaper put()/put_many()), while a plain process crash still
+        replays the WAL intact on reopen. PRAGMA synchronous reports 1 for
+        NORMAL."""
+        with tempfile.TemporaryDirectory() as td:
+            # synchronous is a per-connection setting, not persisted in the
+            # file -- so it has to be read on the queue's own connection.
+            q = _make_queue(td)
+            assert q._conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+
+    def test_put_many_inserts_all_rows_in_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            q.put_many(["a", "b", "c"])
+            assert q.depth() == 3
+            drained: list[str] = []
+            q.drain(drained.append)
+            assert drained == ["a", "b", "c"]
+
+    def test_put_many_empty_list_is_a_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            q.put_many([])
+            assert q.depth() == 0
+
+    def test_put_many_interleaves_with_put_preserving_overall_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            q = _make_queue(td)
+            q.put("one")
+            q.put_many(["two", "three"])
+            q.put("four")
+            drained: list[str] = []
+            q.drain(drained.append)
+            assert drained == ["one", "two", "three", "four"]
+
+    def test_put_many_survives_reopen(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "queue.db")
+            q = FallbackQueue(path)
+            q.put_many(["x", "y"])
+            del q
+            assert FallbackQueue(path).depth() == 2
+
     def test_schema_columns(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "queue.db")
