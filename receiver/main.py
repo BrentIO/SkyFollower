@@ -708,6 +708,7 @@ class Receiver:
     def _rmq_loop(self) -> None:
         """Maintain a persistent RabbitMQ connection, reconnecting on failure."""
         while not self._shutdown.is_set():
+            conn = None
             try:
                 logger.info("Connecting to RabbitMQ…")
                 conn = pika.BlockingConnection(self._rmq_params())
@@ -728,6 +729,24 @@ class Receiver:
 
                 # Keep the connection alive with process_data_events
                 while not self._shutdown.is_set():
+                    # The publish path (_publish / _drain_fallback) is a
+                    # separate source of truth for connectivity: it flips
+                    # _rmq_connected False on any publish failure, including
+                    # a _pika_invoke timeout while the broker has publishers
+                    # blocked (disk-free alarm) but the TCP connection stays
+                    # up. process_data_events keeps succeeding in that case,
+                    # so without this check the flag would stay latched
+                    # False forever and every message would route to the
+                    # SQLite fallback. Tear the connection down and rebuild
+                    # it so the flag gets re-validated on the next connect.
+                    with self._rmq_lock:
+                        publish_healthy = self._rmq_connected
+                    if not publish_healthy:
+                        logger.warning(
+                            "RabbitMQ publish path reported a failure; "
+                            "reconnecting to re-validate."
+                        )
+                        break
                     try:
                         conn.process_data_events(time_limit=1)
                     except pika.exceptions.AMQPConnectionError:
@@ -750,6 +769,11 @@ class Receiver:
                     self._rmq_connected = False
                     self._rmq_channel = None
                     self._rmq_connection = None
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
 
             if not self._shutdown.is_set():
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
@@ -908,13 +932,13 @@ class Receiver:
                 self._flush_period_counters()
 
             # Independent of _rmq_loop's reconnect-triggered drain: a
-            # publish failure can pin _rmq_connected False (or leave
-            # messages queued) without the underlying connection ever
-            # raising AMQPConnectionError, in which case _rmq_loop never
-            # re-enters its reconnect branch and _drain_fallback never
-            # runs again on its own. This periodic sweep is a cheap
-            # no-op when the queue is empty and doesn't depend on that
-            # edge-triggered detection ever firing. _drain_fallback()
+            # publish failure can leave messages queued without the
+            # underlying connection ever raising AMQPConnectionError.
+            # _rmq_loop's inner loop now breaks to a fresh connect when
+            # the publish path latches _rmq_connected False, but this
+            # periodic sweep is a cheap no-op when the queue is empty and
+            # a second line of defence that doesn't depend on that
+            # detection firing. _drain_fallback()
             # itself spawns the actual drain in the background (or skips
             # if one's already running from the reconnect path), so this
             # call returns immediately and never delays the telemetry

@@ -830,8 +830,27 @@ class MessageProcessor:
 
                 self._rmq_channel.start_consuming()
 
+                # start_consuming() returned without raising. Either
+                # shutdown (the while guard below exits), or
+                # _force_rmq_reconnect_if_stale() scheduled stop_consuming
+                # because an archive publish latched _rmq_connected False
+                # while this connection kept delivering inbound messages
+                # (broker blocked publishers rather than dropping the
+                # socket). Rebuild the connection so the flag is
+                # re-validated -- otherwise every completed flight would
+                # route to the SQLite fallback indefinitely.
+                self._rmq_connected = False
+                self._close_rmq_connection()
+                if not self._shutdown.is_set():
+                    logger.warning(
+                        "RabbitMQ publish path reported a failure; "
+                        "reconnecting in %ss…", RECONNECT_BACKOFF_SECONDS,
+                    )
+                    time.sleep(RECONNECT_BACKOFF_SECONDS)
+
             except pika.exceptions.AMQPConnectionError as exc:
                 self._rmq_connected = False
+                self._close_rmq_connection()
                 logger.warning(
                     "RabbitMQ unavailable: %s. Retrying in %ss…",
                     exc, RECONNECT_BACKOFF_SECONDS,
@@ -839,11 +858,49 @@ class MessageProcessor:
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
             except Exception as exc:
                 self._rmq_connected = False
+                self._close_rmq_connection()
                 logger.error(
                     "RabbitMQ error: %s. Retrying in %ss…",
                     exc, RECONNECT_BACKOFF_SECONDS,
                 )
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
+
+    def _close_rmq_connection(self) -> None:
+        """Drop the current connection/channel so _consume_loop's next
+        iteration builds a fresh one. Safe to call after start_consuming()
+        has returned (its own thread is no longer inside pika)."""
+        conn = self._rmq_connection
+        self._rmq_connection = None
+        self._rmq_channel = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _force_rmq_reconnect_if_stale(self) -> None:
+        """The archive publish path (_archive / _drain_fallback) latches
+        _rmq_connected False on any publish failure, including while the
+        broker has publishers blocked (disk-free alarm) but the connection
+        stays up and start_consuming() keeps delivering inbound messages.
+        Nothing clears the flag in that case, so completed flights pile
+        into the SQLite fallback forever. Break start_consuming() so
+        _consume_loop rebuilds the connection and re-validates the flag. A
+        genuine mid-reconnect False (no live connection) is a no-op."""
+        if self._rmq_connected:
+            return
+        conn = self._rmq_connection
+        channel = self._rmq_channel
+        if conn is None or channel is None:
+            return
+        logger.warning(
+            "RabbitMQ publish path latched disconnected while consuming; "
+            "forcing a reconnect."
+        )
+        try:
+            conn.add_callback_threadsafe(channel.stop_consuming)
+        except Exception:
+            pass
 
     def _on_message(self, ch, method, props, body: bytes) -> None:
         try:
@@ -1545,19 +1602,22 @@ class MessageProcessor:
         while not self._shutdown.is_set():
             time.sleep(MQTT_PUBLISH_INTERVAL_SECONDS)
             # Independent of _consume_loop's reconnect-triggered drain: a
-            # publish failure can pin _rmq_connected False (or leave
-            # messages queued) without the underlying connection ever
-            # raising AMQPConnectionError, in which case _consume_loop
-            # never re-enters its reconnect branch and _drain_fallback
-            # never runs again on its own. This periodic sweep is a cheap
-            # no-op when the queue is empty and doesn't depend on that
-            # edge-triggered detection ever firing. _drain_fallback()
-            # itself spawns the actual drain in the background (or skips
-            # if one's already running from the reconnect path), so this
-            # call returns immediately and never delays the telemetry
-            # publish below it.
+            # publish failure can leave messages queued without the
+            # underlying connection ever raising AMQPConnectionError. This
+            # periodic sweep is a cheap no-op when the queue is empty and
+            # doesn't depend on _consume_loop's edge-triggered reconnect
+            # firing. _drain_fallback() itself spawns the actual drain in
+            # the background (or skips if one's already running from the
+            # reconnect path), so this call returns immediately and never
+            # delays the telemetry publish below it.
             if self._rmq_connected:
                 self._drain_fallback()
+            else:
+                # _rmq_connected can also be latched False by a publish
+                # failure while start_consuming() keeps running on a
+                # still-open connection -- break it so _consume_loop
+                # rebuilds and re-validates.
+                self._force_rmq_reconnect_if_stale()
             self._flush_period_counters()
             self._publish_telemetry()
 
