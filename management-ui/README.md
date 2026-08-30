@@ -1,4 +1,4 @@
-# management-ui
+# Management UI
 
 | | |
 |---|---|

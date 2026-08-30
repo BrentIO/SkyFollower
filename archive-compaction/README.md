@@ -1,4 +1,4 @@
-# archive-compaction
+# Archive Compaction
 
 | | |
 |---|---|
