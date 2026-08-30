@@ -335,22 +335,13 @@ export function RuleForm({
       </div>
 
       <div className="flex flex-col gap-3 md:min-h-0 md:flex-1">
-        <div className="flex shrink-0 items-start justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-              Conditions{rule.conditions.length > 0 ? ` (${rule.conditions.length})` : ""}
-            </h2>
-            {rule.conditions.length > 0 && (
-              <p className="text-xs text-slate-400">All conditions must be met to trigger this rule.</p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={addCondition}
-            className="shrink-0 rounded-md border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
-          >
-            Add Condition
-          </button>
+        <div className="shrink-0">
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+            Conditions{rule.conditions.length > 0 ? ` (${rule.conditions.length})` : ""}
+          </h2>
+          {rule.conditions.length > 0 && (
+            <p className="text-xs text-slate-400">All conditions must be met to trigger this rule.</p>
+          )}
         </div>
 
         {rule.conditions.length === 0 && (
@@ -370,6 +361,18 @@ export function RuleForm({
             />
           ))}
         </div>
+
+        {/* Below the list, not in the header: a new condition appends to
+            the end, so the button reads as "…and here's where the next
+            one goes" rather than a top-corner action disconnected from
+            its result. */}
+        <button
+          type="button"
+          onClick={addCondition}
+          className="shrink-0 self-start rounded-md border border-slate-300 px-3 py-1 text-sm font-medium hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800"
+        >
+          Add Condition
+        </button>
       </div>
     </div>
   );
