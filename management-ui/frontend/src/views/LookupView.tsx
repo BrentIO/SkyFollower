@@ -1,6 +1,6 @@
 import * as maplibregl from "maplibre-gl";
 import { mdiMapMarker } from "@mdi/js";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   getAircraft,
   getAirport,
@@ -253,6 +253,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
 // Operator
 // ---------------------------------------------------------------------------
 
+// Mirrors AirportResultView's shape: the code leads in large text, and
+// self-evident fields (name, callsign, country) drop their labels. The
+// name + quoted-italic callsign row reuses RouteResultView's operator
+// header pattern verbatim; country is the muted trailing "where" line
+// shared by all three panels.
 function OperatorResultView({ data }: { data: OperatorRecord }) {
   const name = displayStr(data.name);
   const designator = displayStr(data.airline_designator) ?? "";
@@ -261,26 +266,14 @@ function OperatorResultView({ data }: { data: OperatorRecord }) {
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap items-baseline gap-2">
-        {name ? (
-          <>
-            <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{name}</span>
-            <Mono>{designator}</Mono>
-          </>
-        ) : (
-          <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
-        )}
-      </div>
-      {callsign && (
-        <div className="text-sm text-slate-900 dark:text-slate-100">
-          <Label>Callsign</Label> {callsign}
+      <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{designator}</span>
+      {(name || callsign) && (
+        <div className="flex flex-wrap items-baseline gap-2 text-sm text-slate-900 dark:text-slate-100">
+          {name && <span>{name}</span>}
+          {callsign && <span className="italic">"{callsign}"</span>}
         </div>
       )}
-      {country && (
-        <div className="text-sm text-slate-900 dark:text-slate-100">
-          <Label>Country</Label> {country}
-        </div>
-      )}
+      {country && <div className="text-sm text-slate-500 dark:text-slate-400">{country}</div>}
     </div>
   );
 }
@@ -330,6 +323,7 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
 
 function AirportResultView({ data }: { data: AirportRecord }) {
   const icaoCode = displayStr(data.icao_code) ?? "";
+  const iataCode = displayStr(data.iata_code);
   const name = displayStr(data.name);
   const locLine = joinParts([displayStr(data.city), displayStr(data.region), displayStr(data.country)]);
   const phonic = displayStr(data.phonic);
@@ -338,10 +332,16 @@ function AirportResultView({ data }: { data: AirportRecord }) {
 
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
-      {name && <div className="text-sm text-slate-900 dark:text-slate-100">{name}</div>}
-      {locLine && <div className="text-sm text-slate-900 dark:text-slate-100">{locLine}</div>}
-      {phonic && <div className="text-sm italic text-slate-900 dark:text-slate-100">"{phonic}"</div>}
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
+        {iataCode && <Mono>{iataCode}</Mono>}
+      </div>
+      {name && (
+        <div className="text-sm text-slate-900 dark:text-slate-100">
+          {name} {phonic && <span className="italic">"{phonic}"</span>}
+        </div>
+      )}
+      {locLine && <div className="text-sm text-slate-500 dark:text-slate-400">{locLine}</div>}
       {latitude !== undefined && longitude !== undefined && (
         <div className="mt-2">
           <AirportMap latitude={latitude} longitude={longitude} />
@@ -584,16 +584,22 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
 function RouteResultView({ data }: { data: RouteLookup }) {
   const operatorName = displayStr(data.operator?.name);
   const operatorCallsign = displayStr(data.operator?.callsign);
+  const operatorCountry = displayStr(data.operator?.country);
 
   return (
     <div className="flex flex-col gap-4">
       <RouteMap stops={data.stops} />
       <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{data.ident}</span>
       {operatorName && (
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-slate-900 dark:text-slate-100">{operatorName}</span>
-          {operatorCallsign && (
-            <span className="text-sm italic text-slate-900 dark:text-slate-100">"{operatorCallsign}"</span>
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="text-slate-900 dark:text-slate-100">{operatorName}</span>
+            {operatorCallsign && (
+              <span className="text-sm italic text-slate-900 dark:text-slate-100">"{operatorCallsign}"</span>
+            )}
+          </div>
+          {operatorCountry && (
+            <div className="text-sm text-slate-500 dark:text-slate-400">{operatorCountry}</div>
           )}
         </div>
       )}
@@ -729,10 +735,13 @@ export function LookupView() {
         {state.status === "not-found" && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
         {state.status === "results" &&
           state.results.map((result, i) => (
-            <div key={`${result.tab}-${i}`} className="flex flex-col gap-3">
-              <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
-              <ResultPanelBody result={result} />
-            </div>
+            <Fragment key={`${result.tab}-${i}`}>
+              {i > 0 && <hr className="border-slate-200 dark:border-slate-700" />}
+              <div className="flex flex-col gap-3">
+                <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
+                <ResultPanelBody result={result} />
+              </div>
+            </Fragment>
           ))}
       </div>
     </div>
