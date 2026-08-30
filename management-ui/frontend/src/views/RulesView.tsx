@@ -14,9 +14,15 @@ import {
 } from "../api/rules";
 import { useToast } from "../hooks/useToast";
 
+// The /api/areas response carries full Area objects; `geometry.type` is
+// read here only to filter the rule editor's `area`-condition dropdown to
+// Polygon areas -- per the backend Area model, a LineString/Point area is
+// never usable as an `area` condition value (rules_engine.py skips it), so
+// offering one would silently produce a rule that never matches.
 interface AreaOption {
   identifier: string;
   name: string;
+  geometry: { type: string };
 }
 
 const clone = (rule: Rule): Rule => JSON.parse(JSON.stringify(rule));
@@ -119,7 +125,11 @@ export function RulesView() {
         ]);
         if (cancelled) return;
         setRules(loadedRules);
-        setAreas(loadedAreas);
+        setAreas(
+          loadedAreas
+            .filter((a) => a.geometry?.type === "Polygon")
+            .sort((a, b) => (a.name || a.identifier).localeCompare(b.name || b.identifier)),
+        );
       } catch (err) {
         if (!cancelled) showToast("error", err instanceof Error ? err.message : "Failed to load");
       } finally {
