@@ -959,6 +959,69 @@ class TestDrainFallback:
 
 
 # ---------------------------------------------------------------------------
+# _rmq_loop must recover when the publish path latches _rmq_connected False
+# without process_data_events ever raising -- the broker blocking publishers
+# (disk-free alarm) is exactly this: basic_publish times out but the TCP
+# connection stays up, so the connection-liveness proxy keeps succeeding.
+# ---------------------------------------------------------------------------
+
+
+class TestRmqLoopRecoversFromLatchedDisconnect:
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
+
+    def test_publish_timeout_on_healthy_connection_forces_reconnect_and_recovers(self):
+        r = self._make_receiver()
+
+        state: dict = {"connects": 0}
+
+        def make_conn(*_args, **_kwargs):
+            state["connects"] += 1
+            n = state["connects"]
+            conn = MagicMock()
+            channel = MagicMock()
+            conn.channel.return_value = channel
+            conn.add_callback_threadsafe.side_effect = lambda fn: fn()
+            if n == 1:
+                # Broker has publishers blocked: every publish attempt
+                # times out, but process_data_events keeps succeeding.
+                channel.basic_publish.side_effect = TimeoutError("blocked")
+
+            def process_data_events(**_kw):
+                if state["connects"] == 1:
+                    # Live publish path fails against the blocked broker:
+                    # it latches _rmq_connected False and queues to SQLite,
+                    # without this connection ever raising.
+                    r._publish("4B1900", '{"raw": "AA"}')
+                elif state["connects"] >= 2:
+                    state["connected_on_reconnect"] = r._rmq_connected
+                    state["depth_on_reconnect"] = r._fallback.depth()
+                    r._shutdown.set()
+
+            conn.process_data_events.side_effect = process_data_events
+            return conn
+
+        with patch("receiver.main.pika.BlockingConnection", side_effect=make_conn), \
+             patch("receiver.main.time.sleep", lambda _s: None), \
+             _synchronous_drain_thread():
+            r._rmq_loop()
+
+        # It did not stay latched on the first connection: a fresh connect
+        # was forced even though process_data_events never raised.
+        assert state["connects"] >= 2
+        # Once publishing works again the flag is re-validated True...
+        assert state["connected_on_reconnect"] is True
+        # ...and the backlog drains without a restart.
+        assert state["depth_on_reconnect"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Rate tracker
 # ---------------------------------------------------------------------------
 

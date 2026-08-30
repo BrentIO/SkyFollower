@@ -1607,6 +1607,99 @@ class TestConsumeLoopExchangeBinding:
 
 
 # ---------------------------------------------------------------------------
+# _consume_loop must recover when the archive publish path latches
+# _rmq_connected False while start_consuming() keeps delivering inbound
+# messages on a still-open connection (the broker blocking publishers via a
+# disk-free alarm, not dropping the socket).
+# ---------------------------------------------------------------------------
+
+
+class TestConsumeLoopRecoversFromLatchedDisconnect:
+    def test_force_reconnect_if_stale_breaks_consuming_when_flag_latched_false(self):
+        p, _ = _make_processor()
+        channel = MagicMock()
+        conn = MagicMock()
+        conn.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = channel
+        p._rmq_connection = conn
+        p._rmq_connected = False
+
+        p._force_rmq_reconnect_if_stale()
+
+        channel.stop_consuming.assert_called_once()
+
+    def test_force_reconnect_if_stale_is_noop_when_connected(self):
+        p, _ = _make_processor()
+        channel = MagicMock()
+        p._rmq_channel = channel
+        p._rmq_connection = MagicMock()
+        p._rmq_connected = True
+
+        p._force_rmq_reconnect_if_stale()
+
+        channel.stop_consuming.assert_not_called()
+
+    def test_force_reconnect_if_stale_is_noop_with_no_live_connection(self):
+        p, _ = _make_processor()
+        p._rmq_connected = False
+        p._rmq_connection = None
+        p._rmq_channel = None
+
+        p._force_rmq_reconnect_if_stale()  # must not raise
+
+    def test_telemetry_tick_forces_reconnect_when_flag_latched_false(self):
+        p, _ = _make_processor()
+        channel = MagicMock()
+        conn = MagicMock()
+        conn.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = channel
+        p._rmq_connection = conn
+        p._rmq_connected = False
+
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep), \
+             patch.object(p, "_publish_telemetry"), \
+             patch.object(p, "_flush_period_counters"):
+            p._telemetry_loop()
+
+        channel.stop_consuming.assert_called_once()
+
+    def test_latched_disconnect_during_consume_forces_reconnect_and_revalidates(self):
+        p, _ = _make_processor()
+
+        state: dict = {"connects": 0}
+
+        def make_conn(*_args, **_kwargs):
+            state["connects"] += 1
+            n = state["connects"]
+            conn = MagicMock()
+            channel = MagicMock()
+            conn.channel.return_value = channel
+
+            def start_consuming():
+                if n == 1:
+                    # An archive publish failed against the blocked broker
+                    # while this connection kept delivering inbound
+                    # messages; the watchdog breaks start_consuming().
+                    p._rmq_connected = False
+                    return
+                state["connected_on_reconnect"] = p._rmq_connected
+                p._shutdown.set()
+
+            channel.start_consuming.side_effect = start_consuming
+            return conn
+
+        with patch("message_processor.main.pika.BlockingConnection", side_effect=make_conn), \
+             patch("message_processor.main.time.sleep", lambda _s: None):
+            p._consume_loop()
+
+        assert state["connects"] >= 2
+        assert state["connected_on_reconnect"] is True
+
+
+# ---------------------------------------------------------------------------
 # MessageProcessor enrichment logic (unit tests with mocked Redis)
 # ---------------------------------------------------------------------------
 
