@@ -21,6 +21,7 @@ import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, typ
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { MAP_STYLE } from "../lib/maplibreSetup";
+import { uuidv4 } from "../lib/uuid";
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -807,7 +808,7 @@ export function AreasView() {
         // separate id-translation table.
         idStrategy: {
           isValidId: (id): id is string => typeof id === "string" && id.length > 0,
-          getId: () => crypto.randomUUID(),
+          getId: () => uuidv4(),
         },
         modes: [
           new TerraDrawSelectMode({
@@ -976,7 +977,7 @@ export function AreasView() {
     requestSwitch(() => {
       const draw = drawRef.current;
       if (!draw) return;
-      const tempId = crypto.randomUUID();
+      const tempId = uuidv4();
       draw.addFeatures([
         {
           id: tempId,
@@ -1130,7 +1131,7 @@ export function AreasView() {
       areas.map((a) => a.identifier),
       async (identity, feature) => {
         const style = extractStyleFields(feature.properties ?? {});
-        const tempId = crypto.randomUUID();
+        const tempId = uuidv4();
         draw.addFeatures([
           {
             id: tempId,
@@ -1181,7 +1182,7 @@ export function AreasView() {
         IDENTIFIER_PATTERN.test(rawIdentifier) &&
         !areas.some((a) => a.identifier === rawIdentifier);
 
-      const tempId = crypto.randomUUID();
+      const tempId = uuidv4();
       draw.addFeatures([
         {
           id: tempId,
