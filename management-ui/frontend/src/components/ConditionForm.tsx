@@ -424,12 +424,23 @@ function ConditionValueInput({
         );
       }
 
+      // Checked items float to the top, alphabetical within each group.
+      // Recomputed every render from `selected`, so toggling a box
+      // re-groups it immediately -- expected for a checklist (a discrete
+      // click), unlike sorting a text field while it's being typed into.
+      const sortedOptions = [...otherRuleOptions].sort((a, b) => {
+        const aChecked = selected.includes(a.identifier);
+        const bChecked = selected.includes(b.identifier);
+        if (aChecked !== bChecked) return aChecked ? -1 : 1;
+        return (a.name || a.identifier).localeCompare(b.name || b.identifier);
+      });
+
       return (
         <div className="input flex max-h-32 flex-col gap-1 overflow-y-auto">
           {otherRuleOptions.length === 0 && (
             <span className="text-sm text-slate-400">No other rules to match against yet.</span>
           )}
-          {otherRuleOptions.map((option) => (
+          {sortedOptions.map((option) => (
             <label key={option.identifier} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
