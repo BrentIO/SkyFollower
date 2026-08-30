@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import signal
@@ -114,12 +115,61 @@ def replay(
 
 
 # ---------------------------------------------------------------------------
+# Capture loading
+# ---------------------------------------------------------------------------
+
+def _load_capture(path: str) -> list[dict]:
+    """Load an NDJSON capture file into a list of message dicts.
+
+    A path ending in ``.gz`` is transparently decompressed with the stdlib
+    ``gzip`` module; the compressed form is detected purely by the file
+    extension, not by sniffing the file's contents. Any other path is read
+    as plain text. The per-line parsing is identical for both forms once the
+    file object is yielding decompressed text lines: blank lines are ignored,
+    and a line that is not valid JSON prints a warning to stderr and is
+    skipped rather than aborting the load.
+
+    A ``.gz`` path whose contents are not actually a valid gzip stream
+    (corrupt, truncated, or plain text that was never compressed) raises a
+    single clear error, instead of degrading into one skipped-line warning
+    for every line in the file.
+    """
+    is_gzip = path.lower().endswith(".gz")
+    opener = gzip.open if is_gzip else open
+    messages: list[dict] = []
+    try:
+        with opener(path, "rt") as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    messages.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"Warning: skipping line {lineno}: {e}", file=sys.stderr)
+    except (OSError, EOFError) as e:
+        if is_gzip:
+            raise SystemExit(
+                f"Failed to read {path} as gzip: {e}. The file has a .gz "
+                f"extension but is not a valid gzip stream (corrupt, truncated, "
+                f"or not actually compressed)."
+            )
+        raise SystemExit(f"Failed to read {path}: {e}")
+    return messages
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SkyFollower Traffic Replayer")
-    parser.add_argument("--input", required=True, help="Input NDJSON capture file")
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Input NDJSON capture file (plain .ndjson or gzip-compressed "
+        ".ndjson.gz, detected by extension)",
+    )
     parser.add_argument(
         "--mode",
         choices=["relative", "stress"],
@@ -133,16 +183,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"Loading {args.input} ...", flush=True)
-    messages = []
-    with open(args.input) as f:
-        for lineno, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                messages.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                print(f"Warning: skipping line {lineno}: {e}", file=sys.stderr)
+    messages = _load_capture(args.input)
 
     if not messages:
         print("No messages found in capture file.", file=sys.stderr)

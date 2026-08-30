@@ -13,7 +13,9 @@ isn't already exercised, directly or indirectly, by the tests below.
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import json
 import os
 import sys
 import threading
@@ -37,6 +39,7 @@ def _load_main():
 
 _mod = _load_main()
 replay = _mod.replay
+_load_capture = _mod._load_capture
 
 
 class FakeChannel:
@@ -183,6 +186,91 @@ class TestReplayRelativeMode:
 
         assert count == 3
         assert clock.sleeps == []
+
+
+_CAPTURE_LINES = [
+    {"raw": "8D4840D6202CC371C32CE0576098", "icao_hex": "4840D6",
+     "received_at": 1.0, "source": "1090"},
+    {"raw": "8D40621D58C382D690C8AC2863A7", "icao_hex": "40621D",
+     "received_at": 2.5, "source": "978"},
+    {"raw": "8DA8AE7F9911088D3020009BD3F0", "icao_hex": "A8AE7F",
+     "received_at": 0.5, "source": "MLAT"},
+]
+
+
+def _write_ndjson(path, records) -> None:
+    with open(path, "w") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+
+def _write_ndjson_gz(path, records) -> None:
+    with gzip.open(path, "wt") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+
+class TestLoadCapture:
+    """_load_capture() reads either a plain .ndjson file or a gzip-compressed
+    .ndjson.gz file (chosen by extension), with identical per-line parsing
+    once the file object is yielding text."""
+
+    def test_plain_ndjson_loads_every_line(self, tmp_path):
+        p = tmp_path / "capture.ndjson"
+        _write_ndjson(p, _CAPTURE_LINES)
+        assert _load_capture(str(p)) == _CAPTURE_LINES
+
+    def test_gzip_capture_parses_to_the_same_list_as_its_uncompressed_form(self, tmp_path):
+        plain = tmp_path / "capture.ndjson"
+        gz = tmp_path / "capture.ndjson.gz"
+        _write_ndjson(plain, _CAPTURE_LINES)
+        _write_ndjson_gz(gz, _CAPTURE_LINES)
+
+        assert _load_capture(str(gz)) == _load_capture(str(plain)) == _CAPTURE_LINES
+
+    def test_blank_lines_are_ignored_in_both_forms(self, tmp_path):
+        gz = tmp_path / "capture.ndjson.gz"
+        with gzip.open(gz, "wt") as f:
+            f.write(json.dumps(_CAPTURE_LINES[0]) + "\n")
+            f.write("\n")
+            f.write("   \n")
+            f.write(json.dumps(_CAPTURE_LINES[1]) + "\n")
+
+        assert _load_capture(str(gz)) == _CAPTURE_LINES[:2]
+
+    def test_malformed_line_is_skipped_with_a_warning(self, tmp_path, capsys):
+        p = tmp_path / "capture.ndjson"
+        with open(p, "w") as f:
+            f.write(json.dumps(_CAPTURE_LINES[0]) + "\n")
+            f.write("{ not json\n")
+            f.write(json.dumps(_CAPTURE_LINES[1]) + "\n")
+
+        assert _load_capture(str(p)) == _CAPTURE_LINES[:2]
+        assert "skipping line 2" in capsys.readouterr().err
+
+    def test_gz_path_that_is_not_gzip_fails_with_one_clear_error(self, tmp_path, capsys):
+        """A .gz file that is really plain text must raise a single clear
+        error, not emit a skipped-line warning for every line in the file."""
+        gz = tmp_path / "capture.ndjson.gz"
+        _write_ndjson(gz, _CAPTURE_LINES)  # plain NDJSON, never compressed
+
+        with pytest.raises(SystemExit) as exc:
+            _load_capture(str(gz))
+
+        assert "gzip" in str(exc.value).lower()
+        assert "skipping line" not in capsys.readouterr().err
+
+    def test_truncated_gz_fails_with_one_clear_error(self, tmp_path, capsys):
+        gz = tmp_path / "capture.ndjson.gz"
+        _write_ndjson_gz(gz, _CAPTURE_LINES)
+        data = gz.read_bytes()
+        gz.write_bytes(data[: len(data) // 2])
+
+        with pytest.raises(SystemExit) as exc:
+            _load_capture(str(gz))
+
+        assert "gzip" in str(exc.value).lower()
+        assert "skipping line" not in capsys.readouterr().err
 
 
 class TestReplayStopEvent:
