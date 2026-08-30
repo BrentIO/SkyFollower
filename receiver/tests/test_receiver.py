@@ -251,6 +251,104 @@ class TestReconnectCounter:
 
         assert r._reconnect_counts.get(key, 0) == 0
 
+    def _listener(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(8)
+        return server
+
+    def test_resets_after_a_connection_holds_past_the_reset_threshold(self):
+        """A connection that flapped, then stayed up continuously for at
+        least RECONNECT_COUNT_RESET_AGE_SECONDS, starts its next flapping
+        episode from 1 rather than continuing the stale total."""
+        from receiver.main import RECONNECT_COUNT_RESET_AGE_SECONDS
+        r = self._make_receiver()
+        server = self._listener()
+        host, port = server.getsockname()
+        key = (host, port)
+        r._reconnect_counts[key] = 5  # stale history from an earlier episode
+
+        clock = {"t": 1000.0}
+        threading.Thread(
+            target=lambda: [c.close() for c in [server.accept()[0]]], daemon=True
+        ).start()
+
+        def _fake_reader(*a, **k):
+            # The connection held this long before dropping.
+            clock["t"] += RECONNECT_COUNT_RESET_AGE_SECONDS + 1
+
+        def _fake_sleep(_s):
+            r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        with patch("receiver.main.time.monotonic", lambda: clock["t"]), \
+             patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": host, "port": port, "source": "1090"})
+        server.close()
+
+        assert r._reconnect_counts[key] == 1
+
+    def test_does_not_reset_while_flapping_faster_than_the_threshold(self):
+        """Each reconnection holds for less than the reset threshold, so
+        the count keeps climbing across the flapping episode."""
+        from receiver.main import RECONNECT_COUNT_RESET_AGE_SECONDS
+        r = self._make_receiver()
+        server = self._listener()
+        host, port = server.getsockname()
+        key = (host, port)
+
+        clock = {"t": 1000.0}
+        accepted = []
+
+        def _accept_loop():
+            while len(accepted) < 3:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    return
+                conn.close()
+                accepted.append(conn)
+
+        threading.Thread(target=_accept_loop, daemon=True).start()
+
+        cycles = {"n": 0}
+
+        def _fake_reader(*a, **k):
+            clock["t"] += RECONNECT_COUNT_RESET_AGE_SECONDS - 1  # under the threshold
+
+        def _fake_sleep(_s):
+            cycles["n"] += 1
+            if cycles["n"] >= 3:
+                r._shutdown.set()
+
+        r._read_1090_stream = _fake_reader
+        with patch("receiver.main.time.monotonic", lambda: clock["t"]), \
+             patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": host, "port": port, "source": "1090"})
+        server.close()
+
+        assert r._reconnect_counts[key] == 3  # never reset mid-flap
+
+    def test_never_resets_when_the_connection_never_succeeds(self):
+        """An endpoint that refuses every attempt has no _connected_since
+        timestamp, so no reset ever fires -- the count just accumulates."""
+        r = self._make_receiver()
+        key = ("localhost", 1)
+        r._reconnect_counts[key] = 4
+
+        attempts = {"n": 0}
+
+        def _fake_sleep(_s):
+            attempts["n"] += 1
+            if attempts["n"] >= 2:
+                r._shutdown.set()
+
+        with patch("receiver.main.time.sleep", _fake_sleep):
+            r._source_loop({"host": "localhost", "port": 1, "source": "1090"})
+
+        assert r._reconnect_counts[key] == 6  # 4 + 2, never reset
+        assert r._connected_since[key] is None
+
 
 # ---------------------------------------------------------------------------
 # TCP keepalive on source sockets
