@@ -40,7 +40,7 @@ from shared.config import ConfigError, load_config
 from shared.timing import ROUTE_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
-from shared.redis_keys import route_key
+from shared.redis_keys import normalize_flight_ident, route_key
 from shared.mqtt import build_mqtt_client
 from shared.logging_setup import configure_logging
 from shared.sqlite_staging import open_staging_db
@@ -130,7 +130,7 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
         for row in _csv_rows(data):
             if len(row) < 5:
                 continue
-            ident = row[0].strip().upper()
+            ident = normalize_flight_ident(row[0].strip().upper())
             route = row[4].strip()
             if not ident or not route:
                 continue

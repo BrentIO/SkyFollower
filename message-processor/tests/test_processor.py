@@ -1865,6 +1865,23 @@ class TestMaybeResolveRoute:
         assert f.destination == "KATL"
         assert f.route_resolution_attempted is True
 
+    def test_zero_padded_ident_normalized_before_lookup(self):
+        """A broadcast ident with a zero-padded flight number is normalized
+        to canonical form for the route-lookup key only -- flight.ident
+        itself keeps the value as broadcast."""
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "LFPG", "latitude": 49.0097, "longitude": 2.5479},
+            {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
+        ]
+        mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return=json.dumps(airports))
+        f = self._make_ready_flight(p, ident="AFR0096")
+
+        p._maybe_resolve_route(f)
+
+        mock_redis.evalsha.assert_called_once_with(p._route_sha, 0, "AFR96")
+        assert f.ident == "AFR0096"
+
     def test_leaves_unset_when_no_route_known(self):
         p, mock_redis = _make_processor()
         mock_redis.evalsha.side_effect = _evalsha_dispatch(p._route_sha, route_return="[]")

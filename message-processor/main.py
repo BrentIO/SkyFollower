@@ -67,6 +67,7 @@ from shared.redis_keys import (
     metrics_operator_misses_key,
     metrics_registration_misses_key,
     metrics_total_messages_processed_key,
+    normalize_flight_ident,
     operator_key,
 )
 from shared.timing import (
@@ -1277,7 +1278,9 @@ class MessageProcessor:
             airports = json.loads(flight.route_candidate_airports)
         else:
             try:
-                raw = self._redis.evalsha(self._route_sha, 0, flight.ident)
+                raw = self._redis.evalsha(
+                    self._route_sha, 0, normalize_flight_ident(flight.ident)
+                )
                 airports = json.loads(raw) if raw else []
             except Exception as exc:
                 logger.debug("Redis route resolution error: %s", exc)

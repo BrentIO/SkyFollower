@@ -19,6 +19,7 @@ from shared.redis_keys import (
     metrics_operator_misses_key,
     metrics_registration_misses_key,
     metrics_total_messages_processed_key,
+    normalize_flight_ident,
     operator_key,
     receiver_heartbeat_key,
     receiver_message_count_key,
@@ -53,6 +54,37 @@ class TestEnrichmentKeys:
     def test_airport_key(self):
         assert airport_key("katl") == "airport:KATL"
         assert airport_key("KATL") == "airport:KATL"
+
+
+class TestNormalizeFlightIdent:
+    def test_zero_padded_stripped(self):
+        assert normalize_flight_ident("AFR0096") == "AFR96"
+        assert normalize_flight_ident("IBE0339") == "IBE339"
+        assert normalize_flight_ident("OCN068") == "OCN68"
+
+    def test_already_unpadded_unchanged(self):
+        assert normalize_flight_ident("AFR96") == "AFR96"
+        assert normalize_flight_ident("DAL2") == "DAL2"
+
+    def test_trailing_suffix_letter(self):
+        assert normalize_flight_ident("VIR096K") == "VIR96K"
+        assert normalize_flight_ident("VIR96K") == "VIR96K"
+
+    def test_hyphenated_registration_unchanged(self):
+        assert normalize_flight_ident("N123-AB") == "N123-AB"
+        assert normalize_flight_ident("G-ABCD") == "G-ABCD"
+
+    def test_non_matching_or_empty_unchanged(self):
+        assert normalize_flight_ident("") == ""
+        assert normalize_flight_ident("ABCDEF") == "ABCDEF"
+        assert normalize_flight_ident("123456") == "123456"
+
+    def test_idempotent(self):
+        assert normalize_flight_ident(normalize_flight_ident("AFR0096")) == "AFR96"
+        assert normalize_flight_ident(normalize_flight_ident("VIR096K")) == "VIR96K"
+
+    def test_all_zero_digits_collapse_to_zero(self):
+        assert normalize_flight_ident("ABC000") == "ABC0"
 
 
 class TestConfigKeys:
