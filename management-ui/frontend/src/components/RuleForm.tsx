@@ -257,7 +257,7 @@ export function RuleForm({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || !dirty}
               className="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-40"
             >
               {saving ? "Saving..." : "Save"}
