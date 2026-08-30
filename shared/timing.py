@@ -82,6 +82,14 @@ CONFIG_POLL_INTERVAL_SECONDS = 30
 # Wait between reconnect attempts to RabbitMQ / Redis / S3 after a drop.
 RECONNECT_BACKOFF_SECONDS = 10
 
+# How long a receiver source connection must stay continuously up before a
+# reconnect resets that connection's accumulated reconnect_count to zero --
+# so the metric reflects a *current* flapping episode, not one that ended
+# weeks ago. 3x RECONNECT_BACKOFF_SECONDS: long enough that a connection
+# still flapping (fail, wait, retry) can never cross it, short enough that
+# the count reflects recovery quickly.
+RECONNECT_COUNT_RESET_AGE_SECONDS = 30
+
 # Deadline on a RabbitMQ connection sitting in the broker's blocked state --
 # publishers halted by a resource alarm (disk-free or high memory) while the
 # TCP connection itself stays up. pika tears the connection down once this

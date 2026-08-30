@@ -61,6 +61,7 @@ from shared.timing import (
     RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
     RATE_WINDOW_SECONDS,
     RECONNECT_BACKOFF_SECONDS,
+    RECONNECT_COUNT_RESET_AGE_SECONDS,
     TCP_KEEPALIVE_PROBES,
     TCP_KEEPIDLE_SECONDS,
     TCP_KEEPINTVL_SECONDS,
@@ -336,8 +337,15 @@ class Receiver:
         self._connected: dict[tuple[str, int], bool] = {}
         # Count of drop-and-retry cycles per connection -- distinguishes a
         # rock-solid connection from one that's currently "Connected: True"
-        # but flapping every few minutes.
+        # but flapping every few minutes. Reset to 0 once a reconnection has
+        # held continuously for RECONNECT_COUNT_RESET_AGE_SECONDS, so the
+        # metric tracks a current flapping episode rather than accumulating
+        # forever -- see _source_loop.
         self._reconnect_counts: dict[tuple[str, int], int] = {}
+        # time.monotonic() when each connection last came up, or None if it
+        # is not currently up. Only used to decide whether an uptime was
+        # long enough to reset _reconnect_counts on the next drop.
+        self._connected_since: dict[tuple[str, int], Optional[float]] = {}
         # UTC ISO-8601 timestamp of the last message processed for each
         # connection -- None until the first one arrives, so a low-traffic
         # feed's silence is visible directly instead of only inferred from
@@ -362,6 +370,7 @@ class Receiver:
             self._rates[key] = _RateTracker()
             self._connected[key] = False
             self._reconnect_counts[key] = 0
+            self._connected_since[key] = None
             self._last_message_at[key] = None
 
         # Fallback SQLite queue
@@ -583,6 +592,7 @@ class Receiver:
                     _enable_tcp_keepalive(sock)
                     sock.settimeout(5.0)
                     self._connected[key] = True
+                    self._connected_since[key] = time.monotonic()
                     logger.info("Connected to %s:%s (source=%s).", host, port, source)
                     try:
                         if source == "978":
@@ -610,6 +620,24 @@ class Receiver:
                 # try block above raised (OSError/other exception) or the
                 # stream reader returned via its closed-connection break --
                 # a clean shutdown skips this entirely via the is_set() check.
+                #
+                # If the connection that just dropped had held continuously
+                # for at least RECONNECT_COUNT_RESET_AGE_SECONDS, the
+                # earlier flap history is stale -- zero the count so the
+                # increment below starts a fresh episode at 1. A connection
+                # still flapping (fail, wait RECONNECT_BACKOFF_SECONDS,
+                # retry, drop again) never accumulates that much uptime and
+                # keeps counting up. Clear _connected_since either way, so a
+                # cycle that fails inside socket.create_connection itself --
+                # never reaching the success branch -- can't reuse a stale
+                # timestamp from a much older connection.
+                up_since = self._connected_since.get(key)
+                if (
+                    up_since is not None
+                    and time.monotonic() - up_since >= RECONNECT_COUNT_RESET_AGE_SECONDS
+                ):
+                    self._reconnect_counts[key] = 0
+                self._connected_since[key] = None
                 self._reconnect_counts[key] = self._reconnect_counts.get(key, 0) + 1
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
