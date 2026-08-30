@@ -85,7 +85,7 @@ at the top of this page.
 the bucket, Glue database/table, or Athena workgroup. All of it is created
 by the one-shot `aws-setup` container, which deploys a CloudFormation stack
 from `specs/aws/cloudformation.yaml`; `scripts/install.sh` runs it when you
-install the `archive` role. See [docs/aws-setup.md](../docs/aws-setup.md).
+install the `archive` role. See [docs/aws-configuration.md](../docs/aws-configuration.md).
 
 This job's identity is deliberately separate from `archive-processor`'s: it
 needs `s3:DeleteObject` on `index/*` and bucket-level `s3:ListBucket` that

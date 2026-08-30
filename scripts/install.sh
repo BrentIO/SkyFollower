@@ -1112,7 +1112,7 @@ AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
 
 # archive-processor and archive-compaction each authenticate as their own
 # least-privilege IAM identity (both issued by the aws-setup CloudFormation
-# stack -- see docs/aws-setup.md). docker-compose
+# stack -- see docs/aws-configuration.md). docker-compose
 # maps the pair for each into the container as boto3's own
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY; no credentials are passed in
 # code, so an instance role can replace a pair later by leaving it unset.

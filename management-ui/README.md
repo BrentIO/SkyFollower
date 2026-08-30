@@ -366,7 +366,7 @@ identity — is created by the one-shot `aws-setup` container, which deploys
 a CloudFormation stack from `specs/aws/cloudformation.yaml`.
 `scripts/install.sh` runs it (with `--outputs-only`) when you install the
 `management-ui` role, and pre-fills the AWS prompts from the stack outputs.
-See [docs/aws-setup.md](../docs/aws-setup.md).
+See [docs/aws-configuration.md](../docs/aws-configuration.md).
 
 This backend's identity is **read-only** on Athena and Glue, and — because
 CloudFormation resolves `AWS::AccountId` as a pseudo-parameter — those

@@ -33,8 +33,8 @@ export default defineConfig({
 
     nav: [
       { text: "Getting Started", link: "/getting-started/" },
+      { text: "AWS Configuration", link: "/aws-configuration" },
       { text: "Deployment", link: "/deployment/" },
-      { text: "AWS Setup", link: "/aws-setup" },
       { text: "Architecture", link: "/architecture/" },
       { text: "Rules & Areas", link: "/rules-and-areas/" },
       { text: "Components", link: "/components/" },
@@ -47,8 +47,8 @@ export default defineConfig({
         text: "Guide",
         items: [
           { text: "Getting Started", link: "/getting-started/" },
+          { text: "AWS Configuration", link: "/aws-configuration" },
           { text: "Deployment", link: "/deployment/" },
-          { text: "AWS Setup", link: "/aws-setup" },
           { text: "Architecture", link: "/architecture/" },
           { text: "Timing & Cadences", link: "/architecture/timing" },
           { text: "Rules & Areas", link: "/rules-and-areas/" },

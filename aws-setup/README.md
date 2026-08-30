@@ -113,12 +113,12 @@ access-key pairs (`ArchiveProcessorAccessKeyId` /
   `archive-processor` falls back to `s3.db` with no data loss), or change
   `RESOURCE_NAME_PREFIX`, or delete the stack.
 - **Adding an index column** is an append-only, 5-file change — see
-  [docs/aws-setup.md](../docs/aws-setup.md). Never reorder or rename: Athena
+  [docs/aws-configuration.md](../docs/aws-configuration.md). Never reorder or rename: Athena
   results are read positionally by management-ui.
 - **Never change `ARCHIVE_BUCKET_NAME` on an existing stack** — in create
   mode CloudFormation replaces the bucket, and the archive silently starts
   writing to a new empty one. `UpdateReplacePolicy: Retain` saves the data
   but not the situation.
 
-See [docs/aws-setup.md](../docs/aws-setup.md) for the full operator guide,
+See [docs/aws-configuration.md](../docs/aws-configuration.md) for the full operator guide,
 including recovering a wedged stack (`ROLLBACK_COMPLETE`, `DELETE_FAILED`).
