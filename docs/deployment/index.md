@@ -213,7 +213,7 @@ one-shot `aws-setup` container, which `scripts/install.sh` offers to run
 (prompting for your own temporary AWS credentials, never stored) before it
 asks for the AWS values on the `archive` and `management-ui` roles.
 Declining falls through to entering those values by hand. See
-[AWS Setup](/aws-setup).
+[AWS Configuration](/aws-configuration).
 
 See the component pages for everything beyond configuration:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),

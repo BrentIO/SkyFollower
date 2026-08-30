@@ -217,7 +217,7 @@ created by the one-shot `aws-setup` container, which deploys a
 CloudFormation stack from `specs/aws/cloudformation.yaml`. Re-running it
 applies any later schema or policy change as a delta. `scripts/install.sh`
 runs it for you when you install the `archive` role. See
-[docs/aws-setup.md](../docs/aws-setup.md) for the full guide.
+[docs/aws-configuration.md](../docs/aws-configuration.md) for the full guide.
 
 `archive-processor`'s identity gets `s3:GetObject`/`s3:PutObject` on
 `flights/*` and `index/*`, plus bucket-level `s3:ListBucket` for its

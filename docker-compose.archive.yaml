@@ -9,7 +9,7 @@ name: skyfollower-archive
 # credential pair, mapped per-service below from distinct .env keys
 # (ARCHIVE_PROCESSOR_AWS_* / ARCHIVE_COMPACTION_AWS_*). They run under
 # separate least-privilege IAM identities (both created by the aws-setup
-# container's CloudFormation stack -- see docs/aws-setup.md),
+# container's CloudFormation stack -- see docs/aws-configuration.md),
 # so the container-side AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY -- the
 # names boto3 reads -- are deliberately not part of this shared anchor.
 x-archive-environment: &archive-environment

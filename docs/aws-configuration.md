@@ -1,4 +1,17 @@
-# AWS Setup
+# AWS Configuration
+
+**Which roles need AWS:** only `archive` and `management-ui`. The `core`
+role never touches AWS — it runs no S3, Athena, or Glue client and has no
+AWS prompt in `scripts/install.sh`. If AWS prompts appear during a `core`
+install, it's because that host also runs `management-ui` (the common
+core-host topology), and the prompts belong to that role.
+
+**There is no separate manual step.** `scripts/install.sh` runs the
+`aws-setup` container for you as part of the `archive` and `management-ui`
+prompts and writes the resulting bucket/region/credentials straight into
+that host's `.env`. You only run `aws-setup` by hand if you're
+provisioning outside the installer. Have your AWS access-portal session
+credentials ready before starting an `archive` or `management-ui` install.
 
 **None of the AWS resources on this page exist in a fresh SkyFollower
 deployment.** The archive's Parquet index ([Archive
