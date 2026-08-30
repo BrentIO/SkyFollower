@@ -59,11 +59,16 @@ time via a relative path reference in their `requirements.txt`.
   the whole backlog in one pass; `drain_one()` exposes the same per-row
   step (retry accounting, dead-lettering, cooldown, oldest-first) one row
   at a time, for a caller that needs to interleave higher-priority work
-  between rows — the receiver's publisher thread uses it to keep live
-  traffic strictly ahead of backlog drain. `put_many()` inserts a whole
-  list under a single commit, for a caller batching a burst of queued
-  writes (the receiver's overflow-writer thread) rather than paying a
-  commit per message.
+  between rows; `drain_batch(process_fn, max_batch)` is `drain_one()`
+  extended to a bounded batch — same semantics, one `DELETE`/`commit` for
+  the whole succeeded prefix, stopping at the first failure or
+  cooling-down row. The receiver's publisher thread uses `drain_batch()`
+  to keep live traffic ahead of backlog drain (re-checking the live queue
+  between batches) while catching a large post-outage backlog up far
+  faster than one commit per row. `put_many()` inserts a whole list under
+  a single commit, for a caller batching a burst of queued writes (the
+  receiver's overflow-writer thread) rather than paying a commit per
+  message.
 
   The connection runs `journal_mode=WAL` with `synchronous=NORMAL`: a
   commit no longer fsyncs on every call, so `put()`/`put_many()` are cheap

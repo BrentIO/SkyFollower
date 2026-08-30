@@ -263,15 +263,23 @@ The `rabbitmq` thread's inner loop, while the connection is up:
 2. Publishes **everything** waiting on the in-memory queue (bounded per
    pass only so step 1 keeps running under sustained load).
 3. Only when nothing is waiting live, advances the SQLite fallback backlog
-   by **one** row, then loops straight back to step 2.
+   by **one bounded batch** (`_FALLBACK_DRAIN_BATCH_MAX` rows, default
+   100), in one `SELECT` + one `DELETE`/`commit` for the batch, then loops
+   straight back to step 2.
 
 This is a strict priority, not a time-slice or a fair share: a backlog
-drain of any size can never delay a live message by more than a single
-`basic_publish()`, because a backlog row is only ever pulled on a pass
-where the live queue was observed empty. `blocked_connection_timeout` on
-the connection bounds the one case pika can still stall in — the broker
-holding publishers blocked on a resource alarm while the socket stays up —
-by tearing the connection down so the loop reconnects and re-validates.
+drain of any size can never delay a live message by more than
+`_FALLBACK_DRAIN_BATCH_MAX` `basic_publish()` calls, because backlog rows
+are only ever pulled on a pass where the live queue was observed empty,
+and the live queue is re-checked between every batch (never mid-batch).
+That constant is a live-latency budget — deliberately two orders of
+magnitude below the live queue's own per-pass cap — not a
+throughput-maximising number; it exists because draining one row per pass
+capped post-outage catch-up at roughly one SQLite commit per message.
+`blocked_connection_timeout` on the connection bounds the one case pika
+can still stall in — the broker holding publishers blocked on a resource
+alarm while the socket stays up — by tearing the connection down so the
+loop reconnects and re-validates.
 
 ## Fault Tolerance
 
@@ -290,10 +298,11 @@ that message to `queue.db` and latches the connection unhealthy; the
 re-validating the flag (a broker holding publishers blocked keeps
 `process_data_events()` succeeding, so the flag, not a connection
 exception, is what drives the reconnect). Draining is intrinsic to the
-publish loop — it works a backlog row on every pass where no live message
-is waiting, for as long as the connection holds — so there is no separate
-periodic drain trigger. If RabbitMQ drops mid-drain, draining stops
-cleanly and resumes on the next reconnect.
+publish loop — it works a backlog batch on every pass where no live
+message is waiting, for as long as the connection holds — so there is no
+separate periodic drain trigger. If RabbitMQ drops mid-batch, whatever
+rows already published in that batch are deleted, the rest stay queued,
+and draining resumes oldest-first on the next reconnect.
 
 Messages buffered in the in-memory live queue during a brief outage are
 lost if the process is killed before it reconnects (a bounded amount —
@@ -305,6 +314,15 @@ clean reconnect drains the in-memory live queue ahead of the disk
 backlog. `FallbackQueue` runs `synchronous=NORMAL` (WAL): a plain process
 crash still replays every committed row, only a host power loss can drop
 the last few — see [shared/README.md](../shared/README.md).
+
+Publishing uses no publisher confirms, so a backlog row is deleted once
+`basic_publish()` returns without raising, not once the broker durably
+acknowledges it. A crash between a successful publish and the batch's
+`DELETE` re-publishes those rows on restart — at-least-once, never lost.
+Batched draining widens that window from one row to at most
+`_FALLBACK_DRAIN_BATCH_MAX`; it is a difference of degree, not a new
+failure class, and the message processor already absorbs redelivered
+positions via an `INSERT OR IGNORE` on its `(icao_hex, timestamp)` index.
 
 ### Dead-Lettering Poison Messages
 

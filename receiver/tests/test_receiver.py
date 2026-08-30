@@ -951,8 +951,10 @@ class TestFallbackPutWrapsRoutingKey:
 
 # ---------------------------------------------------------------------------
 # _rmq_publish_loop — the sole publishing thread. Strict priority for live
-# messages off the sockets; the fallback backlog is advanced one row at a
-# time, and only when nothing is waiting to go out live.
+# messages off the sockets; the fallback backlog is advanced one bounded
+# batch (_FALLBACK_DRAIN_BATCH_MAX rows) at a time, and only when nothing
+# is waiting to go out live. The live queue is re-checked between batches,
+# never mid-batch.
 # ---------------------------------------------------------------------------
 
 class TestRmqPublishLoop:
@@ -1007,13 +1009,15 @@ class TestRmqPublishLoop:
         assert published[:2] == ["LIVE0", "LIVE1"]
         assert set(published[2:]) == {"BACK0", "BACK1", "BACK2"}
 
-    def test_live_message_arriving_mid_drain_jumps_ahead_of_backlog(self):
+    def test_live_message_arriving_mid_drain_jumps_ahead_of_the_next_batch(self):
         """A large backlog is draining, no live traffic -- then one live
-        message arrives. It must publish before the next backlog row, not
-        wait behind the rest of the backlog."""
+        message arrives partway through a batch. It publishes before the
+        *next* batch starts (the live queue is re-checked between batches),
+        but not mid-batch: whatever rows the current batch already selected
+        still go out first."""
         r = self._make_receiver()
         r._rmq_connected = True
-        for i in range(3):
+        for i in range(5):
             r._fallback_put(f"BACK{i}", "x")
 
         published = []
@@ -1022,15 +1026,42 @@ class TestRmqPublishLoop:
         def record(**kw):
             rk = kw["routing_key"]
             published.append(rk)
+            # Arrives during the first batch (batch size patched to 2).
             if rk == "BACK0":
                 r._live_queue.put_nowait(("LIVE", "y"))
             if len(published) >= 4:
                 r._shutdown.set()
 
         ch.basic_publish.side_effect = record
-        r._rmq_publish_loop(MagicMock(), ch)
+        with patch("receiver.main._FALLBACK_DRAIN_BATCH_MAX", 2):
+            r._rmq_publish_loop(MagicMock(), ch)
 
-        assert published.index("LIVE") < published.index("BACK1")
+        # BACK1 was already in the running batch, so it precedes LIVE;
+        # LIVE then precedes BACK2, the first row of the next batch.
+        assert published[:4] == ["BACK0", "BACK1", "LIVE", "BACK2"]
+
+    def test_backlog_drains_in_bounded_batches(self):
+        """Each backlog pass removes at most _FALLBACK_DRAIN_BATCH_MAX
+        rows, with a single DELETE+commit per batch rather than per row."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        for i in range(10):
+            r._fallback_put(f"BACK{i}", "x")
+
+        published = []
+        ch = MagicMock()
+
+        def record(**kw):
+            published.append(kw["routing_key"])
+            if len(published) >= 10:
+                r._shutdown.set()
+
+        ch.basic_publish.side_effect = record
+        with patch("receiver.main._FALLBACK_DRAIN_BATCH_MAX", 4):
+            r._rmq_publish_loop(MagicMock(), ch)
+
+        assert published == [f"BACK{i}" for i in range(10)]
+        assert r._fallback.depth() == 0
 
     def test_publish_failure_returns_and_persists_the_message(self):
         r = self._make_receiver()
