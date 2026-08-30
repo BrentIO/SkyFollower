@@ -235,7 +235,11 @@ export function RulesView() {
         <ul
           className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
         >
-          {rules.map((rule) => {
+          {[...rules]
+            .sort((a, b) =>
+              (a.name || a.identifier).localeCompare(b.name || b.identifier),
+            )
+            .map((rule) => {
             const dateActive = isRuleDateActive(rule);
             const isSelected = draft?.identifier === rule.identifier && !isNew;
             return (
