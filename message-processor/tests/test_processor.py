@@ -51,6 +51,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     Flight,
     MessageProcessor,
     _CounterAccumulator,
+    _KeyedCounterAccumulator,
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
@@ -68,7 +69,10 @@ from shared.redis_keys import (
     metrics_registration_misses_key,
     metrics_total_messages_processed_key,
     operator_key,
+    rule_trigger_day_key,
+    rule_trigger_lifetime_key,
 )
+from shared.timing import RULE_TRIGGER_DAY_TTL_SECONDS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1371,6 +1375,99 @@ class TestFlushPeriodCounters:
             if "registration_misses" in c.args[2]
         }
         assert metrics_registration_misses_key(p._id, "hour") in registration_keys
+
+
+class TestKeyedCounterAccumulator:
+    def test_records_per_key(self):
+        acc = _KeyedCounterAccumulator()
+        acc.record("rule_a")
+        acc.record("rule_a")
+        acc.record("rule_b", 3)
+        assert acc.flush_and_reset() == {"rule_a": 2, "rule_b": 3}
+
+    def test_flush_clears_pending(self):
+        acc = _KeyedCounterAccumulator()
+        acc.record("rule_a")
+        assert acc.flush_and_reset() == {"rule_a": 1}
+        assert acc.flush_and_reset() == {}
+
+    def test_thread_safety(self):
+        acc = _KeyedCounterAccumulator()
+        keys = ["rule_a", "rule_b", "rule_c"]
+
+        def worker():
+            for _ in range(1000):
+                for k in keys:
+                    acc.record(k)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert acc.flush_and_reset() == {k: 4000 for k in keys}
+
+
+class TestRuleTriggerCounting:
+    def test_records_once_per_matched_rule_on_update(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        p._rules_engine.evaluate.return_value = [
+            {"identifier": "rule1", "name": "", "description": "", "conditions": []},
+            {"identifier": "rule2", "name": "", "description": "", "conditions": []},
+        ]
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        assert p._rule_trigger_counts.flush_and_reset() == {"rule1": 1, "rule2": 1}
+
+    def test_no_record_when_no_rules_match(self):
+        p, _ = _make_processor()
+        p._rules_engine.evaluate.return_value = []
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="EXTERNAL")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+        assert p._rule_trigger_counts.flush_and_reset() == {}
+
+
+class TestFlushRuleTriggerCounts:
+    def test_nothing_recorded_makes_no_redis_call(self):
+        p, mock_redis = _make_processor()
+        p._flush_rule_trigger_counts()
+        mock_redis.pipeline.assert_not_called()
+
+    def test_flushes_lifetime_and_today_with_ttl(self):
+        p, mock_redis = _make_processor()
+        p._rule_trigger_counts.record("rule_a", 5)
+        p._rule_trigger_counts.record("rule_b", 2)
+
+        fixed_now = datetime(2026, 8, 23, 14, 37, 0, tzinfo=timezone.utc)
+        with patch("message_processor.main.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            p._flush_rule_trigger_counts()
+
+        pipe = mock_redis.pipeline.return_value
+        incrby_calls = {(c.args[0], c.args[1]) for c in pipe.incrby.call_args_list}
+        assert (rule_trigger_lifetime_key("rule_a"), 5) in incrby_calls
+        assert (rule_trigger_day_key("rule_a", "2026-08-23"), 5) in incrby_calls
+        assert (rule_trigger_lifetime_key("rule_b"), 2) in incrby_calls
+        assert (rule_trigger_day_key("rule_b", "2026-08-23"), 2) in incrby_calls
+        expire_calls = {(c.args[0], c.args[1]) for c in pipe.expire.call_args_list}
+        assert (rule_trigger_day_key("rule_a", "2026-08-23"), RULE_TRIGGER_DAY_TTL_SECONDS) in expire_calls
+        pipe.execute.assert_called_once()
+
+    def test_flush_clears_the_accumulator(self):
+        p, _ = _make_processor()
+        p._rule_trigger_counts.record("rule_a")
+        p._flush_rule_trigger_counts()
+        assert p._rule_trigger_counts.flush_and_reset() == {}
+
+    def test_redis_error_is_swallowed(self):
+        p, mock_redis = _make_processor()
+        p._rule_trigger_counts.record("rule_a")
+        mock_redis.pipeline.return_value.execute.side_effect = ConnectionError("Redis unavailable")
+        p._flush_rule_trigger_counts()  # must not raise
 
 
 class TestResetLifetimeCounters:

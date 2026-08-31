@@ -74,6 +74,8 @@ from shared.redis_keys import (  # noqa: E402
     config_rules_version_key,
     normalize_flight_ident,
     operator_key,
+    rule_trigger_day_key,
+    rule_trigger_lifetime_key,
 )
 
 try:
@@ -523,6 +525,20 @@ class Rule(BaseModel):
     enabled: bool
     force_archive: bool = False
     conditions: list[Condition] = Field(min_length=1)
+
+
+class RuleWithTriggerCounts(Rule):
+    """`Rule` plus its trigger-count read-outs. Response-only: these two
+    fields are computed fresh from Redis on every GET (see
+    `_rule_trigger_counts`), never accepted on POST/PUT -- the create/update
+    endpoints keep the plain `Rule` body model."""
+
+    triggered_lifetime: int = Field(
+        default=0, description="Times this rule has fired since it was created."
+    )
+    triggered_last_30_days: int = Field(
+        default=0, description="Times this rule has fired in the trailing 30 days (true rolling window)."
+    )
 
 
 class PolygonGeometry(BaseModel):
@@ -1077,6 +1093,63 @@ def _load_rules_array() -> list[dict]:
     return json.loads(raw)
 
 
+_RULE_TRIGGER_WINDOW_DAYS = 30
+
+
+def _rule_trigger_counts(identifiers: list[str]) -> dict[str, tuple[int, int]]:
+    """`(triggered_lifetime, triggered_last_30_days)` for each rule
+    identifier, computed fresh: two MGETs total regardless of rule count --
+    one for every rule's lifetime key, one for every rule's 30 most recent
+    daily keys (today back through 29 days ago). A missing key counts as 0.
+    The 30-day figure is a true trailing window (summed daily keys), not a
+    fixed-boundary reset. Fails soft -- a Redis error yields (0, 0) for
+    every rule rather than failing the whole rule list, since this is a
+    display-only figure alongside the real rule data."""
+    if not identifiers:
+        return {}
+    today = datetime.now(timezone.utc).date()
+    days = [(today - timedelta(days=i)).isoformat() for i in range(_RULE_TRIGGER_WINDOW_DAYS)]
+    lifetime_keys = [rule_trigger_lifetime_key(i) for i in identifiers]
+    day_keys = [rule_trigger_day_key(i, d) for i in identifiers for d in days]
+    try:
+        lifetime_vals = _redis.mget(lifetime_keys)
+        day_vals = _redis.mget(day_keys) if day_keys else []
+    except redis_lib.RedisError:
+        return {ident: (0, 0) for ident in identifiers}
+
+    out: dict[str, tuple[int, int]] = {}
+    for idx, ident in enumerate(identifiers):
+        lv = lifetime_vals[idx]
+        lifetime = int(lv) if lv is not None else 0
+        chunk = day_vals[idx * _RULE_TRIGGER_WINDOW_DAYS:(idx + 1) * _RULE_TRIGGER_WINDOW_DAYS]
+        last_30 = sum(int(v) for v in chunk if v is not None)
+        out[ident] = (lifetime, last_30)
+    return out
+
+
+def _with_trigger_counts(rule: dict, counts: dict[str, tuple[int, int]]) -> dict:
+    lifetime, last_30 = counts.get(rule.get("identifier", ""), (0, 0))
+    return {**rule, "triggered_lifetime": lifetime, "triggered_last_30_days": last_30}
+
+
+def _delete_rule_trigger_keys(identifier: str) -> None:
+    """Remove a deleted rule's trigger-count keys, so a later rule created
+    with the same identifier starts at zero rather than inheriting history.
+    The lifetime key plus every possible daily key over the 31-day TTL
+    window (today back 31 days); DEL on a nonexistent key is a safe no-op.
+    Fails soft -- a leftover key just expires on its own TTL."""
+    today = datetime.now(timezone.utc).date()
+    keys = [rule_trigger_lifetime_key(identifier)]
+    keys += [
+        rule_trigger_day_key(identifier, (today - timedelta(days=i)).isoformat())
+        for i in range(32)
+    ]
+    try:
+        _redis.delete(*keys)
+    except redis_lib.RedisError:
+        pass
+
+
 def _save_rules_array(rules: list[dict]) -> None:
     body = json.dumps(rules)
     if not _engine.load_rules_json(body):
@@ -1088,21 +1161,29 @@ def _save_rules_array(rules: list[dict]) -> None:
     _write_backup_file(_rules_backup_path(), body)
 
 
-@app.get("/api/rules", tags=["rules"], response_model=list[Rule], responses={**_REDIS_ERROR})
+@app.get(
+    "/api/rules",
+    tags=["rules"],
+    response_model=list[RuleWithTriggerCounts],
+    responses={**_REDIS_ERROR},
+)
 def list_rules():
-    return JSONResponse(content=_load_rules_array())
+    rules = _load_rules_array()
+    counts = _rule_trigger_counts([r.get("identifier", "") for r in rules])
+    return JSONResponse(content=[_with_trigger_counts(r, counts) for r in rules])
 
 
 @app.get(
     "/api/rules/{identifier}",
     tags=["rules"],
-    response_model=Rule,
+    response_model=RuleWithTriggerCounts,
     responses={**_NOT_FOUND, **_REDIS_ERROR},
 )
 def get_rule(identifier: str):
     for rule in _load_rules_array():
         if rule.get("identifier") == identifier:
-            return JSONResponse(content=rule)
+            counts = _rule_trigger_counts([identifier])
+            return JSONResponse(content=_with_trigger_counts(rule, counts))
     raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
 
 
@@ -1110,7 +1191,7 @@ def get_rule(identifier: str):
     "/api/rules",
     tags=["rules"],
     status_code=201,
-    response_model=Rule,
+    response_model=RuleWithTriggerCounts,
     responses={**_CONFLICT, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def create_rule(rule: Rule):
@@ -1122,13 +1203,18 @@ def create_rule(rule: Rule):
     rule_dict = rule.model_dump()
     rules.append(rule_dict)
     _save_rules_array(rules)
-    return JSONResponse(status_code=201, content=rule_dict)
+    # A fresh identifier has no counters yet -- these come back 0/0, so the
+    # editor's post-save re-seed shows a consistent shape.
+    return JSONResponse(
+        status_code=201,
+        content=_with_trigger_counts(rule_dict, _rule_trigger_counts([identifier])),
+    )
 
 
 @app.put(
     "/api/rules/{identifier}",
     tags=["rules"],
-    response_model=Rule,
+    response_model=RuleWithTriggerCounts,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def update_rule(identifier: str, rule: Rule):
@@ -1145,7 +1231,9 @@ def update_rule(identifier: str, rule: Rule):
 
     rules[idx] = rule.model_dump()
     _save_rules_array(rules)
-    return JSONResponse(content=rules[idx])
+    return JSONResponse(
+        content=_with_trigger_counts(rules[idx], _rule_trigger_counts([identifier])),
+    )
 
 
 @app.delete(
@@ -1161,6 +1249,7 @@ def delete_rule(identifier: str):
         raise HTTPException(status_code=404, detail=f"Rule '{identifier}' not found")
 
     _save_rules_array(remaining)
+    _delete_rule_trigger_keys(identifier)
     return Response(status_code=204)
 
 

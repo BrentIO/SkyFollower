@@ -91,6 +91,10 @@ export interface Rule {
   enabled: boolean;
   force_archive: boolean;
   conditions: Condition[];
+  // Response-only: computed fresh by the backend on every GET, never sent
+  // on create/update. Absent on a brand-new unsaved rule.
+  triggered_lifetime?: number;
+  triggered_last_30_days?: number;
 }
 
 export function emptyRule(): Rule {

@@ -186,6 +186,14 @@ ROUTE_TTL_SECONDS = 3 * 86400
 # default lives here.
 DEFAULT_FLIGHT_TTL_SECONDS = 300
 
+# --- Rule trigger counters --------------------------------------------------
+
+# TTL the message processor sets on each rule_triggers:{identifier}:{date}
+# day key. One day of margin past the 30-day window the management-ui
+# backend sums, so a day key can never expire mid-read at the boundary.
+# The lifetime key (rule_triggers:{identifier}:lifetime) never expires.
+RULE_TRIGGER_DAY_TTL_SECONDS = 31 * 86400
+
 
 # --- Cross-file invariants ------------------------------------------------
 # Checked at import so a later edit to one value cannot silently break the

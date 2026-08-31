@@ -249,6 +249,28 @@ def metrics_total_messages_processed_key(message_processor_id: str, period: str)
     return f"metrics:message_processor:{message_processor_id}:total_messages_processed:{period}"
 
 
+def rule_trigger_lifetime_key(identifier: str) -> str:
+    """
+    Lifetime count of times a rule has fired (once per flight, the first
+    time it matches -- not once per message). Never expires. Keyed by rule
+    identifier, so a deleted-then-recreated identifier starts clean;
+    DELETE /api/rules/{identifier} removes this key explicitly.
+    rule_triggers:{identifier}:lifetime
+    """
+    return f"rule_triggers:{identifier}:lifetime"
+
+
+def rule_trigger_day_key(identifier: str, date: str) -> str:
+    """
+    Count of times a rule fired on one UTC day (`date` is YYYY-MM-DD). Set
+    with a 31-day TTL (shared.timing.RULE_TRIGGER_DAY_TTL_SECONDS), so old
+    days clean themselves up with no sweep job. The management-ui backend
+    sums the last 30 of these for a rule's rolling-30-day figure.
+    rule_triggers:{identifier}:{date}
+    """
+    return f"rule_triggers:{identifier}:{date}"
+
+
 def metrics_flights_archived_key(period: str) -> str:
     """
     Counter for flights successfully written to S3 by the archive processor.

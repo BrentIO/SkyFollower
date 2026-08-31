@@ -20,7 +20,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/Rule'
+                  $ref: '#/components/schemas/RuleWithTriggerCounts'
                 type: array
                 title: Response List Rules Api Rules Get
         '500':
@@ -143,7 +143,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
+                $ref: '#/components/schemas/RuleWithTriggerCounts'
               examples:
                 All aircraft below 10,000:
                   value: *id001
@@ -206,7 +206,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
+                $ref: '#/components/schemas/RuleWithTriggerCounts'
               examples:
                 All aircraft below 10,000:
                   value: *id001
@@ -271,7 +271,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
+                $ref: '#/components/schemas/RuleWithTriggerCounts'
               examples:
                 All aircraft below 10,000:
                   value: *id001
@@ -2193,6 +2193,184 @@ components:
         force_archive: true
         identifier: af1_1090_verified
         name: Air Force One overhead, verified via 1090
+    RuleWithTriggerCounts:
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          title: Name
+          default: ''
+        description:
+          type: string
+          maxLength: 2000
+          title: Description
+          default: ''
+        identifier:
+          type: string
+          maxLength: 64
+          pattern: ^\S+$
+          title: Identifier
+        enabled:
+          type: boolean
+          title: Enabled
+        force_archive:
+          type: boolean
+          title: Force Archive
+          default: false
+        conditions:
+          items:
+            oneOf:
+            - $ref: '#/components/schemas/AltitudeCondition'
+            - $ref: '#/components/schemas/VelocityCondition'
+            - $ref: '#/components/schemas/VerticalSpeedCondition'
+            - $ref: '#/components/schemas/HeadingCondition'
+            - $ref: '#/components/schemas/DateCondition'
+            - $ref: '#/components/schemas/IdentCondition'
+            - $ref: '#/components/schemas/SquawkCondition'
+            - $ref: '#/components/schemas/MilitaryCondition'
+            - $ref: '#/components/schemas/ReceiverSourceCondition'
+            - $ref: '#/components/schemas/OperatorAirlineDesignatorCondition'
+            - $ref: '#/components/schemas/AircraftTypeDesignatorCondition'
+            - $ref: '#/components/schemas/AircraftRegistrationCondition'
+            - $ref: '#/components/schemas/AircraftIcaoHexCondition'
+            - $ref: '#/components/schemas/AircraftPowerplantCountCondition'
+            - $ref: '#/components/schemas/WakeTurbulenceCategoryCondition'
+            - $ref: '#/components/schemas/MatchedRulesCondition'
+            - $ref: '#/components/schemas/AreaCondition'
+            discriminator:
+              propertyName: type
+              mapping:
+                aircraft_icao_hex: '#/components/schemas/AircraftIcaoHexCondition'
+                aircraft_powerplant_count: '#/components/schemas/AircraftPowerplantCountCondition'
+                aircraft_registration: '#/components/schemas/AircraftRegistrationCondition'
+                aircraft_type_designator: '#/components/schemas/AircraftTypeDesignatorCondition'
+                altitude: '#/components/schemas/AltitudeCondition'
+                area: '#/components/schemas/AreaCondition'
+                date: '#/components/schemas/DateCondition'
+                heading: '#/components/schemas/HeadingCondition'
+                ident: '#/components/schemas/IdentCondition'
+                matched_rules: '#/components/schemas/MatchedRulesCondition'
+                military: '#/components/schemas/MilitaryCondition'
+                operator_airline_designator: '#/components/schemas/OperatorAirlineDesignatorCondition'
+                receiver_source: '#/components/schemas/ReceiverSourceCondition'
+                squawk: '#/components/schemas/SquawkCondition'
+                velocity: '#/components/schemas/VelocityCondition'
+                vertical_speed: '#/components/schemas/VerticalSpeedCondition'
+                wake_turbulence_category: '#/components/schemas/WakeTurbulenceCategoryCondition'
+          type: array
+          minItems: 1
+          title: Conditions
+        triggered_lifetime:
+          type: integer
+          title: Triggered Lifetime
+          description: Times this rule has fired since it was created.
+          default: 0
+        triggered_last_30_days:
+          type: integer
+          title: Triggered Last 30 Days
+          description: Times this rule has fired in the trailing 30 days (true rolling
+            window).
+          default: 0
+      type: object
+      required:
+      - identifier
+      - enabled
+      - conditions
+      title: RuleWithTriggerCounts
+      description: '`Rule` plus its trigger-count read-outs. Response-only: these
+        two
+
+        fields are computed fresh from Redis on every GET (see
+
+        `_rule_trigger_counts`), never accepted on POST/PUT -- the create/update
+
+        endpoints keep the plain `Rule` body model.'
+      examples:
+      - conditions:
+        - operator: maximum
+          type: altitude
+          value: '10000'
+        description: Any aircraft with an altitude at or below 10,000ft
+        enabled: true
+        identifier: acft_10k_and_below
+        name: All aircraft below 10,000
+      - conditions:
+        - operator: maximum
+          type: altitude
+          value: '15000'
+        - operator: minimum
+          type: altitude
+          value: '12000'
+        - operator: equals
+          type: operator_airline_designator
+          value: UAL
+        - operator: equals
+          type: aircraft_type_designator
+          value: B752
+        - operator: equals
+          type: heading
+          value: 340,020
+        - operator: minimum
+          type: vertical_speed
+          value: '500'
+        description: United Airlines Boeing 757-200's between 12,000 and 15,000ft
+          heading north after takeoff
+        enabled: true
+        identifier: Northbound_United_B75s_12k-15k
+        name: UAL B757-200
+      - conditions:
+        - operator: equals
+          type: ident
+          value: DAL2
+        - operator: minimum
+          type: date
+          value: '2022-12-24'
+        - operator: maximum
+          type: date
+          value: '2022-12-24'
+        - operator: equals
+          type: area
+          value: LI
+        description: Grandma's Flight Home Arriving on Christmas Eve
+        enabled: true
+        identifier: grandma
+        name: Grandma's Flight Home
+      - conditions:
+        - operator: equals
+          type: aircraft_type_designator
+          value: B52
+        - operator: minimum
+          type: date
+          value: 2026-01-16T04:31Z
+        - operator: maximum
+          type: date
+          value: 2027-06-27T18:50Z
+        description: Any B-52 (aircraft_type_designator B52) seen between 2026-01-15
+          11:31 PM EST and 2027-06-27 2:50 PM EDT (entered in US Eastern time, stored
+          as UTC -- note the date rolls back a day for the first one), force-archived
+          even if the flight would otherwise be skipped for being external-only
+        enabled: true
+        force_archive: true
+        identifier: b52_force_persist_2026_2027
+        name: B-52 Force Persist Window
+      - conditions:
+        - operator: equals
+          type: aircraft_icao_hex
+          value: ADFDF8
+        - operator: equals
+          type: receiver_source
+          value:
+          - '1090'
+        description: ADFDF8 (Air Force One) force-archived only when actually received
+          via 1090MHz ADS-B, not merely via an EXTERNAL-tagged source -- an EXTERNAL
+          source's provenance isn't guaranteed the way a direct receive path's is,
+          so seeing it there alone doesn't confirm it's actually nearby. If it isn't
+          showing up on 1090, skip the force-archive and let the normal external-only
+          archive skip apply.
+        enabled: true
+        force_archive: true
+        identifier: af1_1090_verified
+        name: Air Force One overhead, verified via 1090
     SquawkCondition:
       properties:
         type:
@@ -2315,4 +2493,3 @@ components:
       - operator
       - value
       title: WakeTurbulenceCategoryCondition
-
