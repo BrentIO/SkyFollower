@@ -87,8 +87,6 @@ the `config:flight_ttl_seconds` Redis key, not in any `.env`.
 
 | Variable | Required | Default |
 |---|---|---|
-| `RECEIVER_NAME` | ✅ | — |
-| `RECEIVER_SOURCES` | ✅ | — |
 | `RABBITMQ_HOST` | ✅ | — |
 | `RABBITMQ_PORT` | ❌ | `5672` |
 | `RABBITMQ_USERNAME` | ✅ | — |
@@ -101,7 +99,12 @@ the `config:flight_ttl_seconds` Redis key, not in any `.env`.
 | `REDIS_PORT` | ❌ | `6379` |
 | `REDIS_PASSWORD` | ❌ | — |
 
-See [Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)
+`RECEIVER_NAME` and `RECEIVER_SOURCES` aren't in this table: they're not
+read from `.env`. Each instance's values are literals in its generated
+`skyfollower-receiver-{name-slug}` compose service block, appended by
+`scripts/install.sh` (one shared `receiver/` folder and `.env` per host,
+one block per instance). See
+[Receiver](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#configuration)
 for what each variable means, `RECEIVER_SOURCES`'s `host:port:source`
 format, and the multiple-receiver-instance pattern.
 

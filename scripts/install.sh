@@ -18,10 +18,13 @@
 # host). Omit entirely for an interactive multi-select prompt.
 #
 # --non-interactive reads every value this run needs from already-exported
-# environment variables (the same names written into .env -- RECEIVER_NAME,
-# RABBITMQ_HOST, etc.) instead of prompting, and requires --role at least
-# once. Every missing required value is reported together as one error, not
-# one per restart.
+# environment variables (RECEIVER_NAME, RECEIVER_SOURCES, RABBITMQ_HOST,
+# etc. -- the same names, whether they end up in .env or, for the
+# per-instance receiver/message-processor values, a generated compose
+# service block) instead of prompting, and requires --role at least once.
+# The receiver role configures exactly one instance per non-interactive
+# run; add more with a repeated run or interactively. Every missing
+# required value is reported together as one error, not one per restart.
 #
 # --upgrade re-resolves the latest release tag and runs `docker compose
 # pull && up -d` in every role directory found under the install root,
@@ -546,7 +549,10 @@ role_files() {
 role_data_dirs() {
   case "$1" in
     receiver)
-      echo "data/receiver"
+      # Nothing fixed to create here: which instances this node hosts (and
+      # so which data/skyfollower-receiver-{slug} directories exist) isn't
+      # known until collect_receiver_env() has run its prompts, which
+      # creates each one itself as it appends that instance's service block.
       ;;
     core)
       echo "data/rabbitmq data/redis"
@@ -576,15 +582,19 @@ fetch_role() {
   for rel_path in $(role_files "$role"); do
     local dest_path="${role_dir}/${rel_path}"
     mkdir -p "$(dirname "$dest_path")"
-    # message-processor's compose file stops being a static fetched
-    # artifact the moment collect_message_processor_env() appends this
-    # node's per-ID service blocks into it -- re-fetching over it on a
-    # later run would silently discard every already-running instance's
-    # block. No-clobber it exactly like a config/*.example's real target
-    # below: fetched fresh only the first time, left entirely alone once it
-    # exists (delete it by hand to pick up template/anchor changes).
-    if [ "$role" = "message-processor" ] && [ "$rel_path" = "docker-compose.message-processor.yaml" ] && [ -e "$dest_path" ]; then
-      echo "  ${rel_path} (already exists -- left as-is, holds this node's generated processor list)"
+    # The message-processor and receiver compose files stop being static
+    # fetched artifacts the moment collect_*_env() appends this node's
+    # generated per-instance service blocks into them -- re-fetching over
+    # one on a later run would silently discard every already-running
+    # instance's block. No-clobber them exactly like a config/*.example's
+    # real target below: fetched fresh only the first time, left entirely
+    # alone once they exist (delete by hand to pick up template/anchor
+    # changes).
+    if [ -e "$dest_path" ] && {
+      { [ "$role" = "message-processor" ] && [ "$rel_path" = "docker-compose.message-processor.yaml" ]; } ||
+      { [ "$role" = "receiver" ] && [ "$rel_path" = "docker-compose.receiver.yaml" ]; }
+    }; then
+      echo "  ${rel_path} (already exists -- left as-is, holds this node's generated service blocks)"
       continue
     fi
     echo "  ${rel_path}"
@@ -635,12 +645,49 @@ fetch_role() {
 
 collect_receiver_env() {
   local role_dir="$1" env_file="${1}/.env"
+  local compose_file="${role_dir}/docker-compose.receiver.yaml"
   echo "-- ${role_dir} (receiver) --"
-  # RECEIVER_NAME itself was already prompted for once, up in the role
-  # loop -- it doubles as the install folder name, so it has to be known
-  # before this function's fetch_role/role_dir even exist. Nothing to do
-  # here but write the value that's already in scope.
-  RECEIVER_SOURCES="$(prompt_receiver_sources "$(existing_env_value "$env_file" RECEIVER_SOURCES)")"
+
+  # One or more receiver instances share this host and this .env. Each
+  # instance is just a name (Home Assistant label + Redis SET NX identity)
+  # plus its own RECEIVER_SOURCES, baked as literals into a generated
+  # service block in docker-compose.receiver.yaml -- the connection
+  # settings collected further down are shared across every instance.
+  # Re-running install.sh for the receiver role appends any names whose
+  # slug isn't already a block. No fleet-count/ordinal prompts: receivers
+  # have no positional consistent-hash slots the way message processors do.
+  local existing_slugs
+  existing_slugs="$(existing_receiver_slugs "$compose_file")"
+
+  local first=1
+  while true; do
+    if [ "$first" -eq 0 ]; then
+      [ "$NON_INTERACTIVE" -eq 1 ] && break   # non-interactive: exactly one instance
+      local another
+      read -r -p "  Add another receiver on this host? [y/N]: " another </dev/tty
+      { [ -n "$another" ] && [[ "$another" =~ ^[Yy] ]]; } || break
+    fi
+
+    RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Receiver name (Home Assistant label + Redis identity)" "$(default_receiver_name)")"
+    local slug
+    slug="$(sanitize_identifier "$RECEIVER_NAME")"
+    if [ -z "$slug" ]; then
+      record_problem "RECEIVER_NAME must contain at least one letter or number (got '${RECEIVER_NAME}')"
+    elif printf '%s\n' "$existing_slugs" | grep -qx "$slug"; then
+      echo "  skyfollower-receiver-${slug} already has a service block in ${compose_file} -- leaving it as-is."
+    else
+      RECEIVER_SOURCES="$(prompt_receiver_sources "")"
+      mkdir -p "${role_dir}/data/skyfollower-receiver-${slug}"
+      append_receiver_service "$compose_file" "$RECEIVER_NAME" "$RECEIVER_SOURCES"
+      existing_slugs="$(printf '%s\n%s' "$existing_slugs" "$slug")"
+      echo "  Added skyfollower-receiver-${slug}."
+    fi
+
+    first=0
+    [ "$NON_INTERACTIVE" -eq 1 ] && break
+  done
+
+  echo
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(existing_env_value "$env_file" RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(existing_env_value_or "$env_file" RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(existing_env_value_or "$env_file" RABBITMQ_USERNAME skyfollower)")"
@@ -664,17 +711,12 @@ collect_receiver_env() {
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# Operator-chosen name for this receiver -- also used as the install
-# folder name. With REDIS_HOST set below, this is the receiver's actual
-# identity (claimed via Redis SET NX on first boot, then persisted to
-# data/receiver/receiver_id forever after); with REDIS_HOST unset, it's
-# purely a Home Assistant display label and the receiver falls back to a
-# generated UUID identity instead.
-RECEIVER_NAME=${RECEIVER_NAME}
-
-# Comma-separated host:port:source triples, one per readsb connection.
-# source is one of 1090, 978, EXTERNAL.
-RECEIVER_SOURCES=${RECEIVER_SOURCES}
+# Which receivers run on this node -- and each one's RECEIVER_NAME
+# (Home Assistant label + Redis identity) and RECEIVER_SOURCES
+# (comma-separated host:port:source triples; source is 1090, 978, or
+# EXTERNAL) -- lives in docker-compose.receiver.yaml as generated service
+# blocks, not here. Re-run install.sh for the receiver role to add more.
+# The connection settings below are shared across every instance.
 
 RABBITMQ_HOST=${RABBITMQ_HOST}
 RABBITMQ_PORT=${RABBITMQ_PORT}
@@ -922,6 +964,40 @@ append_message_processor_service() {
     environment:
       <<: *message-processor-environment
       MESSAGE_PROCESSOR_ID: ${id}
+SERVICE_EOF
+}
+
+existing_receiver_slugs() {
+  # Name-slugs already holding a generated service block in this node's
+  # docker-compose.receiver.yaml, one per line -- empty (not an error) if
+  # the file doesn't exist yet or has no blocks appended. Used so a re-run
+  # only appends the instances it doesn't already find.
+  local compose_file="$1"
+  [ -f "$compose_file" ] || return 0
+  grep -E '^  skyfollower-receiver-[a-z0-9_-]+:' "$compose_file" 2>/dev/null \
+    | sed -E 's/^  skyfollower-receiver-([a-z0-9_-]+):.*/\1/' || true
+}
+
+append_receiver_service() {
+  # Appends one concrete receiver service block referencing this file's own
+  # x-receiver/x-receiver-environment anchors. RECEIVER_NAME keeps the
+  # operator's original casing (Home Assistant label + Redis SET NX
+  # identity use it verbatim); the sanitized slug is used only for the
+  # service name, container name, and per-instance data directory. Quote
+  # RECEIVER_SOURCES -- it's a compound host:port:source,... string.
+  local compose_file="$1" name="$2" sources="$3" slug
+  slug="$(sanitize_identifier "$name")"
+  cat >> "$compose_file" <<SERVICE_EOF
+
+  skyfollower-receiver-${slug}:
+    <<: *receiver
+    container_name: skyfollower-receiver-${slug}
+    volumes:
+      - ./data/skyfollower-receiver-${slug}:/app/data
+    environment:
+      <<: *receiver-environment
+      RECEIVER_NAME: ${name}
+      RECEIVER_SOURCES: "${sources}"
 SERVICE_EOF
 }
 
@@ -1181,25 +1257,19 @@ ENV_EOF
 # ---------------------------------------------------------------------------
 
 default_folder_for_role() {
-  case "$1" in
-    receiver) echo "receiver" ;;
-    *) echo "$1" ;;
-  esac
+  # Every role's install folder is a fixed, boring name matching the role.
+  echo "$1"
 }
 
 project_name_for_folder() {
-  # Mirrors Compose's own project-name derivation, but sanitized and with
-  # the "receiver" special case: Compose always appends the service name
-  # ("receiver") when it builds a container name, so a folder called
-  # "receiver" -- the common default -- would otherwise double up into
-  # skyfollower-receiver-receiver-1.
+  # Mirrors Compose's own project-name derivation, sanitized. Both the
+  # receiver and message-processor compose files now carry an authoritative
+  # top-level `name:` (skyfollower-receiver / skyfollower-message-processor)
+  # that this must agree with -- for the fixed role folders it does by
+  # construction (skyfollower-<folder>).
   local folder_name="$1"
   local sanitized
   sanitized="$(sanitize_identifier "$folder_name")"
-  case "$sanitized" in
-    receiver) sanitized="" ;;
-    *-receiver) sanitized="${sanitized%-receiver}" ;;
-  esac
   if [ -n "$sanitized" ]; then
     echo "skyfollower-${sanitized}"
   else
@@ -1674,24 +1744,6 @@ main() {
   for role in "${SELECTED_ROLES[@]}"; do
     local folder_name
     folder_name="$(default_folder_for_role "$role")"
-    if [ "$role" = "receiver" ]; then
-      # One unified prompt replaces the old separate "folder name"
-      # and RECEIVER_NAME prompts -- the same operator-chosen name becomes
-      # the install folder (sanitized the same way project_name_for_folder
-      # already sanitizes it), the HA-displayed label, and (once Redis is
-      # configured below) the name claimed via Redis SET NX, so there's
-      # exactly one place to name a receiver instead of two prompts that
-      # could disagree. default_receiver_name() (the machine's uppercased
-      # short hostname) carries forward as this prompt's
-      # suggested default. prompt_string is already non-interactive-safe
-      # (reads RECEIVER_NAME from the environment instead of prompting),
-      # so this isn't gated on NON_INTERACTIVE the way the old FOLDER_NAME
-      # prompt was.
-      echo
-      RECEIVER_NAME="$(prompt_string RECEIVER_NAME "Receiver name (install folder + Home Assistant label)" "$(default_receiver_name)")"
-      folder_name="$(sanitize_identifier "$RECEIVER_NAME")"
-      [ -n "$folder_name" ] || folder_name="$(default_folder_for_role "$role")"
-    fi
     local role_dir="${INSTALL_ROOT}/${folder_name}"
     mkdir -p "$role_dir"
 

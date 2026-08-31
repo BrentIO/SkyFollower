@@ -1,44 +1,59 @@
-# No name: -- the Compose project name comes from COMPOSE_PROJECT_NAME in
-# this host's .env, falling back to the deployment directory's own basename.
-# That is what lets more than one receiver run on a single host: each gets
-# its own folder, and therefore its own project namespace.
+name: skyfollower-receiver
 
+# Interpolated from this host's .env (written by scripts/install.sh).
+# Named one variable at a time rather than `env_file: .env`, so a container
+# only ever holds the values it reads. RECEIVER_NAME / RECEIVER_SOURCES are
+# not here: each generated service block below sets them as literals, since
+# they are the only two values that differ per receiver instance and are
+# decided by install.sh at generation time, not read from .env.
+x-receiver-environment: &receiver-environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  RABBITMQ_HOST: ${RABBITMQ_HOST}
+  RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+  RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+  MQTT_HOST: ${MQTT_HOST}
+  MQTT_PORT: ${MQTT_PORT:-1883}
+  MQTT_USERNAME: ${MQTT_USERNAME}
+  MQTT_PASSWORD: ${MQTT_PASSWORD}
+  # Optional -- unset REDIS_HOST disables identity claim/heartbeat, message
+  # counters, and core-health registration entirely.
+  REDIS_HOST: ${REDIS_HOST:-}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+# Everything identical across instances on this host. What differs per
+# instance -- RECEIVER_NAME (Home Assistant label + Redis identity) and
+# RECEIVER_SOURCES -- is baked as a literal into each generated service
+# block, along with a per-instance data directory
+# (./data/skyfollower-receiver-{name-slug}) so each instance's fallback
+# queue and receiver_id file stay independent. scripts/install.sh appends
+# one concrete service block below per receiver this node hosts; re-run it
+# for the `receiver` role to add another.
+#
+# deploy.replicas cannot substitute for this: a replica's hostname is its
+# container ID, so there is nothing inside the container to derive a
+# distinct RECEIVER_NAME from, and N replicas would share one /app/data
+# bind mount -- one queue.db and one receiver_id written by N processes.
+x-receiver: &receiver
+  image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
+  restart: unless-stopped
+  # RAM-backed, not the container's writable layer -- the healthcheck
+  # heartbeat file is rewritten every 15s and must never hit the host's
+  # eMMC/SD storage the way /app/data (the fallback queue) legitimately does.
+  tmpfs:
+    - /app/health
+  healthcheck:
+    test: ["CMD", "python", "/app/healthcheck.py"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+
+# No services in this repo-provided template -- it exists only to hold the
+# two anchors above. scripts/install.sh appends one service block per
+# receiver instance immediately below this line the first time it fetches
+# this file for a node, and leaves already-appended blocks untouched on a
+# later re-run that only adds more (delete the file by hand to pick up
+# template/anchor changes).
 services:
-
-  receiver:
-    image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
-    restart: unless-stopped
-    # Named one by one from this host's .env rather than `env_file: .env`,
-    # so a container only ever holds the values it actually reads.
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      RECEIVER_NAME: ${RECEIVER_NAME}
-      RECEIVER_SOURCES: ${RECEIVER_SOURCES}
-      RABBITMQ_HOST: ${RABBITMQ_HOST}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
-      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
-      MQTT_HOST: ${MQTT_HOST}
-      MQTT_PORT: ${MQTT_PORT:-1883}
-      MQTT_USERNAME: ${MQTT_USERNAME}
-      MQTT_PASSWORD: ${MQTT_PASSWORD}
-      # Optional -- unset REDIS_HOST disables identity claim/heartbeat,
-      # message counters, and core-health registration entirely.
-      REDIS_HOST: ${REDIS_HOST:-}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    volumes:
-      # Bind mount, matching rabbitmq/redis on the core host -- the data
-      # directory stays directly readable by the operator on the host.
-      - ./data/receiver:/app/data
-    # RAM-backed, not the container's writable layer -- the healthcheck
-    # heartbeat file is rewritten every 15s and must never hit the host's
-    # eMMC/SD storage the way /app/data (the fallback queue) legitimately does.
-    tmpfs:
-      - /app/health
-    healthcheck:
-      test: ["CMD", "python", "/app/healthcheck.py"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 30s

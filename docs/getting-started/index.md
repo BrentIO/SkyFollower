@@ -153,10 +153,13 @@ docker compose up -d
 
 Notes per role:
 
-- **Receiver** — give each instance its own folder and `.env`; a second
-  instance (same host or a different one) just needs its own
-  `COMPOSE_PROJECT_NAME` and `RECEIVER_SOURCES` (see receiver/README.md's
-  "Running Multiple Receiver Instances").
+- **Receiver** — one fixed `receiver/` folder and one shared `.env` per
+  host; each instance is a generated service block in
+  `docker-compose.receiver.yaml` (with its own `RECEIVER_NAME` /
+  `RECEIVER_SOURCES` and `./data/skyfollower-receiver-{slug}`). Re-run
+  `scripts/install.sh` for the `receiver` role to add another. Same
+  shape as the message processor — see receiver/README.md's "Running
+  Multiple Receiver Instances".
 - **Core** — brings up `ofelia` with everything else; `runner-*` services
   stay behind the `runners` Compose profile so `up -d` never launches
   them all at once. The core host also runs `management-ui` as its own
