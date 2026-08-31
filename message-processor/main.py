@@ -152,6 +152,15 @@ def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
 # sourced from a message _decode_1090 couldn't CRC-verify.
 _RESERVED_SQUAWKS = frozenset({"7500", "7600", "7700", "7777"})
 
+
+def _short_hash(full: Optional[str]) -> str:
+    """Last 8 characters of a config version hash, for a compact,
+    directly-comparable read in Home Assistant. "unknown" if no hash has
+    been loaded yet. Only ever applied at the MQTT-publish boundary --
+    never where a version is stored or compared."""
+    return full[-8:] if full else "unknown"
+
+
 # Repeat-sighting count for confirming a reserved squawk or an ident
 # sourced from an unverifiable message -- matches SkyFollower-legacy's
 # mitigation for the same false-positive pattern. The trailing time window
@@ -1747,6 +1756,19 @@ class MessageProcessor:
         )
         self._mqtt.publish(f"{base}/active_flights", str(active), retain=True)
 
+        # The rules/areas config hash this instance has actually loaded --
+        # last 8 chars only, short-hash style, for a compact read in Home
+        # Assistant and direct comparison against core-health's canonical
+        # sensor. Truncation happens only here at the publish boundary; the
+        # engine keeps and compares the full hash internally. "unknown"
+        # until the first successful load.
+        self._mqtt.publish(
+            f"{base}/rules_version", _short_hash(self._rules_engine.rules_version), retain=True
+        )
+        self._mqtt.publish(
+            f"{base}/areas_version", _short_hash(self._rules_engine.areas_version), retain=True
+        )
+
         # registration_misses/operator_misses/total_messages_processed are
         # write-only from this component's perspective -- accumulated in
         # memory and flushed to Redis by _flush_period_counters() above,
@@ -1866,6 +1888,13 @@ class MessageProcessor:
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
             _Sensor("active_flights", "Active Flights", "mdi:airplane", "measurement"),
+            # Opaque short-hash identifiers, not measurements -- no
+            # state_class, no unit. The last 8 chars of the config hash
+            # this instance has actually loaded; compare against
+            # core-health's canonical rules_version/areas_version to see
+            # whether this processor is up to date.
+            _Sensor("rules_version", "Rules Version", "mdi:file-document-check", None),
+            _Sensor("areas_version", "Areas Version", "mdi:map-check", None),
             # registration_misses/operator_misses/total_messages_processed
             # have no entry here -- core-health publishes their HA discovery
             # config on this component's behalf, using this exact device

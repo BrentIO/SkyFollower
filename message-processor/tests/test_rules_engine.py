@@ -941,6 +941,25 @@ class TestReloadIfChanged:
         assert len(engine._rules) == 1
         assert engine._rules_version == "v1"
 
+    def test_public_version_properties_expose_loaded_hash(self):
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        assert engine.rules_version is None
+        assert engine.areas_version is None
+
+        rules_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        areas_json = json.dumps({"type": "FeatureCollection", "features": []})
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "ruleshash",
+            "config:areas:version": "areashash",
+            "config:rules": rules_json,
+            "config:areas": areas_json,
+        }.get(key)
+
+        engine.reload_if_changed()
+        assert engine.rules_version == "ruleshash"
+        assert engine.areas_version == "areashash"
+
     def test_no_reload_when_version_unchanged(self):
         redis = MagicMock()
         engine = RulesEngine(redis)

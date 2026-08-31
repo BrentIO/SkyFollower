@@ -95,6 +95,23 @@ class RulesEngine:
         self.last_error: Optional[str] = None
 
     # ------------------------------------------------------------------
+    # Loaded-config version accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def rules_version(self) -> Optional[str]:
+        """Full SHA-256 hash of the rules config this engine has actually
+        loaded (lags the canonical Redis value if a bad payload was pushed
+        and rejected). None until the first successful load."""
+        return self._rules_version
+
+    @property
+    def areas_version(self) -> Optional[str]:
+        """Full SHA-256 hash of the areas config this engine has actually
+        loaded. None until the first successful load."""
+        return self._areas_version
+
+    # ------------------------------------------------------------------
     # Config reload
     # ------------------------------------------------------------------
 

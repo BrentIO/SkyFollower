@@ -185,6 +185,7 @@ passthrough fields described above:
 |---|---|
 | `SkyFollower/core-health/status` | `ONLINE`/`OFFLINE`, this component's own availability (LWT) |
 | `SkyFollower/core-health/statistic/{started_at,rabbitmq_connected,redis_connected}` | General |
+| `SkyFollower/core-health/statistic/{rules_version,areas_version}` | Canonical rules/areas config version (last 8 chars of `config:rules:version` / `config:areas:version` from Redis) — compare against each processor's own `rules_version`/`areas_version` sensor. Skipped (retained value left alone) while the key is absent or Redis is unreadable |
 | `SkyFollower/core-health/rabbitmq/statistic/{field}` | Broker-wide RabbitMQ stats |
 | `SkyFollower/core-health/redis/statistic/{field}` | Redis stats |
 | `SkyFollower/core-health/message-processor/{id}/statistic/{field}` | A processor's queue stats |

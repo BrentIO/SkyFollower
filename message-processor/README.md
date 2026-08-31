@@ -373,6 +373,8 @@ All topics use the root `SkyFollower`.
 | `local_archive_queue_depth` | Integer as string | Completed flights queued in `completed_flights.db` fallback |
 | `dead_letter_queue_depth` | Integer as string | Completed flights dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Flights](#dead-lettering-poison-flights)) |
 | `active_flights` | Integer as string | Flights currently tracked in the active store |
+| `rules_version` | String | Last 8 characters of the SHA-256 hash of the rules config **this instance has actually loaded** (`"unknown"` until the first successful load). Lags the canonical value published by `core-health` if a bad payload was pushed and rejected, or if this instance hasn't polled since the last save. Truncated only at publish; the engine keeps the full hash for its own comparison |
+| `areas_version` | String | Last 8 characters of the SHA-256 hash of the areas config this instance has actually loaded (`"unknown"` until the first successful load). Same semantics as `rules_version` |
 
 `registration_misses_{hour,today,lifetime}`, `operator_misses_{today,lifetime}`,
 and `total_messages_processed_{hour,today,lifetime}` are **not** in the table
