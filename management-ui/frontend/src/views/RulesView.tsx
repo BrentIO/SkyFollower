@@ -13,6 +13,7 @@ import {
   type Rule,
 } from "../api/rules";
 import { useToast } from "../hooks/useToast";
+import { sortConditions } from "../lib/ruleConditions";
 
 // The /api/areas response carries full Area objects; `geometry.type` is
 // read here only to filter the rule editor's `area`-condition dropdown to
@@ -26,6 +27,16 @@ interface AreaOption {
 }
 
 const clone = (rule: Rule): Rule => JSON.parse(JSON.stringify(rule));
+
+// Canonical condition order, applied at every point a rule is (re)seeded
+// into the editor or sent to the backend -- so draft and original are
+// always sorted identically (no spurious `dirty` from order alone) and
+// the persisted rule is diff-friendly. Never called mid-edit; see
+// lib/ruleConditions.ts.
+const withSortedConditions = (rule: Rule): Rule => ({
+  ...rule,
+  conditions: sortConditions(rule.conditions),
+});
 
 // Mirrors message-processor/rules_engine.py's _eval_date/_compare_ordered:
 // a date-only value compares at UTC day granularity, a datetime value at
@@ -154,8 +165,9 @@ export function RulesView() {
 
   function selectRule(rule: Rule) {
     requestSwitch(() => {
-      setDraft(clone(rule));
-      setOriginal(clone(rule));
+      const sorted = withSortedConditions(rule);
+      setDraft(clone(sorted));
+      setOriginal(clone(sorted));
       setIsNew(false);
       setMobileListOpen(false);
     });
@@ -163,7 +175,7 @@ export function RulesView() {
 
   function startNewRule() {
     requestSwitch(() => {
-      const fresh = emptyRule();
+      const fresh = withSortedConditions(emptyRule());
       setDraft(clone(fresh));
       setOriginal(clone(fresh));
       setIsNew(true);
@@ -175,16 +187,22 @@ export function RulesView() {
     if (!draft) return;
     setSaving(true);
     try {
-      const saved = isNew ? await createRule(draft) : await updateRule(draft.identifier, draft);
+      const toSave = withSortedConditions(draft);
+      const saved = isNew
+        ? await createRule(toSave)
+        : await updateRule(toSave.identifier, toSave);
+      const sortedSaved = withSortedConditions(saved);
       setRules((current) => {
-        const idx = current.findIndex((r) => r.identifier === (isNew ? saved.identifier : draft.identifier));
-        if (idx === -1) return [...current, saved];
+        const idx = current.findIndex(
+          (r) => r.identifier === (isNew ? sortedSaved.identifier : toSave.identifier),
+        );
+        if (idx === -1) return [...current, sortedSaved];
         const next = current.slice();
-        next[idx] = saved;
+        next[idx] = sortedSaved;
         return next;
       });
-      setDraft(clone(saved));
-      setOriginal(clone(saved));
+      setDraft(clone(sortedSaved));
+      setOriginal(clone(sortedSaved));
       setIsNew(false);
       showToast("success", `Rule '${saved.identifier}' saved.`);
     } catch (err) {
