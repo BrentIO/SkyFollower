@@ -341,7 +341,7 @@ export function RuleForm({
         <hr className="border-slate-200 dark:border-slate-700" />
       </div>
 
-      <div className="flex flex-col gap-3 md:min-h-0 md:flex-1">
+      <div className="flex flex-col gap-3">
         <div className="shrink-0">
           <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
             Conditions{rule.conditions.length > 0 ? ` (${rule.conditions.length})` : ""}
@@ -355,7 +355,7 @@ export function RuleForm({
           <p className="shrink-0 text-sm text-slate-400">No conditions yet. Add at least one.</p>
         )}
 
-        <div className="flex flex-col gap-3 md:min-h-0 md:flex-1 md:overflow-y-auto">
+        <div className="flex flex-col gap-3">
           {rule.conditions.map((condition, index) => (
             <ConditionForm
               key={index}
