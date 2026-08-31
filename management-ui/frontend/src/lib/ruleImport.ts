@@ -142,43 +142,49 @@ function buildPayload(
 }
 
 export interface RuleImportResult {
+  // Reached the backend and it accepted the rule.
   created: string[];
+  // Decided up front, before any backend write: referential integrity
+  // within the batch can't be satisfied (missing area / missing rule ref).
+  rejected: { identifier: string; reason: string }[];
+  // Passed phase-1 validation but the backend still refused it on create --
+  // a genuine backend-only rejection client validation can't anticipate.
+  // Expected to be rare.
   failed: { identifier: string; reason: string }[];
-  skipped: { identifier: string; missingAreas: string[] }[];
 }
 
-// Best-effort batch import with three outcome buckets:
+// Validate-then-commit batch import.
 //
-// - `skipped`: an `area` condition references an area not present here. The
-//   backend already rejects this on save; pre-checking gives it a known,
-//   explainable bucket (with the missing identifier) instead of a generic
-//   failure, and skips a doomed round trip. Never attempted.
-// - `created`: reached the backend and it accepted the rule.
-// - `failed`: a backend 400 for any other reason, OR ejected in the
-//   post-pass below.
+// Phase 1 (in-memory, zero backend writes) decides the entire outcome:
+//   - Resolve every rule's identifier for the whole batch, so the
+//     original->resolved remap is complete before anything else looks at
+//     references.
+//   - Area references: an `area` condition value must already exist in
+//     `existingAreaIdentifiers` (areas are never part of a rules import).
+//     A rule referencing a missing area is rejected with a reason.
+//   - matched_rules references: each remapped reference must resolve to an
+//     existing rule identifier or the resolved identifier of another
+//     still-valid rule in this same batch. Computed as a transitive
+//     closure -- rejecting a rule can leave a rule that referenced it
+//     newly dangling -- iterating until stable. This is what lets a
+//     legitimate cyclic pair (A->B, B->A) import: both are in the batch's
+//     valid set, so neither dangles.
 //
-// matched_rules can't be pre-checked the way `area` can -- the backend
-// places no existence constraint on it (that's what makes a legit cyclic
-// pair possible). So it's create-then-verify: create everything that
-// passed the area check regardless of what its matched_rules point at,
-// then verify referential integrity against what's actually there and
-// eject (delete) anything dangling, looping until a full pass ejects
-// nothing (ejecting C can leave E -- which referenced C -- newly dangling).
+// Phase 2 creates only the survivors. Nothing is ever created and then
+// deleted. A create that still fails is a backend-only rejection -> `failed`.
 export async function importRulesBatch(
   rules: ImportedRule[],
   existingRuleIdentifiers: string[],
   existingAreaIdentifiers: string[],
   createOne: (payload: Record<string, unknown>) => Promise<void>,
-  deleteOne: (identifier: string) => Promise<void>,
 ): Promise<RuleImportResult> {
   const areaSet = new Set(existingAreaIdentifiers);
   const taken = new Set(existingRuleIdentifiers);
   const remap = new Map<string, string>();
 
-  // Pass 1: resolve every identifier (so the remap is complete before any
-  // payload is built) and run the area pre-check.
+  // Phase 1a: resolve every identifier (so the remap is complete before
+  // any reference or payload is evaluated).
   const identifiers: string[] = [];
-  const skipped: RuleImportResult["skipped"] = [];
   for (let i = 0; i < rules.length; i++) {
     const original = typeof rules[i].identifier === "string" ? rules[i].identifier.trim() : "";
     const identifier = resolveRuleIdentifier(rules[i], i + 1, taken);
@@ -186,55 +192,64 @@ export async function importRulesBatch(
     identifiers.push(identifier);
   }
 
-  const toCreate: { payload: Record<string, unknown>; identifier: string }[] = [];
+  // index -> rejection reason. Absent = still a candidate for creation.
+  const rejectionReason = new Map<number, string>();
+
+  // Phase 1b: area references.
   for (let i = 0; i < rules.length; i++) {
     const missing = missingAreaReferences(rules[i], areaSet);
     if (missing.length > 0) {
-      skipped.push({ identifier: identifiers[i], missingAreas: missing });
-      continue;
+      rejectionReason.set(i, `references missing area(s): ${missing.join(", ")}`);
     }
-    toCreate.push({ payload: buildPayload(rules[i], identifiers[i], remap), identifier: identifiers[i] });
   }
 
-  // Pass 2: create, regardless of matched_rules references.
+  // Phase 1c: matched_rules transitive closure. A reference resolves if it
+  // points at an existing rule or a still-valid batch rule; rejecting a
+  // rule shrinks the valid set, so loop until a full pass changes nothing.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const valid = new Set(existingRuleIdentifiers);
+    for (let i = 0; i < rules.length; i++) {
+      if (!rejectionReason.has(i)) valid.add(identifiers[i]);
+    }
+    for (let i = 0; i < rules.length; i++) {
+      if (rejectionReason.has(i)) continue;
+      const refs = remappedMatchedRuleRefs(rules[i], remap);
+      const dangling = [...new Set(refs.filter((r) => !valid.has(r)))];
+      if (dangling.length > 0) {
+        rejectionReason.set(i, `references missing rule(s): ${dangling.join(", ")}`);
+        changed = true;
+      }
+    }
+  }
+
+  // Phase 1 outcome, fully determined before any backend write.
+  const rejected: RuleImportResult["rejected"] = [];
+  const toCreate: { payload: Record<string, unknown>; identifier: string }[] = [];
+  for (let i = 0; i < rules.length; i++) {
+    const reason = rejectionReason.get(i);
+    if (reason) {
+      rejected.push({ identifier: identifiers[i], reason });
+    } else {
+      toCreate.push({
+        payload: buildPayload(rules[i], identifiers[i], remap),
+        identifier: identifiers[i],
+      });
+    }
+  }
+
+  // Phase 2: commit the survivors.
   const created: string[] = [];
   const failed: RuleImportResult["failed"] = [];
-  const payloadByIdentifier = new Map<string, Record<string, unknown>>();
   for (const { payload, identifier } of toCreate) {
     try {
       await createOne(payload);
       created.push(identifier);
-      payloadByIdentifier.set(identifier, payload);
     } catch (err) {
       failed.push({ identifier, reason: err instanceof Error ? err.message : "backend rejected the rule" });
     }
   }
 
-  // Pass 3: eject rules whose matched_rules references don't resolve,
-  // transitively, until stable.
-  const known = new Set<string>([...existingRuleIdentifiers, ...created]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const identifier of [...created]) {
-      const payload = payloadByIdentifier.get(identifier);
-      if (!payload) continue;
-      const refs = remappedMatchedRuleRefs(payload as ImportedRule, remap);
-      const dangling = [...new Set(refs.filter((r) => !known.has(r)))];
-      if (dangling.length === 0) continue;
-
-      try {
-        await deleteOne(identifier);
-      } catch {
-        // Even a failed eject-delete: still report the rule as rejected so
-        // the operator knows to clean it up.
-      }
-      created.splice(created.indexOf(identifier), 1);
-      known.delete(identifier);
-      failed.push({ identifier, reason: `references missing rule(s): ${dangling.join(", ")}` });
-      changed = true;
-    }
-  }
-
-  return { created, failed, skipped };
+  return { created, rejected, failed };
 }

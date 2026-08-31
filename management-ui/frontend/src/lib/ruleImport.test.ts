@@ -62,8 +62,6 @@ describe("missingAreaReferences", () => {
 });
 
 describe("importRulesBatch", () => {
-  const noDelete = async () => {};
-
   it("creates every rule, auto-suffixing identifier collisions", async () => {
     const created: string[] = [];
     const result = await importRulesBatch(
@@ -73,14 +71,14 @@ describe("importRulesBatch", () => {
       async (p) => {
         created.push(p.identifier as string);
       },
-      noDelete,
     );
     expect(created).toEqual(["a", "a_2", "b_2"]);
     expect(result.created).toEqual(["a", "a_2", "b_2"]);
+    expect(result.rejected).toEqual([]);
     expect(result.failed).toEqual([]);
   });
 
-  it("skips (never attempts) a rule referencing a missing area", async () => {
+  it("rejects a rule referencing a missing area before any backend write", async () => {
     const attempted: string[] = [];
     const result = await importRulesBatch(
       [rule("r", [{ type: "area", operator: "equals", value: "nope" }])],
@@ -89,10 +87,11 @@ describe("importRulesBatch", () => {
       async (p) => {
         attempted.push(p.identifier as string);
       },
-      noDelete,
     );
     expect(attempted).toEqual([]);
-    expect(result.skipped).toEqual([{ identifier: "r", missingAreas: ["nope"] }]);
+    expect(result.rejected).toEqual([
+      { identifier: "r", reason: "references missing area(s): nope" },
+    ]);
     expect(result.created).toEqual([]);
   });
 
@@ -104,33 +103,74 @@ describe("importRulesBatch", () => {
       async (p) => {
         if (p.identifier === "b") throw new Error("400 bad condition");
       },
-      noDelete,
     );
     expect(result.created).toEqual(["a", "c"]);
     expect(result.failed.map((f) => f.identifier)).toEqual(["b"]);
+    expect(result.rejected).toEqual([]);
   });
 
-  it("keeps a matched_rules cycle within the batch (neither ejected)", async () => {
-    const deleted: string[] = [];
+  it("imports a batch-internal cyclic matched_rules pair with no create/delete round trip", async () => {
+    const calls: string[] = [];
     const result = await importRulesBatch(
       [
         rule("a", [{ type: "matched_rules", operator: "in_list", value: ["b"] }]),
-        rule("b", [{ type: "matched_rules", operator: "in_list", value: ["a"] }]),
+        rule("b", [{ type: "matched_rules", operator: "not_in_list", value: ["a"] }]),
       ],
       [],
       [],
-      async () => {},
-      async (id) => {
-        deleted.push(id);
+      async (p) => {
+        calls.push(`create:${p.identifier as string}`);
       },
     );
     expect(result.created.sort()).toEqual(["a", "b"]);
-    expect(deleted).toEqual([]);
+    expect(result.rejected).toEqual([]);
+    expect(result.failed).toEqual([]);
+    // Only creates, exactly one per rule -- nothing created then removed.
+    expect(calls.sort()).toEqual(["create:a", "create:b"]);
   });
 
-  it("ejects a rule whose matched_rules reference is missing, transitively", async () => {
-    const deleted: string[] = [];
-    // c -> d (d missing/skipped), e -> c. Ejecting c must then eject e.
+  it("rejects a rule referencing another rule that failed its own area check, transitively", async () => {
+    const attempted: string[] = [];
+    // b references a missing area -> rejected. a references b -> now dangling.
+    const result = await importRulesBatch(
+      [
+        rule("a", [{ type: "matched_rules", operator: "in_list", value: ["b"] }]),
+        rule("b", [{ type: "area", operator: "equals", value: "nope" }]),
+      ],
+      [],
+      ["zone_a"],
+      async (p) => {
+        attempted.push(p.identifier as string);
+      },
+    );
+    expect(attempted).toEqual([]);
+    expect(result.created).toEqual([]);
+    expect(result.rejected).toEqual([
+      { identifier: "a", reason: "references missing rule(s): b" },
+      { identifier: "b", reason: "references missing area(s): nope" },
+    ]);
+  });
+
+  it("rejects a reference to an identifier absent from both existing rules and the batch", async () => {
+    const attempted: string[] = [];
+    const result = await importRulesBatch(
+      [rule("c", [{ type: "matched_rules", operator: "in_list", value: ["ghost"] }])],
+      ["existing_1"],
+      [],
+      async (p) => {
+        attempted.push(p.identifier as string);
+      },
+    );
+    expect(attempted).toEqual([]);
+    expect(result.created).toEqual([]);
+    expect(result.rejected).toEqual([
+      { identifier: "c", reason: "references missing rule(s): ghost" },
+    ]);
+  });
+
+  it("rejects a dangling matched_rules reference transitively, before any backend write", async () => {
+    const attempted: string[] = [];
+    // c -> d (absent), e -> c. Rejecting c must then reject e. Neither created.
     const result = await importRulesBatch(
       [
         rule("c", [{ type: "matched_rules", operator: "in_list", value: ["d"] }]),
@@ -138,21 +178,26 @@ describe("importRulesBatch", () => {
       ],
       [],
       [],
-      async () => {},
-      async (id) => {
-        deleted.push(id);
+      async (p) => {
+        attempted.push(p.identifier as string);
       },
     );
+    expect(attempted).toEqual([]);
     expect(result.created).toEqual([]);
-    expect(deleted.sort()).toEqual(["c", "e"]);
-    expect(result.failed.map((f) => f.identifier).sort()).toEqual(["c", "e"]);
+    expect(result.rejected.map((r) => r.identifier).sort()).toEqual(["c", "e"]);
+    expect(result.rejected.find((r) => r.identifier === "c")!.reason).toBe(
+      "references missing rule(s): d",
+    );
+    expect(result.rejected.find((r) => r.identifier === "e")!.reason).toBe(
+      "references missing rule(s): c",
+    );
   });
 
   it("remaps matched_rules references through auto-suffixed identifiers", async () => {
     const payloads: Record<string, unknown>[] = [];
     // Both identifiers collide with existing rules -> a_2, b_2. The
-    // in-file references must follow.
-    await importRulesBatch(
+    // in-file references must follow, and the pair still validates.
+    const result = await importRulesBatch(
       [
         rule("a", [{ type: "matched_rules", operator: "in_list", value: ["b"] }]),
         rule("b", [{ type: "matched_rules", operator: "in_list", value: ["a"] }]),
@@ -162,8 +207,9 @@ describe("importRulesBatch", () => {
       async (p) => {
         payloads.push(p);
       },
-      async () => {},
     );
+    expect(result.created.sort()).toEqual(["a_2", "b_2"]);
+    expect(result.rejected).toEqual([]);
     const a2 = payloads.find((p) => p.identifier === "a_2")!;
     expect((a2.conditions as { value: string[] }[])[0].value).toEqual(["b_2"]);
   });
