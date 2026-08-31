@@ -18,10 +18,12 @@ The Bahamas CAA registers index page is scraped for a link matching `Updated-THE
 
 | Source column | Imported | Notes |
 |---|---|---|
-| `AIRCRAFT REGISTRATION NUMBER` | ✅ | `C6-`-prefix; used as the Mictronics lookup key |
-| `AIRCRAFT TYPE - MAKE/MODEL` | ✅ | → `aircraft.model` (combined make/model, not split); embedded newlines collapsed to a single space; also used for the type sanity check against Mictronics |
-| `SERIAL #` | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
+| `AIRCRAFT REGISTRATION` | ✅ | `C6-`-prefix; used as the Mictronics lookup key |
+| `AIRCRAFT MANUFACTURER & DESIGNATION` | ✅ | → `aircraft.model` (combined make/model, not split); embedded newlines collapsed to a single space; also used for the type sanity check against Mictronics |
+| `AIRCRAFT SERIAL NUMBER` | ✅ | → `aircraft.serial_number`; embedded newlines collapsed to a single space |
 | `REGISTERED OWNER OF AIRCRAFT` | ✅ | → `registrant.names[0]`; embedded newlines collapsed to a single space |
+
+The CAA has renamed these headers before without notice. The parser now aborts with an error if it extracts data rows that lack the registration column, rather than silently importing zero records, so a future rename surfaces as a failed run instead of a clean-looking empty one.
 
 See `specs/data-dictionary.yaml` (`bs-caa-registry` entry) for full column semantics and cross-source schema notes.
 

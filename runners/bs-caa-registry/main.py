@@ -62,6 +62,14 @@ INDEX_URL = "https://caabahamas.com/registers/"
 MQTT_ROOT = "SkyFollower/runner/bs-caa-registry"
 BATCH_SIZE = 100
 
+# Column headers as they appear in the current CAA register PDF. The CAA has
+# renamed these at least once without notice, so they live here as named
+# constants and header drift is detected loudly (see _validate_headers).
+REGISTRATION_COLUMN = "AIRCRAFT REGISTRATION"
+MAKE_MODEL_COLUMN = "AIRCRAFT MANUFACTURER & DESIGNATION"
+SERIAL_COLUMN = "AIRCRAFT SERIAL NUMBER"
+OWNER_COLUMN = "REGISTERED OWNER OF AIRCRAFT"
+
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -153,6 +161,15 @@ def parse_pdf(file_path: str) -> list[dict]:
         raise RuntimeError("No table data found in PDF.")
 
     logger.info("Parsed %d data rows from PDF.", len(rows))
+
+    if rows and not any(REGISTRATION_COLUMN in row for row in rows):
+        raise RuntimeError(
+            f"Parsed {len(rows)} rows but none contain the expected "
+            f"{REGISTRATION_COLUMN!r} column. Parsed headers: {headers!r}. "
+            "The CAA register's column headers have likely changed again; the "
+            "column-name constants in this runner need updating."
+        )
+
     return rows
 
 
@@ -162,9 +179,9 @@ def parse_pdf(file_path: str) -> list[dict]:
 
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build enrichment record from a PDF row."""
-    owner = _WHITESPACE_RE.sub(" ", row.get("REGISTERED OWNER OF AIRCRAFT", "").strip()) or None
-    make_model = _WHITESPACE_RE.sub(" ", row.get("AIRCRAFT TYPE - MAKE/MODEL", "").strip()) or None
-    serial = _WHITESPACE_RE.sub(" ", row.get("SERIAL #", "").strip()) or None
+    owner = _WHITESPACE_RE.sub(" ", row.get(OWNER_COLUMN, "").strip()) or None
+    make_model = _WHITESPACE_RE.sub(" ", row.get(MAKE_MODEL_COLUMN, "").strip()) or None
+    serial = _WHITESPACE_RE.sub(" ", row.get(SERIAL_COLUMN, "").strip()) or None
 
     aircraft_fields: dict = {}
     if make_model:
@@ -292,7 +309,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Bahamas CAA data to aircraft:detail keys in Redis. Returns count of records written."""
     reg_row_map: dict[str, dict] = {}
     for row in rows:
-        reg = row.get("AIRCRAFT REGISTRATION NUMBER", "").strip()
+        reg = row.get(REGISTRATION_COLUMN, "").strip()
         if not reg:
             continue
         reg_row_map[reg] = row
@@ -313,7 +330,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     for registration, hex_val in reg_icao_map.items():
         row = reg_row_map[registration]
-        make_model = row.get("AIRCRAFT TYPE - MAKE/MODEL", "").strip()
+        make_model = row.get(MAKE_MODEL_COLUMN, "").strip()
 
         simple_raw = r.json().get(aircraft_mictronics_key(hex_val))
         if not simple_raw or not _type_check_passes(simple_raw, make_model):
