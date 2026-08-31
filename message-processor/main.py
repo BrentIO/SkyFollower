@@ -69,6 +69,8 @@ from shared.redis_keys import (
     metrics_total_messages_processed_key,
     normalize_flight_ident,
     operator_key,
+    rule_trigger_day_key,
+    rule_trigger_lifetime_key,
 )
 from shared.timing import (
     CONFIG_POLL_INTERVAL_SECONDS,
@@ -81,6 +83,7 @@ from shared.timing import (
     RATE_WINDOW_SECONDS,
     RECONNECT_BACKOFF_SECONDS,
     RULE_NOTIFICATION_MAX_LAG_SECONDS,
+    RULE_TRIGGER_DAY_TTL_SECONDS,
 )
 
 logger = logging.getLogger("message_processor")
@@ -346,6 +349,28 @@ class _CounterAccumulator:
         with self._lock:
             v = self._pending
             self._pending = 0
+            return v
+
+
+class _KeyedCounterAccumulator:
+    """Same idea as _CounterAccumulator, but keyed (by rule identifier)
+    instead of a single scalar. record(key) is pure in-memory arithmetic
+    under a lock -- zero I/O, safe from the hot path. flush_and_reset()
+    returns (and clears) the whole accumulated {key: delta} dict, for the
+    telemetry thread to push into Redis in one pipeline."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def record(self, key: str, n: int = 1) -> None:
+        with self._lock:
+            self._pending[key] = self._pending.get(key, 0) + n
+
+    def flush_and_reset(self) -> dict[str, int]:
+        with self._lock:
+            v = self._pending
+            self._pending = {}
             return v
 
 
@@ -707,6 +732,9 @@ class MessageProcessor:
         self._total_messages_processed = _CounterAccumulator()
         self._registration_misses = _CounterAccumulator()
         self._operator_misses = _CounterAccumulator()
+        # Per-rule trigger counts (rule identifier -> delta), same
+        # in-memory-then-flush pattern. See _flush_rule_trigger_counts().
+        self._rule_trigger_counts = _KeyedCounterAccumulator()
 
         # Redis
         rc = config["redis"]
@@ -1211,6 +1239,10 @@ class MessageProcessor:
 
         for rule in matched:
             flight.matched_rules.append(rule["identifier"])
+            # Once per flight, the first time this rule matches: evaluate()
+            # skips a rule already in flight.matched_rules, so this loop
+            # body runs once per (flight, rule). Pure in-memory.
+            self._rule_trigger_counts.record(rule["identifier"])
             if rule.get("force_archive"):
                 flight.force_archive = True
             self._publish_rule_notification(flight, rule, msg.received_at)
@@ -1622,6 +1654,7 @@ class MessageProcessor:
                 # rebuilds and re-validates.
                 self._force_rmq_reconnect_if_stale()
             self._flush_period_counters()
+            self._flush_rule_trigger_counts()
             self._publish_telemetry()
 
     def _flush_period_counters(self) -> None:
@@ -1655,6 +1688,31 @@ class MessageProcessor:
                         )
             except Exception as exc:
                 logger.debug("Period counter flush failed for %s: %s", key_fn(self._id, "lifetime"), exc)
+
+    def _flush_rule_trigger_counts(self) -> None:
+        """Push each rule's accumulated trigger delta into Redis: a plain
+        INCRBY on the never-expiring lifetime key, plus INCRBY + EXPIRE on
+        today's UTC day key. One pipelined round trip per flush cycle
+        regardless of how many distinct rules fired. Repeated EXPIRE on an
+        already-live day key is harmless (same 31-day value). Fails soft on
+        a Redis error -- flush_and_reset() has already cleared the deltas,
+        so a failed flush loses that cycle's counts, acceptable for a
+        display-only metric. Not self-published via MQTT -- the
+        management-ui backend reads these keys on demand."""
+        deltas = self._rule_trigger_counts.flush_and_reset()
+        if not deltas:
+            return
+        today = datetime.now(timezone.utc).date().isoformat()
+        try:
+            pipe = self._redis.pipeline()
+            for identifier, delta in deltas.items():
+                pipe.incrby(rule_trigger_lifetime_key(identifier), delta)
+                day_key = rule_trigger_day_key(identifier, today)
+                pipe.incrby(day_key, delta)
+                pipe.expire(day_key, RULE_TRIGGER_DAY_TTL_SECONDS)
+            pipe.execute()
+        except Exception as exc:
+            logger.debug("Rule trigger counter flush failed: %s", exc)
 
     def _publish_telemetry(self) -> None:
         if not (self._mqtt and self._mqtt_connected):

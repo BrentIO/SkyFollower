@@ -37,11 +37,11 @@ splice, validate, write-back, not a partial update in Redis itself.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/rules` | All rules. `200` with the array (empty if none configured) |
-| `GET` | `/api/rules/{identifier}` | One rule. `200`, or `404` if not found |
+| `GET` | `/api/rules` | All rules. `200` with the array (empty if none configured). Every rule also carries `triggered_lifetime` and `triggered_last_30_days` — response-only, computed fresh from the `rule_triggers:*` Redis keys the message processor writes (a true trailing 30-day window, summed daily keys), never accepted on write |
+| `GET` | `/api/rules/{identifier}` | One rule, same two `triggered_*` fields as the list. `200`, or `404` if not found |
 | `POST` | `/api/rules` | Add one new rule. `201` with the created rule, `409` if `identifier` already exists, `400` on validation failure |
 | `PUT` | `/api/rules/{identifier}` | Replace one existing rule. `200` with the updated rule, `404` if `identifier` doesn't exist yet (use `POST` to create), `400` if the body's `identifier` doesn't match the path or on validation failure |
-| `DELETE` | `/api/rules/{identifier}` | Remove one rule. `204`, or `404` if not found |
+| `DELETE` | `/api/rules/{identifier}` | Remove one rule. `204`, or `404` if not found. Also deletes the rule's `rule_triggers:*` counter keys, so a later rule reusing the identifier starts at zero |
 | `GET` | `/api/areas` | All areas, flattened: `[{identifier, name, geometry}, ...]` — not a GeoJSON FeatureCollection; see below |
 | `GET` | `/api/areas/{identifier}` | One area. `200`, or `404` if not found |
 | `POST` | `/api/areas` | Add one new area. `201`, `409` if `identifier` already exists, `400` on validation failure |

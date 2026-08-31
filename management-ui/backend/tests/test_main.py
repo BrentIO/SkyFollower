@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -145,13 +146,19 @@ class FakeRedis:
             raise self.get_error
         return self.store.get(key)
 
+    def mget(self, keys):
+        if self.get_error:
+            raise self.get_error
+        return [self.store.get(k) for k in keys]
+
     def set(self, key, value, **kwargs):
         if self.set_error:
             raise self.set_error
         self.store[key] = value
 
-    def delete(self, key):
-        self.store.pop(key, None)
+    def delete(self, *keys):
+        for key in keys:
+            self.store.pop(key, None)
 
     def sadd(self, key, *members):
         """No archive_search:* records ever exist in these rules/areas
@@ -387,6 +394,73 @@ class TestDeleteRule:
     def test_not_found_returns_404(self, client):
         resp = client.delete("/api/rules/nope")
         assert resp.status_code == 404
+
+    def test_deletes_trigger_count_keys(self, client, fake_redis):
+        client.post("/api/rules", json=_rule("r1"))
+        fake_redis.store[ui_main.rule_trigger_lifetime_key("r1")] = "42"
+        today = datetime.now(timezone.utc).date().isoformat()
+        fake_redis.store[ui_main.rule_trigger_day_key("r1", today)] = "3"
+
+        client.delete("/api/rules/r1")
+
+        assert ui_main.rule_trigger_lifetime_key("r1") not in fake_redis.store
+        assert ui_main.rule_trigger_day_key("r1", today) not in fake_redis.store
+
+
+class TestRuleTriggerCounts:
+    def _seed_rule(self, client, fake_redis, identifier="r1"):
+        client.post("/api/rules", json=_rule(identifier))
+
+    def test_absent_keys_report_zero(self, client, fake_redis):
+        self._seed_rule(client, fake_redis)
+        rule = client.get("/api/rules/r1").json()
+        assert rule["triggered_lifetime"] == 0
+        assert rule["triggered_last_30_days"] == 0
+
+    def test_lifetime_and_rolling_30_day_sum(self, client, fake_redis):
+        self._seed_rule(client, fake_redis)
+        today = datetime.now(timezone.utc).date()
+        fake_redis.store[ui_main.rule_trigger_lifetime_key("r1")] = "1000"
+        fake_redis.store[ui_main.rule_trigger_day_key("r1", today.isoformat())] = "5"
+        fake_redis.store[
+            ui_main.rule_trigger_day_key("r1", (today - timedelta(days=10)).isoformat())
+        ] = "7"
+        # 29 days ago is inside the window; 30+ days ago is not.
+        fake_redis.store[
+            ui_main.rule_trigger_day_key("r1", (today - timedelta(days=29)).isoformat())
+        ] = "2"
+        fake_redis.store[
+            ui_main.rule_trigger_day_key("r1", (today - timedelta(days=45)).isoformat())
+        ] = "999"
+
+        rule = client.get("/api/rules/r1").json()
+        assert rule["triggered_lifetime"] == 1000
+        assert rule["triggered_last_30_days"] == 5 + 7 + 2
+
+    def test_list_endpoint_includes_counts_per_rule(self, client, fake_redis):
+        client.post("/api/rules", json=_rule("r1"))
+        client.post("/api/rules", json=_rule("r2"))
+        fake_redis.store[ui_main.rule_trigger_lifetime_key("r2")] = "8"
+
+        by_id = {r["identifier"]: r for r in client.get("/api/rules").json()}
+        assert by_id["r1"]["triggered_lifetime"] == 0
+        assert by_id["r2"]["triggered_lifetime"] == 8
+
+    def test_counts_are_response_only_not_accepted_on_create(self, client, fake_redis):
+        body = _rule("r1")
+        body["triggered_lifetime"] = 12345
+        client.post("/api/rules", json=body)
+        # Not persisted into config:rules.
+        stored = json.loads(fake_redis.store[ui_main.config_rules_key()])
+        assert "triggered_lifetime" not in stored[0]
+
+    def test_redis_error_yields_zero_not_500(self, client, fake_redis):
+        self._seed_rule(client, fake_redis)
+        counts = ui_main._rule_trigger_counts(["r1"])  # direct: mget path only
+
+        fake_redis.get_error = ui_main.redis_lib.RedisError("boom")
+        assert ui_main._rule_trigger_counts(["r1"]) == {"r1": (0, 0)}
+        assert counts == {"r1": (0, 0)}
 
 
 class TestListAreas:

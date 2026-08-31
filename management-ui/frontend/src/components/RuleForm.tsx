@@ -331,6 +331,13 @@ export function RuleForm({
           </label>
         </div>
 
+        {!isNew && (
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
+            <span>Triggered since created: {rule.triggered_lifetime ?? 0}</span>
+            <span>Triggered in last 30 days: {rule.triggered_last_30_days ?? 0}</span>
+          </div>
+        )}
+
         <hr className="border-slate-200 dark:border-slate-700" />
       </div>
 

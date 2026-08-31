@@ -45,6 +45,7 @@ rather than durations omit the `_SECONDS` suffix
 | `HEARTBEAT_TTL_SECONDS` | 60 s | TTL set on that key — twice the refresh interval, so a single missed refresh never drops the claim. Named outright rather than computed as `interval × 2` at each call site. |
 | `CONFIG_POLL_INTERVAL_SECONDS` | 30 s | How often the message processor polls `config:rules:version` / `config:areas:version` and reloads on a change. |
 | `RECONNECT_BACKOFF_SECONDS` | 10 s | Wait between reconnect attempts to RabbitMQ / Redis / S3 after a drop. Unifies what used to be a scatter of `sleep(10)` / `sleep(5)` literals. |
+| `RECONNECT_COUNT_RESET_AGE_SECONDS` | 30 s | How long a receiver source connection must stay continuously up before a reconnect resets that connection's accumulated `reconnect_count` to zero — so the metric reflects a current flapping episode, not one that ended long ago. 3× `RECONNECT_BACKOFF_SECONDS`. |
 | `RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS` | 30 s | Deadline on the receiver's RabbitMQ connection sitting in the broker's blocked state — publishers halted by a resource alarm (disk-free / high memory) while the TCP connection stays up. pika tears the connection down once this elapses, so the receiver's sole publishing thread reconnects and re-validates instead of wedging inside a `basic_publish` that never returns. |
 | `FALLBACK_RETRY_BACKOFF_SECONDS` | 30 s | Minimum spacing between drain attempts against one fallback-queue row, independent of how often the caller invokes `drain()` — keeps a flapping connection from burning the retry threshold in well under a real recovery window. |
 | `RATE_WINDOW_SECONDS` | 30 s | Rolling window over which `_RateTracker` measures messages-per-second, in the receiver and the message processor. |
@@ -60,6 +61,7 @@ rather than durations omit the `_SECONDS` suffix
 | `STITCH_POINTER_TTL_SECONDS` | 86 400 s (1 day) | TTL on the `archive:last_segment:{icao_hex}` pointer used for split-flight stitching. |
 | `ENRICHMENT_TTL_SECONDS` | 1 209 600 s (14 days) | TTL every data runner sets on the enrichment keys it writes — registration, operator, type, airport, livery. Long enough that a single missed weekly run never expires live data. |
 | `ROUTE_TTL_SECONDS` | 259 200 s (3 days) | TTL the `vrs-standing-data` runner sets on `route:{ident}`. Deliberately shorter than `ENRICHMENT_TTL_SECONDS`: the upstream route data refreshes daily, so a 3-day ceiling keeps it from silently going stale for over a week if a run or two is missed. Import-time assertion: must be less than `ENRICHMENT_TTL_SECONDS`. |
+| `RULE_TRIGGER_DAY_TTL_SECONDS` | 2 678 400 s (31 days) | TTL the message processor sets on each `rule_triggers:{identifier}:{YYYY-MM-DD}` day key. One day of margin past the 30-day window the management-ui backend sums for a rule's rolling-30-day trigger count, so a day key can't expire mid-read at the boundary. The lifetime key never expires. |
 | `DEFAULT_FLIGHT_TTL_SECONDS` | 300 s | Fallback for `flight_ttl_seconds` when `config:flight_ttl_seconds` is unset. The one value behind the sole remaining operator knob — see above. |
 
 ## Component-local timing
