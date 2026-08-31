@@ -2443,6 +2443,51 @@ class TestTelemetryPayload:
         }
         assert {f"{base}/{name}" for name in expected}.issubset(topics)
 
+    def test_publishes_config_version_short_hashes(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rules_engine._rules_version = "f" * 56 + "deadbeef"
+        p._rules_engine._areas_version = "0" * 56 + "cafef00d"
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = "SkyFollower/message-processor/0/statistic"
+        # Last 8 chars only -- truncation is publish-boundary only; the
+        # engine still holds the full hash.
+        assert calls[f"{base}/rules_version"] == "deadbeef"
+        assert calls[f"{base}/areas_version"] == "cafef00d"
+        assert p._rules_engine.rules_version == "f" * 56 + "deadbeef"
+
+    def test_config_version_is_unknown_before_first_load(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = "SkyFollower/message-processor/0/statistic"
+        assert calls[f"{base}/rules_version"] == "unknown"
+        assert calls[f"{base}/areas_version"] == "unknown"
+
+    def test_config_version_ha_discovery_has_no_state_class_or_unit(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        for field, name in (("rules_version", "Rules Version"), ("areas_version", "Areas Version")):
+            cfg = configs[f"homeassistant/sensor/SkyFollower_message_processor_0_{field}/config"]
+            assert cfg["name"] == name
+            assert "state_class" not in cfg
+            assert "unit_of_measurement" not in cfg
+            assert cfg["state_topic"] == f"SkyFollower/message-processor/0/statistic/{field}"
+
     def test_does_not_self_publish_period_counters(self):
         # registration_misses/operator_misses/total_messages_processed and
         # the now-removed aircraft_type_misses are write-only from this

@@ -69,6 +69,8 @@ from shared.rabbitmq_topology import (
 )
 from shared.redis_client import build_redis_client
 from shared.redis_keys import (
+    config_areas_version_key,
+    config_rules_version_key,
     metrics_operator_misses_key,
     metrics_registration_misses_key,
     metrics_total_messages_processed_key,
@@ -105,6 +107,15 @@ def _uppercased(value):
     not regular words, so they're fully upper-cased rather than merely
     capitalized. Same string-only guard as _capitalized above."""
     return value.upper() if isinstance(value, str) else value
+
+
+def _short_hash(full) -> Optional[str]:
+    """Last 8 characters of a config version hash, for a compact,
+    directly-comparable read in Home Assistant against each message
+    processor's own rules_version/areas_version sensor. None (skip the
+    publish, don't fabricate) if the key is absent or unreadable. Only
+    ever applied here at the MQTT-publish boundary."""
+    return full[-8:] if isinstance(full, str) and full else None
 
 
 def _sanitize_id(value: str) -> str:
@@ -201,6 +212,13 @@ _CORE_GENERAL_SENSORS = [
     ("started_at", "Start Time", "mdi:clock-start", None, None, "timestamp"),
     ("rabbitmq_connected", "RabbitMQ Management API Connected", "mdi:rabbit", None, None, None),
     ("redis_connected", "Redis Monitoring Connected", "mdi:database-check", None, None, None),
+    # Canonical config version hashes from Redis (config:rules:version /
+    # config:areas:version) -- the value the management UI last saved.
+    # Opaque short-hash identifiers, not measurements: no state_class, no
+    # unit. Compare against each message processor's own rules_version /
+    # areas_version sensor to see which processors have caught up.
+    ("rules_version", "Rules Version", "mdi:file-document-check", None, None, None),
+    ("areas_version", "Areas Version", "mdi:map-check", None, None, None),
 ]
 
 _CORE_RABBITMQ_SENSORS = [
@@ -792,6 +810,25 @@ class CoreHealth:
             return
 
         self._publish_redis_stats(info or {}, memory_stats or {})
+        self._publish_config_versions()
+
+    def _publish_config_versions(self) -> None:
+        """Publish the canonical rules/areas config version hashes from
+        Redis (config:rules:version / config:areas:version) -- last 8 chars
+        only, matching the message processor's own rules_version/areas_version
+        sensors so the two are directly comparable in Home Assistant. A
+        never-saved config (key absent) or a transient read failure just
+        skips the publish this tick, leaving the retained value alone."""
+        for field, key in (
+            ("rules_version", config_rules_version_key()),
+            ("areas_version", config_areas_version_key()),
+        ):
+            try:
+                raw = self._redis.get(key)
+            except redis_lib.exceptions.RedisError as exc:
+                logger.debug("Config version read failed for %s: %s", key, exc)
+                continue
+            self._publish_stat(f"{MQTT_ROOT}/statistic/{field}", _short_hash(raw))
 
     def _publish_redis_stats(self, info: dict, memory_stats: dict) -> None:
         base = f"{MQTT_ROOT}/redis/statistic"

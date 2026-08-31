@@ -953,6 +953,62 @@ class TestPollRedisOnce:
         assert published[f"{MQTT_ROOT}/redis/statistic/redis_connected_clients"] == "3"
         assert published[f"{MQTT_ROOT}/redis/statistic/redis_keys_count"] == "100"
 
+    def test_publishes_config_versions_last_8_chars_only(self):
+        app = _wired_app()
+        app._redis.info.return_value = {}
+        app._redis.memory_stats.return_value = {}
+        full_rules = "a" * 56 + "12345678"
+        full_areas = "b" * 56 + "abcdef99"
+        app._redis.get.side_effect = lambda key: {
+            "config:rules:version": full_rules,
+            "config:areas:version": full_areas,
+        }.get(key)
+
+        app._poll_redis_once()
+
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/statistic/rules_version"] == "12345678"
+        assert published[f"{MQTT_ROOT}/statistic/areas_version"] == "abcdef99"
+
+    def test_config_versions_skipped_when_key_absent(self):
+        app = _wired_app()
+        app._redis.info.return_value = {}
+        app._redis.memory_stats.return_value = {}
+        app._redis.get.side_effect = lambda key: None
+
+        app._poll_redis_once()
+
+        published = _state_publishes(app._mqtt)
+        assert f"{MQTT_ROOT}/statistic/rules_version" not in published
+        assert f"{MQTT_ROOT}/statistic/areas_version" not in published
+
+    def test_config_versions_skipped_on_read_error_without_raising(self):
+        app = _wired_app()
+        app._redis.info.return_value = {}
+        app._redis.memory_stats.return_value = {}
+        app._redis.get.side_effect = redis_lib.exceptions.ConnectionError("down")
+
+        app._poll_redis_once()  # must not raise
+
+        published = _state_publishes(app._mqtt)
+        assert f"{MQTT_ROOT}/statistic/rules_version" not in published
+
+    def test_config_version_discovery_generated_like_other_general_sensors(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        for field, name in (("rules_version", "Rules Version"), ("areas_version", "Areas Version")):
+            payload = discovery[
+                f"homeassistant/sensor/SkyFollower_core_health_{field}/config"
+            ]
+            assert payload["name"] == name
+            assert payload["unique_id"] == f"SkyFollower_core_health_{field}"
+            assert payload["state_topic"] == f"{MQTT_ROOT}/statistic/{field}"
+            assert payload["device"]["ids"] == CORE_DEVICE_IDENTIFIER
+            # Opaque identifier, not a measurement.
+            assert "state_class" not in payload
+            assert "unit_of_measurement" not in payload
+
 
 # ---------------------------------------------------------------------------
 # Message-processor and receiver counter keys -- all reconciled

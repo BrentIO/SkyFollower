@@ -510,6 +510,37 @@ channels:
       MessageProcessorStartedAtMessage:
         $ref: '#/components/messages/MessageProcessorStartedAtMessage'
 
+  messageProcessorRulesVersion:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_version'
+    description: >
+      Last 8 characters of the SHA-256 hash of the rules config THIS
+      instance has actually loaded ("unknown" until the first successful
+      load). Lags the canonical config:rules:version if a bad payload was
+      pushed and rejected, or if this instance has not polled since the
+      last save. Truncation is publish-boundary only -- the engine keeps
+      the full hash for its own comparison. Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorRulesVersionMessage:
+        $ref: '#/components/messages/MessageProcessorRulesVersionMessage'
+
+  messageProcessorAreasVersion:
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/areas_version'
+    description: >
+      Last 8 characters of the SHA-256 hash of the areas config THIS
+      instance has actually loaded ("unknown" until the first successful
+      load). Same semantics as rules_version above. Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorAreasVersionMessage:
+        $ref: '#/components/messages/MessageProcessorAreasVersionMessage'
+
   # ── Archive processor ─────────────────────────────────────────────────────
 
   archiveStatus:
@@ -976,6 +1007,18 @@ operations:
       $ref: '#/channels/messageProcessorStartedAt'
     summary: Message processor publishes its process start time
 
+  publishMessageProcessorRulesVersion:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorRulesVersion'
+    summary: Message processor publishes the short hash of the rules config it has actually loaded
+
+  publishMessageProcessorAreasVersion:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorAreasVersion'
+    summary: Message processor publishes the short hash of the areas config it has actually loaded
+
   publishArchiveStatus:
     action: send
     channel:
@@ -1366,6 +1409,22 @@ components:
       payload:
         $ref: '#/components/schemas/MessageProcessorStartedAt'
 
+    MessageProcessorRulesVersionMessage:
+      name: MessageProcessorRulesVersionMessage
+      title: Message Processor loaded rules config version
+      summary: Last 8 characters of the SHA-256 hash of the rules config this instance has actually loaded
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorConfigVersion'
+
+    MessageProcessorAreasVersionMessage:
+      name: MessageProcessorAreasVersionMessage
+      title: Message Processor loaded areas config version
+      summary: Last 8 characters of the SHA-256 hash of the areas config this instance has actually loaded
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorConfigVersion'
+
     ArchiveFlightsArchivedHourMessage:
       name: ArchiveFlightsArchivedHourMessage
       title: Archive flights archived this hour
@@ -1730,6 +1789,15 @@ components:
       format: date-time
       description: UTC ISO-8601 timestamp of process start
       example: "2026-01-15T10:00:00+00:00"
+
+    MessageProcessorConfigVersion:
+      type: string
+      description: >
+        Last 8 characters of the SHA-256 hash of a config (rules or areas)
+        this instance has actually loaded, or "unknown" before the first
+        successful load. Compare against the canonical value to see whether
+        this instance is up to date.
+      example: "deadbeef"
 
     ArchiveFlightsArchivedHour:
       type: integer
