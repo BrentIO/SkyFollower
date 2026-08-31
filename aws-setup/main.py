@@ -27,17 +27,32 @@ Modes:
                      outputs (used on the second host).
   --delete          delete_stack + wait. Documented as a bare docker run;
                      never offered by install.sh.
+  --print-bootstrap-policy
+                    render the least-privilege IAM policy the provisioning
+                    credential needs, fully substituted from the same
+                    parameters this tool already accepts (no AWS call, no
+                    credentials required). For an operator who does not
+                    already hold an SSO/access-portal session and wants to
+                    create a one-time IAM user for provisioning.
+  --delete-bootstrap-user NAME
+                    delete that IAM user's access keys, inline policies,
+                    and the user itself, using the current credentials --
+                    the self-destruct step for the one-time user created
+                    from --print-bootstrap-policy. On any failure prints
+                    exactly what is left and the manual console steps.
 
 Elevated (provisioning) credentials come from boto3's own environment
 variables (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN /
-AWS_DEFAULT_REGION). They are the operator's own temporary session
-credentials, used once, in a container that is immediately destroyed --
+AWS_DEFAULT_REGION). They are either the operator's own temporary session
+credentials or a one-time IAM user's access key (see the two bootstrap
+modes above), used once, in a container that is immediately destroyed --
 this component never writes them anywhere.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -308,6 +323,276 @@ def delete_stack(cf, stack_name: str) -> None:
     log("✓ Stack deleted. Both S3 buckets were retained; no flight data was lost.")
 
 
+# ---------------------------------------------------------------------------
+# Bootstrap IAM user: policy rendering + self-destruct
+#
+# CloudFormation here has no service role, so it runs every underlying
+# resource action with the caller's own credentials. The policy below is
+# therefore the union of the CloudFormation control-plane actions this
+# module calls AND every resource action the template in
+# specs/aws/cloudformation.yaml creates, updates, or deletes -- scoped by
+# ARN wherever the template's naming parameters allow. Derived by reading
+# the template and this file, NOT from a live deploy: CloudFormation's own
+# resource-tagging can require IAM actions (iam:TagUser and friends) that
+# are not obvious from the template. It must be confirmed end-to-end
+# (create, update, delete) against a real account and iterated on any
+# AccessDenied. See docs/aws-configuration.md.
+# ---------------------------------------------------------------------------
+
+def _bootstrap_context(env: dict) -> dict:
+    prefix = env.get("RESOURCE_NAME_PREFIX", "").strip() or "skyfollower"
+    archive_bucket = env.get("ARCHIVE_BUCKET_NAME", "").strip()
+    if not archive_bucket:
+        raise SystemExit(
+            "Missing required environment variable(s): ARCHIVE_BUCKET_NAME"
+        )
+    # account / region are only needed to tighten the Glue and Athena ARNs.
+    # When unknown (the policy is usually printed before any credential
+    # exists) they fall back to "*" -- still scoped to the specific
+    # workgroup / database / table name, just not to one account.
+    return {
+        "partition": env.get("AWS_PARTITION", "").strip() or "aws",
+        "region": env.get("AWS_DEFAULT_REGION", "").strip() or "*",
+        "account": env.get("AWS_ACCOUNT_ID", "").strip() or "*",
+        "stack_name": env.get("STACK_NAME", "").strip() or _DEFAULT_STACK_NAME,
+        "prefix": prefix,
+        "archive_bucket": archive_bucket,
+        "glue_database": env.get("GLUE_DATABASE_NAME", "").strip() or "skyfollower",
+        "glue_table": env.get("GLUE_TABLE_NAME", "").strip() or "archive_flights",
+        "athena_workgroup": env.get("ATHENA_WORKGROUP_NAME", "").strip() or "skyfollower",
+        "bootstrap_user": env.get("BOOTSTRAP_USER_NAME", "").strip() or f"{prefix}-bootstrap",
+    }
+
+
+def build_bootstrap_policy(env: dict) -> dict:
+    c = _bootstrap_context(env)
+    p, region, account = c["partition"], c["region"], c["account"]
+    stack = c["stack_name"]
+    bucket = c["archive_bucket"]
+    db, table, wg = c["glue_database"], c["glue_table"], c["athena_workgroup"]
+    user_arns = [
+        f"arn:{p}:iam::{account}:user/{c['prefix']}-archive-processor",
+        f"arn:{p}:iam::{account}:user/{c['prefix']}-archive-compaction",
+        f"arn:{p}:iam::{account}:user/{c['prefix']}-management-ui",
+    ]
+    bootstrap_user_arn = f"arn:{p}:iam::{account}:user/{c['bootstrap_user']}"
+
+    # S3 config-read actions CloudFormation issues while creating, drift-
+    # checking, or deleting an AWS::S3::Bucket. Broad on purpose: a missing
+    # one surfaces only as a mid-deploy AccessDenied.
+    s3_bucket_read = [
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketTagging",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketCORS",
+        "s3:GetBucketWebsite",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketLogging",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetBucketNotification",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetBucketRequestPayment",
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+    ]
+    s3_bucket_write = [
+        "s3:CreateBucket",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketTagging",
+    ]
+
+    statements = [
+        {
+            "Sid": "CloudFormationControlPlane",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:CreateChangeSet",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:DeleteChangeSet",
+                "cloudformation:ListChangeSets",
+                "cloudformation:DeleteStack",
+                "cloudformation:GetTemplateSummary",
+            ],
+            "Resource": [
+                f"arn:{p}:cloudformation:{region}:{account}:stack/{stack}/*",
+                f"arn:{p}:cloudformation:{region}:{account}:changeSet/{stack}-*/*",
+            ],
+        },
+        {
+            "Sid": "ArchiveBucketCreateAndConfigure",
+            "Effect": "Allow",
+            "Action": s3_bucket_write + s3_bucket_read,
+            # Archive bucket carries DeletionPolicy: Retain -- no
+            # s3:DeleteBucket for it, deliberately.
+            "Resource": f"arn:{p}:s3:::{bucket}",
+        },
+        {
+            "Sid": "AthenaResultsBucketCreateConfigureAndDelete",
+            "Effect": "Allow",
+            "Action": s3_bucket_write + s3_bucket_read + [
+                "s3:DeleteBucket",
+                "s3:PutLifecycleConfiguration",
+            ],
+            # CloudFormation generates this bucket's name as
+            # "{stack-name}-athenaresultsbucket-{random}", lowercased.
+            "Resource": f"arn:{p}:s3:::{stack}-*",
+        },
+        {
+            "Sid": "GlueDatabaseAndTable",
+            "Effect": "Allow",
+            "Action": [
+                "glue:CreateDatabase",
+                "glue:GetDatabase",
+                "glue:GetDatabases",
+                "glue:UpdateDatabase",
+                "glue:DeleteDatabase",
+                "glue:CreateTable",
+                "glue:GetTable",
+                "glue:GetTables",
+                "glue:UpdateTable",
+                "glue:DeleteTable",
+            ],
+            "Resource": [
+                f"arn:{p}:glue:{region}:{account}:catalog",
+                f"arn:{p}:glue:{region}:{account}:database/{db}",
+                f"arn:{p}:glue:{region}:{account}:table/{db}/*",
+            ],
+        },
+        {
+            "Sid": "AthenaWorkGroup",
+            "Effect": "Allow",
+            "Action": [
+                "athena:CreateWorkGroup",
+                "athena:GetWorkGroup",
+                "athena:UpdateWorkGroup",
+                "athena:DeleteWorkGroup",
+                "athena:TagResource",
+                "athena:UntagResource",
+                "athena:ListTagsForResource",
+            ],
+            "Resource": f"arn:{p}:athena:{region}:{account}:workgroup/{wg}",
+        },
+        {
+            "Sid": "ProvisionedIamUsers",
+            "Effect": "Allow",
+            "Action": [
+                "iam:CreateUser",
+                "iam:GetUser",
+                "iam:DeleteUser",
+                "iam:PutUserPolicy",
+                "iam:GetUserPolicy",
+                "iam:DeleteUserPolicy",
+                "iam:ListUserPolicies",
+                "iam:ListAttachedUserPolicies",
+                "iam:CreateAccessKey",
+                "iam:DeleteAccessKey",
+                "iam:ListAccessKeys",
+                "iam:GetAccessKeyLastUsed",
+                "iam:TagUser",
+                "iam:UntagUser",
+                "iam:ListUserTags",
+            ],
+            "Resource": user_arns,
+        },
+        {
+            # The policy that grants elevated access is also the policy that
+            # lets it clean itself up -- nothing broader. Scoped to exactly
+            # the one bootstrap user, never a wildcard.
+            "Sid": "BootstrapUserSelfCleanup",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListAccessKeys",
+                "iam:DeleteAccessKey",
+                "iam:ListUserPolicies",
+                "iam:DeleteUserPolicy",
+                "iam:GetUser",
+                "iam:DeleteUser",
+            ],
+            "Resource": bootstrap_user_arn,
+        },
+    ]
+    return {"Version": "2012-10-17", "Statement": statements}
+
+
+def delete_bootstrap_user(iam, name: str) -> None:
+    """Delete the one-time provisioning user: its access keys, its inline
+    policies, then the user. Best-effort -- every step's failure is
+    collected so the operator gets one exact list of what is left rather
+    than an abort on the first error."""
+    remaining: list[str] = []
+
+    def _swallow_missing(exc: ClientError) -> bool:
+        return exc.response.get("Error", {}).get("Code") == "NoSuchEntity"
+
+    try:
+        keys = iam.list_access_keys(UserName=name).get("AccessKeyMetadata", [])
+    except ClientError as exc:
+        if _swallow_missing(exc):
+            log(f"User '{name}' does not exist -- nothing to delete.")
+            return
+        keys = []
+        remaining.append(f"could not list access keys ({exc})")
+    for key in keys:
+        key_id = key.get("AccessKeyId", "?")
+        try:
+            iam.delete_access_key(UserName=name, AccessKeyId=key_id)
+        except ClientError as exc:
+            remaining.append(f"access key {key_id} ({exc})")
+
+    try:
+        policies = iam.list_user_policies(UserName=name).get("PolicyNames", [])
+    except ClientError as exc:
+        policies = []
+        if not _swallow_missing(exc):
+            remaining.append(f"could not list inline policies ({exc})")
+    for policy_name in policies:
+        try:
+            iam.delete_user_policy(UserName=name, PolicyName=policy_name)
+        except ClientError as exc:
+            remaining.append(f"inline policy {policy_name} ({exc})")
+
+    try:
+        attached = iam.list_attached_user_policies(UserName=name).get("AttachedPolicies", [])
+    except ClientError:
+        attached = []
+    for policy in attached:
+        arn = policy.get("PolicyArn", "?")
+        try:
+            iam.detach_user_policy(UserName=name, PolicyArn=arn)
+        except ClientError as exc:
+            remaining.append(f"attached policy {arn} ({exc})")
+
+    try:
+        iam.delete_user(UserName=name)
+    except ClientError as exc:
+        if not _swallow_missing(exc):
+            remaining.append(f"user {name} ({exc})")
+
+    if remaining:
+        log(f"✗ Could not fully remove the bootstrap identity '{name}'. Still present:")
+        for item in remaining:
+            log(f"    - {item}")
+        log("")
+        log("  Remove what is left by hand in the IAM console")
+        log("  (https://console.aws.amazon.com/iam/home#/users):")
+        log(f"    1. Open the user '{name}'.")
+        log("    2. Security credentials tab -> delete every access key listed.")
+        log("    3. Permissions tab -> delete every inline policy and detach every")
+        log("       attached policy.")
+        log("    4. Delete the user.")
+        raise SystemExit(1)
+
+    log(f"✓ Bootstrap user '{name}' -- its access keys and inline policy included -- is deleted.")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aws-setup", description=__doc__)
     group = parser.add_mutually_exclusive_group()
@@ -317,6 +602,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                        help="skip provisioning; just read an existing stack's outputs")
     group.add_argument("--delete", action="store_true",
                        help="delete the stack and wait (both buckets are retained)")
+    group.add_argument("--print-bootstrap-policy", action="store_true",
+                       help="render the least-privilege provisioning IAM policy "
+                            "(fully substituted from the same parameters; no AWS call)")
+    group.add_argument("--delete-bootstrap-user", metavar="NAME", default=None,
+                       help="delete NAME's access keys, inline policies, and the user "
+                            "itself, using the current credentials (bootstrap self-destruct)")
     return parser
 
 
@@ -324,6 +615,16 @@ def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     env = os.environ
     stack_name = env.get("STACK_NAME", "").strip() or _DEFAULT_STACK_NAME
+
+    # Bootstrap modes first: --print-bootstrap-policy makes no AWS call at
+    # all, and --delete-bootstrap-user talks to IAM, not CloudFormation.
+    if args.print_bootstrap_policy:
+        print(json.dumps(build_bootstrap_policy(env), indent=2), flush=True)
+        return 0
+
+    if args.delete_bootstrap_user:
+        delete_bootstrap_user(boto3.client("iam"), args.delete_bootstrap_user)
+        return 0
 
     cf = boto3.client("cloudformation")
 

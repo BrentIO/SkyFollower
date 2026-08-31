@@ -8,6 +8,7 @@ separation can all be exercised offline.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 
@@ -345,3 +346,160 @@ class TestMain:
 def test_template_path_resolves_to_repo_spec():
     assert os.path.basename(_mod._TEMPLATE_PATH) == "cloudformation.yaml"
     assert os.path.exists(_mod._TEMPLATE_PATH)
+
+
+# ---------------------------------------------------------------------------
+# --print-bootstrap-policy
+# ---------------------------------------------------------------------------
+
+class TestBootstrapPolicy:
+    def test_requires_archive_bucket_name(self):
+        with pytest.raises(SystemExit) as exc:
+            _mod.build_bootstrap_policy({})
+        assert "ARCHIVE_BUCKET_NAME" in str(exc.value)
+
+    def test_fully_substituted_no_placeholders(self):
+        policy = _mod.build_bootstrap_policy({
+            "ARCHIVE_BUCKET_NAME": "sf-archive",
+            "AWS_DEFAULT_REGION": "eu-west-1",
+            "RESOURCE_NAME_PREFIX": "sf",
+        })
+        blob = json.dumps(policy)
+        assert "${" not in blob and "PLACEHOLDER" not in blob
+        assert policy["Version"] == "2012-10-17"
+
+    def test_scopes_by_arn_from_parameters(self):
+        policy = _mod.build_bootstrap_policy({
+            "ARCHIVE_BUCKET_NAME": "sf-archive",
+            "AWS_DEFAULT_REGION": "eu-west-1",
+            "RESOURCE_NAME_PREFIX": "sf",
+            "GLUE_DATABASE_NAME": "sfdb",
+            "GLUE_TABLE_NAME": "sftbl",
+            "ATHENA_WORKGROUP_NAME": "sfwg",
+            "AWS_ACCOUNT_ID": "123456789012",
+        })
+        sids = {s["Sid"]: s for s in policy["Statement"]}
+        assert sids["ArchiveBucketCreateAndConfigure"]["Resource"] == "arn:aws:s3:::sf-archive"
+        assert "s3:DeleteBucket" not in sids["ArchiveBucketCreateAndConfigure"]["Action"]
+        assert "s3:DeleteBucket" in sids["AthenaResultsBucketCreateConfigureAndDelete"]["Action"]
+        assert sids["AthenaWorkGroup"]["Resource"] == \
+            "arn:aws:athena:eu-west-1:123456789012:workgroup/sfwg"
+        assert "arn:aws:glue:eu-west-1:123456789012:table/sfdb/*" in \
+            sids["GlueDatabaseAndTable"]["Resource"]
+
+    def test_self_cleanup_statement_scoped_to_one_named_user(self):
+        policy = _mod.build_bootstrap_policy({
+            "ARCHIVE_BUCKET_NAME": "b",
+            "RESOURCE_NAME_PREFIX": "sf",
+            "BOOTSTRAP_USER_NAME": "sf-bootstrap",
+        })
+        cleanup = next(s for s in policy["Statement"] if s["Sid"] == "BootstrapUserSelfCleanup")
+        assert cleanup["Resource"] == "arn:aws:iam::*:user/sf-bootstrap"
+        for action in ("iam:DeleteAccessKey", "iam:ListAccessKeys",
+                       "iam:DeleteUserPolicy", "iam:DeleteUser"):
+            assert action in cleanup["Action"]
+
+    def test_main_prints_policy_json_to_stdout(self, capsys, monkeypatch):
+        monkeypatch.setenv("ARCHIVE_BUCKET_NAME", "b")
+        monkeypatch.setattr(_mod.boto3, "client", lambda _name: (_ for _ in ()).throw(
+            AssertionError("no AWS client should be built for --print-bootstrap-policy")))
+        rc = _mod.main(["--print-bootstrap-policy"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed["Statement"][0]["Sid"] == "CloudFormationControlPlane"
+        assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# --delete-bootstrap-user
+# ---------------------------------------------------------------------------
+
+class FakeIam:
+    def __init__(self, *, keys=None, policies=None, attached=None,
+                 fail_on: set | None = None, missing: bool = False) -> None:
+        self._keys = keys or []
+        self._policies = policies or []
+        self._attached = attached or []
+        self._fail_on = fail_on or set()
+        self._missing = missing
+        self.calls: list[str] = []
+
+    def _maybe_fail(self, op):
+        if op in self._fail_on:
+            raise _client_error("AccessDenied", f"denied: {op}", op)
+        if self._missing:
+            raise _client_error("NoSuchEntity", "not found", op)
+
+    def list_access_keys(self, UserName):
+        self.calls.append("list_access_keys")
+        self._maybe_fail("list_access_keys")
+        return {"AccessKeyMetadata": [{"AccessKeyId": k} for k in self._keys]}
+
+    def delete_access_key(self, UserName, AccessKeyId):
+        self.calls.append(f"delete_access_key:{AccessKeyId}")
+        self._maybe_fail("delete_access_key")
+
+    def list_user_policies(self, UserName):
+        self.calls.append("list_user_policies")
+        self._maybe_fail("list_user_policies")
+        return {"PolicyNames": list(self._policies)}
+
+    def delete_user_policy(self, UserName, PolicyName):
+        self.calls.append(f"delete_user_policy:{PolicyName}")
+        self._maybe_fail("delete_user_policy")
+
+    def list_attached_user_policies(self, UserName):
+        self.calls.append("list_attached_user_policies")
+        return {"AttachedPolicies": [{"PolicyArn": a} for a in self._attached]}
+
+    def detach_user_policy(self, UserName, PolicyArn):
+        self.calls.append(f"detach_user_policy:{PolicyArn}")
+
+    def delete_user(self, UserName):
+        self.calls.append("delete_user")
+        self._maybe_fail("delete_user")
+
+
+class TestDeleteBootstrapUser:
+    def test_happy_path_deletes_keys_policies_then_user(self, capsys):
+        iam = FakeIam(keys=["AKIA1", "AKIA2"], policies=["sf-bootstrap-policy"])
+        _mod.delete_bootstrap_user(iam, "sf-bootstrap")
+        assert "delete_access_key:AKIA1" in iam.calls
+        assert "delete_access_key:AKIA2" in iam.calls
+        assert "delete_user_policy:sf-bootstrap-policy" in iam.calls
+        assert iam.calls[-1] == "delete_user"
+        assert "deleted" in capsys.readouterr().err
+
+    def test_missing_user_is_a_clean_noop(self, capsys):
+        iam = FakeIam(missing=True)
+        _mod.delete_bootstrap_user(iam, "gone")
+        assert "does not exist" in capsys.readouterr().err
+
+    def test_failure_lists_what_remains_and_exits_nonzero(self, capsys):
+        iam = FakeIam(keys=["AKIA1"], policies=["p"], fail_on={"delete_user"})
+        with pytest.raises(SystemExit):
+            _mod.delete_bootstrap_user(iam, "sf-bootstrap")
+        err = capsys.readouterr().err
+        assert "Still present" in err
+        assert "sf-bootstrap" in err
+        assert "IAM console" in err
+
+    def test_main_delete_bootstrap_user_uses_iam_client(self, monkeypatch):
+        iam = FakeIam(keys=["AKIA1"])
+        monkeypatch.setattr(_mod.boto3, "client",
+                            lambda name: iam if name == "iam" else pytest.fail(f"unexpected client {name}"))
+        rc = _mod.main(["--delete-bootstrap-user", "sf-bootstrap"])
+        assert rc == 0
+        assert "delete_user" in iam.calls
+
+
+class TestBootstrapArgParsing:
+    def test_modes_are_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            _mod.build_arg_parser().parse_args(["--print-bootstrap-policy", "--delete"])
+
+    def test_delete_bootstrap_user_takes_a_name(self):
+        args = _mod.build_arg_parser().parse_args(["--delete-bootstrap-user", "sf-bootstrap"])
+        assert args.delete_bootstrap_user == "sf-bootstrap"
+        assert args.print_bootstrap_policy is False

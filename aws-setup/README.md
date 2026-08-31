@@ -37,11 +37,22 @@ reason.
 ## Credentials
 
 `aws-setup` needs credentials far broader than the three scoped identities
-it creates — full Glue/IAM/Athena/S3 provisioning rights. Those are **the
-operator's own temporary session credentials** (access key + secret +
-session token, as copied from the AWS access portal), passed to the
-container as environment for a single `--rm` run. This component never
-writes them anywhere; they expire on their own.
+it creates — full CloudFormation/S3/Glue/Athena/IAM provisioning rights.
+The exact least-privilege policy is documented in
+[docs/aws-configuration.md](../docs/aws-configuration.md) and rendered,
+fully substituted, by `--print-bootstrap-policy`.
+
+Two ways to supply the credential:
+
+- **An existing temporary session** (access key + secret + session token,
+  as copied from the AWS access portal).
+- **A one-time IAM user**: run `--print-bootstrap-policy`, create a user
+  with that inline policy in the console, use its access key, then run
+  `--delete-bootstrap-user <name>` to remove it. `scripts/install.sh`
+  walks through this end-to-end.
+
+Either way the credential is passed to the container as environment for a
+single `--rm` run. This component never writes it anywhere.
 
 The property this preserves: **no SkyFollower component ever holds a
 credential that can create, modify, or delete an AWS resource.** The three
@@ -58,6 +69,8 @@ keys back through anything the stack gave it.
 | `--yes` | Apply a replacement-containing change set without prompting (non-interactive runs) |
 | `--outputs-only` | Skip provisioning; just read an existing stack's outputs (the management-ui host) |
 | `--delete` | `delete_stack` + wait. Both buckets are retained |
+| `--print-bootstrap-policy` | Render the least-privilege provisioning IAM policy as JSON, fully substituted from the same parameters (`ARCHIVE_BUCKET_NAME` required; `RESOURCE_NAME_PREFIX`, `GLUE_DATABASE_NAME`, `GLUE_TABLE_NAME`, `ATHENA_WORKGROUP_NAME`, `STACK_NAME`, `AWS_DEFAULT_REGION`, and optional `AWS_ACCOUNT_ID` / `BOOTSTRAP_USER_NAME` refine the ARNs). Makes no AWS call and needs no credentials |
+| `--delete-bootstrap-user NAME` | Delete `NAME`'s access keys, inline policies, then the user itself, using the credentials passed in. On any failed step, prints exactly what is left and the manual console steps, then exits non-zero |
 
 `scripts/install.sh` runs this for you (the `archive` and `management-ui`
 roles). To run it directly:
@@ -79,9 +92,12 @@ and, when unset, leave the template's own defaults authoritative.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | ✅ | — | The operator's temporary provisioning credentials. boto3's own variable names |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ✅ | — | Provisioning credentials. boto3's own variable names |
+| `AWS_SESSION_TOKEN` | ✅ for an SSO/access-portal session; omit for a plain IAM user's key | — | boto3's own variable name |
 | `AWS_DEFAULT_REGION` | ✅ | — | Region to deploy the stack in / read it from |
 | `ARCHIVE_BUCKET_NAME` | ✅ (not for `--outputs-only` / `--delete`) | — | Name of the S3 bucket holding `flights/`, `index/`, `_compaction_state/` |
+| `AWS_ACCOUNT_ID` | ❌ | `*` | `--print-bootstrap-policy` only: tightens the Glue/Athena/IAM ARNs to one account |
+| `BOOTSTRAP_USER_NAME` | ❌ | `{RESOURCE_NAME_PREFIX}-bootstrap` | `--print-bootstrap-policy` only: the user the self-cleanup statement is scoped to |
 | `CREATE_ARCHIVE_BUCKET` | ❌ | `Yes` | `Yes` to create it, `No` to adopt one that already exists |
 | `STACK_NAME` | ❌ | `skyfollower` | CloudFormation stack name. An escape hatch (e.g. a test stack beside the real one); `install.sh` never sets it |
 | `GLUE_DATABASE_NAME` | ❌ | `skyfollower` | |
