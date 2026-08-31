@@ -17,13 +17,17 @@ source).
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
-`load_config("receiver", "rabbitmq", "mqtt", "telemetry")`, interpolated by
-Compose from this host's `.env` (written by `scripts/install.sh`).
+`load_config("receiver", "rabbitmq", "mqtt", "telemetry")`. The shared
+connection settings (`RABBITMQ_*`/`MQTT_*`/`REDIS_*`/`LOG_LEVEL`) are
+interpolated by Compose from this host's `.env` (written by
+`scripts/install.sh`); `RECEIVER_NAME` and `RECEIVER_SOURCES` are literals
+in each generated `skyfollower-receiver-{name-slug}` service block, **not**
+`.env` — see [Running Multiple Receiver Instances](#running-multiple-receiver-instances).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `RECEIVER_NAME` | ✅ | — | Operator-chosen name for this receiver. With `REDIS_HOST` set below, this **is** the receiver's real identity -- claimed via Redis `SET NX` on first boot, then persisted forever after (see [Receiver Identity](#receiver-identity)). With `REDIS_HOST` unset, it's purely a Home Assistant display label (device name/model) in place of the generic `Receiver {short-id}` fallback, and has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the generated UUID instead. Sensors don't repeat this in their own names either way -- `has_entity_name: true` has Home Assistant compose each entity's displayed label from the device name plus the sensor's own short name. |
-| `RECEIVER_SOURCES` | ✅ | — | Comma-separated `host:port:source` triples (see below). At least one is required. |
+| `RECEIVER_NAME` | ✅ | — | *(per-instance compose block, not `.env`)* Operator-chosen name for this receiver. With `REDIS_HOST` set below, this **is** the receiver's real identity -- claimed via Redis `SET NX` on first boot, then persisted forever after (see [Receiver Identity](#receiver-identity)). With `REDIS_HOST` unset, it's purely a Home Assistant display label (device name/model) in place of the generic `Receiver {short-id}` fallback, and has no bearing on MQTT topic addressing or HA entity identity, which stay keyed by the generated UUID instead. Sensors don't repeat this in their own names either way -- `has_entity_name: true` has Home Assistant compose each entity's displayed label from the device name plus the sensor's own short name. |
+| `RECEIVER_SOURCES` | ✅ | — | *(per-instance compose block, not `.env`)* Comma-separated `host:port:source` triples (see below). At least one is required. |
 | `RABBITMQ_HOST` | ✅ | — | |
 | `RABBITMQ_PORT` | ❌ | `5672` | |
 | `RABBITMQ_USERNAME` | ✅ | — | |
@@ -90,16 +94,22 @@ Redis is entirely optional for the receiver's core function -- an unset `REDIS_H
 
 ## Running Multiple Receiver Instances
 
-Every receiver deployment -- whether it's the only one on a host, or one of several sharing a host -- follows the exact same pattern: its own folder, containing its own `docker-compose.receiver.yaml` and its own `.env`. There's no separate mechanism for "same host" vs. "separate host"; a folder is a folder either way.
+The receiver follows `message-processor`'s pattern for running more than one instance on a host: **one fixed folder** (`~/SkyFollower/receiver/`), **one shared `.env`**, and **one generated service block per instance** in that folder's `docker-compose.receiver.yaml`.
 
-`docker-compose.receiver.yaml` sets no project name of its own. It comes from `COMPOSE_PROJECT_NAME` in that folder's `.env`, which `scripts/install.sh` writes: it derives the default from the destination folder's own name, sanitized (lowercased, anything outside `[a-z0-9_-]` replaced with `-`), so two different folders always get two independent Compose project namespaces -- independent container name, independent `./data/receiver` directory -- instead of colliding on a fixed shared name the way a hardcoded project name would. A folder named `receiver` gets project `skyfollower` (container `skyfollower-receiver-1`); a folder named `receiver-2` gets project `skyfollower-receiver-2` (container `skyfollower-receiver-2-receiver-1`). (The `receiver` folder is special-cased to produce no suffix at all -- since the `receiver` service name is always appended by Compose itself, including it in the project name too would otherwise double up into `skyfollower-receiver-receiver-1`.) It's only a default: `.env` is a plain file, so editing `COMPOSE_PROJECT_NAME` renames the project without touching any tracked file.
+`docker-compose.receiver.yaml` as fetched from the repo carries only a fixed `name: skyfollower-receiver` and the two anchors `x-receiver-environment` (the shared RabbitMQ/MQTT/Redis settings) and `x-receiver` (image, restart policy, `tmpfs`, healthcheck) -- no services. `scripts/install.sh` appends one concrete `skyfollower-receiver-{name-slug}` service block per instance, each with:
 
-To run a second receiver on the same host as the first, run the installer again for the `receiver` role -- it prompts for a name (used as both the install folder and `RECEIVER_NAME`) each time one is selected:
+- `RECEIVER_NAME` and `RECEIVER_SOURCES` as literals -- the only two values that differ per instance. `RECEIVER_NAME` keeps its original casing (the Home Assistant label and the Redis `SET NX` identity use it verbatim); the lowercased slug is used only for the service name, container name, and data directory.
+- `volumes: - ./data/skyfollower-receiver-{slug}:/app/data` -- so each instance's fallback queue and `receiver_id` file (`data/skyfollower-receiver-{slug}/receiver_id`) stay independent.
+
+Everything else comes from the shared `x-receiver`/`x-receiver-environment` anchors, so RabbitMQ/MQTT/Redis host and credentials are genuinely shared across every receiver on the host (the same assumption `message-processor` already makes).
+
+To add another receiver on the same host, re-run the installer for the `receiver` role -- it prompts only for the new instance's name and sources, appends its block, and leaves the already-running ones untouched (the compose file is no-clobber fetched for exactly this reason):
 
 ```bash
 ./scripts/install.sh --role receiver
-# Receiver name (install folder + Home Assistant label) [ATTIC-PI]: RECEIVER-2
-# ...then RECEIVER_SOURCES, RabbitMQ/MQTT/Redis credentials for this instance
+# Receiver name (Home Assistant label + Redis identity) [ATTIC-PI]: MLAT-VPS
+# RECEIVER_SOURCES: mlat.example:30003:EXTERNAL
+# Add another receiver on this host? [y/N]: n
 ```
 
 or, without cloning anything first:
@@ -108,9 +118,13 @@ or, without cloning anything first:
 curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 ```
 
-Each instance's Compose project is fully independent, so its `./data/receiver` directory, fallback queue, and identity (`receiver_id`, see [Receiver Identity](#receiver-identity)) never collide with the first instance's -- stopping, restarting, or upgrading one never touches the other. A third (or fourth, ...) instance is just another `--role receiver` run with a different name.
+(A single-receiver install still produces a *named* block, `skyfollower-receiver-{slug}:`, not a bare `receiver:` service -- the folder is the fixed name, not the service.)
 
 Keep in mind each instance is a full copy of the container -- one thread per `RECEIVER_SOURCES` connection, its own RabbitMQ connection, its own MQTT connection -- so host resource limits, not anything in this compose file, become the real ceiling on how many can run on one host.
+
+### Existing name-folder installs
+
+Receivers installed under the older `~/SkyFollower/{RECEIVER_NAME}/` layout keep working exactly as they are -- `install.sh --upgrade` only rewrites `SKYFOLLOWER_VERSION` and re-runs `docker compose up -d`, it never restructures a folder. The shared-folder layout is new-install-only; there is no migration step.
 
 ## Routing
 
