@@ -33,11 +33,13 @@ both `core` and `management-ui`):
 curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash -s -- --role core --role management-ui
 ```
 
-Installing `archive` or `management-ui`? Have your AWS access-portal
-session credentials ready first — the installer provisions the archive
-infrastructure inline during those roles' prompts. See [AWS
-Configuration](/aws-configuration). The `core` role on its own needs nothing from
-AWS.
+Installing `archive` or `management-ui`? The installer provisions the
+archive infrastructure inline during those roles' prompts and asks for one
+elevated AWS credential to do it — either an existing AWS access-portal /
+SSO session, or a one-time IAM user it prints a least-privilege policy for
+and walks you through creating (and offers to delete again afterwards).
+See [AWS Configuration](/aws-configuration). The `core` role on its own
+needs nothing from AWS.
 
 **Other flags**
 
