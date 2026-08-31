@@ -1,6 +1,9 @@
+import { mdiExportVariant, mdiFileImportOutline } from "@mdi/js";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { ImportRuleModal } from "../components/ImportRuleModal";
+import { MdiIcon } from "../components/MdiIcon";
 import { RuleForm } from "../components/RuleForm";
 import { apiClient, ApiError } from "../api/client";
 import {
@@ -13,7 +16,9 @@ import {
   type Rule,
 } from "../api/rules";
 import { useToast } from "../hooks/useToast";
+import { downloadTextFile } from "../lib/csv";
 import { sortConditions } from "../lib/ruleConditions";
+import { importRulesBatch, type ImportedRule } from "../lib/ruleImport";
 
 // The /api/areas response carries full Area objects; `geometry.type` is
 // read here only to filter the rule editor's `area`-condition dropdown to
@@ -125,6 +130,7 @@ export function RulesView() {
 
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +240,36 @@ export function RulesView() {
     }
   }
 
+  function exportAllRules() {
+    downloadTextFile("rules.json", JSON.stringify(rules, null, 2), "application/json");
+  }
+
+  async function handleImportRules(imported: ImportedRule[]) {
+    setImportModalOpen(false);
+    const result = await importRulesBatch(
+      imported,
+      rules.map((r) => r.identifier),
+      areas.map((a) => a.identifier),
+      (payload) => createRule(payload as unknown as Rule).then(() => undefined),
+      (identifier) => deleteRule(identifier),
+    );
+
+    try {
+      setRules(await listRules());
+    } catch {
+      /* the toast below still reports what happened; a manual refresh recovers the list */
+    }
+
+    const total = imported.length;
+    const parts = [`${result.created.length} of ${total} rules imported`];
+    if (result.skipped.length > 0) parts.push(`${result.skipped.length} skipped (missing area)`);
+    if (result.failed.length > 0) parts.push(`${result.failed.length} failed`);
+    showToast(
+      result.failed.length > 0 || result.skipped.length > 0 ? "error" : "success",
+      `${parts.join("; ")}.`,
+    );
+  }
+
   if (loading) {
     return <p className="text-slate-400">Loading rules...</p>;
   }
@@ -248,6 +284,28 @@ export function RulesView() {
         >
           Add Rule
         </button>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setImportModalOpen(true)}
+            aria-label="Import"
+            title="Import"
+            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <MdiIcon path={mdiFileImportOutline} size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={exportAllRules}
+            disabled={rules.length === 0}
+            aria-label="Export all"
+            title="Export all"
+            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <MdiIcon path={mdiExportVariant} size={18} />
+          </button>
+        </div>
 
         <button
           type="button"
@@ -344,6 +402,12 @@ export function RulesView() {
         confirmLabel="Delete"
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ImportRuleModal
+        open={importModalOpen}
+        onImport={handleImportRules}
+        onCancel={() => setImportModalOpen(false)}
       />
     </div>
   );

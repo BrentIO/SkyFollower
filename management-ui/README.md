@@ -134,7 +134,14 @@ component library, to keep dependencies minimal for ARM builds.
   `date` condition isn't currently satisfied) + selected rule's form; owns
   save/discard/delete state and the two confirm flows. Enabling/disabling
   a rule is only done by editing its Enabled checkbox and saving -- no
-  inline toggle in the list.
+  inline toggle in the list. "Export all" downloads every rule as a
+  `rules.json` array (client-side, no round trip); "Import" (`ImportRuleModal`
+  + `lib/ruleImport.ts`) takes that array back — auto-suffixing identifier
+  collisions, skipping a rule whose `area` condition references an area not
+  present here, and, for `matched_rules`, creating then verifying: a
+  reference to a rule that doesn't exist and isn't part of the same import
+  gets the rule ejected (deleted) transitively, while a legitimate cyclic
+  pair inside one file survives.
 - `components/RuleForm.tsx` / `components/ConditionForm.tsx` — the rule
   editor and its per-condition, type-aware value input (number, hex,
   wake-turbulence dropdown sourced alphabetically and title-cased for
