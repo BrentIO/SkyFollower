@@ -426,15 +426,15 @@ sources:
     url: "https://caabahamas.com/registers/"
     format: pdf
     cadence: weekly_friday
-    notes: "PDF generated from Microsoft Excel; ~139 rows across 3 pages; URL is date-stamped and changes with each update — runner scrapes the CAA registers page to discover the current link; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; no manufacturer column (combined with model in AIRCRAFT TYPE - MAKE/MODEL); no powerplant or address data available; owner name, make/model, and serial number may contain embedded newlines — collapsed to single space"
+    notes: "PDF generated from Microsoft Excel; ~139 rows across 3 pages; URL is date-stamped and changes with each update — runner scrapes the CAA registers page to discover the current link; no ICAO hex column — icao_hex resolved via RediSearch reverse-lookup by registration against Mictronics records; must run after Mictronics; no manufacturer column (combined with model in AIRCRAFT MANUFACTURER & DESIGNATION); no powerplant or address data available; owner name, make/model, and serial number may contain embedded newlines — collapsed to single space; the CAA has renamed these column headers before without notice, so the runner aborts loudly if the registration column is missing rather than importing zero records"
     files:
       - name: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
         format: pdf
         columns:
-          "AIRCRAFT REGISTRATION NUMBER": full C6-prefix registration mark
-          "REGISTERED OWNER OF AIRCRAFT": "registered owner name (may contain embedded newlines; collapsed to single space)"
-          "AIRCRAFT TYPE - MAKE/MODEL":   "Combined make and model designation (single free-text field; may contain embedded newlines; collapsed to single space)"
-          "SERIAL #":                     "manufacturer serial number (may contain embedded newlines; collapsed to single space)"
+          "REGISTERED OWNER OF AIRCRAFT":        "registered owner name (may contain embedded newlines; collapsed to single space)"
+          "AIRCRAFT REGISTRATION":               full C6-prefix registration mark
+          "AIRCRAFT MANUFACTURER & DESIGNATION": "Combined make and model designation (single free-text field; may contain embedded newlines; collapsed to single space)"
+          "AIRCRAFT SERIAL NUMBER":              "manufacturer serial number (may contain embedded newlines; collapsed to single space)"
 
   ch-bazl-registry:
     description: "Switzerland Federal Office of Civil Aviation (FOCA/BAZL) aircraft register — HB-prefix registrations"
@@ -1272,7 +1272,7 @@ records:
             description: "Full registration mark including F- prefix (e.g. F-BKDK)"
           - source: bs-caa-registry
             file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
-            field: AIRCRAFT REGISTRATION NUMBER
+            field: AIRCRAFT REGISTRATION
             description: "Full registration mark including C6- prefix (e.g. C6-BFY)"
           - source: ky-caa-registry
             file: Active-Aircraft-Register.pdf
@@ -2341,8 +2341,8 @@ records:
                 field: MODELE
               - source: bs-caa-registry
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
-                field: "AIRCRAFT TYPE - MAKE/MODEL"
-                description: "Combined make and model free-text field (e.g. 'B737-790', 'CIRRUS SR 22', 'DE HAVILLAND DHC-6'); no separate manufacturer column; stored as-is"
+                field: "AIRCRAFT MANUFACTURER & DESIGNATION"
+                description: "Combined make and model free-text field (e.g. 'PIPER PA23-250', 'CIRRUS SR 22', 'BOEING B737-7B6'); no separate manufacturer column; stored as-is"
               - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Series Type"
@@ -2754,7 +2754,7 @@ records:
                 field: NUMERO_SERIE
               - source: bs-caa-registry
                 file: "Updated-THE-BAHAMAS-CIVIL-AIRCRAFT-REGISTER-{Month}-{DD}-{YYYY}.pdf"
-                field: "SERIAL #"
+                field: "AIRCRAFT SERIAL NUMBER"
               - source: ky-caa-registry
                 file: Active-Aircraft-Register.pdf
                 field: "Serial Number"
