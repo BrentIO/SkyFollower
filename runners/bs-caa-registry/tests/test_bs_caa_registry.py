@@ -54,12 +54,15 @@ INDEX_URL = _mod.INDEX_URL
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_HEADERS = [
-    "AIRCRAFT REGISTRATION NUMBER",
-    "AIRCRAFT TYPE - MAKE/MODEL",
-    "SERIAL #",
-    "REGISTERED OWNER OF AIRCRAFT",
-]
+# Real header row from the live CAA register PDF, column order preserved:
+# ['REGISTERED OWNER OF AIRCRAFT', 'AIRCRAFT REGISTRATION',
+#  'AIRCRAFT MANUFACTURER & DESIGNATION', 'AIRCRAFT SERIAL NUMBER']
+_REG_COL = _mod.REGISTRATION_COLUMN
+_MAKE_MODEL_COL = _mod.MAKE_MODEL_COLUMN
+_SERIAL_COL = _mod.SERIAL_COLUMN
+_OWNER_COL = _mod.OWNER_COLUMN
+
+_HEADERS = [_OWNER_COL, _REG_COL, _MAKE_MODEL_COL, _SERIAL_COL]
 
 
 def _make_row(
@@ -69,10 +72,10 @@ def _make_row(
     owner="John Smith",
 ) -> dict:
     return {
-        "AIRCRAFT REGISTRATION NUMBER": registration,
-        "AIRCRAFT TYPE - MAKE/MODEL": make_model,
-        "SERIAL #": serial,
-        "REGISTERED OWNER OF AIRCRAFT": owner,
+        _OWNER_COL: owner,
+        _REG_COL: registration,
+        _MAKE_MODEL_COL: make_model,
+        _SERIAL_COL: serial,
     }
 
 
@@ -206,38 +209,39 @@ class TestDownloadRegistry:
 # ---------------------------------------------------------------------------
 
 class TestParsePdf:
+    # Data rows follow _HEADERS order: owner, registration, make/model, serial.
     def test_parses_data_rows(self):
         table = [
             _HEADERS,
-            ["C6-ABC", "Cessna 172S", "172S12345", "John Smith"],
+            ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"],
         ]
         pdf_mock = _make_pdf_mock([table])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
             rows = parse_pdf("fake.pdf")
         assert len(rows) == 1
-        assert rows[0]["AIRCRAFT REGISTRATION NUMBER"] == "C6-ABC"
-        assert rows[0]["REGISTERED OWNER OF AIRCRAFT"] == "John Smith"
+        assert rows[0][_REG_COL] == "C6-ABC"
+        assert rows[0][_OWNER_COL] == "John Smith"
 
     def test_repeated_header_row_skipped(self):
         """Excel-generated PDFs repeat the header row on every page."""
         table = [
             _HEADERS,
-            ["C6-ABC", "Cessna 172S", "172S12345", "John Smith"],
+            ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"],
             _HEADERS,
-            ["C6-XYZ", "Piper PA-28", "28-98765", "Jane Doe"],
+            ["Jane Doe", "C6-XYZ", "Piper PA-28", "28-98765"],
         ]
         pdf_mock = _make_pdf_mock([table])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
             rows = parse_pdf("fake.pdf")
         assert len(rows) == 2
-        assert rows[0]["AIRCRAFT REGISTRATION NUMBER"] == "C6-ABC"
-        assert rows[1]["AIRCRAFT REGISTRATION NUMBER"] == "C6-XYZ"
+        assert rows[0][_REG_COL] == "C6-ABC"
+        assert rows[1][_REG_COL] == "C6-XYZ"
 
     def test_blank_row_skipped(self):
         table = [
             _HEADERS,
             ["", "", "", ""],
-            ["C6-ABC", "Cessna 172S", "172S12345", "John Smith"],
+            ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"],
         ]
         pdf_mock = _make_pdf_mock([table])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
@@ -247,17 +251,30 @@ class TestParsePdf:
     def test_none_cell_handled(self):
         table = [
             _HEADERS,
-            ["C6-ABC", None, "172S12345", "John Smith"],
+            ["John Smith", "C6-ABC", None, "172S12345"],
         ]
         pdf_mock = _make_pdf_mock([table])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
             rows = parse_pdf("fake.pdf")
-        assert rows[0]["AIRCRAFT TYPE - MAKE/MODEL"] == ""
+        assert rows[0][_MAKE_MODEL_COL] == ""
+
+    def test_none_owner_cell_handled(self):
+        """The live PDF has None in the owner column for many data rows."""
+        table = [
+            _HEADERS,
+            [None, "C6-AAM", "PIPER PA23-250", "27-7405315"],
+        ]
+        pdf_mock = _make_pdf_mock([table])
+        with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
+            rows = parse_pdf("fake.pdf")
+        assert len(rows) == 1
+        assert rows[0][_REG_COL] == "C6-AAM"
+        assert rows[0][_OWNER_COL] == ""
 
     def test_page_with_no_table_skipped(self):
         table = [
             _HEADERS,
-            ["C6-ABC", "Cessna 172S", "172S12345", "John Smith"],
+            ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"],
         ]
         pdf_mock = _make_pdf_mock([None, table])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
@@ -265,8 +282,8 @@ class TestParsePdf:
         assert len(rows) == 1
 
     def test_multi_page_rows_accumulated(self):
-        page1 = [_HEADERS, ["C6-ABC", "Cessna 172S", "172S12345", "John Smith"]]
-        page2 = [_HEADERS, ["C6-XYZ", "Piper PA-28", "28-98765", "Jane Doe"]]
+        page1 = [_HEADERS, ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"]]
+        page2 = [_HEADERS, ["Jane Doe", "C6-XYZ", "Piper PA-28", "28-98765"]]
         pdf_mock = _make_pdf_mock([page1, page2])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
             rows = parse_pdf("fake.pdf")
@@ -276,6 +293,24 @@ class TestParsePdf:
         pdf_mock = _make_pdf_mock([None, None])
         with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
             with pytest.raises(RuntimeError, match="No table data"):
+                parse_pdf("fake.pdf")
+
+    def test_raises_on_header_drift(self):
+        """A future header rename that drops the registration column must
+        fail loudly, not silently produce zero registrations."""
+        drifted_headers = [
+            "REGISTERED OWNER OF AIRCRAFT",
+            "AIRCRAFT REGISTRATION NUMBER",  # old name, no longer emitted by the CAA
+            "AIRCRAFT TYPE - MAKE/MODEL",
+            "SERIAL #",
+        ]
+        table = [
+            drifted_headers,
+            ["John Smith", "C6-ABC", "Cessna 172S", "172S12345"],
+        ]
+        pdf_mock = _make_pdf_mock([table])
+        with patch("bs_caa_registry_main.pdfplumber.open", return_value=pdf_mock):
+            with pytest.raises(RuntimeError, match="column headers have likely changed"):
                 parse_pdf("fake.pdf")
 
 
