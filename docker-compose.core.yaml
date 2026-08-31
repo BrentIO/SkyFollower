@@ -257,7 +257,7 @@ services:
       ofelia.job-run.runner-bg-caa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-bg-caa-registry.delete: *ofelia-runner-delete
 
-      ofelia.job-run.runner-hr-ccaa-registry.schedule: "0 10 23 * * 2"
+      ofelia.job-run.runner-hr-ccaa-registry.schedule: "0 10 21 * * 2"
       ofelia.job-run.runner-hr-ccaa-registry.image: "ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-hr-ccaa-registry.network: *ofelia-runner-network
       ofelia.job-run.runner-hr-ccaa-registry.environment: *ofelia-runner-environment
@@ -269,7 +269,9 @@ services:
       ofelia.job-run.runner-cy-dca-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-cy-dca-registry.delete: *ofelia-runner-delete
 
-      ofelia.job-run.runner-cz-caa-registry.schedule: "0 10 21 * * 2"
+      # cz-caa-registry makes a per-record detail fetch with a 0.25s delay between requests and takes a while.
+      # Schedule it as the last runner of the day.
+      ofelia.job-run.runner-cz-caa-registry.schedule: "0 10 23 * * 2"
       ofelia.job-run.runner-cz-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-cz-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-cz-caa-registry.network: *ofelia-runner-network
       ofelia.job-run.runner-cz-caa-registry.environment: *ofelia-runner-environment

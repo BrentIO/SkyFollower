@@ -75,8 +75,11 @@ up: seeds Redis by running every runner once instead of waiting on each
 one's own `ofelia` schedule (up to a week away for weekly runners).
 `mictronics` runs first since most country runners resolve `icao_hex`
 against its RediSearch index; the rest follow alphabetically, with
-`uk-caa-registry` pushed to the end since it takes far longer than the
-others.
+`cz-caa-registry` and then `uk-caa-registry` pushed to the end since both
+take far longer than the others — each does a per-record detail fetch
+(`cz-caa-registry` with a 0.25s delay between requests, `uk-caa-registry`
+with 676+ prefix searches on top). `cz-caa-registry` runs immediately
+before `uk-caa-registry`.
 
 To do this manually instead — or to bulk-load again later — from the core
 host's directory:
@@ -84,9 +87,10 @@ host's directory:
 ```bash
 docker compose run --rm runner-mictronics
 for svc in $(docker compose --profile runners config --services \
-    | grep '^runner-' | grep -v -E '^runner-(mictronics|uk-caa-registry)$' | sort); do
+    | grep '^runner-' | grep -v -E '^runner-(mictronics|cz-caa-registry|uk-caa-registry)$' | sort); do
   docker compose run --rm "$svc"
 done
+docker compose run --rm runner-cz-caa-registry
 docker compose run --rm runner-uk-caa-registry
 ```
 
