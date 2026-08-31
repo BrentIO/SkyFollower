@@ -59,6 +59,12 @@ SELECTED_ROLES=()
 
 ALL_ROLES="core management-ui archive message-processor receiver"
 
+# Fixed dependency order the selected roles are sorted into before the
+# install loop runs, regardless of the order they were selected or typed:
+# core stashes shared secrets the others read, and archive must deploy the
+# CloudFormation stack before management-ui reads its outputs.
+ROLE_DEPENDENCY_ORDER="core receiver message-processor archive management-ui"
+
 # usage()'s exit code depends on why it's being shown: 0 for an explicit
 # --help request (informational, not an error), 1 for anything else
 # (an unknown/malformed argument) -- callers pass the code they want.
@@ -1440,21 +1446,16 @@ aws_setup_output_value() {
   printf '%s\n' "$outputs" | grep -E "^${key}=" | tail -1 | cut -d= -f2- || true
 }
 
-# Offers to create/update the archive's CloudFormation stack (archive
-# role), or to read an already-deployed stack's outputs (management-ui
-# role), via a one-shot `docker run --rm ghcr.io/.../skyfollower-aws-setup`.
-# Modelled on provision_rabbitmq_users(): idempotent, degrades to advice
-# rather than aborting, and every failure path just falls through to the
-# manual AWS prompts unchanged.
-#
-# On success it sets AWS_PROV_* globals that collect_archive_env() /
-# collect_management_ui_env() then use as their AWS prompt defaults, so the
-# operator presses Enter through them. It never writes the elevated
-# (provisioning) credentials anywhere -- they are passed to the container
-# as environment for that single --rm run and expire on their own.
-offer_aws_provisioning() {
-  local role="$1" env_file="$2"
-
+# AWS_PROV_* carry the stack outputs from one provisioning run across every
+# AWS-consuming role installed in the same run (archive, then management-ui
+# -- dependency-ordered so archive deploys first). AWS_PROV_DONE guards the
+# single elevated-credential prompt: once the one provisioning interaction
+# has happened (whether it succeeded, was declined, or fell back), no later
+# role re-prompts. Both are initialised once before the role loop and
+# blanked once at the end of the whole run -- nothing elevated is left in
+# the process environment.
+init_aws_prov_globals() {
+  AWS_PROV_DONE=0
   AWS_PROV_S3_BUCKET=""
   AWS_PROV_REGION=""
   AWS_PROV_ARCHIVE_PROCESSOR_KEY_ID=""
@@ -1463,10 +1464,75 @@ offer_aws_provisioning() {
   AWS_PROV_ARCHIVE_COMPACTION_SECRET=""
   AWS_PROV_MANAGEMENT_UI_KEY_ID=""
   AWS_PROV_MANAGEMENT_UI_SECRET=""
+}
+clear_aws_prov_globals() { init_aws_prov_globals; }
+
+# After a successful provisioning run on the one-time-IAM-user path, offers
+# to delete that user (its access key, inline policy, and the user itself)
+# with its own still-valid credentials. A no-op on the paste-a-session path
+# (bootstrap_user empty). A failed delete step is handled inside
+# `aws-setup --delete-bootstrap-user`, which prints exactly what is left
+# and the manual console steps; this just relays its non-zero exit.
+offer_bootstrap_user_cleanup() {
+  local image="$1" bootstrap_user="$2" key_id="$3" secret="$4" region="$5"
+  [ -n "$bootstrap_user" ] || return 0
+
+  local answer
+  echo
+  echo "  The one-time IAM user '${bootstrap_user}' has served its purpose."
+  read -r -p "  Delete it now (key, inline policy, and user)? [Y/n]: " answer </dev/tty
+  if [ -n "$answer" ] && ! [[ "$answer" =~ ^[Yy] ]]; then
+    echo "  Left in place. Delete it later with:" >&2
+    echo "    docker run --rm -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \\" >&2
+    echo "      -e AWS_DEFAULT_REGION=${region} ${image} --delete-bootstrap-user ${bootstrap_user}" >&2
+    return 0
+  fi
+
+  if docker run --rm \
+      -e AWS_ACCESS_KEY_ID="$key_id" \
+      -e AWS_SECRET_ACCESS_KEY="$secret" \
+      -e AWS_DEFAULT_REGION="$region" \
+      "$image" --delete-bootstrap-user "$bootstrap_user"; then
+    echo "  ✓ One-time IAM user removed."
+  else
+    echo "  ✗ The one-time IAM user was not fully removed -- see the steps above." >&2
+  fi
+}
+
+# Offers to create/update the archive's CloudFormation stack (archive
+# role), or to read an already-deployed stack's outputs (management-ui
+# role), via a one-shot `docker run --rm ghcr.io/.../skyfollower-aws-setup`.
+# Modelled on provision_rabbitmq_users(): idempotent, degrades to advice
+# rather than aborting, and every failure path just falls through to the
+# manual AWS prompts unchanged.
+#
+# It prompts for the elevated provisioning credential exactly once per run.
+# First it asks how the operator wants to supply one: paste an existing
+# temporary session (SSO / access portal), or have the installer print the
+# least-privilege caller policy and walk them through creating a one-time
+# IAM user -- then offer to delete that user once provisioning succeeds.
+# aws-setup itself creates the CloudFormation execution role and hands it
+# to CloudFormation, so the caller credential only ever needs that small
+# policy.
+#
+# On success it sets AWS_PROV_* globals that collect_archive_env() /
+# collect_management_ui_env() then use as their AWS prompt defaults, so the
+# operator presses Enter through them. It never writes the elevated
+# (provisioning) credentials anywhere -- they are passed to the container
+# as environment for that single --rm run and expire on their own (or, for
+# the one-time user, are self-deleted at the end).
+offer_aws_provisioning() {
+  local role="$1" env_file="$2"
 
   # Non-interactive runs read every AWS value straight from the
   # environment (the .env key names) -- no container step, no prompting.
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    return 0
+  fi
+
+  # The one provisioning interaction for this run already happened (an
+  # earlier role) -- reuse whatever AWS_PROV_* it captured.
+  if [ "${AWS_PROV_DONE:-0}" = "1" ]; then
     return 0
   fi
 
@@ -1475,64 +1541,141 @@ offer_aws_provisioning() {
   local answer
   read -r -p "  Create or update it now? [Y/n]: " answer </dev/tty
   if [ -n "$answer" ] && ! [[ "$answer" =~ ^[Yy] ]]; then
+    AWS_PROV_DONE=1
     return 0
   fi
 
   if ! command -v docker >/dev/null 2>&1; then
     echo "  ✗ docker not found on PATH -- skipping provisioning; you'll be prompted for the AWS values manually." >&2
+    AWS_PROV_DONE=1
     return 0
   fi
 
-  echo
-  echo "  Paste temporary AWS credentials with permission to create these resources"
-  echo "  (access key + secret + session token, as copied from the AWS access portal)."
-  echo "  These are used for this one step only and are never saved."
-  local prov_key_id prov_secret prov_token prov_region
-  prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
-  prov_secret="$(prompt_password_value AWS_PROVISIONING_SECRET_ACCESS_KEY "AWS secret access key" "")"
-  prov_token="$(prompt_password_value AWS_PROVISIONING_SESSION_TOKEN "AWS session token" "")"
-  # Region must be prompted before any stack lookup: finding a stack
-  # requires knowing its region, so it can't be taken from the stack's own
-  # AwsRegion output.
-  prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
+  # From here on this is the single provisioning interaction: no later role
+  # re-prompts, even if this one falls back to manual AWS prompts.
+  AWS_PROV_DONE=1
 
   local image="ghcr.io/brentio/skyfollower-aws-setup:${IMAGE_VERSION}"
+  local prov_key_id prov_secret prov_token prov_region prov_prefix=""
+  local prov_bucket="" prov_create="" bootstrap_user="" cred_choice
+
+  echo
+  echo "  Provisioning needs an elevated AWS credential (CloudFormation, S3, Glue, Athena, IAM)."
+  echo "  How do you want to supply it?"
+  echo "    1) Paste an existing temporary session (AWS access portal / SSO)."
+  echo "    2) Create a one-time IAM user now -- the installer prints a"
+  echo "       least-privilege policy and the console steps, and offers to"
+  echo "       delete the user again once provisioning succeeds."
+  read -r -p "  Choose [1/2]: " cred_choice </dev/tty
+
+  if [ "$cred_choice" = "2" ]; then
+    # One-time IAM user path. Ask region and prefix first so the printed
+    # caller policy has no placeholders left in it; the bucket is asked
+    # here too so the deploy below has everything it needs in one pass.
+    echo
+    prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
+    prov_prefix="$(prompt_string RESOURCE_NAME_PREFIX "Resource name prefix (for the stack's IAM identity names)" "skyfollower")"
+    if [ "$role" = "management-ui" ]; then
+      prov_bucket="$(prompt_string S3_BUCKET "S3 archive bucket name (the one the archive host provisioned)" "$(existing_env_value "$env_file" S3_BUCKET)")"
+      prov_create="No"
+    else
+      prov_bucket="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
+      read -r -p "  Create this bucket? [Y/n]: " answer </dev/tty
+      if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then prov_create="Yes"; else prov_create="No"; fi
+    fi
+    bootstrap_user="${prov_prefix}-bootstrap"
+
+    local policy_json
+    if ! policy_json="$(docker run --rm \
+        -e AWS_DEFAULT_REGION="$prov_region" \
+        -e ARCHIVE_BUCKET_NAME="$prov_bucket" \
+        -e RESOURCE_NAME_PREFIX="$prov_prefix" \
+        -e BOOTSTRAP_USER_NAME="$bootstrap_user" \
+        "$image" --print-bootstrap-policy)"; then
+      echo "  ✗ Could not render the caller policy. Falling back to manual prompts." >&2
+      return 0
+    fi
+
+    echo
+    echo "  ----------------------------------------------------------------------"
+    echo "  One-time setup in the AWS console (https://console.aws.amazon.com/iam):"
+    echo
+    echo "    1. Users -> Create user. Name it exactly: ${bootstrap_user}"
+    echo "       Do NOT enable console access."
+    echo "    2. On 'Set permissions' pick 'Attach policies directly', then"
+    echo "       'Create inline policy' -> JSON tab, and paste this verbatim:"
+    echo
+    printf '%s\n' "$policy_json" | sed 's/^/         /'
+    echo
+    echo "       Name it (e.g. ${bootstrap_user}-policy) and finish creating the user."
+    echo "    3. Open ${bootstrap_user} -> Security credentials -> Create access key"
+    echo "       -> 'Application running outside AWS'. Copy the key ID and secret."
+    echo "    4. Paste them below. A plain IAM user's key needs no session token."
+    echo "  ----------------------------------------------------------------------"
+    echo
+    prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
+    prov_secret="$(prompt_password_value AWS_PROVISIONING_SECRET_ACCESS_KEY "AWS secret access key" "")"
+    prov_token=""
+  else
+    echo
+    echo "  Paste temporary AWS credentials with permission to create these resources"
+    echo "  (access key + secret + session token, as copied from the AWS access portal)."
+    echo "  These are used for this one step only and are never saved."
+    prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
+    prov_secret="$(prompt_password_value AWS_PROVISIONING_SECRET_ACCESS_KEY "AWS secret access key" "")"
+    prov_token="$(prompt_password_value AWS_PROVISIONING_SESSION_TOKEN "AWS session token" "")"
+    # Region must be prompted before any stack lookup: finding a stack
+    # requires knowing its region, so it can't be taken from the stack's own
+    # AwsRegion output.
+    prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
+  fi
+
+  # A plain IAM user's key needs no session token, and boto3 rejects an
+  # empty-string AWS_SESSION_TOKEN rather than ignoring it -- so only pass
+  # it when non-empty.
+  local cred_args=(
+    -e AWS_ACCESS_KEY_ID="$prov_key_id"
+    -e AWS_SECRET_ACCESS_KEY="$prov_secret"
+    -e AWS_DEFAULT_REGION="$prov_region"
+  )
+  [ -n "$prov_token" ] && cred_args+=(-e AWS_SESSION_TOKEN="$prov_token")
+
   local outputs=""
 
   if [ "$role" = "management-ui" ]; then
     echo "  → Reading the archive stack's outputs..."
-    if ! outputs="$(docker run --rm \
-        -e AWS_ACCESS_KEY_ID="$prov_key_id" \
-        -e AWS_SECRET_ACCESS_KEY="$prov_secret" \
-        -e AWS_SESSION_TOKEN="$prov_token" \
-        -e AWS_DEFAULT_REGION="$prov_region" \
-        "$image" --outputs-only)"; then
+    if ! outputs="$(docker run --rm "${cred_args[@]}" "$image" --outputs-only)"; then
       echo "  ✗ Could not read the stack outputs -- is the archive host provisioned yet? Falling back to manual prompts." >&2
+      _bootstrap_user_retry_hint "$bootstrap_user" "$image" "$prov_region"
       return 0
     fi
   else
-    local prov_bucket prov_create
-    prov_bucket="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
-    read -r -p "  Create this bucket? [Y/n]: " answer </dev/tty
-    if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then
-      prov_create="Yes"
-    else
-      prov_create="No"
+    if [ -z "$prov_bucket" ]; then
+      prov_bucket="$(prompt_string S3_BUCKET "S3 archive bucket name" "$(existing_env_value "$env_file" S3_BUCKET)")"
+      read -r -p "  Create this bucket? [Y/n]: " answer </dev/tty
+      if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then prov_create="Yes"; else prov_create="No"; fi
+    fi
+    # RESOURCE_NAME_PREFIX is only passed when the operator set a non-default
+    # value (the one-time-user path) -- otherwise the template's own default
+    # stands, matching the names the printed policy was scoped to. Built as
+    # folded into one always-non-empty array so `"${deploy_args[@]}"` is
+    # safe under `set -u` on bash 3.2 (see the note in
+    # collect_message_processor_env about zero-element arrays).
+    local -a deploy_args=(-e ARCHIVE_BUCKET_NAME="$prov_bucket" -e CREATE_ARCHIVE_BUCKET="$prov_create")
+    if [ -n "$prov_prefix" ] && [ "$prov_prefix" != "skyfollower" ]; then
+      deploy_args+=(-e "RESOURCE_NAME_PREFIX=$prov_prefix")
     fi
     echo "  → Deploying CloudFormation stack 'skyfollower' (this can take a few minutes)..."
-    if ! outputs="$(docker run --rm \
-        -e AWS_ACCESS_KEY_ID="$prov_key_id" \
-        -e AWS_SECRET_ACCESS_KEY="$prov_secret" \
-        -e AWS_SESSION_TOKEN="$prov_token" \
-        -e AWS_DEFAULT_REGION="$prov_region" \
-        -e ARCHIVE_BUCKET_NAME="$prov_bucket" \
-        -e CREATE_ARCHIVE_BUCKET="$prov_create" \
-        "$image")"; then
+    outputs="$(docker run --rm "${cred_args[@]}" "${deploy_args[@]}" "$image")" || true
+    if [ -z "$outputs" ]; then
       echo "  ✗ Provisioning failed -- see the output above. Falling back to manual prompts." >&2
+      _bootstrap_user_retry_hint "$bootstrap_user" "$image" "$prov_region"
       return 0
     fi
     echo "  ✓ Stack deployed."
   fi
+
+  offer_bootstrap_user_cleanup "$image" "$bootstrap_user" "$prov_key_id" "$prov_secret" "$prov_region"
 
   AWS_PROV_S3_BUCKET="$(aws_setup_output_value "$outputs" ArchiveBucketName)"
   AWS_PROV_REGION="$(aws_setup_output_value "$outputs" AwsRegion)"
@@ -1546,6 +1689,17 @@ offer_aws_provisioning() {
   # stack output somehow came back blank.
   [ -n "$AWS_PROV_REGION" ] || AWS_PROV_REGION="$prov_region"
   echo "  ✓ AWS values captured -- the prompts below are pre-filled; press Enter to accept."
+}
+
+# Printed after a failed provisioning run on the one-time-user path: the
+# user still exists, so keep it to retry or delete it once done.
+_bootstrap_user_retry_hint() {
+  local bootstrap_user="$1" image="$2" region="$3"
+  [ -n "$bootstrap_user" ] || return 0
+  echo "  Note: the one-time IAM user '${bootstrap_user}' still exists -- keep it to" >&2
+  echo "  retry, or delete it once you're done:" >&2
+  echo "    docker run --rm -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... \\" >&2
+  echo "      -e AWS_DEFAULT_REGION=${region} ${image} --delete-bootstrap-user ${bootstrap_user}" >&2
 }
 
 offer_ofelia_and_bulk_load() {
@@ -1728,21 +1882,25 @@ main() {
     [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
 
-  # collect_core_env() must actually run before any dependent role's
-  # collect_*_env in the loop below, since those read CORE_REDIS_PASSWORD/
-  # CORE_RABBITMQ_PASSWORD that only exist once core has stashed them (see
-  # resolve_core_shared_password()) -- reorder core to the front regardless
-  # of what order roles were selected/typed in, without disturbing the
-  # relative order of the rest.
-  if [ -n "${CORE_SELECTED_IN_THIS_RUN:-}" ]; then
-    local reordered_roles=("core")
+  # Sort the selected roles into ROLE_DEPENDENCY_ORDER. Two constraints
+  # this satisfies: collect_core_env() must run before any dependent role's
+  # collect_*_env (those read CORE_REDIS_PASSWORD / CORE_RABBITMQ_PASSWORD
+  # that only exist once core has stashed them -- see
+  # resolve_core_shared_password()), and archive must deploy the
+  # CloudFormation stack before management-ui's collect_*_env reads its
+  # outputs via `aws-setup --outputs-only`.
+  local reordered_roles=() want r
+  for want in $ROLE_DEPENDENCY_ORDER; do
     for r in "${SELECTED_ROLES[@]}"; do
-      [ "$r" = "core" ] || reordered_roles+=("$r")
+      [ "$r" = "$want" ] && reordered_roles+=("$r")
     done
-    SELECTED_ROLES=("${reordered_roles[@]}")
-  fi
+  done
+  SELECTED_ROLES=("${reordered_roles[@]}")
 
   mkdir -p "$INSTALL_ROOT"
+
+  # One provisioning interaction per run; blanked again at the end.
+  init_aws_prov_globals
 
   local installed_dirs=()
   local installed_roles=()
@@ -1795,6 +1953,9 @@ main() {
       offer_ofelia_and_bulk_load "$role_dir"
     fi
   done
+
+  # Nothing elevated is left in the process environment once the run ends.
+  clear_aws_prov_globals
 
   echo
   echo "Summary:"

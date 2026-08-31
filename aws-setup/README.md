@@ -13,6 +13,15 @@ lives in [`specs/aws/cloudformation.yaml`](../specs/aws/cloudformation.yaml),
 baked into this image. `aws-setup` drives CloudFormation with it rather
 than calling the Glue/IAM/Athena APIs directly:
 
+- **The execution role.** Before every deploy, `aws-setup` idempotently
+  creates the `<prefix>-cloudformation-execution` IAM role — trusted only
+  by `cloudformation.amazonaws.com` — and attaches an inline permissions
+  policy holding every resource action the template needs (`create_role` /
+  `put_role_policy` via boto3, using the caller credentials; an unchanged
+  re-run is a no-op, a changed policy is written in place). The deploy
+  then passes `RoleARN=<that role>` to `create_change_set` and
+  `execute_change_set`, so CloudFormation runs the underlying
+  S3/Glue/Athena/IAM actions **as the role, not as the caller**.
 - **Create or update** is a single `create_change_set` →
   `execute_change_set`. CloudFormation diffs desired state against deployed
   state and applies only the delta, rolling back on failure. Re-running an
@@ -23,9 +32,11 @@ than calling the Glue/IAM/Athena APIs directly:
   recreated) — then it stops and requires `--yes`. This makes the two
   documented foot-guns (changing `ArchiveBucketName` or `ResourceNamePrefix`
   on an existing stack) impossible to trigger by accident.
-- **Teardown** is `--delete`. Both S3 buckets carry `DeletionPolicy:
-  Retain`, so a delete never destroys flight data or the query-results
-  bucket's contents.
+- **Teardown** is `--delete`: `delete_stack` + wait, then a best-effort
+  teardown of the execution role and its inline policy (a leftover is
+  reported, not fatal). Both S3 buckets carry `DeletionPolicy: Retain`, so
+  a delete never destroys flight data or the query-results bucket's
+  contents.
 
 **stdout carries only `KEY=value` lines** (the stack outputs). Every
 progress line, change-set summary, stack event, and error goes to stderr.
@@ -36,28 +47,40 @@ reason.
 
 ## Credentials
 
-`aws-setup` needs credentials far broader than the three scoped identities
-it creates — full Glue/IAM/Athena/S3 provisioning rights. Those are **the
-operator's own temporary session credentials** (access key + secret +
-session token, as copied from the AWS access portal), passed to the
-container as environment for a single `--rm` run. This component never
-writes them anywhere; they expire on their own.
+The credential `aws-setup` runs with is a **caller** credential — far
+smaller than the union of what the template touches, because CloudFormation
+executes the template as the execution role (above), not as the caller.
+The exact least-privilege policy is documented in
+[docs/aws-configuration.md](../docs/aws-configuration.md) and rendered,
+fully substituted, by `--print-bootstrap-policy`. Two ways to supply it:
+
+- **An existing temporary session** — access key + secret + session token,
+  as copied from the AWS access portal / SSO.
+- **A one-time IAM user**: run `--print-bootstrap-policy`, create a user
+  with that inline policy in the console, use its plain access key (no
+  session token), then run `--delete-bootstrap-user <name>` to remove it.
+  `scripts/install.sh` walks through this end-to-end.
+
+Either way the credential is passed to the container as environment for a
+single `--rm` run. This component never writes it anywhere.
 
 The property this preserves: **no SkyFollower component ever holds a
 credential that can create, modify, or delete an AWS resource.** The three
 identities the stack issues are data-plane only — they cannot even read the
 CloudFormation control plane, which is why the management-ui host runs
-`--outputs-only` with its own temporary credentials rather than reading its
+`--outputs-only` with its own caller credential rather than reading its
 keys back through anything the stack gave it.
 
 ## Invocation
 
 | Flags | Behaviour |
 |---|---|
-| *(none)* | Build a change set, print its summary, execute it (pausing for confirmation only on a `Replacement`), wait for a terminal state, print outputs |
+| *(none)* | Ensure the execution role exists, then build a change set, print its summary, execute it (pausing for confirmation only on a `Replacement`), wait for a terminal state, print outputs. `RoleARN` is passed on both change-set calls |
 | `--yes` | Apply a replacement-containing change set without prompting (non-interactive runs) |
 | `--outputs-only` | Skip provisioning; just read an existing stack's outputs (the management-ui host) |
-| `--delete` | `delete_stack` + wait. Both buckets are retained |
+| `--delete` | `delete_stack` + wait, then tear down the execution role (best-effort). Both buckets are retained |
+| `--print-bootstrap-policy` | Render the least-privilege caller IAM policy as JSON, fully substituted from the same parameters (`RESOURCE_NAME_PREFIX`, `STACK_NAME`, `AWS_DEFAULT_REGION`, and optional `AWS_ACCOUNT_ID` / `BOOTSTRAP_USER_NAME` refine the ARNs). Makes no AWS call and needs no credentials |
+| `--delete-bootstrap-user NAME` | Delete `NAME`'s access keys, inline policies, then the user itself, using the credentials passed in. On any failed step, prints exactly what is left and the manual console steps, then exits non-zero |
 
 `scripts/install.sh` runs this for you (the `archive` and `management-ui`
 roles). To run it directly:
@@ -71,6 +94,10 @@ docker run --rm \
   ghcr.io/brentio/skyfollower-aws-setup:latest
 ```
 
+Omit `AWS_SESSION_TOKEN` when the credential is a plain IAM user's key
+rather than an SSO / access-portal session — boto3 rejects an empty-string
+token rather than ignoring it.
+
 ## Configuration
 
 Every value is an environment variable. `ARCHIVE_BUCKET_NAME` is the only
@@ -79,16 +106,19 @@ and, when unset, leave the template's own defaults authoritative.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | ✅ | — | The operator's temporary provisioning credentials. boto3's own variable names |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | ✅ | — | The caller provisioning credentials. boto3's own variable names |
+| `AWS_SESSION_TOKEN` | ✅ for an SSO / access-portal session; omit for a plain IAM user's key | — | boto3's own variable name |
 | `AWS_DEFAULT_REGION` | ✅ | — | Region to deploy the stack in / read it from |
-| `ARCHIVE_BUCKET_NAME` | ✅ (not for `--outputs-only` / `--delete`) | — | Name of the S3 bucket holding `flights/`, `index/`, `_compaction_state/` |
+| `ARCHIVE_BUCKET_NAME` | ✅ (not for `--outputs-only` / `--delete` / `--print-bootstrap-policy`) | — | Name of the S3 bucket holding `flights/`, `index/`, `_compaction_state/` |
 | `CREATE_ARCHIVE_BUCKET` | ❌ | `Yes` | `Yes` to create it, `No` to adopt one that already exists |
+| `AWS_ACCOUNT_ID` | ❌ | `*` | `--print-bootstrap-policy` only: tightens the Glue/Athena/IAM ARNs to one account |
+| `BOOTSTRAP_USER_NAME` | ❌ | `{RESOURCE_NAME_PREFIX}-bootstrap` | `--print-bootstrap-policy` only: the user the self-cleanup statement is scoped to |
 | `STACK_NAME` | ❌ | `skyfollower` | CloudFormation stack name. An escape hatch (e.g. a test stack beside the real one); `install.sh` never sets it |
 | `GLUE_DATABASE_NAME` | ❌ | `skyfollower` | |
 | `GLUE_TABLE_NAME` | ❌ | `archive_flights` | |
 | `ATHENA_WORKGROUP_NAME` | ❌ | `skyfollower` | |
 | `ATHENA_RESULTS_EXPIRATION_DAYS` | ❌ | `8` | Whole-bucket expiry on the query-results bucket. One day longer than management-ui's Redis pointer TTL, by design |
-| `RESOURCE_NAME_PREFIX` | ❌ | `skyfollower` | Prefix for the three IAM user names. Changing it on an existing stack replaces every user (rotating every key) |
+| `RESOURCE_NAME_PREFIX` | ❌ | `skyfollower` | Prefix for the three IAM user names **and** the `<prefix>-cloudformation-execution` role. Changing it on an existing stack replaces every user (rotating every key) |
 | `ACCESS_KEY_SERIAL` | ❌ | `1` | Bump to rotate all three access-key pairs |
 | `ATHENA_BYTES_SCANNED_CUTOFF_BYTES` | ❌ | `0` | Per-query scanned-bytes ceiling (cost guardrail). `0` disables it; any non-zero value is floored at 10 MB by AWS |
 
