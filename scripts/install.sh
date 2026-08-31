@@ -1567,9 +1567,10 @@ offer_ofelia_and_bulk_load() {
     echo
     echo "First-time bulk load: seeds Redis by running every runner once"
     echo "(mictronics first -- most country runners resolve icao_hex against"
-    echo "its index -- then the rest alphabetically, with uk-caa-registry last"
-    echo "since it takes hours). Otherwise each runs on its own schedule and"
-    echo "Redis fills in gradually."
+    echo "its index -- then the rest alphabetically, then cz-caa-registry just"
+    echo "before uk-caa-registry last, since both do slow per-record detail"
+    echo "fetches). Otherwise each runs on its own schedule and Redis fills"
+    echo "in gradually."
     read -r -p "Run the bulk load now? [y/N]: " answer </dev/tty
   fi
   if [ -z "$answer" ] || ! [[ "$answer" =~ ^[Yy] ]]; then
@@ -1586,12 +1587,17 @@ offer_ofelia_and_bulk_load() {
   # that legitimately matches nothing (an unusual runner set, or none at
   # all) would otherwise take the whole script down right here instead of
   # just producing an empty list.
-  local all_runners mictronics rest uk_last ordered
+  # cz-caa-registry and uk-caa-registry are both pulled out of the
+  # alphabetical batch and appended last: each does a per-record detail
+  # fetch (cz-caa-registry with a 0.25s inter-request delay, uk-caa-registry
+  # with 676+ prefix searches on top) and runs far longer than the rest.
+  local all_runners mictronics rest cz_second_last uk_last ordered
   all_runners="$(cd "$role_dir" && docker compose --profile runners config --services | grep '^runner-' || true)"
   mictronics="$(echo "$all_runners" | grep '^runner-mictronics$' || true)"
+  cz_second_last="$(echo "$all_runners" | grep '^runner-cz-caa-registry$' || true)"
   uk_last="$(echo "$all_runners" | grep '^runner-uk-caa-registry$' || true)"
-  rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-uk-caa-registry$' | sort || true)"
-  ordered="$(printf '%s\n%s\n%s\n' "$mictronics" "$rest" "$uk_last" | grep -v '^$' || true)"
+  rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-cz-caa-registry$' | grep -v '^runner-uk-caa-registry$' | sort || true)"
+  ordered="$(printf '%s\n%s\n%s\n%s\n' "$mictronics" "$rest" "$cz_second_last" "$uk_last" | grep -v '^$' || true)"
 
   for r in $ordered; do
     echo "Running ${r}..."
