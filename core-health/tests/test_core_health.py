@@ -511,12 +511,53 @@ class TestPollReceivers:
         assert published[
             "SkyFollower/receiver/attic/statistic/messages_192-168-10-5_30002_total_hour"
         ] == "5"
+        assert published[
+            "SkyFollower/receiver/attic/statistic/messages_192-168-10-5_30002_total_today"
+        ] == "5"
         # And the counter was read from the real per-connection key shape,
         # connection_id = sanitized "{host}_{port}", matching what the
         # receiver's own telemetry thread flushes to.
         app._redis.get.assert_any_call(
             receiver_message_count_key("attic", "192-168-10-5_30002", "hour")
         )
+
+    def test_lifetime_is_not_published_or_read_from_redis(self):
+        # messages_*_total_lifetime is a device-local, in-memory figure the
+        # receiver publishes directly (it resets on a receiver restart) and
+        # is never written to Redis -- core-health must neither read a
+        # lifetime key nor publish that topic.
+        app = _wired_app()
+        app._redis.smembers.return_value = {"attic"}
+        registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
+        app._redis.get.side_effect = lambda key: (
+            json.dumps(registration) if key == receiver_registration_key("attic") else "5"
+        )
+
+        app._poll_receivers()
+
+        published = _state_publishes(app._mqtt)
+        assert not any("_total_lifetime" in topic for topic in published)
+        discovery = _discovery_payloads(app._mqtt)
+        assert not any("_total_lifetime" in topic for topic in discovery)
+        for call in app._redis.get.call_args_list:
+            assert "messages:lifetime" not in call.args[0]
+
+    def test_discovery_generated_for_hour_and_today_only(self):
+        app = _wired_app()
+        app._redis.smembers.return_value = {"attic"}
+        registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
+        app._redis.get.side_effect = lambda key: (
+            json.dumps(registration) if key == receiver_registration_key("attic") else "5"
+        )
+
+        app._poll_receivers()
+
+        discovery = _discovery_payloads(app._mqtt)
+        receiver_cfgs = [t for t in discovery if "SkyFollower_receiver_attic_messages_" in t]
+        assert sorted(receiver_cfgs) == sorted([
+            "homeassistant/sensor/SkyFollower_receiver_attic_messages_192-168-10-5_30002_total_hour/config",
+            "homeassistant/sensor/SkyFollower_receiver_attic_messages_192-168-10-5_30002_total_today/config",
+        ])
 
     def test_registration_key_uses_the_real_shared_builder_shape(self):
         # Regression test for #1067: core-health's registration GET must
@@ -961,6 +1002,12 @@ class TestReconciledReceiverKeys:
         assert receiver_message_count_key("attic", "192-168-10-5_30002", "hour") == (
             "metrics:receiver:attic:192-168-10-5_30002:messages:hour"
         )
+
+    def test_receiver_message_count_key_rejects_lifetime(self):
+        # Receiver per-connection counts have no "lifetime" period -- that
+        # total is in-memory only and published directly by the receiver.
+        with pytest.raises(ValueError):
+            receiver_message_count_key("attic", "192-168-10-5_30002", "lifetime")
 
 
 # ---------------------------------------------------------------------------

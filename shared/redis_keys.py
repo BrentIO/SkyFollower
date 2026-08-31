@@ -10,6 +10,10 @@ import re
 
 _VALID_PERIODS = frozenset({"hour", "today", "lifetime"})
 _VALID_ARCHIVE_PERIODS = frozenset({"hour", "today"})
+# Receiver per-connection message counts have no "lifetime": that total is
+# a device-local, in-memory figure the receiver publishes directly (it
+# resets on a receiver restart), never persisted to Redis.
+_VALID_RECEIVER_PERIODS = frozenset({"hour", "today"})
 _VALID_OPERATOR_MISSES_PERIODS = frozenset({"today", "lifetime"})
 
 # RediSearch index over all aircraft:mictronics:{hex} JSON documents (Mictronics).
@@ -194,13 +198,17 @@ def receiver_message_count_key(receiver_id: str, connection_id: str, period: str
     port), so a Redis key and its corresponding
     messages_{connection_id}_total_{period} MQTT field are trivially
     derivable from each other -- what core-health's publishing-parity
-    mimicry depends on. period must be one of: hour, today, lifetime.
+    mimicry depends on. period must be one of: hour, today. There is no
+    "lifetime" period here: that total is a device-local, in-memory figure
+    the receiver publishes directly (resets on its restart), never Redis.
     Missing key means the count is genuinely 0, not unavailable -- same
     principle as the message processor's own miss counters.
     metrics:receiver:{id}:{connection_id}:messages:{period}
     """
-    if period not in _VALID_PERIODS:
-        raise ValueError(f"period must be one of {_VALID_PERIODS}, got: {period!r}")
+    if period not in _VALID_RECEIVER_PERIODS:
+        raise ValueError(
+            f"period must be one of {_VALID_RECEIVER_PERIODS}, got: {period!r}"
+        )
     return f"metrics:receiver:{receiver_id}:{connection_id}:messages:{period}"
 
 

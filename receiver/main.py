@@ -146,26 +146,26 @@ class _RateTracker:
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
 
-        # Redis-backed period counters. Pure in-memory
-        # running totals for *this process's own lifetime* -- record()
-        # only ever adds to them, never reads/writes Redis and never
-        # resets them for a real hour/day boundary (that happens in
-        # flush_to_redis(), from the telemetry thread, never here). There
-        # is deliberately no persisted store behind these three fields, so
-        # a receiver restart resets the receiver's own published totals to
-        # zero even though Redis (what core-health reads) keeps
-        # accumulating across that restart -- see receiver/README.md's
-        # "known limitation" note.
+        # Pure in-memory running totals for *this process's own lifetime* --
+        # record() only ever adds to them, never reads/writes Redis and
+        # never resets them for a real hour/day boundary (that happens in
+        # flush_to_redis(), from the telemetry thread, never here).
+        #
+        # hour_count/today_count feed the Redis-backed, cross-restart-
+        # durable counters core-health publishes: flush_to_redis() pushes
+        # their delta into Redis every telemetry tick. lifetime_count is
+        # different -- it is never written to Redis. It is a device-local
+        # running total the receiver publishes directly, so it resets to
+        # zero on every receiver restart by design (see receiver/README.md).
         self.hour_count = 0
         self.today_count = 0
         self.lifetime_count = 0
-        # Bookkeeping only flush_to_redis() touches: the last value of
-        # each counter already pushed to Redis (so it can INCRBY just the
+        # Bookkeeping only flush_to_redis() touches: the last value of each
+        # Redis-flushed counter already pushed (so it can send just the
         # delta), and the hour/day "bucket" (floored to the boundary) each
         # counter was last flushed against, to detect a real rollover.
         self._flushed_hour = 0
         self._flushed_today = 0
-        self._flushed_lifetime = 0
         self._hour_bucket: Optional[datetime] = None
         self._day_bucket: Optional[datetime] = None
 
@@ -195,10 +195,11 @@ class _RateTracker:
         key_fn: Callable[[str], str],
         now: datetime,
     ) -> None:
-        """Pushes the delta accumulated since the last flush into Redis
-        (via incr_period_counter.lua for hour/today, a plain INCRBY for
-        lifetime since it never expires), and resets hour_count/today_count
-        locally on an actually-observed UTC hour/midnight rollover.
+        """Pushes the hour/today delta accumulated since the last flush
+        into Redis (via incr_period_counter.lua), and resets
+        hour_count/today_count locally on an actually-observed UTC
+        hour/midnight rollover. lifetime_count is never flushed -- it is a
+        device-local total the receiver publishes directly.
 
         Called only from the receiver's telemetry thread -- never the
         per-message hot path record() runs on.
@@ -240,9 +241,6 @@ class _RateTracker:
                 today_delta = self.today_count - self._flushed_today
                 self._flushed_today = self.today_count
 
-            lifetime_delta = self.lifetime_count - self._flushed_lifetime
-            self._flushed_lifetime = self.lifetime_count
-
         if hour_delta:
             next_hour = hour_bucket + timedelta(hours=1)
             redis_client.evalsha(
@@ -253,8 +251,6 @@ class _RateTracker:
             redis_client.evalsha(
                 script_sha, 0, key_fn("today"), today_delta, int(next_day.timestamp())
             )
-        if lifetime_delta:
-            redis_client.incrby(key_fn("lifetime"), lifetime_delta)
 
 
 def _load_or_create_receiver_id(data_dir: str) -> str:
@@ -1168,6 +1164,17 @@ class Receiver:
                 str(round(tracker.rate(), 2)),
                 retain=True,
             )
+            # Device-local running total for this process's lifetime,
+            # sourced straight from the in-memory counter and never from
+            # Redis -- so it resets to zero on every receiver restart, the
+            # same as messages_*_per_second above. hour/today are the ones
+            # that stay Redis-backed and cross-restart-durable, published
+            # solely by core-health.
+            self._mqtt.publish(
+                f"{base}/messages_{mqtt_host}_{mqtt_port}_total_lifetime",
+                str(tracker.lifetime_count),
+                retain=True,
+            )
             self._mqtt.publish(
                 f"{base}/{mqtt_host}_{mqtt_port}_connected",
                 str(self._connected.get((host, port), False)),
@@ -1185,12 +1192,11 @@ class Receiver:
                     json.dumps({"last_message_received": last_message_at}),
                     retain=True,
                 )
-            # messages_*_total_{hour,today,lifetime} is NOT published here:
-            # core-health owns those topics, publishing the cross-restart-
-            # durable Redis counters this receiver's flush feeds. The
-            # receiver only publishes what core-health doesn't. With
-            # REDIS_HOST unset there is no core-health path, so those three
-            # sensors simply don't exist -- see _RateTracker's docstring and
+            # messages_*_total_{hour,today} are NOT published here: core-health
+            # owns those two topics, publishing the cross-restart-durable
+            # Redis counters this receiver's flush feeds. With REDIS_HOST
+            # unset there is no core-health path, so those two sensors simply
+            # don't exist -- see _RateTracker's docstring and
             # receiver/README.md.
         # Every backlog an operator cares about: the durable SQLite queue
         # plus whatever is still buffered in memory -- the live queue
@@ -1273,10 +1279,16 @@ class Receiver:
                              f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes"))
             sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None, None))
-            # No discovery for messages_*_total_{hour,today,lifetime}:
-            # core-health is the sole publisher of both the value and the
-            # discovery config for those, so the receiver doesn't compete
-            # for the same unique_id -- see _publish_telemetry.
+            # total_increasing is the correct HA semantics for a counter
+            # that legitimately resets on a device restart -- which this
+            # one does, being sourced from the in-memory counter, not Redis.
+            sensors.append((f"messages_{mqtt_host}_{mqtt_port}_total_lifetime",
+                             f"{host}:{port} Messages Total (Lifetime)",
+                             "mdi:counter", "total_increasing", None, None))
+            # No discovery for messages_*_total_{hour,today}: core-health is
+            # the sole publisher of both the value and the discovery config
+            # for those two, so the receiver doesn't compete for the same
+            # unique_id -- see _publish_telemetry.
         sensors += [
             ("started_at", "Start Time",
              "mdi:clock-start", None, None, None),

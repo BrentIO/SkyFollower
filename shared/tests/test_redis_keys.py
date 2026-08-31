@@ -137,14 +137,17 @@ class TestReceiverKeys:
             receiver_message_count_key("ATTIC", "localhost_30002", "today")
             == "metrics:receiver:ATTIC:localhost_30002:messages:today"
         )
-        assert (
-            receiver_message_count_key("ATTIC", "localhost_30002", "lifetime")
-            == "metrics:receiver:ATTIC:localhost_30002:messages:lifetime"
-        )
 
     def test_message_count_key_invalid_period(self):
         with pytest.raises(ValueError, match="period"):
             receiver_message_count_key("ATTIC", "localhost_30002", "week")
+
+    def test_message_count_key_rejects_lifetime(self):
+        # Receiver per-connection counts have no "lifetime": that total is
+        # a device-local, in-memory figure the receiver publishes directly
+        # (resets on a receiver restart), never persisted to Redis.
+        with pytest.raises(ValueError, match="period"):
+            receiver_message_count_key("ATTIC", "localhost_30002", "lifetime")
 
 
 class TestMetricKeys:
