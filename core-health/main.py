@@ -726,7 +726,10 @@ class CoreHealth:
         # with the one the receiver actually writes.
         host_s, port_s = _sanitize_id(str(host)), _sanitize_id(str(port))
         connection_id = f"{host_s}_{port_s}"
-        for period, label_suffix in (("hour", "Hour"), ("today", "Today"), ("lifetime", "Lifetime")):
+        # lifetime is deliberately absent: it is a device-local, in-memory
+        # total the receiver publishes directly (resets on its restart),
+        # never written to Redis. Only hour/today are Redis-backed here.
+        for period, label_suffix in (("hour", "Hour"), ("today", "Today")):
             field = f"messages_{host_s}_{port_s}_total_{period}"
             value = self._redis_counter_or_none(
                 self._redis, receiver_message_count_key(name, connection_id, period)

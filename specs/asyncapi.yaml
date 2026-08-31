@@ -101,22 +101,25 @@ channels:
       ReceiverConnectionReconnectCountMessage:
         $ref: '#/components/messages/ReceiverConnectionReconnectCountMessage'
 
-  # Only published when the receiver has REDIS_HOST configured. Missing
-  # entirely (rather than a zero-valued topic) is how a Redis-less
-  # receiver signals these don't apply, matching the receiver's own
-  # has-no-standalone-entry convention elsewhere in this file rather than
-  # inventing a new one.
+  # The _total_hour / _total_today topics are only published when the
+  # receiver has REDIS_HOST configured (they are Redis-backed and published
+  # by core-health, not the receiver). Missing entirely (rather than a
+  # zero-valued topic) is how a Redis-less deployment signals they don't
+  # apply, matching the receiver's own has-no-standalone-entry convention
+  # elsewhere in this file rather than inventing a new one. The sibling
+  # _total_lifetime topic is unconditional and published by the receiver
+  # itself -- see its own entry below.
 
   receiverConnectionMessagesTotalHour:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_hour'
     description: >
       Cumulative message count for one specific sources[] connection since
-      the current UTC hour began. Only published when the receiver has
-      REDIS_HOST configured. Backed by shared/lua/incr_period_counter.lua
-      via Redis, but published from the receiver's own in-memory running
-      total, not a Redis read -- resets on receiver restart as well as at
-      the real UTC hour boundary (documented limitation, not a bug).
-      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+      the current UTC hour began. Only published when REDIS_HOST is
+      configured. Backed by shared/lua/incr_period_counter.lua via Redis;
+      the receiver flushes its own count into Redis and core-health reads
+      Redis and publishes this topic, so the value is cross-restart-durable
+      (it survives a receiver restart, resetting only at the real UTC hour
+      boundary). Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -132,9 +135,10 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_today'
     description: >
       Cumulative message count for one specific sources[] connection since
-      the current UTC day began. Only published when the receiver has
-      REDIS_HOST configured. Same in-memory-total/restart-resets caveat as
-      the sibling _total_hour field above. Published every
+      the current UTC day began. Only published when REDIS_HOST is
+      configured. Redis-backed and published by core-health, same as the
+      sibling _total_hour field above -- cross-restart-durable, resetting
+      only at the real UTC day boundary. Published every
       MQTT_PUBLISH_INTERVAL_SECONDS, retained.
     parameters:
       receiver_id:
@@ -151,10 +155,13 @@ channels:
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_lifetime'
     description: >
       Cumulative message count for one specific sources[] connection since
-      this process started -- not since the receiver was first installed;
-      there is no persistence layer distinguishing the two. Only published
-      when the receiver has REDIS_HOST configured. Published every
-      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+      this receiver process started -- not since the receiver was first
+      installed. A device-local, in-memory figure the receiver publishes
+      directly (the same way messages_*_per_second is published), never
+      written to or read from Redis, so it resets to zero on every receiver
+      restart by design. Published unconditionally, regardless of whether
+      REDIS_HOST is set. Published every MQTT_PUBLISH_INTERVAL_SECONDS,
+      retained.
     parameters:
       receiver_id:
         $ref: '#/components/parameters/ReceiverId'
@@ -829,7 +836,7 @@ operations:
     action: send
     channel:
       $ref: '#/channels/receiverConnectionMessagesTotalLifetime'
-    summary: Receiver publishes the cumulative message count for one sources[] connection since process start (REDIS_HOST configured only)
+    summary: Receiver publishes the cumulative message count for one sources[] connection since this receiver process started (in-memory, resets on restart; published regardless of REDIS_HOST)
 
   publishReceiverConnectionConnectedAttributes:
     action: send
@@ -1583,26 +1590,28 @@ components:
       type: integer
       description: >
         Cumulative message count for one sources[] connection since the
-        current UTC hour began. Only published when the receiver has
-        REDIS_HOST configured; resets on receiver restart as well as at
-        the real UTC boundary.
+        current UTC hour began. Only published when REDIS_HOST is
+        configured; Redis-backed and published by core-health, so it is
+        cross-restart-durable and resets only at the real UTC boundary.
       example: 214
 
     ReceiverConnectionMessagesTotalToday:
       type: integer
       description: >
         Cumulative message count for one sources[] connection since the
-        current UTC day began. Only published when the receiver has
-        REDIS_HOST configured; resets on receiver restart as well as at
-        the real UTC boundary.
+        current UTC day began. Only published when REDIS_HOST is
+        configured; Redis-backed and published by core-health, so it is
+        cross-restart-durable and resets only at the real UTC boundary.
       example: 8452
 
     ReceiverConnectionMessagesTotalLifetime:
       type: integer
       description: >
         Cumulative message count for one sources[] connection since this
-        process started -- not since the receiver was first installed.
-        Only published when the receiver has REDIS_HOST configured.
+        receiver process started -- not since the receiver was first
+        installed. An in-memory figure the receiver publishes directly,
+        never Redis-backed, so it resets to zero on every receiver restart
+        by design. Published regardless of whether REDIS_HOST is set.
       example: 193822
 
     ReceiverConnectionConnectedAttributes:

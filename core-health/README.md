@@ -91,14 +91,18 @@ publishing them itself:
   `total_messages_processed_{hour,today,lifetime}` — enumerated for free
   from the same `skyfollower-message-processor-{id}` queue list already
   polled above, no separate discovery mechanism.
-- **receiver**: `messages_{host}_{port}_total_{hour,today,lifetime}` per
-  source connection — discovered via one cheap `SMEMBERS` per RabbitMQ poll
+- **receiver**: `messages_{host}_{port}_total_{hour,today}` per source
+  connection — discovered via one cheap `SMEMBERS` per RabbitMQ poll
   cycle against a small Redis index set of currently-claimed receiver
   names (never a keyspace scan), then one `GET` per receiver for its
   registration entry (its source list). core-health is the **sole**
-  publisher of these three (value and HA discovery); the receiver only
-  feeds the Redis counters and never publishes the topics itself, so with
-  no Redis configured they don't exist at all.
+  publisher of these two (value and HA discovery); the receiver only
+  feeds the Redis counters and never publishes those topics itself, so with
+  no Redis configured they don't exist at all. The sibling
+  `messages_{host}_{port}_total_lifetime` sensor is **not** core-health's —
+  the receiver publishes that one directly from its own in-memory counter
+  (it resets on a receiver restart by design), and it is never written to
+  Redis.
 
 A missing period key means the count is genuinely zero, not unavailable —
 mirroring message-processor's own `_redis_counter()` precedent. This is

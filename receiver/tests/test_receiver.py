@@ -1380,7 +1380,10 @@ class TestRateTrackerPeriodCounters:
         assert calls["key:hour"][:4] == ("sha123", 0, "key:hour", 2)
         assert calls["key:today"][:4] == ("sha123", 0, "key:today", 2)
 
-    def test_flush_uses_plain_incrby_for_lifetime(self):
+    def test_flush_never_writes_lifetime_to_redis(self):
+        """lifetime_count is a device-local, in-memory figure the receiver
+        publishes directly -- flush_to_redis must never touch Redis for it
+        (no INCRBY, no key named ...:lifetime)."""
         rt = _RateTracker()
         rt.record()
         rt.record()
@@ -1392,7 +1395,11 @@ class TestRateTrackerPeriodCounters:
             key_fn=lambda period: f"key:{period}",
             now=self._now(),
         )
-        mock_redis.incrby.assert_called_once_with("key:lifetime", 3)
+        mock_redis.incrby.assert_not_called()
+        flushed_keys = [c.args[2] for c in mock_redis.evalsha.call_args_list]
+        assert "key:lifetime" not in flushed_keys
+        # The in-memory counter still tracks it for the receiver's own publish.
+        assert rt.lifetime_count == 3
 
     def test_flush_with_no_new_messages_calls_nothing(self):
         rt = _RateTracker()
@@ -1415,7 +1422,9 @@ class TestRateTrackerPeriodCounters:
         rt.record()
         mock_redis.reset_mock()
         rt.flush_to_redis(mock_redis, "sha", lambda p: f"key:{p}", self._now())
-        mock_redis.incrby.assert_called_once_with("key:lifetime", 1)
+        calls = {c.args[2]: c.args[3] for c in mock_redis.evalsha.call_args_list}
+        assert calls["key:hour"] == 1
+        assert calls["key:today"] == 1
 
     def test_hour_rollover_resets_local_hour_count_only(self):
         rt = _RateTracker()
@@ -2014,14 +2023,15 @@ class TestPeriodCounterTelemetryAndDiscovery:
         }
         return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
 
-    # core-health is the sole publisher of messages_*_total_{hour,today,
-    # lifetime} (value and HA discovery), reading the cross-restart-durable
-    # Redis counters the receiver's flush feeds. The receiver must not
-    # publish those topics itself -- doing so caused two retained publishers
-    # on one topic to alternate their values. This holds whether or not
-    # REDIS_HOST is set; with it unset, those sensors simply don't exist.
+    # core-health is the sole publisher of messages_*_total_{hour,today}
+    # (value and HA discovery), reading the cross-restart-durable Redis
+    # counters the receiver's flush feeds. The receiver must not publish
+    # those two topics itself -- doing so caused two retained publishers on
+    # one topic to alternate their values. _total_lifetime is the exception:
+    # it is a device-local in-memory figure the receiver DOES publish
+    # directly (and its discovery), resetting on every receiver restart.
 
-    def test_publish_telemetry_never_publishes_period_counter_totals(self):
+    def test_publish_telemetry_publishes_only_lifetime_not_hour_today(self):
         mock_redis = MagicMock()
         mock_redis.set.return_value = True
         r, _ = self._make_receiver(mock_redis=mock_redis)
@@ -2032,15 +2042,35 @@ class TestPeriodCounterTelemetryAndDiscovery:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_telemetry()
-        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        assert not any(
-            "_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics
-        )
-        # The per-second rate and connection topics are still published.
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        topics = set(calls)
+        assert not any("_total_hour" in t or "_total_today" in t for t in topics)
         base = f"SkyFollower/receiver/{r._id}/statistic"
+        # lifetime IS self-published, straight from the in-memory counter.
+        assert calls[f"{base}/messages_localhost_30002_total_lifetime"] == "42"
+        # The per-second rate and connection topics are still published.
         assert f"{base}/messages_localhost_30002_per_second" in topics
 
-    def test_ha_autodiscovery_never_publishes_period_counter_sensors(self):
+    def test_publish_telemetry_publishes_lifetime_without_redis(self):
+        """The lifetime counter is in-memory only, so it is published even
+        with no Redis configured at all."""
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            r = Receiver(cfg)
+        r._rates[("localhost", 30002)].lifetime_count = 5
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        r._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        base = f"SkyFollower/receiver/{r._id}/statistic"
+        assert calls[f"{base}/messages_localhost_30002_total_lifetime"] == "5"
+
+    def test_ha_autodiscovery_publishes_only_lifetime_not_hour_today(self):
         mock_redis = MagicMock()
         mock_redis.set.return_value = True
         r, _ = self._make_receiver(mock_redis=mock_redis)
@@ -2048,12 +2078,26 @@ class TestPeriodCounterTelemetryAndDiscovery:
         r._mqtt = mock_mqtt
         r._mqtt_connected = True
         r._publish_ha_autodiscovery()
-        topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
-        assert not any(
-            "_total_hour" in t or "_total_today" in t or "_total_lifetime" in t for t in topics
-        )
+        payloads = {c.args[0]: json.loads(c.args[1]) for c in mock_mqtt.publish.call_args_list}
+        topics = set(payloads)
+        assert not any("_total_hour" in t or "_total_today" in t for t in topics)
         # The per-connection sensors it does own are still there.
         assert any("_per_second/config" in t for t in topics)
+        # lifetime discovery IS published, as total_increasing (correct for
+        # a counter that legitimately resets on a device restart).
+        cfg_topic = (
+            f"homeassistant/sensor/SkyFollower_receiver_{r._id}"
+            f"_messages_localhost_30002_total_lifetime/config"
+        )
+        payload = payloads[cfg_topic]
+        assert payload["state_class"] == "total_increasing"
+        assert "unit_of_measurement" not in payload
+        assert payload["state_topic"] == (
+            f"SkyFollower/receiver/{r._id}/statistic/messages_localhost_30002_total_lifetime"
+        )
+        assert payload["unique_id"] == (
+            f"SkyFollower_receiver_{r._id}_messages_localhost_30002_total_lifetime"
+        )
 
 
 class TestFlushPeriodCounters:
@@ -2085,8 +2129,13 @@ class TestFlushPeriodCounters:
         r, _ = self._make_receiver(mock_redis=mock_redis)
         r._rates[("localhost", 30002)].record()
         r._flush_period_counters()
-        mock_redis.incrby.assert_called_once_with(
-            "metrics:receiver:ATTIC:localhost_30002:messages:lifetime", 1
+        flushed = {c.args[2]: c.args[3] for c in mock_redis.evalsha.call_args_list}
+        assert flushed["metrics:receiver:ATTIC:localhost_30002:messages:hour"] == 1
+        assert flushed["metrics:receiver:ATTIC:localhost_30002:messages:today"] == 1
+        # lifetime is never written to Redis -- no INCRBY, no lifetime key.
+        mock_redis.incrby.assert_not_called()
+        assert not any(
+            "messages:lifetime" in c.args[2] for c in mock_redis.evalsha.call_args_list
         )
 
     def test_flush_period_counters_fails_soft_on_script_load_error(self):
@@ -2101,7 +2150,7 @@ class TestFlushPeriodCounters:
         mock_redis = MagicMock()
         mock_redis.set.return_value = True
         mock_redis.script_load.return_value = "shaXYZ"
-        mock_redis.incrby.side_effect = ConnectionError("boom")
+        mock_redis.evalsha.side_effect = ConnectionError("boom")
         r, _ = self._make_receiver(mock_redis=mock_redis)
         r._rates[("localhost", 30002)].record()
         r._flush_period_counters()  # Must not raise.
