@@ -251,7 +251,6 @@ export function RulesView() {
       rules.map((r) => r.identifier),
       areas.map((a) => a.identifier),
       (payload) => createRule(payload as unknown as Rule).then(() => undefined),
-      (identifier) => deleteRule(identifier),
     );
 
     try {
@@ -262,11 +261,11 @@ export function RulesView() {
 
     const total = imported.length;
     const parts = [`${result.created.length} of ${total} rules imported`];
-    if (result.skipped.length > 0) parts.push(`${result.skipped.length} skipped (missing area)`);
-    if (result.failed.length > 0) parts.push(`${result.failed.length} failed`);
+    for (const r of result.rejected) parts.push(`${r.identifier} rejected: ${r.reason}`);
+    for (const f of result.failed) parts.push(`${f.identifier} failed: ${f.reason}`);
     showToast(
-      result.failed.length > 0 || result.skipped.length > 0 ? "error" : "success",
-      `${parts.join("; ")}.`,
+      result.failed.length > 0 || result.rejected.length > 0 ? "error" : "success",
+      `${parts.join(". ")}.`,
     );
   }
 
