@@ -89,10 +89,16 @@ class RulesEngine:
         self._removed_rules: list[dict] = []
         self._rules_version: Optional[str] = None
         self._areas_version: Optional[str] = None
-        # Set on the most recent failed _load_rules/_load_areas call; consumed
-        # by the UI backend to return a 400 with a useful detail message
-        # instead of only the logger.critical() output below.
+        # Set on the most recent failed _load_rules/_load_areas call, or on a
+        # lenient rules reload that skipped one or more invalid rules;
+        # consumed by the UI backend to return a 400 with a useful detail
+        # message instead of only the logger.critical() output below.
         self.last_error: Optional[str] = None
+        # Which subsystem last set last_error ("rules" or "areas"), so a
+        # successful areas reload doesn't silently clobber a still-pending
+        # rules-skip summary set earlier in the same poll cycle (or vice
+        # versa). None whenever last_error is None.
+        self._last_error_owner: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Loaded-config version accessors
@@ -195,11 +201,13 @@ class RulesEngine:
             rules = json.loads(json_str)
         except json.JSONDecodeError:
             self.last_error = "Rules file contains invalid JSON"
+            self._last_error_owner = "rules"
             logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
         if not isinstance(rules, list):
             self.last_error = "Rules must be a JSON array"
+            self._last_error_owner = "rules"
             logger.critical("%s — keeping previous ruleset.", self.last_error)
             return False
 
@@ -221,6 +229,7 @@ class RulesEngine:
                     logger.error("%s — skipping this rule only; other rules still loaded.", error_detail)
                     continue
                 self.last_error = error_detail
+                self._last_error_owner = "rules"
                 logger.critical("%s — keeping previous ruleset.", self.last_error)
                 return False
 
@@ -229,8 +238,10 @@ class RulesEngine:
         self._rules = staged
         if skipped_errors:
             self.last_error = f"{len(skipped_errors)} rule(s) skipped on reload: " + " | ".join(skipped_errors)
+            self._last_error_owner = "rules"
         else:
             self.last_error = None
+            self._last_error_owner = None
         logger.info("Rules loaded: %d active.", len(self._rules))
         return True
 
@@ -307,11 +318,13 @@ class RulesEngine:
             geo = json.loads(json_str)
         except json.JSONDecodeError:
             self.last_error = "Areas file contains invalid JSON"
+            self._last_error_owner = "areas"
             logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
         if geo.get("type", "").lower() != "featurecollection":
             self.last_error = "Areas must be a GeoJSON FeatureCollection"
+            self._last_error_owner = "areas"
             logger.critical("%s — keeping previous areas.", self.last_error)
             return False
 
@@ -352,7 +365,15 @@ class RulesEngine:
                 continue
 
         self._areas = staged
-        self.last_error = None
+        # Only clear last_error on success if it isn't a still-pending
+        # rules-owned summary (e.g. a lenient reload's skipped-rules
+        # summary) set earlier in the same poll cycle -- an areas success
+        # should never silently erase that, the only visible signal that
+        # some rules were excluded. An areas-owned (or absent) last_error
+        # is cleared normally.
+        if self._last_error_owner != "rules":
+            self.last_error = None
+            self._last_error_owner = None
         logger.info("Areas loaded: %d polygons.", len(self._areas))
         return True
 

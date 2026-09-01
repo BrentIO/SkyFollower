@@ -1047,9 +1047,8 @@ class TestReloadIfChanged:
         engine = RulesEngine(redis)
 
         # Areas are already up to date (unchanged version) so this reload
-        # cycle only touches rules — keeps the rules-load's last_error
-        # (skip summary) from being clobbered by a subsequent, unrelated
-        # successful areas reload.
+        # cycle only touches rules. See TestLastErrorNotClobberedAcrossSubsystems
+        # below for coverage of a same-cycle rules + areas reload.
         engine._areas_version = "a1"
 
         rules = [
@@ -1106,4 +1105,122 @@ class TestReloadIfChanged:
         assert reloaded is True
         assert {r["identifier"] for r in engine._rules} == {"good", "bad"}
         assert engine.rules_version == "v2"
+        assert engine.last_error is None
+
+
+class TestLastErrorNotClobberedAcrossSubsystems:
+    """Regression coverage for the last_error clobber bug: reload_if_changed()
+    runs the rules reload and then the areas reload in the same poll cycle
+    when both config:rules:version and config:areas:version have changed.
+    A lenient rules reload that skips one or more invalid rules sets
+    last_error to a summary of what was skipped; a subsequent, successful
+    areas reload in that same cycle must not silently erase it."""
+
+    def test_rules_skip_summary_survives_same_cycle_areas_success(self):
+        rules = [
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("velocity", "equals", "100")]),  # velocity doesn't support 'equals'
+        ]
+        rules_json = json.dumps(rules)
+        areas_json = json.dumps({"type": "FeatureCollection", "features": []})
+
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": rules_json,
+            "config:areas": areas_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        # Both subsystems actually reloaded in this cycle.
+        assert engine.rules_version == "v1"
+        assert engine.areas_version == "a1"
+        assert [r["identifier"] for r in engine._rules] == ["good"]
+        # The rules-skip summary must still be visible after the areas
+        # reload ran (and succeeded) in the same cycle.
+        assert engine.last_error is not None
+        assert "bad" in engine.last_error
+
+    def test_areas_only_successful_reload_sets_no_stale_error(self):
+        """With no rules-skip summary pending, an areas-only reload cycle
+        behaves exactly as before: no error where none exists."""
+        areas_json = json.dumps({"type": "FeatureCollection", "features": []})
+
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        engine._rules_version = "v1"  # rules unchanged this cycle
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:areas": areas_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert engine.areas_version == "a1"
+        assert engine.last_error is None
+
+    def test_rules_only_lenient_reload_still_sets_summary(self):
+        """With areas unchanged this cycle, a lenient rules reload that
+        skips an invalid rule still sets last_error exactly as before."""
+        rules = [
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("velocity", "equals", "100")]),
+        ]
+        rules_json = json.dumps(rules)
+
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        engine._areas_version = "a1"  # areas unchanged this cycle
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": rules_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert [r["identifier"] for r in engine._rules] == ["good"]
+        assert engine.last_error is not None
+        assert "bad" in engine.last_error
+
+    def test_genuine_area_failure_still_surfaces_after_rules_success(self):
+        """A genuinely broken areas payload must still surface as an error,
+        even when the rules reload in the same cycle succeeded cleanly (no
+        pending rules summary to protect)."""
+        rules_json = json.dumps([_rule("good", [_cond("altitude", "maximum", "5000")])])
+
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": rules_json,
+            "config:areas": "not valid json",
+        }.get(key)
+
+        engine.reload_if_changed()
+
+        assert engine.last_error is not None
+        assert "invalid JSON" in engine.last_error
+        # The broken areas payload must not have been applied.
+        assert engine.areas_version is None
+
+    def test_areas_success_clears_prior_areas_owned_error(self):
+        """A previously-set areas-owned error is still cleared normally by
+        a later successful areas reload (only rules-owned errors are
+        protected)."""
+        engine = _bare_engine()
+        engine.last_error = "Areas file contains invalid JSON"
+        engine._last_error_owner = "areas"
+
+        ok = engine.load_areas_json(json.dumps({"type": "FeatureCollection", "features": []}))
+
+        assert ok is True
         assert engine.last_error is None
