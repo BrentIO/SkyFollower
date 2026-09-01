@@ -980,6 +980,11 @@ def _redis_json_get(key: str) -> Optional[dict]:
 
 _NOT_FOUND = {404: {"description": "Not found", "model": ErrorDetail}}
 _CONFLICT = {409: {"description": "Identifier already exists", "model": ErrorDetail}}
+# Distinct from _CONFLICT: raised by delete_area when a rule's `area`
+# condition still references the area being deleted, rather than a
+# duplicate-identifier clash -- see delete_area's referential-integrity
+# check below.
+_AREA_IN_USE = {409: {"description": "Area is referenced by one or more rules", "model": ErrorDetail}}
 _REDIS_ERROR = {500: {"description": "Redis error", "model": ErrorDetail}}
 _VALIDATION_ERROR = {400: {"description": "Validation error", "model": ErrorDetail}}
 # Distinct from _REDIS_ERROR: only raised by _search_one() when the specific
@@ -1412,13 +1417,32 @@ def update_area(identifier: str, area: Area):
     "/api/areas/{identifier}",
     tags=["areas"],
     status_code=204,
-    responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR},
+    responses={**_NOT_FOUND, **_AREA_IN_USE, **_VALIDATION_ERROR, **_REDIS_ERROR},
 )
 def delete_area(identifier: str):
     areas = _load_areas_array()
     remaining = [a for a in areas if a.get("identifier") != identifier]
     if len(remaining) == len(areas):
         raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
+
+    # Referential integrity: an area condition pointing at a deleted area
+    # would otherwise be silently invalid, and message-processor's
+    # RulesEngine._load_rules treats any invalid rule as fatal to the whole
+    # reload -- reject the delete rather than let that happen downstream.
+    referencing_rules = [
+        rule.get("identifier")
+        for rule in _load_rules_array()
+        if any(
+            condition.get("type") == "area" and condition.get("value") == identifier
+            for condition in rule.get("conditions", [])
+        )
+    ]
+    if referencing_rules:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Area '{identifier}' is referenced by rule(s): "
+            f"{', '.join(referencing_rules)}",
+        )
 
     _save_areas_array(remaining)
     return Response(status_code=204)
