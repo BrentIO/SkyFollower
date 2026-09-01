@@ -130,6 +130,7 @@ export function RulesView() {
 
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   useEffect(() => {
@@ -225,6 +226,7 @@ export function RulesView() {
 
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
+    setDeleting(true);
     try {
       await deleteRule(deleteTarget.identifier);
       setRules((current) => current.filter((r) => r.identifier !== deleteTarget.identifier));
@@ -236,6 +238,7 @@ export function RulesView() {
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to delete rule.");
     } finally {
+      setDeleting(false);
       setDeleteTarget(null);
     }
   }
@@ -399,6 +402,7 @@ export function RulesView() {
         title="Delete rule?"
         message={deleteTarget ? <DeleteRuleMessage rule={deleteTarget} /> : ""}
         confirmLabel="Delete"
+        confirmLoading={deleting}
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
       />
