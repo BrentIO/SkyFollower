@@ -297,15 +297,35 @@ export function RulesView() {
     }
 
     const total = imported.length;
-    const parts = [`${result.created.length} of ${total} rules imported`];
+    const summaryParts = [`${result.created.length} of ${total} rules imported`];
     if (skipIdentifiers.size > 0) {
-      parts.push(`${skipIdentifiers.size} skipped (already exists)`);
+      summaryParts.push(`${skipIdentifiers.size} skipped (already exists)`);
     }
-    for (const r of result.rejected) parts.push(`${r.identifier} rejected: ${r.reason}`);
-    for (const f of result.failed) parts.push(`${f.identifier} failed: ${f.reason}`);
+    const summaryText = `${summaryParts.join(". ")}.`;
+    const hasIssues = result.rejected.length > 0 || result.failed.length > 0;
+
+    if (!hasIssues) {
+      showToast("success", summaryText);
+      return;
+    }
+
     showToast(
-      result.failed.length > 0 || result.rejected.length > 0 ? "error" : "success",
-      `${parts.join(". ")}.`,
+      "error",
+      <div>
+        <p className="font-semibold">{summaryText}</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-4">
+          {result.rejected.map((r) => (
+            <li key={`rejected-${r.identifier}`}>
+              <span className="font-mono">{r.identifier}</span> rejected: {r.reason}
+            </li>
+          ))}
+          {result.failed.map((f) => (
+            <li key={`failed-${f.identifier}`}>
+              <span className="font-mono">{f.identifier}</span> failed: {f.reason}
+            </li>
+          ))}
+        </ul>
+      </div>,
     );
   }
 

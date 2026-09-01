@@ -1,16 +1,16 @@
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
 export type ToastKind = "success" | "error";
 
 export interface Toast {
   id: number;
   kind: ToastKind;
-  message: string;
+  message: ReactNode;
 }
 
 interface ToastContextValue {
   toasts: Toast[];
-  showToast: (kind: ToastKind, message: string) => void;
+  showToast: (kind: ToastKind, message: ReactNode) => void;
   dismissToast: (id: number) => void;
 }
 
@@ -29,7 +29,7 @@ export function useToastState(): ToastContextValue {
   }, []);
 
   const showToast = useCallback(
-    (kind: ToastKind, message: string) => {
+    (kind: ToastKind, message: ReactNode) => {
       const id = nextId++;
       setToasts((current) => [...current, { id, kind, message }]);
       if (kind === "success") {
