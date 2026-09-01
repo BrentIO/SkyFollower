@@ -527,6 +527,15 @@ export function AreasView() {
   const drawRef = useRef<TerraDraw | null>(null);
 
   const [areas, setAreas] = useState<Area[]>([]);
+  // Mirrors `areas` for read access inside async flows (like the import
+  // batch below) where the closed-over `areas` value is stale by the time
+  // the batch's awaits resolve -- state setters queued during the batch
+  // (one per created area) have committed and re-rendered by then, so this
+  // ref reflects the full post-import set without re-fetching from the API.
+  const areasRef = useRef<Area[]>(areas);
+  useEffect(() => {
+    areasRef.current = areas;
+  }, [areas]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mapReady, setMapReady] = useState(false);
@@ -1183,6 +1192,15 @@ export function AreasView() {
       parts.push(`${result.failed.length} failed`);
     }
     showToast(result.failed.length === 0 ? "success" : "error", `${parts.join("; ")}.`);
+
+    // Match the initial-load fit-bounds behaviour: pan/zoom to the current
+    // area set (existing + newly imported) so an import doesn't require a
+    // page refresh to see areas outside the current viewport. Nothing to
+    // fit to if every feature in the batch failed/was skipped.
+    if (result.created.length > 0) {
+      const bounds = computeBounds(areasRef.current);
+      if (bounds) mapRef.current?.fitBounds(bounds, { padding: 40 });
+    }
   }
 
   // Recomputes every conflict row's rename preview via the real batch
