@@ -56,7 +56,8 @@ nothing admin-adjacent persists.
 ## The two-tier credential model
 
 `aws-setup` deploys the CloudFormation stack with a **service role**
-(`RoleARN` on `create_change_set` / `execute_change_set`), mirroring
+(`RoleARN` on `create_change_set`, bound once when the change set is
+created and carried automatically through `execute_change_set`), mirroring
 FireFly-Cloud's `firefly-cloudformation-execution` + `firefly-github-actions`
 split.
 

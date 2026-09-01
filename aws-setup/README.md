@@ -19,9 +19,10 @@ than calling the Glue/IAM/Athena APIs directly:
   policy holding every resource action the template needs (`create_role` /
   `put_role_policy` via boto3, using the caller credentials; an unchanged
   re-run is a no-op, a changed policy is written in place). The deploy
-  then passes `RoleARN=<that role>` to `create_change_set` and
-  `execute_change_set`, so CloudFormation runs the underlying
-  S3/Glue/Athena/IAM actions **as the role, not as the caller**.
+  then passes `RoleARN=<that role>` to `create_change_set`, which binds
+  the role to the change set once; `execute_change_set` later assumes it
+  automatically, so CloudFormation runs the underlying S3/Glue/Athena/IAM
+  actions **as the role, not as the caller**.
 - **Create or update** is a single `create_change_set` →
   `execute_change_set`. CloudFormation diffs desired state against deployed
   state and applies only the delta, rolling back on failure. Re-running an
@@ -75,7 +76,7 @@ keys back through anything the stack gave it.
 
 | Flags | Behaviour |
 |---|---|
-| *(none)* | Ensure the execution role exists, then build a change set, print its summary, execute it (pausing for confirmation only on a `Replacement`), wait for a terminal state, print outputs. `RoleARN` is passed on both change-set calls |
+| *(none)* | Ensure the execution role exists, then build a change set, print its summary, execute it (pausing for confirmation only on a `Replacement`), wait for a terminal state, print outputs. `RoleARN` is bound once on `create_change_set` and carried automatically through `execute_change_set` |
 | `--yes` | Apply a replacement-containing change set without prompting (non-interactive runs) |
 | `--outputs-only` | Skip provisioning; just read an existing stack's outputs (the management-ui host) |
 | `--delete` | `delete_stack` + wait, then tear down the execution role (best-effort). Both buckets are retained |
