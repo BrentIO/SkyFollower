@@ -175,6 +175,63 @@ class TestLoadRules:
 
 
 # ---------------------------------------------------------------------------
+# Strict vs. lenient rule loading (message processor's lenient reload vs.
+# management-ui's strict save-time validation)
+# ---------------------------------------------------------------------------
+
+class TestStrictVsLenientLoad:
+    def test_strict_mode_rejects_all_on_one_bad_rule(self):
+        """load_rules_json (management-ui's save-time gate) is strict by
+        default: one invalid rule rejects the whole ruleset."""
+        rules = [
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("area", "equals", "NOWHERE")]),  # dangling area reference
+        ]
+        engine = _bare_engine()
+        assert engine.load_rules_json(json.dumps(rules)) is False
+        assert engine._rules == []
+        assert "bad" in engine.last_error
+
+    def test_lenient_mode_loads_valid_subset_skips_bad_one(self):
+        """_load_rules(strict=False) — used only by reload_if_changed() — skips
+        just the invalid rule and still loads every other valid rule."""
+        rules = [
+            _rule("good1", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("area", "equals", "NOWHERE")]),  # dangling area reference
+            _rule("good2", [_cond("ident", "equals", "DAL1")]),
+        ]
+        engine = _bare_engine()
+        assert engine._load_rules(json.dumps(rules), strict=False) is True
+        loaded_identifiers = {r["identifier"] for r in engine._rules}
+        assert loaded_identifiers == {"good1", "good2"}
+        assert "bad" in engine.last_error
+
+    def test_lenient_mode_multiple_bad_rules_each_skipped(self):
+        """Multiple independently-bad rules are each skipped without
+        affecting the loading of any other valid rule."""
+        rules = [
+            _rule("good1", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad1", [_cond("area", "equals", "NOWHERE")]),
+            _rule("good2", [_cond("ident", "equals", "DAL1")]),
+            _rule("bad2", [_cond("area", "equals", "STILL_NOWHERE")]),
+            _rule("good3", [_cond("squawk", "equals", "7500")]),
+        ]
+        engine = _bare_engine()
+        assert engine._load_rules(json.dumps(rules), strict=False) is True
+        loaded_identifiers = {r["identifier"] for r in engine._rules}
+        assert loaded_identifiers == {"good1", "good2", "good3"}
+        assert "bad1" in engine.last_error
+        assert "bad2" in engine.last_error
+
+    def test_lenient_mode_still_rejects_malformed_root(self):
+        """Lenient mode only relaxes per-rule validation — a malformed
+        top-level payload (bad JSON, not an array) is still rejected outright."""
+        engine = _bare_engine()
+        assert engine._load_rules("{not json}", strict=False) is False
+        assert engine._load_rules('{"key": "value"}', strict=False) is False
+
+
+# ---------------------------------------------------------------------------
 # force_archive rule-level flag
 # ---------------------------------------------------------------------------
 
@@ -979,3 +1036,74 @@ class TestReloadIfChanged:
         redis.get.side_effect = ConnectionError("Redis down")
         engine = RulesEngine(redis)
         engine.reload_if_changed()  # should not raise
+
+    def test_reload_is_lenient_and_loads_valid_subset(self):
+        """A ruleset with one invalid rule (dangling area reference) pushed
+        to Redis still results in every other valid rule loading via the
+        periodic reload_if_changed() poll, and rules_version advances to the
+        hash of the ruleset actually attempted (not frozen at the stale
+        value)."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+
+        # Areas are already up to date (unchanged version) so this reload
+        # cycle only touches rules — keeps the rules-load's last_error
+        # (skip summary) from being clobbered by a subsequent, unrelated
+        # successful areas reload.
+        engine._areas_version = "a1"
+
+        rules = [
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("velocity", "equals", "100")]),  # velocity doesn't support 'equals'
+        ]
+        rules_json = json.dumps(rules)
+
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": rules_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+        assert reloaded is True
+        assert [r["identifier"] for r in engine._rules] == ["good"]
+        assert engine.rules_version == "v1"
+        assert "bad" in engine.last_error
+
+    def test_reload_picks_up_fix_on_next_poll(self):
+        """Once the previously-bad rule is fixed (or removed), the next
+        poll cycle picks it up exactly as any other rule change would."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+
+        bad_rules_json = json.dumps([
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("area", "equals", "NOWHERE")]),
+        ])
+        areas_json = json.dumps({"type": "FeatureCollection", "features": []})
+
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": bad_rules_json,
+            "config:areas": areas_json,
+        }.get(key)
+        engine.reload_if_changed()
+        assert [r["identifier"] for r in engine._rules] == ["good"]
+
+        fixed_rules_json = json.dumps([
+            _rule("good", [_cond("altitude", "maximum", "5000")]),
+            _rule("bad", [_cond("altitude", "minimum", "1000")]),
+        ])
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v2",
+            "config:areas:version": "a1",
+            "config:rules": fixed_rules_json,
+            "config:areas": areas_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+        assert reloaded is True
+        assert {r["identifier"] for r in engine._rules} == {"good", "bad"}
+        assert engine.rules_version == "v2"
+        assert engine.last_error is None
