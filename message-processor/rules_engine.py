@@ -125,7 +125,7 @@ class RulesEngine:
             rv = self._redis.get("config:rules:version")
             if rv != self._rules_version:
                 raw = self._redis.get("config:rules")
-                if raw and self._load_rules(raw):
+                if raw and self._load_rules(raw, strict=False):
                     self._rules_version = rv
                     reloaded = True
 
@@ -179,8 +179,18 @@ class RulesEngine:
     # Rule loading
     # ------------------------------------------------------------------
 
-    def _load_rules(self, json_str: str) -> bool:
-        """Parse, validate and stage rules.  Only replaces the active set on success."""
+    def _load_rules(self, json_str: str, strict: bool = True) -> bool:
+        """Parse, validate and stage rules.  Only replaces the active set on success.
+
+        In strict mode (default — used by the UI backend's save-time
+        validation via load_rules_json), a single invalid rule rejects the
+        entire ruleset and the previous set is kept unchanged.
+
+        In lenient mode (used only by reload_if_changed()'s periodic poll
+        from Redis), a rule that fails validation is logged at error level
+        and skipped, but every other valid rule in the array still loads —
+        the reload as a whole succeeds with the valid subset.
+        """
         try:
             rules = json.loads(json_str)
         except json.JSONDecodeError:
@@ -195,6 +205,7 @@ class RulesEngine:
 
         staged: list[dict] = []
         seen_identifiers: set[str] = set()
+        skipped_errors: list[str] = []
 
         for idx, rule in enumerate(rules):
             try:
@@ -204,14 +215,22 @@ class RulesEngine:
                 seen_identifiers.add(staged_rule["identifier"])
                 staged.append(staged_rule)
             except _RuleError as exc:
-                self.last_error = f"Rule #{idx} invalid: {exc}"
+                error_detail = f"Rule #{idx} invalid: {exc}"
+                if not strict:
+                    skipped_errors.append(error_detail)
+                    logger.error("%s — skipping this rule only; other rules still loaded.", error_detail)
+                    continue
+                self.last_error = error_detail
                 logger.critical("%s — keeping previous ruleset.", self.last_error)
                 return False
 
         removed = [r for r in self._rules if r not in staged]
         self._removed_rules = removed
         self._rules = staged
-        self.last_error = None
+        if skipped_errors:
+            self.last_error = f"{len(skipped_errors)} rule(s) skipped on reload: " + " | ".join(skipped_errors)
+        else:
+            self.last_error = None
         logger.info("Rules loaded: %d active.", len(self._rules))
         return True
 
