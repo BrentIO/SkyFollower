@@ -658,6 +658,45 @@ class TestDeleteArea:
         resp = client.delete("/api/areas/nope")
         assert resp.status_code == 404
 
+    def test_referenced_by_rule_returns_409_and_is_not_deleted(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        rule = _rule("area-rule", conditions=[{"type": "area", "operator": "equals", "value": "LI"}])
+        client.post("/api/rules", json=rule)
+
+        resp = client.delete("/api/areas/LI")
+
+        assert resp.status_code == 409
+        assert "area-rule" in resp.json()["detail"]
+        assert client.get("/api/areas/LI").status_code == 200
+
+    def test_referenced_by_multiple_rules_names_all_of_them(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        client.post("/api/rules", json=_rule(
+            "area-rule-1", conditions=[{"type": "area", "operator": "equals", "value": "LI"}],
+        ))
+        client.post("/api/rules", json=_rule(
+            "area-rule-2", conditions=[{"type": "area", "operator": "equals", "value": "LI"}],
+        ))
+
+        resp = client.delete("/api/areas/LI")
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "area-rule-1" in detail
+        assert "area-rule-2" in detail
+
+    def test_unreferenced_area_still_deletes_when_other_areas_are_in_use(self, client):
+        client.post("/api/areas", json=_area("LI"))
+        client.post("/api/areas", json=_area("OTHER", name="Other"))
+        client.post("/api/rules", json=_rule(
+            "area-rule", conditions=[{"type": "area", "operator": "equals", "value": "LI"}],
+        ))
+
+        resp = client.delete("/api/areas/OTHER")
+
+        assert resp.status_code == 204
+        assert client.get("/api/areas/OTHER").status_code == 404
+
 
 class TestAreaConditionCrossValidation:
     def test_rule_referencing_existing_area_succeeds(self, client):
