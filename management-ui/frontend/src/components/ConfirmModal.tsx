@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 
 interface ConfirmModalProps {
   open: boolean;
@@ -6,6 +7,7 @@ interface ConfirmModalProps {
   message: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  confirmLoading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -18,6 +20,7 @@ export function ConfirmModal({
   message,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
+  confirmLoading = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -39,8 +42,10 @@ export function ConfirmModal({
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            disabled={confirmLoading}
+            className="flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-70"
           >
+            {confirmLoading && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
           </button>
         </div>

@@ -534,6 +534,7 @@ export function AreasView() {
 
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [pendingDrawFeatureId, setPendingDrawFeatureId] = useState<string | null>(null);
   // Only set by duplicateArea(), to suggest "<name> copy" in the naming
   // modal -- a freshly drawn shape leaves this null and the modal starts
@@ -1271,6 +1272,7 @@ export function AreasView() {
 
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
+    setDeleting(true);
     try {
       await deleteArea(deleteTarget.identifier);
       drawRef.current?.removeFeatures([deleteTarget.identifier]);
@@ -1283,6 +1285,7 @@ export function AreasView() {
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to delete area.");
     } finally {
+      setDeleting(false);
       setDeleteTarget(null);
     }
   }
@@ -1572,6 +1575,7 @@ export function AreasView() {
         title={deleteTarget ? `Delete ${geometryDisplayNoun(deleteTarget.geometry.type).toLowerCase()}?` : "Delete area?"}
         message={deleteTarget ? <DeleteAreaMessage area={deleteTarget} /> : ""}
         confirmLabel="Delete"
+        confirmLoading={deleting}
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
       />
