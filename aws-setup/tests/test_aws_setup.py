@@ -309,11 +309,14 @@ class TestProvision:
         assert "execute_change_set" in cf.calls
         assert "get_waiter:stack_create_complete" in cf.calls
 
-    def test_role_arn_threaded_into_both_change_set_calls(self):
+    def test_role_arn_passed_to_create_only_not_execute(self):
+        # RoleARN is a valid create_change_set parameter (binds the
+        # execution role to the change set) but is not a valid parameter
+        # for execute_change_set, which assumes that role automatically.
         cf = FakeCloudFormation(exists=False, outputs={"ArchiveBucketName": "b"})
         _mod.provision(cf, "skyfollower", "body", [], _ROLE_ARN, assume_yes=False, interactive=False)
         assert cf.create_change_set_role_arn == _ROLE_ARN
-        assert cf.execute_change_set_role_arn == _ROLE_ARN
+        assert cf.execute_change_set_role_arn is None
 
     def test_noop_update_returns_outputs(self, capsys):
         cf = FakeCloudFormation(

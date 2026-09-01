@@ -21,7 +21,8 @@ Two-tier credential model:
   by cloudformation.amazonaws.com, holds every resource permission the
   template in specs/aws/cloudformation.yaml needs. aws-setup creates that
   role (idempotently, with the caller credentials) before the deploy and
-  passes RoleARN=<that role> to create_change_set and execute_change_set,
+  passes RoleARN=<that role> to create_change_set, which binds the role to
+  the change set once; execute_change_set later assumes it automatically,
   so CloudFormation runs the underlying S3/Glue/Athena/IAM actions as the
   role, not as the caller. The caller credential itself only needs the
   small policy `--print-bootstrap-policy` renders: CloudFormation
@@ -325,9 +326,7 @@ def provision(cf, stack_name: str, template_body: str, parameters: list[dict],
                 )
 
     log(f"→ Executing change set on '{stack_name}'...")
-    cf.execute_change_set(
-        ChangeSetName=change_set_name, StackName=stack_name, RoleARN=role_arn
-    )
+    cf.execute_change_set(ChangeSetName=change_set_name, StackName=stack_name)
 
     waiter_name = "stack_create_complete" if not exists else "stack_update_complete"
     log("→ Waiting for the stack to reach a terminal state (this can take a few minutes)...")
@@ -367,11 +366,12 @@ def delete_stack(cf, stack_name: str) -> None:
 # ---------------------------------------------------------------------------
 # Two-tier credential model
 #
-# CloudFormation is given a service role (RoleARN on create_change_set /
-# execute_change_set) so it runs the template's underlying resource actions
-# as that role rather than as the caller. Two policies fall out of this and
-# both are built here, from the same parameters, so the live IAM calls and
-# the copy in docs/aws-configuration.md cannot drift:
+# CloudFormation is given a service role (RoleARN on create_change_set,
+# bound once when the change set is created and carried automatically
+# through execute_change_set) so it runs the template's underlying
+# resource actions as that role rather than as the caller. Two policies
+# fall out of this and both are built here, from the same parameters, so
+# the live IAM calls and the copy in docs/aws-configuration.md cannot drift:
 #
 #   build_execution_role_policy()  -- everything the template creates,
 #                                     updates, or deletes. Attached to the
