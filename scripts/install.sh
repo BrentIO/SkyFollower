@@ -1600,17 +1600,19 @@ offer_aws_provisioning() {
     echo "  ----------------------------------------------------------------------"
     echo "  One-time setup in the AWS console (https://console.aws.amazon.com/iam):"
     echo
-    echo "    1. Users -> Create user. Name it exactly: ${bootstrap_user}"
+    echo "    1. Access management -> Users -> Create user. Name it exactly: ${bootstrap_user}"
     echo "       Do NOT enable console access."
-    echo "    2. On 'Set permissions' pick 'Attach policies directly', then"
-    echo "       'Create inline policy' -> JSON tab, and paste this verbatim:"
+    echo "    2. On 'Set permissions' pick 'Attach policies directly' and leave it"
+    echo "       empty -- don't attach anything yet. Finish creating the user."
+    echo "    3. Open ${bootstrap_user} -> Permissions tab -> Add permissions ->"
+    echo "       Create inline policy -> JSON tab, and paste this verbatim:"
     echo
     printf '%s\n' "$policy_json" | sed 's/^/         /'
     echo
-    echo "       Name it (e.g. ${bootstrap_user}-policy) and finish creating the user."
-    echo "    3. Open ${bootstrap_user} -> Security credentials -> Create access key"
+    echo "       Name it (e.g. ${bootstrap_user}-policy) and create the policy."
+    echo "    4. Open ${bootstrap_user} -> Security credentials -> Create access key"
     echo "       -> 'Application running outside AWS'. Copy the key ID and secret."
-    echo "    4. Paste them below. A plain IAM user's key needs no session token."
+    echo "    5. Paste them below. A plain IAM user's key needs no session token."
     echo "  ----------------------------------------------------------------------"
     echo
     prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
