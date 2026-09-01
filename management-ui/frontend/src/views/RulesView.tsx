@@ -256,7 +256,14 @@ export function RulesView() {
   }
 
   function exportAllRules() {
-    downloadTextFile("rules.json", JSON.stringify(rules, null, 2), "application/json");
+    // triggered_lifetime/triggered_last_30_days are read-time-computed
+    // display stats the backend adds to GET /api/rules responses -- never
+    // part of what's stored in config:rules -- so they're stripped before
+    // export rather than round-tripped through a saved file.
+    const exportable = rules.map(
+      ({ triggered_lifetime: _triggeredLifetime, triggered_last_30_days: _triggeredLast30Days, ...rule }) => rule,
+    );
+    downloadTextFile("rules.json", JSON.stringify(exportable, null, 2), "application/json");
   }
 
   // Entry point from ImportRuleModal. An imported identifier already used
