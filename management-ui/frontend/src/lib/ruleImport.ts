@@ -77,6 +77,58 @@ export function resolveRuleIdentifier(
   return identifier;
 }
 
+// Per-identifier operator choice for an import conflict: keep only the
+// existing rule (skip the imported duplicate entirely) or keep both (auto
+// suffix the imported one). Drives ImportConflictModal.
+export type ImportConflictChoice = "skip" | "rename";
+
+// The distinct imported identifiers that already exist among
+// `existingIdentifiers`, in file order, deduplicated. Feeds
+// ImportConflictModal's row list -- an import with an empty result here
+// proceeds straight through with no modal.
+export function collidingIdentifiers(rules: ImportedRule[], existingIdentifiers: string[]): string[] {
+  const existing = new Set(existingIdentifiers);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rule of rules) {
+    const raw = typeof rule.identifier === "string" ? rule.identifier.trim() : "";
+    if (raw && existing.has(raw) && !seen.has(raw)) {
+      seen.add(raw);
+      out.push(raw);
+    }
+  }
+  return out;
+}
+
+export interface ResolvedRuleImportEntry {
+  rule: ImportedRule;
+  identifier: string;
+}
+
+// Resolves every non-skipped rule's final identifier for the batch, honoring
+// per-identifier skip choices for entries that collide with an existing
+// rule. A rule whose trimmed identifier is in `skipIdentifiers` is left out
+// of the result entirely -- resolveRuleIdentifier never sees it, and it
+// never occupies a slot in `taken` -- exactly as if it were absent from the
+// file. Every other rule resolves via resolveRuleIdentifier exactly as
+// before skip/rename existed. Shared by importRulesBatch (the real import)
+// and ImportConflictModal's live rename preview (identical inputs, identical
+// output), so the preview can never diverge from what actually gets created.
+export function resolveImportIdentifiers(
+  rules: ImportedRule[],
+  existingRuleIdentifiers: string[],
+  skipIdentifiers: ReadonlySet<string> = new Set(),
+): ResolvedRuleImportEntry[] {
+  const taken = new Set(existingRuleIdentifiers);
+  const resolved: ResolvedRuleImportEntry[] = [];
+  for (let i = 0; i < rules.length; i++) {
+    const original = typeof rules[i].identifier === "string" ? rules[i].identifier.trim() : "";
+    if (original && skipIdentifiers.has(original)) continue;
+    resolved.push({ rule: rules[i], identifier: resolveRuleIdentifier(rules[i], i + 1, taken) });
+  }
+  return resolved;
+}
+
 function conditionsOf(rule: ImportedRule): Record<string, unknown>[] {
   const c = rule.conditions;
   if (!Array.isArray(c)) return [];
@@ -156,9 +208,12 @@ export interface RuleImportResult {
 // Validate-then-commit batch import.
 //
 // Phase 1 (in-memory, zero backend writes) decides the entire outcome:
-//   - Resolve every rule's identifier for the whole batch, so the
-//     original->resolved remap is complete before anything else looks at
-//     references.
+//   - Resolve every non-skipped rule's identifier for the whole batch (via
+//     resolveImportIdentifiers), so the original->resolved remap is
+//     complete before anything else looks at references. An identifier in
+//     `skipIdentifiers` (the operator's per-conflict "Skip" choice from
+//     ImportConflictModal) is excluded here -- resolveRuleIdentifier never
+//     sees it, and it is never counted against created/failed/rejected.
 //   - Area references: an `area` condition value must already exist in
 //     `existingAreaIdentifiers` (areas are never part of a rules import).
 //     A rule referencing a missing area is rejected with a reason.
@@ -177,27 +232,27 @@ export async function importRulesBatch(
   existingRuleIdentifiers: string[],
   existingAreaIdentifiers: string[],
   createOne: (payload: Record<string, unknown>) => Promise<void>,
+  skipIdentifiers: ReadonlySet<string> = new Set(),
 ): Promise<RuleImportResult> {
   const areaSet = new Set(existingAreaIdentifiers);
-  const taken = new Set(existingRuleIdentifiers);
   const remap = new Map<string, string>();
 
-  // Phase 1a: resolve every identifier (so the remap is complete before
-  // any reference or payload is evaluated).
-  const identifiers: string[] = [];
-  for (let i = 0; i < rules.length; i++) {
-    const original = typeof rules[i].identifier === "string" ? rules[i].identifier.trim() : "";
-    const identifier = resolveRuleIdentifier(rules[i], i + 1, taken);
+  // Phase 1a: resolve every non-skipped rule's identifier (so the remap is
+  // complete before any reference or payload is evaluated).
+  const entries = resolveImportIdentifiers(rules, existingRuleIdentifiers, skipIdentifiers);
+  const identifiers = entries.map((e) => e.identifier);
+  for (const { rule, identifier } of entries) {
+    const original = typeof rule.identifier === "string" ? rule.identifier.trim() : "";
     if (original) remap.set(original, identifier);
-    identifiers.push(identifier);
   }
 
-  // index -> rejection reason. Absent = still a candidate for creation.
+  // index (into `entries`) -> rejection reason. Absent = still a candidate
+  // for creation.
   const rejectionReason = new Map<number, string>();
 
   // Phase 1b: area references.
-  for (let i = 0; i < rules.length; i++) {
-    const missing = missingAreaReferences(rules[i], areaSet);
+  for (let i = 0; i < entries.length; i++) {
+    const missing = missingAreaReferences(entries[i].rule, areaSet);
     if (missing.length > 0) {
       rejectionReason.set(i, `references missing area(s): ${missing.join(", ")}`);
     }
@@ -210,12 +265,12 @@ export async function importRulesBatch(
   while (changed) {
     changed = false;
     const valid = new Set(existingRuleIdentifiers);
-    for (let i = 0; i < rules.length; i++) {
+    for (let i = 0; i < entries.length; i++) {
       if (!rejectionReason.has(i)) valid.add(identifiers[i]);
     }
-    for (let i = 0; i < rules.length; i++) {
+    for (let i = 0; i < entries.length; i++) {
       if (rejectionReason.has(i)) continue;
-      const refs = remappedMatchedRuleRefs(rules[i], remap);
+      const refs = remappedMatchedRuleRefs(entries[i].rule, remap);
       const dangling = [...new Set(refs.filter((r) => !valid.has(r)))];
       if (dangling.length > 0) {
         rejectionReason.set(i, `references missing rule(s): ${dangling.join(", ")}`);
@@ -227,13 +282,13 @@ export async function importRulesBatch(
   // Phase 1 outcome, fully determined before any backend write.
   const rejected: RuleImportResult["rejected"] = [];
   const toCreate: { payload: Record<string, unknown>; identifier: string }[] = [];
-  for (let i = 0; i < rules.length; i++) {
+  for (let i = 0; i < entries.length; i++) {
     const reason = rejectionReason.get(i);
     if (reason) {
       rejected.push({ identifier: identifiers[i], reason });
     } else {
       toCreate.push({
-        payload: buildPayload(rules[i], identifiers[i], remap),
+        payload: buildPayload(entries[i].rule, identifiers[i], remap),
         identifier: identifiers[i],
       });
     }
