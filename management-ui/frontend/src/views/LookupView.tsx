@@ -573,10 +573,15 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
     };
   }, [stops]);
 
+  // flex-1 + a min-height floor -- the caller (LookupView) places this in a
+  // full-width flex column below the route's text so it fills whatever
+  // vertical space is left in the viewport, but never collapses below the
+  // floor for a short/compact result or when several route results are
+  // stacked and space is tight.
   return (
     <div
       ref={containerRef}
-      className="h-96 w-full rounded-md border border-slate-200 dark:border-slate-700"
+      className="min-h-[24rem] w-full flex-1 rounded-md border border-slate-200 dark:border-slate-700"
     />
   );
 }
@@ -586,9 +591,11 @@ function RouteResultView({ data }: { data: RouteLookup }) {
   const operatorCallsign = displayStr(data.operator?.callsign);
   const operatorCountry = displayStr(data.operator?.country);
 
+  // Map is rendered by the caller (LookupView), below this text and outside
+  // the max-w-3xl text column -- see the "route" branch in LookupView's
+  // results loop.
   return (
     <div className="flex flex-col gap-4">
-      <RouteMap stops={data.stops} />
       <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{data.ident}</span>
       {operatorName && (
         <div className="flex flex-col gap-1">
@@ -700,8 +707,13 @@ export function LookupView() {
   const loading = state.status === "loading";
 
   return (
-    <div className="flex flex-col gap-4">
-      <form onSubmit={handleSearch} className="flex max-w-lg gap-2">
+    // min-h-full (not h-full) -- fills main's available viewport height so
+    // a route result's map can flex-grow into it, but still grows past that
+    // via normal block sizing (rather than clipping) when stacked results
+    // need more room than the viewport, letting Layout's <main
+    // overflow-y-auto> scroll.
+    <div className="flex min-h-full flex-col gap-4">
+      <form onSubmit={handleSearch} className="flex max-w-lg shrink-0 gap-2">
         <input
           type="text"
           value={query}
@@ -718,16 +730,26 @@ export function LookupView() {
         </button>
       </form>
 
-      <div className="flex max-w-3xl flex-col gap-8">
-        {loading && <p className="text-slate-400">Searching...</p>}
-        {state.status === "not-found" && <p className="text-slate-500 dark:text-slate-400">No data found.</p>}
+      {/* No max-w-3xl here -- a route result's map (below) needs to span
+          the full available width. max-w-3xl is instead applied per-item,
+          around just the text, a few lines down. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-8">
+        {loading && <p className="max-w-3xl text-slate-400">Searching...</p>}
+        {state.status === "not-found" && (
+          <p className="max-w-3xl text-slate-500 dark:text-slate-400">No data found.</p>
+        )}
         {state.status === "results" &&
           state.results.map((result, i) => (
             <Fragment key={`${result.tab}-${i}`}>
-              {i > 0 && <hr className="border-slate-200 dark:border-slate-700" />}
-              <div className="flex flex-col gap-3">
-                <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
-                <ResultPanelBody result={result} />
+              {i > 0 && <hr className="max-w-3xl border-slate-200 dark:border-slate-700" />}
+              <div
+                className={`flex min-h-0 flex-col gap-3 ${result.tab === "route" ? "flex-1" : ""}`}
+              >
+                <div className="max-w-3xl shrink-0">
+                  <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
+                  <ResultPanelBody result={result} />
+                </div>
+                {result.tab === "route" && <RouteMap stops={result.data.stops} />}
               </div>
             </Fragment>
           ))}
