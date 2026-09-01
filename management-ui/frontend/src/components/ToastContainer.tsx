@@ -22,12 +22,12 @@ function ToastContainer() {
         <div
           key={toast.id}
           role="alert"
-          className={`min-w-64 max-w-sm rounded-md px-4 py-3 text-sm text-white shadow-lg ${
+          className={`min-w-64 max-w-md rounded-md px-4 py-3 text-sm text-white shadow-lg ${
             toast.kind === "success" ? "bg-emerald-600" : "bg-red-600"
           }`}
         >
           <div className="flex items-start justify-between gap-3">
-            <span>{toast.message}</span>
+            <div className="max-h-64 overflow-y-auto">{toast.message}</div>
             <button
               type="button"
               onClick={() => dismissToast(toast.id)}
