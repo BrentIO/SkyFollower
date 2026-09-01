@@ -186,8 +186,14 @@ function buildPayload(
   const sortable =
     conditions.length > 0 &&
     conditions.every((c) => typeof c.type === "string" && typeof c.operator === "string");
+  // triggered_lifetime/triggered_last_30_days are read-time-computed display
+  // stats the backend adds to GET /api/rules responses -- never part of what's
+  // stored. An imported file (e.g. a prior export, or hand-edited) may carry
+  // them, but they must never be sent back on create; excluded explicitly
+  // rather than relying on the backend to silently drop unknown fields.
+  const { triggered_lifetime: _triggeredLifetime, triggered_last_30_days: _triggeredLast30Days, ...rest } = rule;
   return {
-    ...rule,
+    ...rest,
     identifier,
     conditions: sortable ? sortConditions(conditions as unknown as Condition[]) : conditions,
   };

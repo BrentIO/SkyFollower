@@ -281,4 +281,20 @@ describe("importRulesBatch", () => {
     const a2 = payloads.find((p) => p.identifier === "a_2")!;
     expect((a2.conditions as { value: string[] }[])[0].value).toEqual(["b_2"]);
   });
+
+  it("never sends triggered_lifetime/triggered_last_30_days, even when the source rule carries them", async () => {
+    const payloads: Record<string, unknown>[] = [];
+    const withCounts = {
+      ...rule("a"),
+      triggered_lifetime: 42,
+      triggered_last_30_days: 7,
+    } as ImportedRule;
+    const result = await importRulesBatch([withCounts], [], [], async (p) => {
+      payloads.push(p);
+    });
+    expect(result.created).toEqual(["a"]);
+    const payload = payloads[0];
+    expect(payload).not.toHaveProperty("triggered_lifetime");
+    expect(payload).not.toHaveProperty("triggered_last_30_days");
+  });
 });
