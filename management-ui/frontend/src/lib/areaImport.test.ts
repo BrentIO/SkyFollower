@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  collidingIdentifiers,
   IMPORT_COORDINATE_PRECISION,
   importAreasBatch,
   parseAndValidate,
   resolveFeatureIdentity,
+  resolveImportIdentities,
   roundGeometryPrecision,
   type ImportedFeature,
 } from "./areaImport";
@@ -204,6 +206,37 @@ describe("resolveFeatureIdentity — client-side conflict auto-resolution", () =
   });
 });
 
+describe("collidingIdentifiers", () => {
+  it("returns the distinct imported identifiers that already exist, in file order", () => {
+    const file = [polygon({ identifier: "a" }), polygon({ identifier: "b" }), polygon({ identifier: "c" })];
+    expect(collidingIdentifiers(file, ["b", "c"])).toEqual(["b", "c"]);
+  });
+
+  it("dedupes a repeated colliding identifier", () => {
+    const file = [polygon({ identifier: "a" }), polygon({ identifier: "a" })];
+    expect(collidingIdentifiers(file, ["a"])).toEqual(["a"]);
+  });
+
+  it("a feature with no identifier of its own never collides", () => {
+    const file = [polygon({ name: "North Ramp" })];
+    expect(collidingIdentifiers(file, ["North_Ramp"])).toEqual([]);
+  });
+});
+
+describe("resolveImportIdentities", () => {
+  it("excludes a skipped feature entirely -- never resolved, never occupies a taken slot", () => {
+    const file = [polygon({ identifier: "a", name: "A" }), polygon({ identifier: "b", name: "B" })];
+    const entries = resolveImportIdentities(file, ["a"], new Set(["a"]));
+    expect(entries.map((e) => e.identity.identifier)).toEqual(["b"]);
+  });
+
+  it("still auto-suffixes a non-skipped collision", () => {
+    const file = [polygon({ identifier: "a", name: "A" })];
+    const entries = resolveImportIdentities(file, ["a"], new Set());
+    expect(entries.map((e) => e.identity.identifier)).toEqual(["a_2"]);
+  });
+});
+
 describe("importAreasBatch", () => {
   it("round-trips an export-all file: every feature created, identifiers preserved", async () => {
     const exported = [
@@ -247,6 +280,50 @@ describe("importAreasBatch", () => {
     });
     expect(result.created.map((c) => c.identifier)).toEqual(["b"]);
     expect(result.failed.map((f) => f.identifier)).toEqual(["a"]);
+  });
+
+  it("a batch with a mix of skipped and renamed collisions: skipped never reach the create/resolve step", async () => {
+    const attempted: string[] = [];
+    // "alpha" and "bravo" both collide with existing areas; "charlie"
+    // doesn't collide at all. "alpha" is skipped, "bravo" is renamed.
+    const file = [
+      polygon({ identifier: "alpha", name: "Alpha" }),
+      polygon({ identifier: "bravo", name: "Bravo" }),
+      polygon({ identifier: "charlie", name: "Charlie" }),
+    ];
+    const result = await importAreasBatch(
+      file,
+      ["alpha", "bravo"],
+      async (identity) => {
+        attempted.push(identity.identifier);
+        return true;
+      },
+      new Set(["alpha"]),
+    );
+    expect(attempted).toEqual(["bravo_2", "charlie"]);
+    expect(result.created.map((c) => c.identifier)).toEqual(["bravo_2", "charlie"]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it("skipping every colliding identifier is a no-op on those identifiers, non-colliding entries still import", async () => {
+    const attempted: string[] = [];
+    const file = [
+      polygon({ identifier: "alpha", name: "Alpha" }),
+      polygon({ identifier: "bravo", name: "Bravo" }),
+      polygon({ identifier: "fresh", name: "Fresh" }),
+    ];
+    const result = await importAreasBatch(
+      file,
+      ["alpha", "bravo"],
+      async (identity) => {
+        attempted.push(identity.identifier);
+        return true;
+      },
+      new Set(["alpha", "bravo"]),
+    );
+    expect(attempted).toEqual(["fresh"]);
+    expect(result.created.map((c) => c.identifier)).toEqual(["fresh"]);
+    expect(result.failed).toEqual([]);
   });
 
   it("synthesizes names for a file of geometry-only features", async () => {

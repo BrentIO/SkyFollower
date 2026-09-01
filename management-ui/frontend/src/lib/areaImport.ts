@@ -135,6 +135,36 @@ export interface ResolvedFeatureIdentity {
   locked: boolean;
 }
 
+// Per-identifier operator choice for an import conflict: keep only the
+// existing area (skip the imported duplicate entirely) or keep both (auto
+// suffix the imported one). Drives ImportConflictModal. Mirrors
+// ruleImport's ImportConflictChoice.
+export type ImportConflictChoice = "skip" | "rename";
+
+// The distinct imported `properties.identifier` values that already exist
+// among `existingIdentifiers`, in file order, deduplicated. A feature with
+// no usable identifier of its own (missing, or resolved from its name) can
+// never collide, so it never appears here. Feeds ImportConflictModal's row
+// list -- an import with an empty result here proceeds straight through
+// with no modal.
+export function collidingIdentifiers(
+  features: ImportedFeature[],
+  existingIdentifiers: string[],
+): string[] {
+  const existing = new Set(existingIdentifiers);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const feature of features) {
+    const props = feature.properties ?? {};
+    const raw = typeof props.identifier === "string" ? props.identifier.trim() : "";
+    if (raw && existing.has(raw) && !seen.has(raw)) {
+      seen.add(raw);
+      out.push(raw);
+    }
+  }
+  return out;
+}
+
 // Auto-resolves the identifier/name for one feature in a multi-feature
 // import, so bulk import never has to stop and prompt (the single-feature
 // path still falls through to AreaNameModal -- that stays unchanged).
@@ -186,32 +216,63 @@ export function resolveFeatureIdentity(
   return { identifier, name, locked };
 }
 
+export interface ResolvedFeatureImportEntry {
+  feature: ImportedFeature;
+  identity: ResolvedFeatureIdentity;
+}
+
+// Resolves every non-skipped feature's final identity for the batch,
+// honoring per-identifier skip choices for entries that collide with an
+// existing area. A feature whose `properties.identifier` (trimmed) is in
+// `skipIdentifiers` is left out of the result entirely -- resolveFeatureIdentity
+// never sees it, and it never occupies a slot in `taken` -- exactly as if it
+// were absent from the file. Every other feature resolves via
+// resolveFeatureIdentity exactly as before skip/rename existed. Shared by
+// importAreasBatch (the real import) and ImportConflictModal's live rename
+// preview (identical inputs, identical output), so the preview can never
+// diverge from what actually gets created.
+export function resolveImportIdentities(
+  features: ImportedFeature[],
+  existingIdentifiers: string[],
+  skipIdentifiers: ReadonlySet<string> = new Set(),
+): ResolvedFeatureImportEntry[] {
+  const taken = new Set(existingIdentifiers);
+  const resolved: ResolvedFeatureImportEntry[] = [];
+  for (let i = 0; i < features.length; i++) {
+    const props = features[i].properties ?? {};
+    const raw = typeof props.identifier === "string" ? props.identifier.trim() : "";
+    if (raw && skipIdentifiers.has(raw)) continue;
+    resolved.push({ feature: features[i], identity: resolveFeatureIdentity(features[i], i + 1, taken) });
+  }
+  return resolved;
+}
+
 export interface BatchImportResult {
   created: { identifier: string; name: string }[];
   failed: { identifier: string }[];
 }
 
-// Drives a multi-feature import: resolve each feature's identity in file
-// order (so earlier resolutions feed the collision set for later ones),
-// then create it. `createOne` returns false (or throws) for a backend
-// rejection or network error on that one feature -- best-effort applies
-// here and only here: the rest of the batch still gets created, and the
-// caller reports a summary. Structural validity was already a whole-file
-// gate in parseAndValidate; this step never relaxes that.
+// Drives a multi-feature import: resolve each non-skipped feature's
+// identity in file order (so earlier resolutions feed the collision set for
+// later ones), then create it. `createOne` returns false (or throws) for a
+// backend rejection or network error on that one feature -- best-effort
+// applies here and only here: the rest of the batch still gets created, and
+// the caller reports a summary. Structural validity was already a
+// whole-file gate in parseAndValidate; this step never relaxes that.
 export async function importAreasBatch(
   features: ImportedFeature[],
   existingIdentifiers: string[],
   createOne: (identity: ResolvedFeatureIdentity, feature: ImportedFeature) => Promise<boolean>,
+  skipIdentifiers: ReadonlySet<string> = new Set(),
 ): Promise<BatchImportResult> {
-  const taken = new Set(existingIdentifiers);
   const created: BatchImportResult["created"] = [];
   const failed: BatchImportResult["failed"] = [];
 
-  for (let i = 0; i < features.length; i++) {
-    const identity = resolveFeatureIdentity(features[i], i + 1, taken);
+  const entries = resolveImportIdentities(features, existingIdentifiers, skipIdentifiers);
+  for (const { feature, identity } of entries) {
     let ok = false;
     try {
-      ok = await createOne(identity, features[i]);
+      ok = await createOne(identity, feature);
     } catch {
       ok = false;
     }

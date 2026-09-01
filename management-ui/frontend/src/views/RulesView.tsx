@@ -2,6 +2,7 @@ import { mdiExportVariant, mdiFileImportOutline } from "@mdi/js";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { ImportConflictModal, type ConflictChoice } from "../components/ImportConflictModal";
 import { ImportRuleModal } from "../components/ImportRuleModal";
 import { MdiIcon } from "../components/MdiIcon";
 import { RuleForm } from "../components/RuleForm";
@@ -18,7 +19,12 @@ import {
 import { useToast } from "../hooks/useToast";
 import { downloadTextFile } from "../lib/csv";
 import { sortConditions } from "../lib/ruleConditions";
-import { importRulesBatch, type ImportedRule } from "../lib/ruleImport";
+import {
+  collidingIdentifiers,
+  importRulesBatch,
+  resolveImportIdentifiers,
+  type ImportedRule,
+} from "../lib/ruleImport";
 
 // The /api/areas response carries full Area objects; `geometry.type` is
 // read here only to filter the rule editor's `area`-condition dropdown to
@@ -131,6 +137,12 @@ export function RulesView() {
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  // Set together, right before ImportConflictModal opens: the raw imported
+  // batch (needed to actually run the import once the operator confirms
+  // their skip/rename choices) and the colliding identifiers it contains.
+  // Both null/empty = the modal is closed.
+  const [pendingImportRules, setPendingImportRules] = useState<ImportedRule[] | null>(null);
+  const [conflictIdentifiers, setConflictIdentifiers] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,13 +256,28 @@ export function RulesView() {
     downloadTextFile("rules.json", JSON.stringify(rules, null, 2), "application/json");
   }
 
-  async function handleImportRules(imported: ImportedRule[]) {
+  // Entry point from ImportRuleModal. An imported identifier already used
+  // by an existing rule stops here and shows ImportConflictModal instead of
+  // importing immediately; an import with no collisions runs straight
+  // through exactly as before that modal existed.
+  function handleImportRules(imported: ImportedRule[]) {
     setImportModalOpen(false);
+    const colliding = collidingIdentifiers(imported, rules.map((r) => r.identifier));
+    if (colliding.length > 0) {
+      setPendingImportRules(imported);
+      setConflictIdentifiers(colliding);
+    } else {
+      void runRulesImport(imported, new Set());
+    }
+  }
+
+  async function runRulesImport(imported: ImportedRule[], skipIdentifiers: ReadonlySet<string>) {
     const result = await importRulesBatch(
       imported,
       rules.map((r) => r.identifier),
       areas.map((a) => a.identifier),
       (payload) => createRule(payload as unknown as Rule).then(() => undefined),
+      skipIdentifiers,
     );
 
     try {
@@ -261,12 +288,52 @@ export function RulesView() {
 
     const total = imported.length;
     const parts = [`${result.created.length} of ${total} rules imported`];
+    if (skipIdentifiers.size > 0) {
+      parts.push(`${skipIdentifiers.size} skipped (already exists)`);
+    }
     for (const r of result.rejected) parts.push(`${r.identifier} rejected: ${r.reason}`);
     for (const f of result.failed) parts.push(`${f.identifier} failed: ${f.reason}`);
     showToast(
       result.failed.length > 0 || result.rejected.length > 0 ? "error" : "success",
       `${parts.join(". ")}.`,
     );
+  }
+
+  // Recomputes every conflict row's rename preview via the real batch
+  // resolver, over the whole pending import, so it can never diverge from
+  // what importRulesBatch would actually produce for the same choices.
+  function computeRuleConflictPreview(choices: Map<string, ConflictChoice>): Map<string, string> {
+    if (!pendingImportRules) return new Map();
+    const skipIdentifiers = new Set(
+      [...choices].filter(([, choice]) => choice === "skip").map(([identifier]) => identifier),
+    );
+    const entries = resolveImportIdentifiers(
+      pendingImportRules,
+      rules.map((r) => r.identifier),
+      skipIdentifiers,
+    );
+    const preview = new Map<string, string>();
+    for (const { rule, identifier } of entries) {
+      const original = typeof rule.identifier === "string" ? rule.identifier.trim() : "";
+      if (original && !preview.has(original)) preview.set(original, identifier);
+    }
+    return preview;
+  }
+
+  function handleConflictConfirm(choices: Map<string, ConflictChoice>) {
+    const imported = pendingImportRules;
+    setPendingImportRules(null);
+    setConflictIdentifiers([]);
+    if (!imported) return;
+    const skipIdentifiers = new Set(
+      [...choices].filter(([, choice]) => choice === "skip").map(([identifier]) => identifier),
+    );
+    void runRulesImport(imported, skipIdentifiers);
+  }
+
+  function handleConflictCancel() {
+    setPendingImportRules(null);
+    setConflictIdentifiers([]);
   }
 
   if (loading) {
@@ -407,6 +474,15 @@ export function RulesView() {
         open={importModalOpen}
         onImport={handleImportRules}
         onCancel={() => setImportModalOpen(false)}
+      />
+
+      <ImportConflictModal
+        open={conflictIdentifiers.length > 0}
+        noun="rule"
+        identifiers={conflictIdentifiers}
+        computePreview={computeRuleConflictPreview}
+        onConfirm={handleConflictConfirm}
+        onCancel={handleConflictCancel}
       />
     </div>
   );

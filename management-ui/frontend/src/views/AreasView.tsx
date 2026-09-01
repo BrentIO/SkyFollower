@@ -15,7 +15,14 @@ import { useEffect, useRef, useState } from "react";
 import { AreaNameModal, IDENTIFIER_PATTERN } from "../components/AreaNameModal";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ImportAreaModal } from "../components/ImportAreaModal";
-import { importAreasBatch, roundGeometryPrecision, type ImportedFeature } from "../lib/areaImport";
+import { ImportConflictModal, type ConflictChoice } from "../components/ImportConflictModal";
+import {
+  collidingIdentifiers,
+  importAreasBatch,
+  resolveImportIdentities,
+  roundGeometryPrecision,
+  type ImportedFeature,
+} from "../lib/areaImport";
 import { MdiIcon } from "../components/MdiIcon";
 import { createArea, deleteArea, geometryDisplayNoun, listAreas, updateArea, type Area } from "../api/areas";
 import { ApiError } from "../api/client";
@@ -553,6 +560,14 @@ export function AreasView() {
   // extracted from the imported feature's own properties for an import.
   const [pendingStyle, setPendingStyle] = useState<StyleFields>({});
   const [importModalOpen, setImportModalOpen] = useState(false);
+  // Set together, right before ImportConflictModal opens: the raw imported
+  // batch (needed to actually run the import once the operator confirms
+  // their skip/rename choices) and the colliding identifiers it contains.
+  // Both null/empty = the modal is closed. Only ever populated by the
+  // multi-feature batch path -- a single-feature import still falls
+  // through to AreaNameModal exactly as before.
+  const [pendingImportFeatures, setPendingImportFeatures] = useState<ImportedFeature[] | null>(null);
+  const [conflictIdentifiers, setConflictIdentifiers] = useState<string[]>([]);
   // Screen-space alignment guides -- only ever non-empty while a
   // shape is actively being dragged/reshaped; cleared the moment the drag
   // ends (draw's "finish" event) or selection otherwise changes.
@@ -1107,20 +1122,27 @@ export function AreasView() {
 
   // Entry point from ImportAreaModal. One feature keeps the original
   // behaviour exactly -- a single conflict is one confirm click, no reason
-  // to change it. More than one auto-resolves every identifier/name
-  // conflict on the client and creates them in a loop, so bulk import never
-  // needs a per-conflict prompt queue.
+  // to change it. More than one collides against the existing identifiers;
+  // any collision stops here and shows ImportConflictModal instead of
+  // importing immediately, otherwise the batch runs straight through
+  // exactly as before that modal existed.
   function handleImportFeatures(features: ImportedFeature[]) {
     if (features.length === 1) {
       handleImportFeature(features[0]);
       return;
     }
     requestSwitch(() => {
-      void importFeaturesBatch(features);
+      const colliding = collidingIdentifiers(features, areas.map((a) => a.identifier));
+      if (colliding.length > 0) {
+        setPendingImportFeatures(features);
+        setConflictIdentifiers(colliding);
+      } else {
+        void importFeaturesBatch(features, new Set());
+      }
     });
   }
 
-  async function importFeaturesBatch(features: ImportedFeature[]) {
+  async function importFeaturesBatch(features: ImportedFeature[], skipIdentifiers: ReadonlySet<string>) {
     const draw = drawRef.current;
     if (!draw) return;
     setDraft(null);
@@ -1149,17 +1171,56 @@ export function AreasView() {
           { suppressToast: true },
         );
       },
+      skipIdentifiers,
     );
 
     const total = features.length;
-    if (result.failed.length === 0) {
-      showToast("success", `${result.created.length} of ${total} areas imported.`);
-    } else {
-      showToast(
-        "error",
-        `${result.created.length} of ${total} areas imported; ${result.failed.length} failed.`,
-      );
+    const parts = [`${result.created.length} of ${total} areas imported`];
+    if (skipIdentifiers.size > 0) {
+      parts.push(`${skipIdentifiers.size} skipped (already exists)`);
     }
+    if (result.failed.length > 0) {
+      parts.push(`${result.failed.length} failed`);
+    }
+    showToast(result.failed.length === 0 ? "success" : "error", `${parts.join("; ")}.`);
+  }
+
+  // Recomputes every conflict row's rename preview via the real batch
+  // resolver, over the whole pending import, so it can never diverge from
+  // what importAreasBatch would actually produce for the same choices.
+  function computeAreaConflictPreview(choices: Map<string, ConflictChoice>): Map<string, string> {
+    if (!pendingImportFeatures) return new Map();
+    const skipIdentifiers = new Set(
+      [...choices].filter(([, choice]) => choice === "skip").map(([identifier]) => identifier),
+    );
+    const entries = resolveImportIdentities(
+      pendingImportFeatures,
+      areas.map((a) => a.identifier),
+      skipIdentifiers,
+    );
+    const preview = new Map<string, string>();
+    for (const { feature, identity } of entries) {
+      const props = feature.properties ?? {};
+      const original = typeof props.identifier === "string" ? props.identifier.trim() : "";
+      if (original && !preview.has(original)) preview.set(original, identity.identifier);
+    }
+    return preview;
+  }
+
+  function handleAreaConflictConfirm(choices: Map<string, ConflictChoice>) {
+    const features = pendingImportFeatures;
+    setPendingImportFeatures(null);
+    setConflictIdentifiers([]);
+    if (!features) return;
+    const skipIdentifiers = new Set(
+      [...choices].filter(([, choice]) => choice === "skip").map(([identifier]) => identifier),
+    );
+    void importFeaturesBatch(features, skipIdentifiers);
+  }
+
+  function handleAreaConflictCancel() {
+    setPendingImportFeatures(null);
+    setConflictIdentifiers([]);
   }
 
   // Places an imported feature onto the draw map exactly like a fresh draw
@@ -1591,6 +1652,15 @@ export function AreasView() {
           handleImportFeatures(features);
         }}
         onCancel={() => setImportModalOpen(false)}
+      />
+
+      <ImportConflictModal
+        open={conflictIdentifiers.length > 0}
+        noun="area"
+        identifiers={conflictIdentifiers}
+        computePreview={computeAreaConflictPreview}
+        onConfirm={handleAreaConflictConfirm}
+        onCancel={handleAreaConflictCancel}
       />
     </div>
   );
