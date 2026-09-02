@@ -41,6 +41,13 @@
 # understands. Any individual file missing at the resolved tag (a release
 # cut before a given role existed) falls back to main for that one file,
 # with a printed warning.
+#
+# Testing a dev build (a real, pullable image from main or a branch,
+# published without cutting a release -- see
+# build-container-images.yaml's dev_mode): set IMAGE_VERSION alongside
+# REF so the resolved dev tag is written instead of :latest, e.g.
+#   REF=my-branch IMAGE_VERSION=dev-my-branch ./install.sh
+# See docs/getting-started/index.md's "Testing a dev build" section.
 
 set -euo pipefail
 
@@ -120,11 +127,15 @@ fi
 
 resolve_ref() {
   # The tag written into .env as SKYFOLLOWER_VERSION. Only a release tag is
-  # also an image tag (every image publishes as both :{tag} and :latest on
-  # release), so an explicitly-overridden REF -- REF=main, a branch, a
-  # commit -- can't be assumed to name an image and falls back to :latest.
+  # also an image tag by default (every image publishes as both :{tag} and
+  # :latest on release), so an explicitly-overridden REF -- REF=main, a
+  # branch, a commit -- can't be assumed to name an image and falls back
+  # to :latest, UNLESS the caller also sets IMAGE_VERSION explicitly --
+  # e.g. REF=my-branch IMAGE_VERSION=dev-my-branch to point at a dev build
+  # published by build-container-images.yaml's dev_mode (see "Testing a
+  # dev build" below). Omitting IMAGE_VERSION keeps today's behavior.
   if [ -n "${REF:-}" ]; then
-    IMAGE_VERSION="latest"
+    IMAGE_VERSION="${IMAGE_VERSION:-latest}"
     return
   fi
   # No jq assumption (Raspberry Pi OS Lite doesn't ship it) -- the

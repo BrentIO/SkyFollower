@@ -1,5 +1,5 @@
 name: 🛠️ Build Container Images
-run-name: "Build container images ${{ github.ref_name }}"
+run-name: "Build container images ${{ github.ref_name }}${{ inputs.dev_mode && ' (dev)' || '' }}"
 
 # Two ways in:
 #   1. workflow_dispatch, --ref <tag> — how release.yaml triggers this. A tag
@@ -12,7 +12,14 @@ run-name: "Build container images ${{ github.ref_name }}"
 #
 # workflow_dispatch also accepts test_mode, for dry-running workflow changes
 # (e.g. cache behavior, matrix concurrency) against an arbitrary ref like
-# `main` without cutting a real release tag or publishing to GHCR.
+# `main` without cutting a real release tag or publishing to GHCR, and
+# dev_mode, for actually publishing a real, pullable dev build from `main`
+# or any branch without cutting a release at all -- e.g.
+# `gh workflow run build-container-images.yaml --ref my-branch -f dev_mode=true`.
+# dev_mode images are tagged `:dev-{branch}` and the floating `:dev`, never
+# `:latest` or the raw ref name, so a dev build can never be mistaken for
+# (or overwrite) a real release tag that a fresh production install
+# defaults to. See docs/getting-started/index.md's "Testing a dev build".
 on:
   push:
     tags:
@@ -21,6 +28,10 @@ on:
     inputs:
       test_mode:
         description: "Test mode: build only, don't push, skip version-tag validation (for dry-running against a branch)"
+        type: boolean
+        default: false
+      dev_mode:
+        description: "Dev mode: build AND push, tagged :dev-{branch} and :dev, skip version-tag validation (for real dev/host testing against main or any branch)"
         type: boolean
         default: false
 
@@ -34,8 +45,16 @@ jobs:
     steps:
       - name: Validate tag format
         run: |
+          if [[ "${{ inputs.test_mode }}" == "true" && "${{ inputs.dev_mode }}" == "true" ]]; then
+            echo "❌ test_mode and dev_mode can't both be true — test_mode never pushes, dev_mode always does. Pick one."
+            exit 1
+          fi
           if [[ "${{ inputs.test_mode }}" == "true" ]]; then
             echo "⚠️ test_mode enabled — skipping version format validation (ref: ${{ github.ref_name }})"
+            exit 0
+          fi
+          if [[ "${{ inputs.dev_mode }}" == "true" ]]; then
+            echo "⚠️ dev_mode enabled — skipping version format validation, will publish :dev-* tags (ref: ${{ github.ref_name }})"
             exit 0
           fi
           if [[ ! "${{ github.ref_name }}" =~ ^[0-9]{4}\.(0[1-9]|1[0-2])\.(0[1-9]|[1-9][0-9])$ ]]; then
@@ -120,6 +139,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine image tags
+        id: tags
+        # dev_mode tags as :dev-{branch} (pin to a specific branch's most
+        # recent build) and the floating :dev (whatever was built most
+        # recently, any branch) -- never :latest or the raw ref name, so a
+        # dev build can never be mistaken for a real release tag. Branch
+        # names can contain `/` (e.g. feature/foo), which Docker tags
+        # don't allow, so it's sanitized first. Built with $'\n' rather
+        # than a literal multi-line string so this run block's own
+        # indentation never leaks into the tag value.
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.dev_mode }}" == "true" ]]; then
+            sanitized_ref="$(printf '%s' '${{ github.ref_name }}' | tr '/' '-')"
+            tags="${{ matrix.image }}:dev-${sanitized_ref}"$'\n'"${{ matrix.image }}:dev"
+          else
+            tags="${{ matrix.image }}:${{ github.ref_name }}"$'\n'"${{ matrix.image }}:latest"
+          fi
+          {
+            echo "list<<TAGS_EOF"
+            echo "$tags"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -137,10 +180,10 @@ jobs:
             VERSION=${{ github.ref_name }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
           # still computed but unused, since push is the gate that matters.
+          # dev_mode always pushes (that's the point); validate-version
+          # already rejects test_mode and dev_mode both being true.
           push: ${{ !inputs.test_mode }}
-          tags: |
-            ${{ matrix.image }}:${{ github.ref_name }}
-            ${{ matrix.image }}:latest
+          tags: ${{ steps.tags.outputs.list }}
           # Scoped per image so one component's cache can't evict another's
           # in the shared GHA cache namespace.
           cache-from: type=gha,scope=${{ matrix.name }}
