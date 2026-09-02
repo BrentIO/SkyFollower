@@ -70,6 +70,41 @@ runs `docker compose pull && up -d` for each.
 **Rolling back:** edit `SKYFOLLOWER_VERSION` in that host's `.env` to an
 older release tag, then `docker compose up -d`.
 
+## Testing a dev build
+
+Cutting a real release for every change under test is slow. `main` or any
+branch can be built and published as a real, pullable image without a
+release, using `build-container-images.yaml`'s `dev_mode` (requires push
+access to the repo):
+
+```bash
+gh workflow run build-container-images.yaml --ref my-branch -f dev_mode=true
+```
+
+(`--ref main` to build the latest merged code instead of a branch.) This
+publishes every image tagged `:dev-{branch}` (that branch's most recent
+dev build) and the floating `:dev` (whatever was built most recently,
+any branch) -- never `:latest`, so a dev build can never be pulled by a
+fresh production install by accident.
+
+Point a host at one by setting `REF` **and** `IMAGE_VERSION` together --
+`REF` picks which branch's compose/config files are fetched, and
+`IMAGE_VERSION` overrides the image tag that would otherwise default to
+`:latest`:
+
+```bash
+REF=my-branch IMAGE_VERSION=dev-my-branch \
+  curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
+```
+
+Already installed? The same two variables work with `--upgrade` on an
+existing host, or edit `SKYFOLLOWER_VERSION` in `.env` by hand and
+`docker compose pull && up -d`.
+
+**Going back to a real release:** run `--upgrade` with neither `REF` nor
+`IMAGE_VERSION` set -- it re-resolves the latest release tag exactly as
+normal.
+
 ## Loading All Data
 
 `install.sh` offers a first-time bulk load right after bringing `core`
