@@ -158,7 +158,7 @@ def _queue_target(queue_name: str) -> _QueueTarget:
             device=build_ha_device(
                 identifier=f"SkyFollower_message_processor_{pid}",
                 name=f"SkyFollower Message Processor {pid}",
-                model=f"Message Processor {pid}",
+                model="Message Processor",
             ),
             state_base=f"{MQTT_ROOT}/message-processor/{pid}/statistic",
             unique_prefix=f"SkyFollower_message_processor_{pid}_queue",
@@ -643,7 +643,7 @@ class CoreHealth:
         device = build_ha_device(
             identifier=f"SkyFollower_message_processor_{pid}",
             name=f"SkyFollower Message Processor {pid}",
-            model=f"Message Processor {pid}",
+            model="Message Processor",
         )
         base = f"SkyFollower/message-processor/{pid}/statistic"
         for field, period, kind, label, icon in _MP_COUNTER_FIELDS:
