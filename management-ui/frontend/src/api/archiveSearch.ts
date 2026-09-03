@@ -51,9 +51,15 @@ export function getArchiveSearchDetail(uuid: string): Promise<ArchiveSearchDetai
   return apiClient.get<ArchiveSearchDetail>(`/api/archive/search/${encodeURIComponent(uuid)}`);
 }
 
-export function getArchiveSearchResults(uuid: string, page: number): Promise<ArchiveSearchResultsPage> {
+export function getArchiveSearchResults(
+  uuid: string,
+  page: number,
+  pageSize?: number,
+): Promise<ArchiveSearchResultsPage> {
+  const params = new URLSearchParams({ page: String(page) });
+  if (pageSize !== undefined) params.set("page_size", String(pageSize));
   return apiClient.get<ArchiveSearchResultsPage>(
-    `/api/archive/search/${encodeURIComponent(uuid)}/results?page=${page}`,
+    `/api/archive/search/${encodeURIComponent(uuid)}/results?${params.toString()}`,
   );
 }
 
