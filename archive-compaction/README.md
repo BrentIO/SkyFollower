@@ -4,7 +4,7 @@
 |---|---|
 | **Purpose** | Daily consolidation of the archive's per-flight Parquet index files into one file per day, so Athena/Glue partition projection isn't scanning thousands of tiny files per partition indefinitely |
 | **Run frequency** | Daily, scheduled by `ofelia` |
-| **Reads/writes** | AWS S3 only — no Redis, no RabbitMQ |
+| **Reads/writes** | AWS S3, plus a local index-cache volume shared with `archive-processor` (see [Local Index Cache](#local-index-cache)) — no Redis, no RabbitMQ |
 
 ## How it works
 
@@ -37,19 +37,26 @@ this job:
    mismatch means a date was actually checked and is still missing a row,
    which won't fix itself by moving on to the next date.
 4. For a date that passes the parity check: lists every object under that
-   day's `index/year=/month=/day=/` prefix, filtering out any file already
-   produced by a previous compaction run (identified by a `compacted-`
-   filename prefix — a per-flight file is always a bare UUID, so this can
-   never collide with one), reads and merges the remaining per-flight files
-   into a single Arrow table, and writes it as one new
-   `compacted-{uuid}.parquet` file under the same partition.
+   day's `index/year=/month=/day=/` prefix (via S3, always — parity
+   checking and listing never consult the local cache), filtering out any
+   file already produced by a previous compaction run (identified by a
+   `compacted-` filename prefix — a per-flight file is always a bare UUID,
+   so this can never collide with one), reads and merges the remaining
+   per-flight files into a single Arrow table, and writes it as one new
+   `compacted-{uuid}.parquet` file under the same partition. Each
+   per-flight file's *content* is read from the local index cache when
+   present, falling back to a real S3 `GetObject` only when it's missing —
+   see [Local Index Cache](#local-index-cache).
 5. Deletes only the source files that were actually read into that output
    — never a file that failed to read, and never a file that arrived under
    the prefix after the initial listing (a late straggler). Both cases are
    left in place: an extra small file in the partition, still queryable on
    its own via Glue's partition projection (which reads every file under a
    partition as one table), with no duplication risk. The watermark only
-   advances past a date once its compaction step actually completes.
+   advances past a date once its compaction step actually completes. A
+   file's local index-cache copy (if any) is removed the moment its S3
+   counterpart is confirmed deleted — see [Local Index
+   Cache](#local-index-cache).
 
 A file that's left behind — whether a late straggler or one whose delete
 call failed after being included in a compacted output — is not retried by
@@ -59,6 +66,35 @@ small file in that day's partition, not incorrect query results, except in
 the narrow case of a post-inclusion delete failure, where the row is
 present twice until someone manually removes the lingering source file —
 logged clearly via `files_delete_failed` when it happens.
+
+## Local Index Cache
+
+`archive-processor` and `archive-compaction` run on the same host
+(`docker-compose.archive.yaml`) and both bind-mount the same host
+directory at `/app/index-cache`. `archive-processor` writes a local copy
+of each per-flight Parquet index row there right after uploading it to S3;
+this job reads from that local copy instead of downloading the row again,
+issuing a real S3 `GetObject` only when the local copy is unexpectedly
+missing (a partial/failed write on `archive-processor`'s side, or a row
+written before this cache existed) — see
+[archive-processor/README.md](../archive-processor/README.md#local-index-cache)
+for the write side.
+
+The local path mirrors the S3 key's own layout, minus the `index/` prefix:
+`/app/index-cache/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet` — so a
+multi-day catch-up run (see step 2 above) naturally finds each backlogged
+date's local files under its own subdirectory, with no extra bookkeeping
+for how many days are outstanding.
+
+Only the *read* path (step 4 above) consults the local cache.
+`check_date_parity` (step 3) and the post-compaction delete (step 5) are
+both S3-only, exactly as before — the local cache is purely a faster way
+to get bytes this job would otherwise download, never a second source of
+truth about what exists. A file's local copy is removed the moment its S3
+counterpart is confirmed deleted, so the shared volume only ever holds the
+not-yet-compacted backlog rather than growing without bound; if the S3
+delete itself fails (see `files_delete_failed` above), the local copy is
+left in place along with the lingering S3 source.
 
 ## Configuration
 
@@ -130,3 +166,13 @@ or widened one — see [AWS Setup](#aws-setup) above for exactly what it
 needs and why (`Delete` and bucket-level `List`, which `archive-processor`
 doesn't need; no access to `flights/*` content at all). See the `ofelia`
 service's labels in `docker-compose.archive.yaml` for the schedule.
+
+Ofelia's scheduled run creates its own container directly through the
+Docker Engine API rather than reusing this file's `archive-compaction`
+service definition, so the shared index-cache mount (see [Local Index
+Cache](#local-index-cache)) is declared a second time as its own
+`ofelia.job-run.archive-compaction.volume` label, resolving to the same
+host directory as `archive-processor`'s `/app/index-cache` mount. The
+manual `docker compose run --rm archive-compaction` path uses the service
+definition's own `volumes:` entry instead — both paths land on the same
+host directory either way.

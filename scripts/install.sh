@@ -585,7 +585,7 @@ role_data_dirs() {
       # service block.
       ;;
     archive)
-      echo "data/archive-processor data/archive-compaction"
+      echo "data/archive-processor data/archive-compaction data/archive-index-cache"
       ;;
   esac
 }

@@ -1254,6 +1254,98 @@ class TestIndexWriteRetryQueue:
 
 
 # ---------------------------------------------------------------------------
+# Local index cache: mirrors the Parquet index row to a shared volume
+# archive-compaction reads from instead of re-downloading from S3.
+# ---------------------------------------------------------------------------
+
+class TestLocalIndexCache:
+    def test_written_after_successful_index_write(self):
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             tempfile.TemporaryDirectory() as cache_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch("archive_processor.main.INDEX_CACHE_DIR", cache_dir):
+                processor._archive_flight_to_s3(flight)
+
+            from shared.index_cache import local_index_path
+
+            index_key = f"index/year=2024/month=05/day=31/{flight.id}.parquet"
+            local_path = local_index_path(index_key, cache_dir)
+            assert os.path.exists(local_path)
+            with open(local_path, "rb") as f:
+                local_bytes = f.read()
+            assert local_bytes == processor._s3_client.read_parquet_bytes(index_key)
+
+    def test_local_write_failure_does_not_affect_archiving_or_retry_queue(self):
+        """Best-effort semantic, same as the S3 index write's own failure
+        handling: a local cache write failure must never block archiving
+        and must never be treated as an index-write failure requiring a
+        retry -- the S3 write (the durable copy) already succeeded."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.write_local_index",
+                side_effect=OSError("disk full"),
+            ):
+                processor._archive_flight_to_s3(flight)  # must not raise
+
+            index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
+            assert len(index_keys) == 1  # S3 write still succeeded
+            assert processor._index_fallback.depth() == 0  # not treated as a failed index write
+            assert processor._fallback.depth() == 0
+
+    def test_not_written_when_s3_index_write_fails(self):
+        """The local cache mirrors a write that already succeeded on S3 --
+        it must not be populated from a row that failed to upload, since
+        the failed row is still pending in the retry queue instead."""
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             tempfile.TemporaryDirectory() as cache_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch("archive_processor.main.INDEX_CACHE_DIR", cache_dir), \
+                 patch.object(processor, "_write_index_to_s3", side_effect=RuntimeError("down")):
+                processor._archive_flight_to_s3(flight)
+
+            assert processor._index_fallback.depth() == 1
+            assert not os.listdir(cache_dir)
+
+    def test_drain_index_fallback_writes_local_cache_too(self):
+        with tempfile.TemporaryDirectory() as tmp_dir, \
+             tempfile.TemporaryDirectory() as cache_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+
+            flight = _make_flight()
+            with patch(
+                "archive_processor.main.build_parquet_index_row",
+                side_effect=RuntimeError("boom"),
+            ):
+                processor._archive_flight_to_s3(flight)
+            assert processor._index_fallback.depth() == 1
+
+            from shared.index_cache import local_index_path
+
+            index_key = f"index/year=2024/month=05/day=31/{flight.id}.parquet"
+            with patch("archive_processor.main.INDEX_CACHE_DIR", cache_dir), \
+                 _synchronous_drain_thread():
+                processor._drain_index_fallback()
+
+            assert processor._index_fallback.depth() == 0
+            assert os.path.exists(local_index_path(index_key, cache_dir))
+
+
+# ---------------------------------------------------------------------------
 # S3 reconnect: synchronous backlog drain gates _s3_connected
 # ---------------------------------------------------------------------------
 

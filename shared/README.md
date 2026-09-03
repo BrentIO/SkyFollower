@@ -28,6 +28,15 @@ time via a relative path reference in their `requirements.txt`.
   every compose file fixes the data directory at `/app/data` via its bind
   mount, so it was never a per-deployment value.
 
+- **`index_cache.py`** — `INDEX_CACHE_DIR`, `local_index_path()`,
+  `write_local_index()`, and `delete_local_index()`: the local mirror of a
+  per-flight Parquet index row, shared between `archive-processor`
+  (writer) and `archive-compaction` (reader) via a bind mount both
+  containers point at the same host directory (see
+  `docker-compose.archive.yaml`). Lets `archive-compaction` read a row
+  back from local disk instead of re-downloading it from S3 days later.
+  See each component's own README for how it's wired in.
+
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.
