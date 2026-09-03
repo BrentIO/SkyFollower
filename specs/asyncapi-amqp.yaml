@@ -1,0 +1,468 @@
+asyncapi: '3.1.0'
+info:
+  title: SkyFollower AMQP
+  version: '9999.99.99'
+  description: >
+    RabbitMQ/AMQP exchanges and queues SkyFollower uses internally to move
+    ADS-B/UAT messages from receiver(s) to message processor(s), and
+    completed flights from message processor(s) to the archive processor.
+    Companion document to specs/asyncapi.yaml, which covers this system's
+    externally-facing MQTT topics (Home Assistant-facing telemetry and rule
+    notifications) — kept as a separate document rather than a second
+    server in that file because every existing MQTT channel there has no
+    `servers` list of its own (defaulting, per the AsyncAPI 3.x Channel
+    Object, to "available on every server in this document"); adding an
+    AMQP server there would have silently put all of them on this broker
+    too unless every one of those channels was also touched to pin it back
+    to `mqtt` explicitly. A second file with its own single server avoids
+    that blast radius entirely, at zero cost to either document's
+    per-topic depth.
+
+    shared/rabbitmq_topology.py is the single source of truth for every
+    exchange/queue name, argument, and binding-weight value documented
+    below; shared/tests/test_rabbitmq_asyncapi_spec.py fails if this file
+    and that module drift apart.
+
+servers:
+  rabbitmq:
+    host: localhost:5672
+    protocol: amqp
+    description: >
+      RabbitMQ broker (Host B in the deployment topology). Replace
+      host/port with your broker's address. The virtual host, TLS, and
+      authentication (the skyfollower / skyfollower-admin users
+      provisioned by scripts/install.sh's provision_rabbitmq_users) are
+      deployment-specific runtime concerns, not modelled here.
+
+# ---------------------------------------------------------------------------
+# Channels
+# ---------------------------------------------------------------------------
+#
+# AMQP channel bindings (bindingVersion 0.3.0) can express `is: routingKey`
+# (the channel is really an exchange, described via its own `exchange`
+# object) or `is: queue` (the channel is really a queue, described via its
+# own `queue` object) — never both on the same binding. A resource that is
+# genuinely both, like skyfollower-adsb-unroutable below, is modelled once
+# on its observable/bindable half (the queue) with the feeding exchange
+# called out via a specification-extension field and prose, rather than
+# split into two channel entries for one literal resource name.
+
+channels:
+
+  adsbExchange:
+    address: skyfollower-adsb
+    description: >
+      Durable x-consistent-hash exchange. Every receiver publishes every
+      decoded 1090ES/UAT message here, keyed by the aircraft's ICAO hex —
+      the exchange hashes that routing key onto exactly one bound queue
+      (see messageProcessorQueue below), which is what keeps one aircraft's
+      messages, and therefore the SQLite flight state built from them, on a
+      single message processor without the receiver ever knowing how many
+      processors exist or in what order they were started. Declared with
+      an alternate-exchange argument pointing at skyfollower-adsb-unroutable
+      so a message that cannot be routed (no processor queue currently
+      bound) is retained rather than silently dropped — the receiver
+      publishes without publisher confirms and without the mandatory flag,
+      so without an alternate exchange the broker would discard it with no
+      signal to anyone. x-consistent-hash is a RabbitMQ plugin-provided
+      exchange type, not one of the standard AMQP exchange types the AMQP
+      channel binding's `exchange.type` enum allows (topic / direct /
+      fanout / default / headers) — see the x-rabbitmqExchangeType
+      extension field below for how that's represented.
+    messages:
+      AdsbMessage:
+        $ref: '#/components/messages/AdsbMessage'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: skyfollower-adsb
+          durable: true
+          autoDelete: false
+          vhost: /
+        bindingVersion: '0.3.0'
+        # The AMQP channel binding's exchange.type is a strict enum (topic,
+        # direct, fanout, default, headers) in AsyncAPI's bindingVersion
+        # 0.3.0 JSON Schema — x-consistent-hash is not a member and setting
+        # `type: topic` (or any of the standard values) here to work around
+        # that would misdocument the actual broker behaviour. A
+        # specification-extension field (the one escape hatch the channel
+        # binding schema itself reserves via its `^x-[\w\d.-]+$`
+        # patternProperties) is used instead so the real type is still
+        # machine-readable without failing schema validation.
+        x-rabbitmqExchangeType: x-consistent-hash
+        x-rabbitmqExchangeArguments:
+          alternate-exchange: skyfollower-adsb-unroutable
+
+  adsbUnroutable:
+    address: skyfollower-adsb-unroutable
+    description: >
+      Durable queue bound to a same-named durable fanout exchange (both
+      declared together, exchange first, by
+      shared/rabbitmq_topology.py's declare_adsb_topology) — the
+      alternate-exchange target for skyfollower-adsb above. Anything the
+      hash exchange cannot route (typically: no message processor queue is
+      currently bound) lands here automatically; no application code ever
+      publishes to this exchange directly; it exists purely so a routing
+      failure is observable instead of a silent drop. Nothing consumes
+      from this queue either — core-health polls its depth via the
+      RabbitMQ Management API (the same way it polls every other
+      SkyFollower-owned queue) and republishes it over MQTT as
+      SkyFollower/queue/skyfollower-adsb-unroutable/statistic/messages_ready,
+      alongside the adsb exchange's own publish_in/publish_out rate
+      counters as a routing-loss cross-check. A steadily growing depth
+      here means messages are being lost to routing, not processed.
+    messages:
+      AdsbMessage:
+        $ref: '#/components/messages/AdsbMessage'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: skyfollower-adsb-unroutable
+          durable: true
+          exclusive: false
+          autoDelete: false
+          vhost: /
+        bindingVersion: '0.3.0'
+        x-rabbitmqFeederExchange:
+          name: skyfollower-adsb-unroutable
+          type: fanout
+          durable: true
+          autoDelete: false
+
+  archiveQueue:
+    address: skyfollower-archive
+    description: >
+      Durable queue, declared by both the message processor (publisher)
+      and the archive processor (consumer) on every connect so either one
+      coming up first still finds it. The message processor publishes one
+      completed flight here per flight eviction, via the default exchange
+      (routing key = queue name), with publisher confirms enabled and the
+      mandatory flag set — a missing queue (archive-processor not
+      installed yet) raises pika.exceptions.UnroutableError synchronously
+      instead of the broker silently dropping the message, and the message
+      processor falls back to its local completed_flights.db SQLite queue
+      in that case. The archive processor consumes with
+      basic_qos(prefetch_count=100) and acknowledges manually only after
+      the S3 write (or local s3.db fallback write) has actually succeeded.
+    messages:
+      ArchiveQueueMessage:
+        $ref: '#/components/messages/ArchiveQueueMessage'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: skyfollower-archive
+          durable: true
+          exclusive: false
+          autoDelete: false
+          vhost: /
+        bindingVersion: '0.3.0'
+
+  messageProcessorQueue:
+    address: 'skyfollower-message-processor-{message_processor_id}'
+    description: >
+      One durable queue per running message processor instance, declared
+      and bound to skyfollower-adsb by that instance itself on startup
+      (shared/rabbitmq_topology.py's bind_adsb_queue) with a fixed binding
+      routing key of "1" — the consistent-hash plugin's documented equal
+      weight, since uneven weights are for deliberately uneven consumers
+      and measurably do not improve distribution evenness here. No
+      application code publishes to this queue by name directly; it fills
+      solely from skyfollower-adsb's hash routing. The instance itself
+      consumes with basic_qos(prefetch_count=100) — a large prefetch is
+      safe because, unlike a round-robin queue, exactly one consumer will
+      ever bind to this specific queue for as long as it exists — and
+      acknowledges each message manually only once its own SQLite active
+      store has durably recorded it. A queue's binding position is fixed
+      for as long as the binding exists: restarting a processor rebinds an
+      unchanged position (a no-op) and moves no aircraft, but removing a
+      binding from the middle of the fleet's binding order — rather than
+      only ever from the end — reshuffles roughly two-thirds of all
+      aircraft onto different processors. This queue's own name never
+      changes across restarts (MESSAGE_PROCESSOR_ID is set once per
+      compose service block), so only a genuine removal-from-the-middle,
+      not a routine restart, triggers that reshuffle.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      AdsbMessage:
+        $ref: '#/components/messages/AdsbMessage'
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: 'skyfollower-message-processor-{message_processor_id}'
+          durable: true
+          exclusive: false
+          autoDelete: false
+          vhost: /
+        bindingVersion: '0.3.0'
+
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
+
+operations:
+
+  publishAdsbMessage:
+    action: send
+    channel:
+      $ref: '#/channels/adsbExchange'
+    summary: Receiver publishes a decoded ADS-B/UAT message, routed by icao_hex
+    bindings:
+      amqp:
+        deliveryMode: 2
+        bindingVersion: '0.3.0'
+
+  publishAdsbUnroutableMessage:
+    action: send
+    channel:
+      $ref: '#/channels/adsbUnroutable'
+    summary: >
+      RabbitMQ itself republishes here automatically via the
+      alternate-exchange mechanism; no SkyFollower component ever
+      publishes to this exchange directly.
+    bindings:
+      amqp:
+        deliveryMode: 2
+        bindingVersion: '0.3.0'
+
+  publishArchiveQueueMessage:
+    action: send
+    channel:
+      $ref: '#/channels/archiveQueue'
+    summary: Message processor publishes a completed flight for archival
+    bindings:
+      amqp:
+        deliveryMode: 2
+        mandatory: true
+        bindingVersion: '0.3.0'
+
+  consumeArchiveQueueMessage:
+    action: receive
+    channel:
+      $ref: '#/channels/archiveQueue'
+    summary: Archive processor consumes completed flights for S3 archival
+    bindings:
+      amqp:
+        ack: true
+        bindingVersion: '0.3.0'
+
+  consumeMessageProcessorQueueMessage:
+    action: receive
+    channel:
+      $ref: '#/channels/messageProcessorQueue'
+    summary: >
+      One message processor instance consumes the share of ADS-B messages
+      the hash exchange routed to it
+    bindings:
+      amqp:
+        ack: true
+        bindingVersion: '0.3.0'
+
+components:
+
+  # ---------------------------------------------------------------------------
+  # Messages
+  # ---------------------------------------------------------------------------
+
+  messages:
+
+    AdsbMessage:
+      name: AdsbMessage
+      title: Inbound ADS-B/UAT message
+      summary: Raw decoded 1090ES/UAT message envelope, routed by icao_hex
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/AdsbPayload'
+
+    ArchiveQueueMessage:
+      name: ArchiveQueueMessage
+      title: Completed flight record
+      summary: >
+        Full completed-flight record queued for archival — positions and
+        velocities included, flight_path not yet added (the archive
+        processor adds that after reading this off the queue, immediately
+        before the S3 write)
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/CompletedFlightPayload'
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+
+  schemas:
+
+    AdsbPayload:
+      type: object
+      description: >
+        shared/models.py's InboundMessage — the wire shape the receiver
+        publishes to skyfollower-adsb, and the same shape RabbitMQ forwards
+        unchanged into skyfollower-adsb-unroutable when it can't be routed.
+      required: [raw, icao_hex, received_at, source]
+      properties:
+        raw:
+          type: string
+          description: >
+            Raw hex-encoded 1090ES or UAT message bytes as read off the
+            wire, before any pyModeS decoding.
+          example: "8DA8AE7F58C382D690C8AC2863A7"
+        icao_hex:
+          type: string
+          description: >
+            6-character uppercase hex ICAO address — the routing key
+            skyfollower-adsb's x-consistent-hash exchange hashes on.
+          example: A8AE7F
+        received_at:
+          type: number
+          format: double
+          description: Unix timestamp (seconds) when the receiver read this message off the wire.
+          example: 1768465200.123
+        source:
+          type: string
+          enum: ["1090", "978", "EXTERNAL"]
+          description: Which receiver connection produced this message.
+          example: "1090"
+
+    CompletedFlightPayload:
+      type: object
+      description: >
+        shared/models.py's CompletedFlight — published by the message
+        processor to skyfollower-archive on flight completion. Same shape
+        as the legacy MongoDB document, plus _id/receiver_sources/
+        force_archive. See specs/data-dictionary.yaml's `flight` record for
+        the exhaustive field-by-field reference of the same document once
+        the archive processor has finished with it (adds flight_path,
+        writes it gzipped to S3); everything below is present at the
+        moment it's queued.
+      required: [_id, first_message, last_message, total_messages, receiver_sources, force_archive, aircraft, matched_rules]
+      properties:
+        _id:
+          type: string
+          description: UUID-v7 flight identifier, generated once per completed flight.
+          example: "018f4b3c-7a2e-7c31-9b6a-1f7e6b1a2c3d"
+        first_message:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:00:00+00:00"
+        last_message:
+          type: string
+          format: date-time
+          example: "2026-01-15T10:45:00+00:00"
+        total_messages:
+          type: integer
+          example: 3842
+        receiver_sources:
+          type: array
+          items:
+            type: string
+            enum: ["1090", "978", "EXTERNAL"]
+          description: >
+            Every distinct ADS-B receive source seen for this flight;
+            defaults to an empty array (only ever seen on flights migrated
+            from legacy records that predate the field, since a real
+            flight always has at least one).
+        force_archive:
+          type: boolean
+          default: false
+          description: True if a matching rule overrides the EXTERNAL-only archive skip for this flight.
+        aircraft:
+          type: object
+          description: >
+            AircraftRecord fields (icao_hex always present) — see
+            specs/data-dictionary.yaml's flight record for the full
+            breakdown.
+        ident:
+          type: string
+          example: DAL659
+        operator:
+          type: object
+          description: OperatorRecord fields, source key stripped. Absent when unpopulated.
+        squawk:
+          type: string
+          example: "1200"
+        origin:
+          type: string
+          description: >
+            ICAO airport code (e.g. KATL). Not yet expanded to full airport
+            metadata at this stage — that only happens in the flight rule
+            notification shape (see specs/asyncapi.yaml's
+            FlightRuleNotification schema).
+        destination:
+          type: string
+        matched_rules:
+          type: array
+          items:
+            type: string
+          description: Defaults to an empty array; populated the same way as specs/asyncapi.yaml's rule notifications.
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PositionRecord'
+        velocities:
+          type: array
+          items:
+            $ref: '#/components/schemas/VelocityRecord'
+
+    PositionRecord:
+      type: object
+      description: >
+        Position.to_dict() output. A key whose value is None is omitted
+        entirely rather than serialised as an explicit null — multiplied
+        across every position row on every flight, that's a real
+        contributor to payload size.
+      required: [timestamp, latitude, longitude]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        latitude:
+          type: number
+          description: Degrees; capped to 5 decimal places (~1.1m) at decode time.
+        longitude:
+          type: number
+          description: Degrees; capped to 5 decimal places (~1.1m) at decode time.
+        altitude:
+          type: integer
+          description: Feet MSL; omitted when not present in the source message.
+
+    VelocityRecord:
+      type: object
+      description: >
+        Velocity.to_dict() output. A key whose value is None is omitted
+        entirely rather than serialised as an explicit null (e.g. a
+        velocity report that carried no heading).
+      required: [timestamp]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        velocity:
+          type: number
+          description: Knots.
+        heading:
+          type: number
+          description: Degrees, 0–359; capped to 1 decimal place at decode time.
+        vertical_speed:
+          type: integer
+          description: Feet/min; negative means descending.
+
+  # ---------------------------------------------------------------------------
+  # Parameters
+  # ---------------------------------------------------------------------------
+
+  parameters:
+
+    MessageProcessorId:
+      description: >
+        Message processor instance identifier: any unique string, not a
+        contiguous ordinal — set via the MESSAGE_PROCESSOR_ID environment
+        variable in that instance's generated compose service block
+        (COMPOSE_PROFILES gates a node running more than one; the
+        MESSAGE_PROCESSOR_PREFIX, defaulting to the node's own hostname,
+        keeps IDs unique across nodes with no coordination needed). Names
+        this queue verbatim: skyfollower-message-processor-{message_processor_id}.
