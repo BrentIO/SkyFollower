@@ -88,7 +88,7 @@ def _make_row(**overrides) -> dict:
         "ident": "DAL123",
         "first_message": datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
         "last_message": datetime(2026, 7, 20, 12, 5, tzinfo=timezone.utc),
-        "s3_key": "flights/2026/07/20/A1B2C3_DAL123_uuid.json.gz",
+        "s3_key": "flights/2026/07/20/uuid.json.gz",
     }
     row.update(overrides)
     return row
