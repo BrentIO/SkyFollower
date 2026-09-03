@@ -33,6 +33,11 @@ from receiver.main import (
     _sanitize_mqtt_id,
     parse_978_line,
 )
+from shared.rabbitmq_topology import (
+    ADSB_EXCHANGE,
+    ADSB_UNROUTABLE_EXCHANGE,
+    ADSB_UNROUTABLE_QUEUE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -609,12 +614,12 @@ class TestIcaoRoutingIntegration:
             r._rmq_loop()
 
         declared_queues = [c.kwargs.get("queue") for c in ch.queue_declare.call_args_list]
-        assert declared_queues == ["adsb-unroutable"]
+        assert declared_queues == [ADSB_UNROUTABLE_QUEUE]
         ch.exchange_declare.assert_any_call(
-            exchange="adsb",
+            exchange=ADSB_EXCHANGE,
             exchange_type="x-consistent-hash",
             durable=True,
-            arguments={"alternate-exchange": "adsb-unroutable"},
+            arguments={"alternate-exchange": ADSB_UNROUTABLE_EXCHANGE},
         )
 
     def test_handle_message_sets_last_message_at(self):
@@ -997,7 +1002,7 @@ class TestPublishOne:
         ch = MagicMock()
         assert r._publish_one(ch, "4B1900", '{"raw": "AA"}') is True
         kwargs = ch.basic_publish.call_args.kwargs
-        assert kwargs["exchange"] == "adsb"
+        assert kwargs["exchange"] == ADSB_EXCHANGE
         assert kwargs["routing_key"] == "4B1900"
         assert kwargs["body"] == b'{"raw": "AA"}'
 
@@ -1081,7 +1086,7 @@ class TestRmqPublishLoop:
         r._rmq_publish_loop(MagicMock(), ch)
 
         assert published == ["4B1900"]
-        assert ch.basic_publish.call_args.kwargs["exchange"] == "adsb"
+        assert ch.basic_publish.call_args.kwargs["exchange"] == ADSB_EXCHANGE
 
     def test_live_messages_publish_before_any_backlog_row(self):
         """Strict priority: everything queued off the sockets goes out

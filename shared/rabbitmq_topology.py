@@ -23,7 +23,7 @@ import re
 # of the bound queues, which is what keeps an aircraft with a single message
 # processor -- and therefore with the SQLite flight state that processor
 # holds -- without the publisher knowing how many processors exist.
-ADSB_EXCHANGE = "adsb"
+ADSB_EXCHANGE = "skyfollower-adsb"
 ADSB_EXCHANGE_TYPE = "x-consistent-hash"
 
 # Catches whatever the hash exchange cannot route, which is every message
@@ -31,8 +31,8 @@ ADSB_EXCHANGE_TYPE = "x-consistent-hash"
 # without publisher confirms and without the mandatory flag, so absent an
 # alternate exchange the broker discards those messages without telling
 # anyone; here they land in a durable queue whose depth is observable.
-ADSB_UNROUTABLE_EXCHANGE = "adsb-unroutable"
-ADSB_UNROUTABLE_QUEUE = "adsb-unroutable"
+ADSB_UNROUTABLE_EXCHANGE = "skyfollower-adsb-unroutable"
+ADSB_UNROUTABLE_QUEUE = "skyfollower-adsb-unroutable"
 
 ADSB_EXCHANGE_ARGUMENTS = {"alternate-exchange": ADSB_UNROUTABLE_EXCHANGE}
 
@@ -49,14 +49,14 @@ ADSB_BINDING_WEIGHT = "1"
 # alternation branch exists only because this is shared with an
 # exchange-matching permission, not a queue-only one), so it's a harmless
 # no-op branch here, not a bug.
-SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN = r"^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$"
+SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN = r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$"
 _SKYFOLLOWER_RABBITMQ_RESOURCE_RE = re.compile(SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN)
 
 # The literal queue name completed flights are published to via the default
 # exchange (see archive-processor/main.py). Not fleet/ID-derived like a
 # message processor's queue, so it's just a constant rather than a builder
 # function.
-ARCHIVE_QUEUE_NAME = "archive"
+ARCHIVE_QUEUE_NAME = "skyfollower-archive"
 
 _MESSAGE_PROCESSOR_QUEUE_PREFIX = "skyfollower-message-processor-"
 
