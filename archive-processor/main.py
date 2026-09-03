@@ -2,8 +2,8 @@
 """
 SkyFollower Archive Processor
 
-Consumes completed flight records from the RabbitMQ 'archive' queue,
-builds a 3D GeoJSON LineString with altitude interpolation, writes
+Consumes completed flight records from the RabbitMQ 'skyfollower-archive'
+queue, builds a 3D GeoJSON LineString with altitude interpolation, writes
 gzip-compressed JSON to AWS S3 alongside a per-flight Parquet index row
 (queryable via AWS Athena/Glue), and falls back to SQLite when S3 is
 unavailable.
@@ -18,7 +18,6 @@ import logging
 import logging.handlers
 import os
 import pathlib
-import re
 import signal
 import sys
 import threading
@@ -46,6 +45,7 @@ from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
+from shared.rabbitmq_topology import ARCHIVE_QUEUE_NAME
 from shared.redis_keys import (
     archive_last_segment_key,
     config_flight_ttl_seconds_key,
@@ -211,13 +211,10 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
 # S3 key builder
 # ---------------------------------------------------------------------------
 
-_NON_ALNUM_RE = re.compile(r"[^a-zA-Z0-9]")
-
-
 def build_s3_key(flight: CompletedFlight) -> str:
     """
     Build the S3 object key for a completed flight.
-    Format: flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
+    Format: flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz
 
     Dated by first_message, not last_message: split-flight stitching
     (_merge_segments) always preserves the *original* segment's
@@ -234,12 +231,9 @@ def build_s3_key(flight: CompletedFlight) -> str:
     mm = dt.strftime("%m")
     dd = dt.strftime("%d")
 
-    icao_hex = flight.aircraft.get("icao_hex", "unknown")
-    ident_raw = flight.ident or "unknown"
-    ident = _NON_ALNUM_RE.sub("", ident_raw) or "unknown"
     uuid = flight.id  # alias for _id field
 
-    return f"flights/{yyyy}/{mm}/{dd}/{icao_hex}_{ident}_{uuid}.json.gz"
+    return f"flights/{yyyy}/{mm}/{dd}/{uuid}.json.gz"
 
 
 # ---------------------------------------------------------------------------
@@ -522,17 +516,23 @@ class ArchiveProcessor:
         """Main loop: connect to RabbitMQ and consume messages until shutdown."""
         while not self._shutdown.is_set():
             try:
-                logger.info("Connecting to RabbitMQ (queue: archive)…")
+                logger.info(
+                    "Connecting to RabbitMQ (queue: %s)…", ARCHIVE_QUEUE_NAME
+                )
                 self._rmq_connection = pika.BlockingConnection(self._rmq_params())
                 self._rmq_channel = self._rmq_connection.channel()
-                self._rmq_channel.queue_declare(queue="archive", durable=True)
+                self._rmq_channel.queue_declare(
+                    queue=ARCHIVE_QUEUE_NAME, durable=True
+                )
                 self._rmq_channel.basic_qos(prefetch_count=1)
                 self._rmq_channel.basic_consume(
-                    queue="archive",
+                    queue=ARCHIVE_QUEUE_NAME,
                     on_message_callback=self._on_message,
                 )
                 self._rmq_connected = True
-                logger.info("RabbitMQ connected, consuming from archive.")
+                logger.info(
+                    "RabbitMQ connected, consuming from %s.", ARCHIVE_QUEUE_NAME
+                )
 
                 # Drain fallback queue now that we're connected to RabbitMQ
                 # (S3 drain happens separately in s3_reconnect_loop)

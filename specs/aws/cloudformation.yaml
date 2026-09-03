@@ -211,7 +211,8 @@ Resources:
           # CloudFormation performs ZERO validation of this map. A typo
           # here (projection.enbaled, projection.enabled: "ture", ...)
           # deploys cleanly and yields a table that returns zero rows for
-          # every query, forever. The anti-drift test asserts these keys
+          # every query, forever. shared/tests/test_cloudformation_template.py
+          # asserts this map, key-for-key, against shared/glue_projection.py
           # because AWS will not.
           "projection.enabled": "true"
           "projection.year.type": "integer"

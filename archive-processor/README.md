@@ -103,12 +103,15 @@ every external contact indiscriminately. Skipped flights increment
 Each flight is written to:
 
 ```
-flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
+flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz
 ```
 
 - `{YYYY}/{MM}/{DD}` — UTC date of the flight's *first* message, not its last. This key is only ever computed once, at first archive — a later [split-flight stitch](#split-flight-stitching) overwrites the object in place under this same key rather than recomputing it, so the date has to come from whichever timestamp stitching never changes. `first_message` is exactly that (`_merge_segments` always preserves the original segment's `first_message`; only `last_message` advances with each stitched segment) — using it keeps the key stable across any number of stitches, even ones that happen to straddle a UTC day boundary. The [Parquet index row](#parquet-index)'s key follows the same rule, for the same reason (it's rebuilt on every stitch, unlike this object's key).
-- `{ident}` — non-alphanumeric characters stripped; `unknown` if absent
 - `{uuid}` — the flight's `_id` (UUID-v7)
+
+The key carries no `icao_hex`/`ident` segment — the Parquet index row already
+stores those as their own indexed columns, and no query path recovers them
+by parsing the key.
 
 The object body is the completed flight record (see
 [shared/README.md](../shared/README.md)

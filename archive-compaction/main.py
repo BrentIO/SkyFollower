@@ -19,7 +19,11 @@ Before compacting each date, verifies every flight object under that date's
 flights/ prefix has a matching Parquet index row under its index/ prefix.
 A mismatch stops the loop at that date (nothing later is attempted either)
 and leaves the watermark exactly where it was, rather than silently
-compacting an index that's missing rows.
+compacting an index that's missing rows. The same state object also tracks
+how many consecutive runs have been blocked on that date, published over
+MQTT so a stuck compactor is visible without reading container logs, and
+the process exits with a distinct status code so exit-status monitoring can
+tell a parity mismatch apart from a genuine failure.
 
 Each per-flight row is read from the shared local index cache (see
 shared/index_cache.py) archive-processor populates on the same host,
@@ -43,6 +47,7 @@ import boto3
 import paho.mqtt.client as mqtt
 import pyarrow as pa
 import pyarrow.parquet as pq
+from botocore.exceptions import ClientError
 
 # Add /app to sys.path so shared/ is importable whether running from
 # /app/archive-compaction or /app.
@@ -216,19 +221,16 @@ def delete_keys(s3_client, bucket: str, keys: list[str]) -> tuple[int, list[str]
 def _uuid_from_flight_key(key: str) -> str | None:
     """
     Extract the flight UUID from a flights/ object key
-    (flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz). icao_hex
-    and ident never contain underscores themselves (icao_hex is hex
-    digits; ident is sanitized to alnum-only in archive-processor's
-    build_s3_key), so splitting the basename on "_" always yields exactly
-    three segments. Returns None for a key that doesn't match this shape.
+    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz). Returns None for a key
+    that doesn't match this shape.
     """
     basename = key.rsplit("/", 1)[-1]
     if not basename.endswith(".json.gz"):
         return None
-    parts = basename[: -len(".json.gz")].split("_")
-    if len(parts) != 3:
+    uuid = basename[: -len(".json.gz")]
+    if not uuid or "_" in uuid:
         return None
-    return parts[2]
+    return uuid
 
 
 def _uuid_from_index_key(key: str) -> str | None:
@@ -270,24 +272,60 @@ def check_date_parity(s3_client, bucket: str, d: date) -> set[str]:
 # Watermark
 # ---------------------------------------------------------------------------
 
-def read_watermark(s3_client, bucket: str) -> date | None:
+def _parse_date_field(data: dict, key: str) -> date | None:
+    value = data.get(key)
+    return datetime.strptime(value, "%Y-%m-%d").date() if value else None
+
+
+def read_watermark(s3_client, bucket: str) -> dict | None:
     """
-    Read the last successfully compacted date from
-    _compaction_state/watermark.json. Returns None if the object doesn't
-    exist yet (first run ever) or can't be read/parsed for any other
-    reason -- either way, the caller treats an absent watermark as
-    "nothing compacted yet" rather than failing the whole run over it.
+    Read compaction state (watermark plus mismatch tracking) from
+    _compaction_state/watermark.json.
+
+    Returns None only when the object genuinely doesn't exist yet -- a real
+    first run, detected via S3's NoSuchKey/404 response on get_object. Any
+    other failure (permissions, a corrupt/unparseable object, an S3 outage,
+    ...) is deliberately NOT treated the same as "absent": it re-raises so
+    the caller fails loudly instead of silently treating an unreadable
+    object as "nothing compacted yet" and skipping every date before the
+    cutoff.
+
+    On success, returns a dict with `last_compacted_date` (date | None),
+    `mismatch_date` (date | None), and `mismatch_runs` (int) -- the state
+    written by write_watermark(). Missing keys (a watermark object written
+    by a version of this job before mismatch tracking existed) default to
+    None / 0 so an old object still parses cleanly.
     """
     try:
         response = s3_client.get_object(Bucket=bucket, Key=_WATERMARK_KEY)
-        data = json.loads(response["Body"].read())
-        return datetime.strptime(data["last_compacted_date"], "%Y-%m-%d").date()
-    except Exception:
-        return None
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in ("NoSuchKey", "404"):
+            return None
+        raise
+
+    data = json.loads(response["Body"].read())
+    return {
+        "last_compacted_date": _parse_date_field(data, "last_compacted_date"),
+        "mismatch_date": _parse_date_field(data, "mismatch_date"),
+        "mismatch_runs": data.get("mismatch_runs", 0),
+    }
 
 
-def write_watermark(s3_client, bucket: str, d: date) -> None:
-    body = json.dumps({"last_compacted_date": d.strftime("%Y-%m-%d")}).encode("utf-8")
+def write_watermark(
+    s3_client,
+    bucket: str,
+    last_compacted_date: date | None,
+    mismatch_date: date | None = None,
+    mismatch_runs: int = 0,
+) -> None:
+    body = json.dumps({
+        "last_compacted_date": (
+            last_compacted_date.strftime("%Y-%m-%d") if last_compacted_date else None
+        ),
+        "mismatch_date": mismatch_date.strftime("%Y-%m-%d") if mismatch_date else None,
+        "mismatch_runs": mismatch_runs,
+    }).encode("utf-8")
     s3_client.put_object(
         Bucket=bucket,
         Key=_WATERMARK_KEY,
@@ -382,6 +420,12 @@ def run_compaction(
     resolves (the row lands late, or drains from index_queue) instead of
     silently skipping past it.
 
+    A mismatch on the same date across consecutive runs increments
+    `mismatch_runs` (persisted alongside the watermark) so a stuck
+    compactor is visible as a climbing number rather than only a daily
+    ERROR log line. The count resets to 1 whenever the blocked date
+    changes, and to 0 once a run gets past it.
+
     `local_dir` is the shared index-cache root (see shared/index_cache.py)
     each compacted date's per-flight reads and post-delete local cleanup
     use -- one directory tree, organized the same year=/month=/day= way as
@@ -390,15 +434,22 @@ def run_compaction(
     bookkeeping for "how many days are outstanding."
     """
     cutoff = _cutoff_date(now)
-    watermark = read_watermark(s3_client, bucket)
-    if watermark is None:
+    state = read_watermark(s3_client, bucket)
+    if state is None:
         watermark = cutoff - timedelta(days=1)
+        prior_mismatch_date: date | None = None
+        prior_mismatch_runs = 0
+    else:
+        watermark = state["last_compacted_date"] or (cutoff - timedelta(days=1))
+        prior_mismatch_date = state["mismatch_date"]
+        prior_mismatch_runs = state["mismatch_runs"]
 
     files_compacted = 0
     files_delete_failed = 0
     days_compacted = 0
     mismatch_date: date | None = None
     mismatch_uuids: set[str] = set()
+    mismatch_runs = 0
 
     target = watermark + timedelta(days=1)
     while target <= cutoff:
@@ -406,10 +457,18 @@ def run_compaction(
         if missing:
             mismatch_date = target
             mismatch_uuids = missing
+            mismatch_runs = (
+                prior_mismatch_runs + 1 if prior_mismatch_date == target else 1
+            )
             logger.error(
                 "Parity mismatch for %s: %d flight(s) missing their index row; "
-                "stopping catch-up here. UUIDs: %s",
-                target.isoformat(), len(missing), ", ".join(sorted(missing)),
+                "stopping catch-up here (blocked for %d consecutive run(s)). "
+                "UUIDs: %s",
+                target.isoformat(), len(missing), mismatch_runs, ", ".join(sorted(missing)),
+            )
+            write_watermark(
+                s3_client, bucket, watermark,
+                mismatch_date=mismatch_date, mismatch_runs=mismatch_runs,
             )
             break
 
@@ -421,7 +480,7 @@ def run_compaction(
         days_compacted += 1
 
         watermark = target
-        write_watermark(s3_client, bucket, watermark)
+        write_watermark(s3_client, bucket, watermark, mismatch_date=None, mismatch_runs=0)
         target += timedelta(days=1)
 
     return {
@@ -431,6 +490,7 @@ def run_compaction(
         "last_compacted_date": watermark,
         "mismatch_date": mismatch_date,
         "mismatch_uuids": mismatch_uuids,
+        "mismatch_runs": mismatch_runs,
     }
 
 
@@ -459,6 +519,7 @@ def publish_completion_stats(
     last_compacted_date = result.get("last_compacted_date")
     mismatch_date = result.get("mismatch_date")
     mismatch_uuids = result.get("mismatch_uuids") or set()
+    mismatch_runs = result.get("mismatch_runs", 0)
 
     client = build_mqtt_client(mc)
     connected = False
@@ -501,6 +562,7 @@ def publish_completion_stats(
             ",".join(sorted(mismatch_uuids)),
             retain=True,
         )
+        client.publish(f"{base}/mismatch_runs", str(mismatch_runs), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
         client.publish(f"{base}/version", os.environ.get("VERSION", "dev"), retain=True)
@@ -536,6 +598,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         ("last_compacted_date", "Archive Compaction Last Compacted Date", "mdi:calendar", None, None),
         ("mismatch_date", "Archive Compaction Mismatch Date", "mdi:calendar-alert", None, None),
         ("mismatch_uuids", "Archive Compaction Mismatch Flight UUIDs", "mdi:alert-circle", None, None),
+        ("mismatch_runs", "Archive Compaction Mismatch Consecutive Runs", "mdi:counter", "measurement", None),
         ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None),
         ("version", "Archive Compaction Version", "mdi:tag", None, None),
@@ -587,6 +650,7 @@ def main() -> None:
         "last_compacted_date": None,
         "mismatch_date": None,
         "mismatch_uuids": set(),
+        "mismatch_runs": 0,
     }
 
     try:
@@ -621,6 +685,13 @@ def main() -> None:
         except Exception as exc:
             logger.warning("Failed to publish MQTT stats: %s", exc)
 
+    if status == "mismatch":
+        # Distinct from a genuine failure so anything watching exit status
+        # (Ofelia, an external monitor) can tell "blocked on a parity
+        # mismatch" apart from "the job actually errored" -- both are
+        # non-zero, neither is ever 0, since a compactor stuck for weeks
+        # must never look healthy to something watching exit status alone.
+        sys.exit(2)
     if status != "success":
         sys.exit(1)
 

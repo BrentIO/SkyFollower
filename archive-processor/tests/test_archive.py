@@ -127,27 +127,9 @@ class TestBuildS3Key:
     def test_basic_structure(self):
         flight = _make_flight()
         key = build_s3_key(flight)
-        # Should be: flights/2024/05/31/A8AE7F_DAL659_{uuid}.json.gz
-        assert key.startswith("flights/2024/05/31/")
-        assert "A8AE7F_DAL659_" in key
-        assert key.endswith(".json.gz")
-
-    def test_non_alphanumeric_ident_stripped(self):
-        flight = _make_flight(ident="UAL-123/A")
-        key = build_s3_key(flight)
-        assert "UAL123A_" in key or "_UAL123A" in key or "UAL123A" in key
-        assert "-" not in key.split("/")[-1].split("_")[1]
-        assert "/" not in key.split("/")[-1]
-
-    def test_none_ident_becomes_unknown(self):
-        flight = _make_flight(ident=None)
-        key = build_s3_key(flight)
-        assert "_unknown_" in key
-
-    def test_unknown_icao_hex_when_missing(self):
-        flight = _make_flight(aircraft={})
-        key = build_s3_key(flight)
-        assert key.startswith("flights/2024/05/31/unknown_")
+        # Should be: flights/2024/05/31/{uuid}.json.gz -- no icao_hex/ident
+        # segment; the Parquet index carries those as their own columns.
+        assert key == f"flights/2024/05/31/{flight.id}.json.gz"
 
     def test_uuid_in_key(self):
         flight = _make_flight()
@@ -1089,7 +1071,7 @@ class TestArchiveWritesIndexToS3:
 
             flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
             index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
-            assert flight_keys == ["flights/2024/03/14/A8AE7F_DAL659_seg1-uuid.json.gz"]
+            assert flight_keys == ["flights/2024/03/14/seg1-uuid.json.gz"]
             assert index_keys == ["index/year=2024/month=03/day=14/seg1-uuid.parquet"]
 
             pointer_call = mock_redis.set.call_args
@@ -1110,7 +1092,7 @@ class TestArchiveWritesIndexToS3:
             # no stale 03/14-dated leftover or duplicate 03/15 copy exists.
             flight_keys = [k for k in processor._s3_client.objects if k.startswith("flights/")]
             index_keys = [k for k in processor._s3_client.objects if k.startswith("index/")]
-            assert flight_keys == ["flights/2024/03/14/A8AE7F_DAL659_seg1-uuid.json.gz"]
+            assert flight_keys == ["flights/2024/03/14/seg1-uuid.json.gz"]
             assert index_keys == ["index/year=2024/month=03/day=14/seg1-uuid.parquet"]
 
             payload = processor._s3_client.read_parquet_bytes(index_keys[0])

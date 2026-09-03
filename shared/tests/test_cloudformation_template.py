@@ -9,7 +9,9 @@ projection Parameters map -- a typo there deploys green and returns zero
 rows forever. These assertions cover what AWS will not.
 
 specs/data-dictionary.yaml's archive_parquet_index.fields is the enforced
-source of truth for the 9 index columns, in order.
+source of truth for the 9 index columns, in order. shared/glue_projection.py
+is the enforced source of truth for the partition-projection Parameters map
+and the storage.location.template placeholders.
 """
 
 from __future__ import annotations
@@ -20,6 +22,11 @@ from pathlib import Path
 import yaml
 
 from shared.config import athena_config
+from shared.glue_projection import (
+    EXPECTED_PROJECTION_PARAMETERS,
+    PARTITION_KEYS,
+    STORAGE_LOCATION_TEMPLATE_SUFFIX,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATE_PATH = _REPO_ROOT / "specs" / "aws" / "cloudformation.yaml"
@@ -130,11 +137,7 @@ def test_every_dictionary_type_is_mapped():
 
 def test_partition_keys():
     keys = _glue_table_input()["PartitionKeys"]
-    assert keys == [
-        {"Name": "year", "Type": "string"},
-        {"Name": "month", "Type": "string"},
-        {"Name": "day", "Type": "string"},
-    ]
+    assert keys == [{"Name": name, "Type": "string"} for name in PARTITION_KEYS]
 
 
 # ---------------------------------------------------------------------------
@@ -144,19 +147,20 @@ def test_partition_keys():
 
 def test_projection_properties():
     params = _glue_table_input()["Parameters"]
-    expected = {
-        "projection.enabled": "true",
-        "projection.year.type": "integer",
-        "projection.year.range": "2022,2100",
-        "projection.month.type": "integer",
-        "projection.month.range": "1,12",
-        "projection.month.digits": "2",
-        "projection.day.type": "integer",
-        "projection.day.range": "1,31",
-        "projection.day.digits": "2",
-    }
-    for key, value in expected.items():
-        assert params.get(key) == value, f"{key!r} should be {value!r}, got {params.get(key)!r}"
+    expected = EXPECTED_PROJECTION_PARAMETERS
+    # Compare the full projection.* key SET, not just each expected key's
+    # value in isolation -- a misspelled key (e.g. "projection.enbaled")
+    # must surface as an unexpected extra rather than passing silently
+    # because the correctly-spelled key was simply never looked up.
+    actual = {k: v for k, v in params.items() if k.startswith("projection.")}
+    missing = set(expected) - set(actual)
+    unexpected = set(actual) - set(expected)
+    assert not missing and not unexpected, (
+        f"projection.* keys drifted from shared/glue_projection.py.\n"
+        f"  missing: {sorted(missing)}\n"
+        f"  unexpected: {sorted(unexpected)}"
+    )
+    assert actual == expected
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +178,7 @@ def test_storage_location_template():
     assert "Fn::Sub" not in str(value)
     delimiter, parts = value["Fn::Join"]
     assert delimiter == ""
-    assert parts[-1] == "/index/year=${year}/month=${month}/day=${day}/"
+    assert parts[-1] == STORAGE_LOCATION_TEMPLATE_SUFFIX
     # The dictionary's s3_path uses the same Hive layout.
     data = yaml.safe_load(_DATA_DICTIONARY_PATH.read_text())
     s3_path = data["records"]["archive_parquet_index"]["s3_path"]

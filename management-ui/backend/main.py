@@ -1580,6 +1580,8 @@ def get_route(ident: str):
 # resolve to a deleted S3 object. Keep this comfortably under that lifecycle.
 ARCHIVE_SEARCH_TTL_SECONDS = 7 * 86400
 _PAGE_SIZE = 100
+_PAGE_SIZE_MIN = 25
+_PAGE_SIZE_MAX = 500
 ATHENA_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
 ATHENA_POLL_DEADLINE_SECONDS = 120
 _RESULT_CACHE_MAX_ENTRIES = 10
@@ -1594,6 +1596,14 @@ _SEARCH_SELECT_COLUMNS = [
     "icao_hex", "registration", "type_designator", "military",
     "operator_designator", "ident", "first_message", "last_message", "s3_key",
 ]
+
+# Columns a results-page request may sort by -- every field
+# ArchiveSearchResultRow exposes to the browser except uuid/token, which are
+# server-derived rather than a real Athena column a user would sort on.
+_SORTABLE_COLUMNS = (
+    "icao_hex", "registration", "type_designator", "military",
+    "operator_designator", "ident", "first_message", "last_message",
+)
 
 # Cheap early rejection before ever calling Athena -- not a real security
 # boundary (the querying IAM identity is already read-only on just this one
@@ -1847,13 +1857,10 @@ def _result_output_location(query_execution_id: str) -> str:
 
 
 def _uuid_from_s3_key(s3_key: str) -> str:
-    """flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz -- icao_hex
-    and ident never contain underscores (icao_hex is hex digits; ident is
-    sanitized to alnum-only by archive-processor's build_s3_key), so the
-    final underscore-separated segment is always the uuid."""
+    """Extract the flight UUID from an S3 flight object key
+    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz)."""
     filename = s3_key.rsplit("/", 1)[-1]
-    stem = filename.removesuffix(".json.gz")
-    return stem.rsplit("_", 1)[-1]
+    return filename.removesuffix(".json.gz")
 
 
 def _encrypt_s3_key(s3_key: str) -> str:
@@ -1987,7 +1994,13 @@ def get_archive_search(uuid: str):
     response_model=ArchiveSearchResultsPage,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
 )
-def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge=1)):
+def get_archive_search_results(
+    uuid: str,
+    page: int = FastAPIQuery(default=1, ge=1),
+    page_size: int = FastAPIQuery(default=_PAGE_SIZE, ge=_PAGE_SIZE_MIN, le=_PAGE_SIZE_MAX),
+    sort_by: Optional[Literal[_SORTABLE_COLUMNS]] = FastAPIQuery(default=None),
+    sort_dir: Literal["asc", "desc"] = FastAPIQuery(default="asc"),
+):
     record = _get_search_record(uuid)
     if record["status"] != "COMPLETE":
         raise HTTPException(
@@ -1995,8 +2008,15 @@ def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge
             detail=f"Search '{uuid}' is not complete (status: {record['status']})",
         )
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
-    start = (page - 1) * _PAGE_SIZE
-    return JSONResponse(content={"rows": rows[start:start + _PAGE_SIZE], "total_rows": len(rows)})
+    # Sort the whole cached result set (not just the requested page) so this
+    # behaves like a real column sort -- _fetch_and_cache_results already
+    # has every row in memory, so no new Athena query is needed. sorted()
+    # returns a new list, leaving the cached one untouched for other
+    # pages/sort orders to reuse.
+    if sort_by is not None:
+        rows = sorted(rows, key=lambda row: row[sort_by], reverse=sort_dir == "desc")
+    start = (page - 1) * page_size
+    return JSONResponse(content={"rows": rows[start:start + page_size], "total_rows": len(rows)})
 
 
 @app.delete(

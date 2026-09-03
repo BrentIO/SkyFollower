@@ -24,6 +24,12 @@ _REPO_ROOT = os.path.abspath(os.path.join(_TOOL_DIR, ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# main.py doesn't need this one itself (it matches unroutable-queue names
+# via the is_skyfollower_queue regex rather than an exact-name comparison),
+# so it isn't importable off the loaded module below like ARCHIVE_QUEUE_NAME
+# and ADSB_EXCHANGE are -- pull it straight from the shared constant.
+from shared.rabbitmq_topology import ADSB_UNROUTABLE_QUEUE  # noqa: E402
+
 
 def _load_main():
     spec = importlib.util.spec_from_file_location(
@@ -55,6 +61,8 @@ receiver_message_count_key = _mod.receiver_message_count_key
 MQTT_ROOT = _mod.MQTT_ROOT
 CORE_DEVICE_IDENTIFIER = _mod.CORE_DEVICE_IDENTIFIER
 RABBITMQ_POLL_INTERVAL_SECONDS = _mod.RABBITMQ_POLL_INTERVAL_SECONDS
+ARCHIVE_QUEUE_NAME = _mod.ARCHIVE_QUEUE_NAME
+ADSB_EXCHANGE = _mod.ADSB_EXCHANGE
 
 
 # ---------------------------------------------------------------------------
@@ -120,14 +128,16 @@ class TestQueueTarget:
         assert target.unique_prefix == "SkyFollower_message_processor_mp-1_queue"
 
     def test_archive_queue_merges_onto_archive_device(self):
-        target = _queue_target("archive")
+        target = _queue_target(ARCHIVE_QUEUE_NAME)
         assert target.device["ids"] == "SkyFollower_archive"
         assert target.state_base == f"{MQTT_ROOT}/archive/statistic"
 
     def test_unroutable_queue_merges_onto_core_device(self):
-        target = _queue_target("adsb-unroutable")
+        target = _queue_target(ADSB_UNROUTABLE_QUEUE)
         assert target.device["ids"] == CORE_DEVICE_IDENTIFIER
-        assert target.state_base == f"{MQTT_ROOT}/queue/adsb-unroutable/statistic"
+        assert target.state_base == (
+            f"{MQTT_ROOT}/queue/{ADSB_UNROUTABLE_QUEUE}/statistic"
+        )
 
     def test_unique_prefixes_never_collide_with_owning_component(self):
         """The whole reason for the "_queue_" infix: message-processor's
@@ -422,13 +432,13 @@ class TestPublishExchangeStats:
 class TestPublishArchiveQueueMissing:
     def test_present_publishes_false(self):
         app = _wired_app()
-        app._publish_archive_queue_missing([{"name": "archive"}, {"name": "adsb-unroutable"}])
+        app._publish_archive_queue_missing([{"name": ARCHIVE_QUEUE_NAME}, {"name": ADSB_UNROUTABLE_QUEUE}])
         published = _state_publishes(app._mqtt)
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "False"
 
     def test_absent_publishes_true(self):
         app = _wired_app()
-        app._publish_archive_queue_missing([{"name": "adsb-unroutable"}])
+        app._publish_archive_queue_missing([{"name": ADSB_UNROUTABLE_QUEUE}])
         published = _state_publishes(app._mqtt)
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "True"
 
@@ -757,7 +767,7 @@ class TestMqttLifecycle:
 
     def test_on_connect_clears_dynamic_discovery_dedup(self):
         app = _wired_app()
-        app._known_queues.add("archive")
+        app._known_queues.add(ARCHIVE_QUEUE_NAME)
         app._known_mp_counters.add(("mp-1", "registration_misses_hour"))
         app._known_receiver_fields.add(("attic", "messages_x_y_total_hour"))
 
@@ -837,11 +847,11 @@ class TestPollRabbitmqOnce:
                 response.json.return_value = [{"mem_alarm": False, "disk_free_alarm": False}]
             elif url.endswith("/api/queues/%2F"):
                 response.json.return_value = [
-                    {"name": "archive", "consumers": 1, "messages_ready": 0,
+                    {"name": ARCHIVE_QUEUE_NAME, "consumers": 1, "messages_ready": 0,
                      "messages_unacknowledged": 0, "state": "running"},
                     {"name": "not-skyfollowers-queue", "consumers": 0},
                 ]
-            elif url.endswith("/api/exchanges/%2F/adsb"):
+            elif url.endswith(f"/api/exchanges/%2F/{ADSB_EXCHANGE}"):
                 response.json.return_value = {
                     "message_stats": {
                         "publish_in_details": {"rate": 512.3},
@@ -881,10 +891,10 @@ class TestPollRabbitmqOnce:
                 # No "archive" queue at all -- e.g. archive-processor was
                 # never installed on this deployment.
                 response.json.return_value = [
-                    {"name": "adsb-unroutable", "consumers": 0, "messages_ready": 0,
+                    {"name": ADSB_UNROUTABLE_QUEUE, "consumers": 0, "messages_ready": 0,
                      "messages_unacknowledged": 0, "state": "running"},
                 ]
-            elif url.endswith("/api/exchanges/%2F/adsb"):
+            elif url.endswith(f"/api/exchanges/%2F/{ADSB_EXCHANGE}"):
                 response.json.return_value = {}
             response.raise_for_status = MagicMock()
             return response
@@ -911,7 +921,7 @@ class TestPollRabbitmqOnce:
                     {"name": "skyfollower-message-processor-mp-1", "consumers": 1,
                      "messages_ready": 0, "messages_unacknowledged": 0, "state": "running"},
                 ]
-            elif url.endswith("/api/exchanges/%2F/adsb"):
+            elif url.endswith(f"/api/exchanges/%2F/{ADSB_EXCHANGE}"):
                 response.json.return_value = {}
             response.raise_for_status = MagicMock()
             return response

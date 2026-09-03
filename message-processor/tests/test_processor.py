@@ -63,6 +63,11 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
 )
 from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES  # noqa: E402
 from shared.models import InboundMessage, Position, Velocity
+from shared.rabbitmq_topology import (  # noqa: E402
+    ADSB_EXCHANGE,
+    ADSB_UNROUTABLE_EXCHANGE,
+    ARCHIVE_QUEUE_NAME,
+)
 from shared.redis_keys import (
     message_processor_heartbeat_key,
     metrics_operator_misses_key,
@@ -843,7 +848,7 @@ class TestProcessorArchive:
 
         mock_connection.add_callback_threadsafe.assert_called_once()
         mock_channel.basic_publish.assert_called_once()
-        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == ARCHIVE_QUEUE_NAME
         assert p._fallback.depth() == 0
         assert p._rmq_connected is True
 
@@ -986,7 +991,7 @@ class TestProcessorDrainFallback:
         assert p._fallback.depth() == 0
         mock_connection.add_callback_threadsafe.assert_called_once()
         mock_channel.basic_publish.assert_called_once()
-        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == "archive"
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == ARCHIVE_QUEUE_NAME
 
     def test_drain_fallback_leaves_items_queued_on_publish_error(self):
         p, mock_channel, _ = self._connected_processor_with_queued_item()
@@ -1656,10 +1661,10 @@ class TestConsumeLoopExchangeBinding:
         channel = self._run_one_connect(p)
 
         channel.exchange_declare.assert_any_call(
-            exchange="adsb",
+            exchange=ADSB_EXCHANGE,
             exchange_type="x-consistent-hash",
             durable=True,
-            arguments={"alternate-exchange": "adsb-unroutable"},
+            arguments={"alternate-exchange": ADSB_UNROUTABLE_EXCHANGE},
         )
 
     def test_binds_its_own_queue_with_weight_one(self):
@@ -1670,7 +1675,7 @@ class TestConsumeLoopExchangeBinding:
             queue="skyfollower-message-processor-7", durable=True
         )
         channel.queue_bind.assert_any_call(
-            queue="skyfollower-message-processor-7", exchange="adsb", routing_key="1"
+            queue="skyfollower-message-processor-7", exchange=ADSB_EXCHANGE, routing_key="1"
         )
         channel.basic_consume.assert_called_once_with(
             queue="skyfollower-message-processor-7", on_message_callback=p._on_message

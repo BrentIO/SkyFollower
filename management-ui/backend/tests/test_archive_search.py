@@ -498,7 +498,7 @@ class TestResultsRetrieval:
     def test_results_omit_s3_key_and_include_uuid_and_token(self, client, fake_athena, fake_s3):
         row = ("A8AE7F", "N659DL", "B738", "false", "DAL", "DAL123",
                "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
-               "flights/2026/07/31/A8AE7F_DAL123_0198abcd-1234-7abc-8def-1234567890ab.json.gz")
+               "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz")
         uuid = self._complete_search(client, fake_athena, fake_s3, [row])
 
         resp = client.get(f"/api/archive/search/{uuid}/results")
@@ -515,7 +515,7 @@ class TestResultsRetrieval:
         assert "token" in result_row and result_row["token"]
 
     def test_token_decrypts_back_to_the_real_s3_key(self, client, fake_athena, fake_s3):
-        s3_key = "flights/2026/07/31/A8AE7F_DAL123_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
+        s3_key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         row = ("A8AE7F", "N659DL", "B738", "true", "DAL", "DAL123",
                "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000", s3_key)
         uuid = self._complete_search(client, fake_athena, fake_s3, [row])
@@ -527,7 +527,7 @@ class TestResultsRetrieval:
         rows = [
             (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
              "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
-             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+             f"flights/2026/07/31/uuid-{i}.json.gz")
             for i in range(150)
         ]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
@@ -542,7 +542,7 @@ class TestResultsRetrieval:
     def test_second_page_request_reuses_cache_no_second_s3_fetch(self, client, fake_athena, fake_s3):
         rows = [("A1", "N1", "B738", "false", "DAL", "DAL1",
                   "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
-                  "flights/2026/07/31/A1_DAL1_uuid-0.json.gz")]
+                  "flights/2026/07/31/uuid-0.json.gz")]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
 
         client.get(f"/api/archive/search/{uuid}/results?page=1")
@@ -552,6 +552,111 @@ class TestResultsRetrieval:
             client.get(f"/api/archive/search/{uuid}/results?page=1")
         finally:
             fake_s3.get_object = original_get_object
+
+    def test_page_size_param_controls_slice_size(self, client, fake_athena, fake_s3):
+        rows = [
+            (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
+             "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
+             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+            for i in range(60)
+        ]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        page1 = client.get(f"/api/archive/search/{uuid}/results?page=1&page_size=25").json()
+        page2 = client.get(f"/api/archive/search/{uuid}/results?page=2&page_size=25").json()
+        page3 = client.get(f"/api/archive/search/{uuid}/results?page=3&page_size=25").json()
+        assert len(page1["rows"]) == 25
+        assert len(page2["rows"]) == 25
+        assert len(page3["rows"]) == 10
+        assert page1["total_rows"] == 60
+
+    def test_page_size_out_of_bounds_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        too_small = client.get(f"/api/archive/search/{uuid}/results?page_size=24")
+        too_large = client.get(f"/api/archive/search/{uuid}/results?page_size=501")
+        assert too_small.status_code == 422
+        assert too_large.status_code == 422
+
+
+class TestResultsSorting:
+    def _complete_search(self, client, fake_athena, fake_s3, rows):
+        return TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows)
+
+    _ROWS = [
+        ("A00003", "N3", "B738", "false", "DAL", "DAL3",
+         "2026-07-31 12:00:00.000", "2026-07-31 15:00:00.000",
+         "flights/2026/07/31/uuid-3.json.gz"),
+        ("A00001", "N1", "A320", "true", "AAL", "AAL1",
+         "2026-07-31 14:00:00.000", "2026-07-31 13:00:00.000",
+         "flights/2026/07/31/uuid-1.json.gz"),
+        ("A00002", "N2", "C172", "false", "UAL", "UAL2",
+         "2026-07-31 10:00:00.000", "2026-07-31 20:00:00.000",
+         "flights/2026/07/31/uuid-2.json.gz"),
+    ]
+
+    def test_sort_by_icao_hex_ascending_default(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00001", "A00002", "A00003"]
+
+    def test_sort_dir_desc_reverses_order(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00003", "A00002", "A00001"]
+
+    def test_sort_by_military_boolean(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=military")
+        assert [r["military"] for r in resp.json()["rows"]] == [False, False, True]
+
+    def test_sort_by_first_message_timestamp(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=first_message")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00002", "A00003", "A00001"]
+
+    def test_sort_by_last_message_timestamp_desc(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=last_message&sort_dir=desc")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00002", "A00003", "A00001"]
+
+    def test_sort_is_applied_before_pagination(self, client, fake_athena, fake_s3):
+        rows = [
+            (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
+             "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
+             f"flights/2026/07/31/uuid-{i}.json.gz")
+            for i in range(150)
+        ]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        page1 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=1").json()
+        page2 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=2").json()
+        # Descending across the WHOLE 150-row set: page 1 holds the top 100
+        # hex values, page 2 the bottom 50 -- not a within-page reorder.
+        assert page1["rows"][0]["icao_hex"] == f"A{149:05X}"
+        assert page1["rows"][-1]["icao_hex"] == f"A{50:05X}"
+        assert page2["rows"][0]["icao_hex"] == f"A{49:05X}"
+        assert page2["rows"][-1]["icao_hex"] == f"A{0:05X}"
+
+    def test_sort_does_not_trigger_a_second_s3_fetch(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        client.get(f"/api/archive/search/{uuid}/results")
+        original_get_object = fake_s3.get_object
+        fake_s3.get_object = MagicMock(side_effect=AssertionError("should not refetch from S3 just to sort"))
+        try:
+            resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc")
+            assert resp.status_code == 200
+        finally:
+            fake_s3.get_object = original_get_object
+
+    def test_invalid_sort_by_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=token")
+        assert resp.status_code == 422
+
+    def test_invalid_sort_dir_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=sideways")
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -620,14 +725,14 @@ class TestFlightFetch:
         unreachable (e.g. a permissions mismatch, 403) must surface as a
         clean 502 -- the same AWS-error contract as every other archive
         endpoint -- not an unhandled 500."""
-        s3_key = "flights/2026/07/31/A8AE7F_DAL123_uuid.json.gz"
+        s3_key = "flights/2026/07/31/uuid.json.gz"
         token = ui_main._encrypt_s3_key(s3_key)  # never written to fake_s3.objects
 
         resp = client.get(f"/api/archive/flights/{token}")
         assert resp.status_code == 502
 
     def test_valid_token_downloads_the_flight_object(self, client, fake_s3):
-        s3_key = "flights/2026/07/31/A8AE7F_DAL123_uuid.json.gz"
+        s3_key = "flights/2026/07/31/uuid.json.gz"
         fake_s3.objects[s3_key] = b"gzipped-flight-bytes"
         token = ui_main._encrypt_s3_key(s3_key)
 
@@ -637,11 +742,10 @@ class TestFlightFetch:
         assert "attachment" in resp.headers["content-disposition"]
 
     def test_token_never_exposes_the_raw_s3_key_in_the_url(self, client, fake_s3):
-        s3_key = "flights/2026/07/31/A8AE7F_DAL123_uuid.json.gz"
+        s3_key = "flights/2026/07/31/uuid.json.gz"
         fake_s3.objects[s3_key] = b"x"
         token = ui_main._encrypt_s3_key(s3_key)
         assert "flights/2026" not in token
-        assert "A8AE7F" not in token
 
 
 # ---------------------------------------------------------------------------
@@ -712,10 +816,6 @@ class TestBoundedResultCache:
 # ---------------------------------------------------------------------------
 
 class TestUuidFromS3Key:
-    def test_extracts_final_underscore_segment(self):
-        key = "flights/2026/07/31/A8AE7F_DAL123_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
-        assert ui_main._uuid_from_s3_key(key) == "0198abcd-1234-7abc-8def-1234567890ab"
-
-    def test_handles_unknown_ident(self):
-        key = "flights/2026/07/31/A8AE7F_unknown_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
+    def test_extracts_uuid(self):
+        key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         assert ui_main._uuid_from_s3_key(key) == "0198abcd-1234-7abc-8def-1234567890ab"

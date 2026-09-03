@@ -11,11 +11,13 @@ import {
   listArchiveSearches,
   type ArchiveSearchResultRow,
   type ArchiveSearchResultsPage,
+  type ArchiveSearchSortColumn,
   type ArchiveSearchSummary,
 } from "../api/archiveSearch";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { downloadTextFile, rowsToCsv } from "../lib/csv";
+import { nextSortState, type ResultsSortState } from "../lib/resultsSort";
 
 // A couple of seconds' interval, per the design -- frequent enough that
 // RUNNING -> COMPLETE/FAILED/ABORTED feels live, not so frequent it hammers
@@ -56,7 +58,33 @@ function formatAthenaTimestamp(raw: string): string {
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
 }
 
-const PAGE_SIZE = 100;
+// Default/CSV-export page size -- independent of whatever the user has
+// picked in the results table's page-size selector (see PAGE_SIZE_OPTIONS),
+// so a CSV export's chunking doesn't change just because someone changed
+// how many rows they like to see on screen.
+const DEFAULT_PAGE_SIZE = 100;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+
+// Every column header in the results table that's sortable, in display
+// order -- mirrors main.py's _SORTABLE_COLUMNS.
+const SORTABLE_COLUMNS: { column: ArchiveSearchSortColumn; label: string }[] = [
+  { column: "registration", label: "Registration" },
+  { column: "icao_hex", label: "ICAO Hex" },
+  { column: "ident", label: "Ident" },
+  { column: "operator_designator", label: "Operator" },
+  { column: "type_designator", label: "Type" },
+  { column: "military", label: "Military" },
+  { column: "first_message", label: "First Message" },
+  { column: "last_message", label: "Last Message" },
+];
+
+// Sort state folded into the cache key alongside uuid/page/page-size --
+// the same page number under a different sort order is different data.
+// "none" stands in for the unsorted (server-default) order so it never
+// collides with a real column name.
+function resultsCacheKey(uuid: string, page: number, pageSize: number, sort: ResultsSortState | null): string {
+  return `${uuid}:${page}:${pageSize}:${sort ? `${sort.column}:${sort.dir}` : "none"}`;
+}
 
 // `token` is deliberately excluded -- it's an ephemeral, per-process
 // download credential (see ArchiveSearchResultRow), not data worth
@@ -104,12 +132,45 @@ interface SearchResultsPanelProps {
   resultsLoading: boolean;
   page: number;
   onPageChange: (page: number) => void;
+  pageSize: number;
+  onPageSizeChange: (pageSize: number) => void;
+  sort: ResultsSortState | null;
+  onSortChange: (column: ArchiveSearchSortColumn) => void;
   onViewFlight: (token: string) => void;
   whereClause: string | null;
   whereClauseLoading: boolean;
   onResubmit: () => void;
   onDownloadCsv: () => void;
   downloadingCsv: boolean;
+}
+
+// One clickable, sortable column header -- shows an up/down chevron only
+// for the currently active column so an inactive header stays uncluttered.
+function SortableColumnHeader({
+  label,
+  column,
+  sort,
+  onSortChange,
+}: {
+  label: string;
+  column: ArchiveSearchSortColumn;
+  sort: ResultsSortState | null;
+  onSortChange: (column: ArchiveSearchSortColumn) => void;
+}) {
+  const active = sort?.column === column;
+  return (
+    <th className="px-2 py-1.5">
+      <button
+        type="button"
+        onClick={() => onSortChange(column)}
+        aria-sort={active ? (sort?.dir === "asc" ? "ascending" : "descending") : "none"}
+        className="flex items-center gap-1 uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+      >
+        {label}
+        {active && (sort?.dir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+      </button>
+    </th>
+  );
 }
 
 // Shown for a FAILED or ABORTED search: the reason, the WHERE clause that
@@ -161,6 +222,10 @@ function SearchResultsPanel({
   resultsLoading,
   page,
   onPageChange,
+  pageSize,
+  onPageSizeChange,
+  sort,
+  onSortChange,
   onViewFlight,
   whereClause,
   whereClauseLoading,
@@ -200,7 +265,7 @@ function SearchResultsPanel({
     return <p className="p-4 text-sm text-slate-400">No flights matched this search.</p>;
   }
 
-  const totalPages = Math.max(1, Math.ceil(results.total_rows / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden">
@@ -208,23 +273,21 @@ function SearchResultsPanel({
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700 dark:text-slate-400">
-              <th className="px-2 py-1.5">Registration</th>
-              <th className="px-2 py-1.5">ICAO Hex</th>
-              <th className="px-2 py-1.5">Ident</th>
-              <th className="px-2 py-1.5">Operator</th>
-              <th className="px-2 py-1.5">Type</th>
-              <th className="px-2 py-1.5">Military</th>
-              <th className="px-2 py-1.5">First Message</th>
-              <th className="px-2 py-1.5">Last Message</th>
+              {SORTABLE_COLUMNS.map(({ column, label }) => (
+                <SortableColumnHeader key={column} label={label} column={column} sort={sort} onSortChange={onSortChange} />
+              ))}
               <th className="px-2 py-1.5" />
             </tr>
           </thead>
           <tbody>
             {results.rows.map((row) => (
-              <tr key={row.uuid} className="border-b border-slate-100 dark:border-slate-800">
-                <td className="px-2 py-1.5 font-mono">{row.registration}</td>
+              <tr
+                key={row.uuid}
+                className="border-b border-slate-100 odd:bg-slate-50 dark:border-slate-800 dark:odd:bg-slate-900"
+              >
+                <td className="px-2 py-1.5">{row.registration}</td>
                 <td className="px-2 py-1.5 font-mono">{row.icao_hex}</td>
-                <td className="px-2 py-1.5 font-mono">{row.ident}</td>
+                <td className="px-2 py-1.5">{row.ident}</td>
                 <td className="px-2 py-1.5">{row.operator_designator}</td>
                 <td className="px-2 py-1.5">{row.type_designator}</td>
                 <td className="px-2 py-1.5">{row.military && <Badge color="yellow">Military</Badge>}</td>
@@ -234,12 +297,12 @@ function SearchResultsPanel({
                   <button
                     type="button"
                     onClick={() => onViewFlight(row.token)}
-                    aria-label="View flight"
-                    title="View flight"
+                    aria-label="Download flight"
+                    title="Download flight"
                     className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                   >
                     <Download size={12} />
-                    View
+                    Download
                   </button>
                 </td>
               </tr>
@@ -260,6 +323,20 @@ function SearchResultsPanel({
         </button>
 
         <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+            Rows per page
+            <select
+              value={pageSize}
+              onChange={(event) => onPageSizeChange(Number(event.target.value))}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             disabled={page <= 1}
@@ -293,6 +370,8 @@ export function HistoryView() {
   const [resultsCache, setResultsCache] = useState<Record<string, ArchiveSearchResultsPage>>({});
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultsPage, setResultsPage] = useState(1);
+  const [resultsPageSize, setResultsPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [resultsSort, setResultsSort] = useState<ResultsSortState | null>(null);
   const [mobileListOpen, setMobileListOpen] = useState(false);
   const [newSearchModalOpen, setNewSearchModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -345,15 +424,21 @@ export function HistoryView() {
   }, [searches]);
 
   // Fetch results for the selected search once it's COMPLETE, or when the
-  // page changes -- cached per-uuid so switching back to an already-viewed
-  // search doesn't refetch.
+  // page, page size, or sort changes -- cached per-uuid/page/page-size/sort
+  // so switching back to an already-viewed combination doesn't refetch.
   useEffect(() => {
     if (!selectedSearch || selectedSearch.status !== "COMPLETE") return;
-    const cacheKey = `${selectedSearch.uuid}:${resultsPage}`;
+    const cacheKey = resultsCacheKey(selectedSearch.uuid, resultsPage, resultsPageSize, resultsSort);
     if (resultsCache[cacheKey]) return;
     let cancelled = false;
     setResultsLoading(true);
-    getArchiveSearchResults(selectedSearch.uuid, resultsPage)
+    getArchiveSearchResults(
+      selectedSearch.uuid,
+      resultsPage,
+      resultsPageSize,
+      resultsSort?.column,
+      resultsSort?.dir,
+    )
       .then((page) => {
         if (!cancelled) setResultsCache((current) => ({ ...current, [cacheKey]: page }));
       })
@@ -366,7 +451,7 @@ export function HistoryView() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSearch?.uuid, selectedSearch?.status, resultsPage]);
+  }, [selectedSearch?.uuid, selectedSearch?.status, resultsPage, resultsPageSize, resultsSort]);
 
   // Fetch the submitted WHERE clause for a FAILED/ABORTED search, so it can
   // be shown and offered back for resubmission instead of forcing the user
@@ -395,6 +480,21 @@ export function HistoryView() {
 
   function selectSearch(search: ArchiveSearchSummary) {
     setSelectedUuid((current) => (current === search.uuid ? null : search.uuid));
+    setResultsPage(1);
+  }
+
+  // Changing the page size invalidates the current page number -- e.g. page
+  // 3 at 25/page may no longer exist at 200/page -- so always snap back to
+  // page 1 rather than risk landing out of range.
+  function handlePageSizeChange(pageSize: number) {
+    setResultsPageSize(pageSize);
+    setResultsPage(1);
+  }
+
+  // A new sort order re-ranks the entire result set, so whatever page
+  // number was showing may no longer make sense -- snap back to page 1.
+  function handleSortChange(column: ArchiveSearchSortColumn) {
+    setResultsSort((current) => nextSortState(current, column));
     setResultsPage(1);
   }
 
@@ -428,16 +528,22 @@ export function HistoryView() {
   // requests for a one-off export) and assembles them into a CSV client-side.
   // No new backend endpoint: same already-sanitized rows the table renders,
   // so the s3_key/token protections those rows already have carry over here
-  // for free.
+  // for free. Always paged at DEFAULT_PAGE_SIZE regardless of the table's
+  // own page-size selection, so the export's chunking is independent of
+  // what the user happens to have the results table set to. Also always
+  // unsorted (server-default order), independent of the table's own sort
+  // state, for the same reason.
   async function handleDownloadCsv(search: ArchiveSearchSummary) {
     setDownloadingCsv(true);
     try {
-      const firstPage = resultsCache[`${search.uuid}:1`] ?? (await getArchiveSearchResults(search.uuid, 1));
+      const firstPageKey = resultsCacheKey(search.uuid, 1, DEFAULT_PAGE_SIZE, null);
+      const firstPage =
+        resultsCache[firstPageKey] ?? (await getArchiveSearchResults(search.uuid, 1, DEFAULT_PAGE_SIZE));
       const allRows = [...firstPage.rows];
-      const totalPages = Math.max(1, Math.ceil(firstPage.total_rows / PAGE_SIZE));
+      const totalPages = Math.max(1, Math.ceil(firstPage.total_rows / DEFAULT_PAGE_SIZE));
       for (let p = 2; p <= totalPages; p++) {
-        const cached = resultsCache[`${search.uuid}:${p}`];
-        const nextPage = cached ?? (await getArchiveSearchResults(search.uuid, p));
+        const cached = resultsCache[resultsCacheKey(search.uuid, p, DEFAULT_PAGE_SIZE, null)];
+        const nextPage = cached ?? (await getArchiveSearchResults(search.uuid, p, DEFAULT_PAGE_SIZE));
         allRows.push(...nextPage.rows);
       }
       const csv = rowsToCsv(CSV_HEADERS, allRows.map(resultRowToCsvRow));
@@ -476,7 +582,7 @@ export function HistoryView() {
   }
 
   const resultsForSelected = selectedSearch
-    ? (resultsCache[`${selectedSearch.uuid}:${resultsPage}`] ?? null)
+    ? (resultsCache[resultsCacheKey(selectedSearch.uuid, resultsPage, resultsPageSize, resultsSort)] ?? null)
     : null;
 
   return (
@@ -562,6 +668,10 @@ export function HistoryView() {
                       resultsLoading={resultsLoading}
                       page={resultsPage}
                       onPageChange={setResultsPage}
+                      pageSize={resultsPageSize}
+                      onPageSizeChange={handlePageSizeChange}
+                      sort={resultsSort}
+                      onSortChange={handleSortChange}
                       onViewFlight={handleViewFlight}
                       whereClause={whereClauseCache[search.uuid] ?? null}
                       whereClauseLoading={whereClauseLoading}
@@ -588,6 +698,10 @@ export function HistoryView() {
             resultsLoading={resultsLoading}
             page={resultsPage}
             onPageChange={setResultsPage}
+            pageSize={resultsPageSize}
+            onPageSizeChange={handlePageSizeChange}
+            sort={resultsSort}
+            onSortChange={handleSortChange}
             onViewFlight={handleViewFlight}
             whereClause={whereClauseCache[selectedSearch.uuid] ?? null}
             whereClauseLoading={whereClauseLoading}

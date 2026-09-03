@@ -103,11 +103,11 @@ class TestIsSkyfollowerQueue:
         one automated check that the value hasn't silently changed here
         without a human also updating the shell script."""
         assert SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN == (
-            r"^(adsb.*|skyfollower-message-processor-.*|archive|amq\.default)$"
+            r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$"
         )
 
     def test_adsb_prefixed_queue_matches(self):
-        assert is_skyfollower_queue("adsb-unroutable") is True
+        assert is_skyfollower_queue(ADSB_UNROUTABLE_QUEUE) is True
 
     def test_message_processor_queue_matches(self):
         assert is_skyfollower_queue("skyfollower-message-processor-mp-1") is True
@@ -141,5 +141,5 @@ class TestMessageProcessorIdFromQueueName:
         ) == "host-a-mp-2"
 
     def test_non_processor_queue_returns_none(self):
-        assert message_processor_id_from_queue_name("archive") is None
-        assert message_processor_id_from_queue_name("adsb-unroutable") is None
+        assert message_processor_id_from_queue_name(ARCHIVE_QUEUE_NAME) is None
+        assert message_processor_id_from_queue_name(ADSB_UNROUTABLE_QUEUE) is None

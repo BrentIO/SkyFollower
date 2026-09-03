@@ -49,8 +49,13 @@ needs nothing from AWS.
 | `--non-interactive` | Reads every value from already-exported environment variables instead of prompting (same names written to `.env` — e.g. `RECEIVER_NAME`, `RABBITMQ_HOST`). Requires `--role` at least once. |
 
 Files come from the **latest GitHub release**, matching the `:latest`
-container images. Set `REF=main` (or any other ref) as an environment
-variable before the command to fetch something else instead.
+container images. To fetch something else instead, set `REF` on the
+`bash` side of the pipe, not the `curl` side — `curl`'s environment
+never reaches the `bash` process that actually runs the fetched script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | REF=main bash
+```
 
 Once `core` is up, the script offers a first-time bulk data load — see
 [Loading All Data](#loading-all-data) below.
@@ -90,16 +95,17 @@ fresh production install by accident.
 Point a host at one by setting `REF` **and** `IMAGE_VERSION` together --
 `REF` picks which branch's compose/config files are fetched, and
 `IMAGE_VERSION` overrides the image tag that would otherwise default to
-`:latest`:
+`:latest`. Both go on the `bash` side of the pipe, on a single line --
+`curl`'s environment is a separate process from `bash`'s, so anything set
+before `curl` never reaches the script that actually runs:
 
 ```bash
-REF=my-branch IMAGE_VERSION=dev-my-branch \
-  curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | REF=my-branch IMAGE_VERSION=dev-my-branch bash
 ```
 
 Already installed? The same two variables work with `--upgrade` on an
-existing host, or edit `SKYFOLLOWER_VERSION` in `.env` by hand and
-`docker compose pull && up -d`.
+existing host (placed the same way, after the pipe), or edit
+`SKYFOLLOWER_VERSION` in `.env` by hand and `docker compose pull && up -d`.
 
 **Going back to a real release:** run `--upgrade` with neither `REF` nor
 `IMAGE_VERSION` set -- it re-resolves the latest release tag exactly as

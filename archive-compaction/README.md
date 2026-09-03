@@ -10,8 +10,8 @@
 
 The archive processor writes one small Parquet index row per flight to
 `index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet` alongside the
-flight's own `flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz`
-object (see `archive-processor/README.md` and
+flight's own `flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz` object (see
+`archive-processor/README.md` and
 `specs/data-dictionary.yaml`'s `archive_parquet_index` record). Each run of
 this job:
 
@@ -35,7 +35,10 @@ this job:
    from the late-straggler case below: a late straggler is a file this run
    simply hasn't seen yet and will pick up on its own once seen; a parity
    mismatch means a date was actually checked and is still missing a row,
-   which won't fix itself by moving on to the next date.
+   which won't fix itself by moving on to the next date. Consecutive runs
+   blocked on the same date are counted (`mismatch_runs`, reset once the
+   blocked date changes or the mismatch clears) so a compactor stuck for
+   days is visible in MQTT stats rather than only a repeated ERROR log line.
 4. For a date that passes the parity check: lists every object under that
    day's `index/year=/month=/day=/` prefix (via S3, always — parity
    checking and listing never consult the local cache), filtering out any
@@ -147,12 +150,21 @@ Published once, at the end of a run, to
 | `last_compacted_date` | e.g. `2026-07-23` | The watermark after this run — the most recent date whose partition has been fully compacted |
 | `mismatch_date` | e.g. `2026-07-24`, or empty | The date this run stopped at due to a flight/index parity mismatch; empty when the run wasn't stopped by one |
 | `mismatch_uuids` | e.g. `0198abcd-...,0198abce-...`, or empty | Comma-separated flight UUIDs missing their index row on `mismatch_date` — a starting point for manual investigation. Check `local_index_queue_depth` on the archive processor's own stats: nonzero means the row is likely still draining locally and will resolve on its own; zero means it's genuinely lost from the archive processor's perspective |
+| `mismatch_runs` | e.g. `7`, or `0` | Integer as string — number of consecutive runs blocked on `mismatch_date`. Resets to `0` once that date compacts successfully, or to `1` if a different date becomes the blocker. A climbing number here, not just a repeated ERROR log line, is the signal that a mismatch needs a human rather than time |
 | `last_run_at` | e.g. `2026-07-25T04:50:03.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `Success`, `Failure`, or `Mismatch` | String — `Mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`); `Failure` means an actual exception (S3 error, etc.) |
+| `last_run_status` | `Success`, `Failure`, or `Mismatch` | String — `Mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`/`mismatch_runs`); `Failure` means an actual exception (S3 error, etc.) |
 
 Home Assistant autodiscovery configs are also published (retained) to
 `homeassistant/sensor/SkyFollower_archive_compaction_{name}/config` for
-each of the eight stats above.
+each of the nine stats above.
+
+The process exit code also distinguishes the two non-success cases: `0` on
+`Success`, `2` on `Mismatch`, `1` on `Failure`. Both non-zero codes still
+read as "not clean" to `ofelia`, but anything inspecting exit status
+directly (rather than the MQTT stats) can tell "blocked on a parity
+mismatch" apart from "the job actually errored." A mismatch never exits
+`0` — a compactor stuck for weeks must not look healthy to something
+watching exit status alone.
 
 ## Deployment
 

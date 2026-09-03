@@ -39,6 +39,21 @@ export interface ArchiveSearchResultsPage {
   total_rows: number;
 }
 
+// Every column the results table lets a user sort by -- mirrors main.py's
+// _SORTABLE_COLUMNS (everything ArchiveSearchResultRow exposes except the
+// server-derived uuid/token).
+export type ArchiveSearchSortColumn =
+  | "icao_hex"
+  | "registration"
+  | "type_designator"
+  | "military"
+  | "operator_designator"
+  | "ident"
+  | "first_message"
+  | "last_message";
+
+export type ArchiveSearchSortDir = "asc" | "desc";
+
 export function createArchiveSearch(name: string, whereClause: string): Promise<{ uuid: string }> {
   return apiClient.post<{ uuid: string }>("/api/archive/search", { name, where_clause: whereClause });
 }
@@ -51,9 +66,21 @@ export function getArchiveSearchDetail(uuid: string): Promise<ArchiveSearchDetai
   return apiClient.get<ArchiveSearchDetail>(`/api/archive/search/${encodeURIComponent(uuid)}`);
 }
 
-export function getArchiveSearchResults(uuid: string, page: number): Promise<ArchiveSearchResultsPage> {
+export function getArchiveSearchResults(
+  uuid: string,
+  page: number,
+  pageSize?: number,
+  sortBy?: ArchiveSearchSortColumn,
+  sortDir?: ArchiveSearchSortDir,
+): Promise<ArchiveSearchResultsPage> {
+  const params = new URLSearchParams({ page: String(page) });
+  if (pageSize !== undefined) params.set("page_size", String(pageSize));
+  if (sortBy !== undefined) {
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir ?? "asc");
+  }
   return apiClient.get<ArchiveSearchResultsPage>(
-    `/api/archive/search/${encodeURIComponent(uuid)}/results?page=${page}`,
+    `/api/archive/search/${encodeURIComponent(uuid)}/results?${params.toString()}`,
   );
 }
 
