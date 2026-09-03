@@ -1825,6 +1825,61 @@ _bootstrap_user_retry_hint() {
   echo "      -e AWS_DEFAULT_REGION=${region} ${image} --delete-bootstrap-user ${bootstrap_user}" >&2
 }
 
+# Runs the first-time bulk-load runner sequence detached from the installer
+# process, so accepting the offer doesn't require keeping the installer's
+# terminal session open for however long the full run takes (hours, once
+# slow per-record-fetch runners like cz-caa-registry/uk-caa-registry are in
+# the mix) and doesn't block the main role loop's later offer_up prompts.
+#
+# ofelia itself was considered for this instead of a bash loop -- it's
+# already being brought up in this same flow and already encodes this exact
+# ordering as permanent weekly cron labels in docker-compose.core.yaml -- but
+# it has no on-demand "run this job chain now" trigger: it's a pure
+# label/cron-driven daemon (job-run/job-exec/job-local/job-service-run, all
+# scheduled), with no CLI subcommand, HTTP API, or signal to fire a job
+# outside its schedule. The only way to get immediate execution out of it
+# would be temporarily scheduling each job a few seconds apart, which is
+# fragile against exactly the runners this ordering exists for: mictronics
+# must finish (not just start) before the rest run, since they resolve
+# icao_hex against its RediSearch index, and cz-caa-registry/uk-caa-registry
+# routinely run far longer than a few seconds. A generated one-shot script
+# reusing the same sequential ordering, just detached, avoids all of that.
+#
+# The generated script is written to a temp file and deletes itself as its
+# last line; `nohup` keeps it from being killed by SIGHUP when the
+# installer's session ends, and `disown` drops it from this shell's job
+# table so the shell doesn't wait on or report it. Output goes to a log file
+# under role_dir the operator can tail after the installer has moved on to
+# the next role or exited entirely; `docker compose ps`/`docker ps` also
+# show whichever runner is currently mid-run.
+run_bulk_load_detached() {
+  local role_dir="$1" ordered="$2"
+  local log_file script_file
+  log_file="${role_dir}/bulk-load-$(date +%Y%m%dT%H%M%S).log"
+  script_file="$(mktemp)"
+
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'cd %q || exit 1\n' "$role_dir"
+    local r
+    for r in $ordered; do
+      printf 'echo "$(date "+%%Y-%%m-%%d %%H:%%M:%%S") Running %s..."\n' "$r"
+      printf 'docker compose run --rm %q || echo "$(date "+%%Y-%%m-%%d %%H:%%M:%%S")   %s failed -- continuing with the rest."\n' "$r" "$r"
+    done
+    printf 'echo "$(date "+%%Y-%%m-%%d %%H:%%M:%%S") Bulk load complete."\n'
+    printf 'rm -f %q\n' "$script_file"
+  } > "$script_file"
+
+  nohup bash "$script_file" >>"$log_file" 2>&1 </dev/null &
+  disown
+
+  echo "Bulk load started in the background -- it will keep running after this"
+  echo "installer moves on or exits."
+  echo "  Log:      ${log_file}"
+  echo "  Progress: tail -f ${log_file}"
+  echo "  Status:   (cd ${role_dir} && docker compose ps)"
+}
+
 offer_ofelia_and_bulk_load() {
   local role_dir="$1"
   local answer
@@ -1847,7 +1902,9 @@ offer_ofelia_and_bulk_load() {
     echo "its index -- then the rest alphabetically, then cz-caa-registry just"
     echo "before uk-caa-registry last, since both do slow per-record detail"
     echo "fetches). Otherwise each runs on its own schedule and Redis fills"
-    echo "in gradually."
+    echo "in gradually. This can take hours end to end, so it runs detached"
+    echo "in the background -- the installer moves on immediately and this"
+    echo "session does not need to stay open for it to finish."
     read -r -p "Run the bulk load now? [y/N]: " answer </dev/tty
   fi
   if [ -z "$answer" ] || ! [[ "$answer" =~ ^[Yy] ]]; then
@@ -1876,10 +1933,7 @@ offer_ofelia_and_bulk_load() {
   rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-cz-caa-registry$' | grep -v '^runner-uk-caa-registry$' | sort || true)"
   ordered="$(printf '%s\n%s\n%s\n%s\n' "$mictronics" "$rest" "$cz_second_last" "$uk_last" | grep -v '^$' || true)"
 
-  for r in $ordered; do
-    echo "Running ${r}..."
-    (cd "$role_dir" && docker compose run --rm "$r") || echo "  ${r} failed -- continuing with the rest." >&2
-  done
+  run_bulk_load_detached "$role_dir" "$ordered"
 }
 
 # ---------------------------------------------------------------------------
