@@ -249,18 +249,6 @@ _CORE_REDIS_SENSORS = [
     ("redis_rejected_connections", "Redis Rejected Connections", "mdi:connection", "total_increasing", None, None),
 ]
 
-# Preferred HA display unit per byte-valued sensor. These sensors publish a
-# raw byte integer on the wire (unit_of_measurement "B"); HA only auto-scales
-# a data_size sensor's display if a suggested unit is offered via discovery.
-# Queue memory/message bytes sit in the MB range; Redis used memory in the GB
-# range. Applied on first entity registration only -- HA never overrides a
-# unit already stored for an existing entity or one a user picked manually.
-_SUGGESTED_UNITS = {
-    "memory_bytes": "MB",
-    "message_bytes": "MB",
-    "redis_used_memory_bytes": "GB",
-}
-
 # (field, period, kind, label, icon) -- mimicked message-processor counters.
 # kind selects which Redis key builder applies (see _mp_counter_key below).
 _MP_COUNTER_FIELDS = [
@@ -438,8 +426,6 @@ class CoreHealth:
                     payload["state_class"] = state_class
                 if unit:
                     payload["unit_of_measurement"] = unit
-                if field in _SUGGESTED_UNITS:
-                    payload["suggested_unit_of_measurement"] = _SUGGESTED_UNITS[field]
                 if device_class:
                     payload["device_class"] = device_class
                 self._mqtt.publish(
@@ -624,8 +610,6 @@ class CoreHealth:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
-            if field in _SUGGESTED_UNITS:
-                payload["suggested_unit_of_measurement"] = _SUGGESTED_UNITS[field]
             if device_class:
                 payload["device_class"] = device_class
             self._mqtt.publish(
