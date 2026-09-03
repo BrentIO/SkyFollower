@@ -145,6 +145,28 @@ function SortableColumnHeader({
   );
 }
 
+// The submitted WHERE clause, labeled and in a <pre> block -- shown for
+// FAILED/ABORTED searches (inside FailedSearchDetail) and, per this view's
+// design, above a COMPLETE search's results table too, so the text behind
+// any search's results looks the same wherever it's shown. Fetched lazily
+// per search (see HistoryView's detail-fetch effect), regardless of status.
+function WhereClauseBlock({ detail, detailLoading }: { detail: ArchiveSearchDetail | null; detailLoading: boolean }) {
+  return (
+    <div>
+      <p className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+        WHERE clause submitted
+      </p>
+      {detailLoading || detail === null ? (
+        <p className="text-sm text-slate-400">Loading&hellip;</p>
+      ) : (
+        <pre className="overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          {detail.where_clause}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 // Shown for a FAILED or ABORTED search: the reason, the WHERE clause and
 // resolved date range that were submitted (fetched lazily -- see
 // HistoryView's detail-fetch effect), and a way to try again without
@@ -164,19 +186,8 @@ function FailedSearchDetail({
     <div className="flex flex-col gap-3 p-4">
       <p className="text-sm text-red-600 dark:text-red-400">{reason}</p>
       <div>
-        <p className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-          WHERE clause submitted
-        </p>
-        {detailLoading || detail === null ? (
-          <p className="text-sm text-slate-400">Loading&hellip;</p>
-        ) : (
-          <>
-            <pre className="overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-              {detail.where_clause}
-            </pre>
-            <ResolvedRangeNote detail={detail} loading={detailLoading} />
-          </>
-        )}
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
+        <ResolvedRangeNote detail={detail} loading={detailLoading} />
       </div>
       <button
         type="button"
@@ -236,6 +247,7 @@ function SearchResultsPanel({
   if (resultsLoading || results === null) {
     return (
       <div className="flex flex-col gap-2 p-4">
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
         <ResolvedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">Loading results&hellip;</p>
       </div>
@@ -244,6 +256,7 @@ function SearchResultsPanel({
   if (results.total_rows === 0) {
     return (
       <div className="flex flex-col gap-2 p-4">
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
         <ResolvedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">No flights matched this search.</p>
       </div>
@@ -254,6 +267,7 @@ function SearchResultsPanel({
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden">
+      <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
       <ResolvedRangeNote detail={detail} loading={detailLoading} />
       {results.truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
