@@ -3,7 +3,7 @@
 A standalone command-line tool that reads an NDJSON capture file produced by
 `tools/traffic-recorder` and republishes its messages to RabbitMQ, using the
 same `{raw, icao_hex, received_at, source}` envelope and the same routing the
-receiver uses — one publish to the `adsb` consistent-hash exchange per
+receiver uses — one publish to the `skyfollower-adsb` consistent-hash exchange per
 message, keyed by ICAO hex. It lets the rest of the pipeline (message
 processor, rules engine, archive processor) be exercised repeatedly against a
 known, recorded set of traffic — without live ADS-B reception or SDR
@@ -59,11 +59,12 @@ printed every 5 seconds. Stop early at any time with `Ctrl+C` (or
 
 The replayer has no notion of how many message processors exist — the
 exchange decides which one receives each aircraft, exactly as it does for a
-live receiver. The exchange and its `adsb-unroutable` alternate exchange are
-declared (durable) on connect, so the replayer works against a freshly
-created RabbitMQ vhost. With no message processors bound yet, every replayed
-message lands in `adsb-unroutable` rather than being discarded, which is
-itself a useful check that the capture is being published at all.
+live receiver. The exchange and its `skyfollower-adsb-unroutable` alternate
+exchange are declared (durable) on connect, so the replayer works against a
+freshly created RabbitMQ vhost. With no message processors bound yet, every
+replayed message lands in `skyfollower-adsb-unroutable` rather than being
+discarded, which is itself a useful check that the capture is being
+published at all.
 
 ## Modes
 
@@ -136,7 +137,7 @@ what to publish — is covered directly with a fake RabbitMQ channel and a
 fake clock, for both modes: that a `stress`-mode replay never sleeps, that a
 `relative`-mode replay sleeps for exactly the gap between each message's
 original `received_at`, that it stops sleeping (without erroring) once it has
-fallen behind schedule, that every message goes to the `adsb` exchange keyed
+fallen behind schedule, that every message goes to the `skyfollower-adsb` exchange keyed
 by its own ICAO hex (never to the default exchange), and that setting
 `stop_event` before starting halts replay immediately.
 

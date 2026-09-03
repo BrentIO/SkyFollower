@@ -1,7 +1,7 @@
 # Archive Processor
 
 The archive processor consumes completed flight records from the RabbitMQ
-`archive` queue, builds a 3D GeoJSON `LineString` of the flight path
+`skyfollower-archive` queue, builds a 3D GeoJSON `LineString` of the flight path
 (interpolating missing altitude from adjacent position reports), writes each
 flight as gzip-compressed JSON to AWS S3, and writes a small per-flight
 Parquet index row alongside it in the same bucket, queryable via AWS
@@ -73,7 +73,7 @@ pick up a changed value. Defaults to `300` if unset. See
 ## Consuming from RabbitMQ
 
 The archive processor declares and consumes from a single durable queue
-named `archive` (`prefetch_count=1`, manual ack). This is the queue the
+named `skyfollower-archive` (`prefetch_count=1`, manual ack). This is the queue the
 message processor publishes completed flights to — see
 [message-processor/README.md](../message-processor/README.md).
 A message that fails to process is not requeued; instead it is written to

@@ -320,7 +320,7 @@ the node leaves every one of its bindings intact, and nothing renumbers
 until a queue is actually deleted.
 
 **Archive processor** — stop it. Message processors keep publishing completed
-flights to the durable `archive` RabbitMQ queue (or their own local
+flights to the durable `skyfollower-archive` RabbitMQ queue (or their own local
 fallback if RabbitMQ is also unavailable at the time), which simply grows
 while the archive processor is down. Restart it and it drains normally —
 already fault-tolerant by design, no special handling needed.

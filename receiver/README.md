@@ -130,7 +130,7 @@ Receivers installed under the older `~/SkyFollower/{RECEIVER_NAME}/` layout keep
 
 ## Routing
 
-Every message is published to the durable `adsb` exchange with the aircraft's
+Every message is published to the durable `skyfollower-adsb` exchange with the aircraft's
 ICAO hex as the routing key. The exchange is of type `x-consistent-hash`
 (RabbitMQ's `rabbitmq_consistent_hash_exchange` plugin), which hashes that key
 and delivers the message to exactly one of the queues bound to it — one queue
@@ -147,12 +147,13 @@ the binding exists. The exchange name, type and arguments are defined once in
 idempotently by both components on every connect.
 
 The exchange carries an `alternate-exchange` argument pointing at the
-`adsb-unroutable` fanout exchange, which feeds the durable `adsb-unroutable`
-queue. Anything the hash exchange cannot route — which is everything published
-while no message processor queue is bound — ends up there. Without it those
-messages would be discarded silently, because the receiver publishes without
-publisher confirms and without the `mandatory` flag. A non-zero depth on
-`adsb-unroutable` means messages arrived with nothing bound to receive them.
+`skyfollower-adsb-unroutable` fanout exchange, which feeds the durable
+`skyfollower-adsb-unroutable` queue. Anything the hash exchange cannot route —
+which is everything published while no message processor queue is bound —
+ends up there. Without it those messages would be discarded silently, because
+the receiver publishes without publisher confirms and without the
+`mandatory` flag. A non-zero depth on `skyfollower-adsb-unroutable` means
+messages arrived with nothing bound to receive them.
 
 ### Cutover to consistent-hash routing
 

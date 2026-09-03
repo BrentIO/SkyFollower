@@ -13,7 +13,7 @@ time via a relative path reference in their `requirements.txt`.
 - **`models.py`** — Pydantic models for the RabbitMQ message envelope
   (`InboundMessage`), in-flight telemetry (`Position`, `Velocity`), Redis
   enrichment records (`AircraftRecord`, `OperatorRecord`, `AirportRecord`),
-  and the completed flight record published to the archive queue
+  and the completed flight record published to the `skyfollower-archive` queue
   (`CompletedFlight`). Also exports `generate_flight_id()` which returns
   a UUID-v7 string used as the `_id` of each archived flight.
 
@@ -90,7 +90,7 @@ time via a relative path reference in their `requirements.txt`.
   A third category sits between "recoverable outage" and "poison": a
   dependency deliberately absent in this deployment (e.g. a message
   processor publishing completed flights with `mandatory=True` against an
-  `archive` queue no operator declared because this environment runs no
+  `skyfollower-archive` queue no operator declared because this environment runs no
   archiver). A caller passes the exception type(s) that signal this via
   `non_poison_exceptions` — `FallbackQueue` stays broker-agnostic and
   never imports the caller's library. A row failing only with those types
