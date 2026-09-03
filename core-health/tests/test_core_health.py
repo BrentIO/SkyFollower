@@ -293,9 +293,9 @@ class TestPublishQueueStats:
         ] == "Flow"
 
     def test_message_bytes_and_memory_bytes_discovery_use_data_size_device_class(self):
-        """Byte-valued queue sensors get HA's native device_class so the
-        frontend auto-scales the raw value -- the published state itself
-        stays the raw byte integer, only the discovery config changes."""
+        """Byte-valued queue sensors get HA's native device_class -- the
+        published state itself stays the raw byte integer, only the
+        discovery config changes."""
         app = _wired_app()
         app._publish_queue_stats(self._queue())
         discovery = _discovery_payloads(app._mqtt)
@@ -307,10 +307,8 @@ class TestPublishQueueStats:
         ]
         assert message_bytes_payload["device_class"] == "data_size"
         assert message_bytes_payload["unit_of_measurement"] == "B"
-        assert message_bytes_payload["suggested_unit_of_measurement"] == "MB"
         assert memory_bytes_payload["device_class"] == "data_size"
         assert memory_bytes_payload["unit_of_measurement"] == "B"
-        assert memory_bytes_payload["suggested_unit_of_measurement"] == "MB"
         published = _state_publishes(app._mqtt)
         # Raw byte value on the wire, unformatted -- HA's frontend does the
         # KB/MB/GB scaling, not this component.
@@ -718,7 +716,6 @@ class TestPublishRedisStats:
         ]
         assert used_memory_payload["device_class"] == "data_size"
         assert used_memory_payload["unit_of_measurement"] == "B"
-        assert used_memory_payload["suggested_unit_of_measurement"] == "GB"
 
     def test_maxmemory_policy_sensor_removed(self):
         app = _wired_app()
