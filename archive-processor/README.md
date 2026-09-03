@@ -73,8 +73,13 @@ pick up a changed value. Defaults to `300` if unset. See
 ## Consuming from RabbitMQ
 
 The archive processor declares and consumes from a single durable queue
-named `skyfollower-archive` (`prefetch_count=1`, manual ack). This is the queue the
-message processor publishes completed flights to — see
+named `skyfollower-archive` (`prefetch_count=100`, manual ack). Each
+completed flight is written to S3 independently with no shared mutable
+state between flights, so unlike the message processor's per-aircraft
+affinity concerns, raising prefetch here has no fair-dispatch or ordering
+downside — it just avoids a full ack round trip before the broker will
+deliver the next message. This is the queue the message processor
+publishes completed flights to — see
 [message-processor/README.md](../message-processor/README.md).
 A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
