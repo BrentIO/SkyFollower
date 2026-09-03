@@ -1597,6 +1597,14 @@ _SEARCH_SELECT_COLUMNS = [
     "operator_designator", "ident", "first_message", "last_message", "s3_key",
 ]
 
+# Columns a results-page request may sort by -- every field
+# ArchiveSearchResultRow exposes to the browser except uuid/token, which are
+# server-derived rather than a real Athena column a user would sort on.
+_SORTABLE_COLUMNS = (
+    "icao_hex", "registration", "type_designator", "military",
+    "operator_designator", "ident", "first_message", "last_message",
+)
+
 # Cheap early rejection before ever calling Athena -- not a real security
 # boundary (the querying IAM identity is already read-only on just this one
 # table), purely so a mistake produces an instant, clear 400 instead of a
@@ -1993,6 +2001,8 @@ def get_archive_search_results(
     uuid: str,
     page: int = FastAPIQuery(default=1, ge=1),
     page_size: int = FastAPIQuery(default=_PAGE_SIZE, ge=_PAGE_SIZE_MIN, le=_PAGE_SIZE_MAX),
+    sort_by: Optional[Literal[_SORTABLE_COLUMNS]] = FastAPIQuery(default=None),
+    sort_dir: Literal["asc", "desc"] = FastAPIQuery(default="asc"),
 ):
     record = _get_search_record(uuid)
     if record["status"] != "COMPLETE":
@@ -2001,6 +2011,13 @@ def get_archive_search_results(
             detail=f"Search '{uuid}' is not complete (status: {record['status']})",
         )
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
+    # Sort the whole cached result set (not just the requested page) so this
+    # behaves like a real column sort -- _fetch_and_cache_results already
+    # has every row in memory, so no new Athena query is needed. sorted()
+    # returns a new list, leaving the cached one untouched for other
+    # pages/sort orders to reuse.
+    if sort_by is not None:
+        rows = sorted(rows, key=lambda row: row[sort_by], reverse=sort_dir == "desc")
     start = (page - 1) * page_size
     return JSONResponse(content={"rows": rows[start:start + page_size], "total_rows": len(rows)})
 

@@ -980,6 +980,42 @@ paths:
           minimum: 1
           default: 1
           title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 25
+          default: 100
+          title: Page Size
+      - name: sort_by
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - icao_hex
+            - registration
+            - type_designator
+            - military
+            - operator_designator
+            - ident
+            - first_message
+            - last_message
+            type: string
+          - type: 'null'
+          title: Sort By
+      - name: sort_dir
+        in: query
+        required: false
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+          default: asc
+          title: Sort Dir
       responses:
         '200':
           description: Successful Response

@@ -578,6 +578,87 @@ class TestResultsRetrieval:
         assert too_large.status_code == 422
 
 
+class TestResultsSorting:
+    def _complete_search(self, client, fake_athena, fake_s3, rows):
+        return TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows)
+
+    _ROWS = [
+        ("A00003", "N3", "B738", "false", "DAL", "DAL3",
+         "2026-07-31 12:00:00.000", "2026-07-31 15:00:00.000",
+         "flights/2026/07/31/A00003_DAL3_uuid-3.json.gz"),
+        ("A00001", "N1", "A320", "true", "AAL", "AAL1",
+         "2026-07-31 14:00:00.000", "2026-07-31 13:00:00.000",
+         "flights/2026/07/31/A00001_AAL1_uuid-1.json.gz"),
+        ("A00002", "N2", "C172", "false", "UAL", "UAL2",
+         "2026-07-31 10:00:00.000", "2026-07-31 20:00:00.000",
+         "flights/2026/07/31/A00002_UAL2_uuid-2.json.gz"),
+    ]
+
+    def test_sort_by_icao_hex_ascending_default(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00001", "A00002", "A00003"]
+
+    def test_sort_dir_desc_reverses_order(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00003", "A00002", "A00001"]
+
+    def test_sort_by_military_boolean(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=military")
+        assert [r["military"] for r in resp.json()["rows"]] == [False, False, True]
+
+    def test_sort_by_first_message_timestamp(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=first_message")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00002", "A00003", "A00001"]
+
+    def test_sort_by_last_message_timestamp_desc(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=last_message&sort_dir=desc")
+        assert [r["icao_hex"] for r in resp.json()["rows"]] == ["A00002", "A00003", "A00001"]
+
+    def test_sort_is_applied_before_pagination(self, client, fake_athena, fake_s3):
+        rows = [
+            (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
+             "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
+             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+            for i in range(150)
+        ]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        page1 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=1").json()
+        page2 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=2").json()
+        # Descending across the WHOLE 150-row set: page 1 holds the top 100
+        # hex values, page 2 the bottom 50 -- not a within-page reorder.
+        assert page1["rows"][0]["icao_hex"] == f"A{149:05X}"
+        assert page1["rows"][-1]["icao_hex"] == f"A{50:05X}"
+        assert page2["rows"][0]["icao_hex"] == f"A{49:05X}"
+        assert page2["rows"][-1]["icao_hex"] == f"A{0:05X}"
+
+    def test_sort_does_not_trigger_a_second_s3_fetch(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
+        client.get(f"/api/archive/search/{uuid}/results")
+        original_get_object = fake_s3.get_object
+        fake_s3.get_object = MagicMock(side_effect=AssertionError("should not refetch from S3 just to sort"))
+        try:
+            resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc")
+            assert resp.status_code == 200
+        finally:
+            fake_s3.get_object = original_get_object
+
+    def test_invalid_sort_by_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=token")
+        assert resp.status_code == 422
+
+    def test_invalid_sort_dir_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=sideways")
+        assert resp.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
