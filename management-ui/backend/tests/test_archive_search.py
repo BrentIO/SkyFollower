@@ -585,13 +585,13 @@ class TestResultsSorting:
     _ROWS = [
         ("A00003", "N3", "B738", "false", "DAL", "DAL3",
          "2026-07-31 12:00:00.000", "2026-07-31 15:00:00.000",
-         "flights/2026/07/31/A00003_DAL3_uuid-3.json.gz"),
+         "flights/2026/07/31/uuid-3.json.gz"),
         ("A00001", "N1", "A320", "true", "AAL", "AAL1",
          "2026-07-31 14:00:00.000", "2026-07-31 13:00:00.000",
-         "flights/2026/07/31/A00001_AAL1_uuid-1.json.gz"),
+         "flights/2026/07/31/uuid-1.json.gz"),
         ("A00002", "N2", "C172", "false", "UAL", "UAL2",
          "2026-07-31 10:00:00.000", "2026-07-31 20:00:00.000",
-         "flights/2026/07/31/A00002_UAL2_uuid-2.json.gz"),
+         "flights/2026/07/31/uuid-2.json.gz"),
     ]
 
     def test_sort_by_icao_hex_ascending_default(self, client, fake_athena, fake_s3):
@@ -623,7 +623,7 @@ class TestResultsSorting:
         rows = [
             (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
              "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
-             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+             f"flights/2026/07/31/uuid-{i}.json.gz")
             for i in range(150)
         ]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
