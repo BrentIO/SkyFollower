@@ -9,6 +9,7 @@ import {
   getArchiveSearchDetail,
   getArchiveSearchResults,
   listArchiveSearches,
+  type ArchiveSearchDetail,
   type ArchiveSearchResultRow,
   type ArchiveSearchResultsPage,
   type ArchiveSearchSortColumn,
@@ -137,11 +138,27 @@ interface SearchResultsPanelProps {
   sort: ResultsSortState | null;
   onSortChange: (column: ArchiveSearchSortColumn) => void;
   onViewFlight: (token: string) => void;
-  whereClause: string | null;
-  whereClauseLoading: boolean;
+  // Carries where_clause plus the RESOLVED start_date/end_date actually
+  // queried -- fetched lazily per search (see HistoryView's detail-fetch
+  // effect), regardless of status, since the resolved range may have come
+  // from derivation rather than anything the operator typed.
+  detail: ArchiveSearchDetail | null;
+  detailLoading: boolean;
   onResubmit: () => void;
   onDownloadCsv: () => void;
   downloadingCsv: boolean;
+}
+
+// "2022-01-01 to 2026-09-04 (UTC)" -- absent entirely for a legacy record
+// with no persisted range (both fields null).
+function ResolvedRangeNote({ detail, loading }: { detail: ArchiveSearchDetail | null; loading: boolean }) {
+  if (loading || detail === null) return null;
+  if (!detail.start_date && !detail.end_date) return null;
+  return (
+    <p className="text-xs text-slate-400 dark:text-slate-500">
+      Searched {detail.start_date ?? "the start of the archive"} to {detail.end_date ?? "today"} (UTC)
+    </p>
+  );
 }
 
 // One clickable, sortable column header -- shows an up/down chevron only
@@ -173,18 +190,19 @@ function SortableColumnHeader({
   );
 }
 
-// Shown for a FAILED or ABORTED search: the reason, the WHERE clause that
-// was submitted (fetched lazily -- see HistoryView's details-fetch effect),
-// and a way to try again without retyping it from scratch.
+// Shown for a FAILED or ABORTED search: the reason, the WHERE clause and
+// resolved date range that were submitted (fetched lazily -- see
+// HistoryView's detail-fetch effect), and a way to try again without
+// retyping either from scratch.
 function FailedSearchDetail({
   reason,
-  whereClause,
-  whereClauseLoading,
+  detail,
+  detailLoading,
   onResubmit,
 }: {
   reason: ReactNode;
-  whereClause: string | null;
-  whereClauseLoading: boolean;
+  detail: ArchiveSearchDetail | null;
+  detailLoading: boolean;
   onResubmit: () => void;
 }) {
   return (
@@ -194,18 +212,21 @@ function FailedSearchDetail({
         <p className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
           WHERE clause submitted
         </p>
-        {whereClauseLoading || whereClause === null ? (
+        {detailLoading || detail === null ? (
           <p className="text-sm text-slate-400">Loading&hellip;</p>
         ) : (
-          <pre className="overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            {whereClause}
-          </pre>
+          <>
+            <pre className="overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {detail.where_clause}
+            </pre>
+            <ResolvedRangeNote detail={detail} loading={detailLoading} />
+          </>
         )}
       </div>
       <button
         type="button"
         onClick={onResubmit}
-        disabled={whereClause === null}
+        disabled={detail === null}
         className="self-start rounded-md border border-sky-600 px-3 py-1.5 text-sm font-medium text-sky-600 hover:bg-sky-50 disabled:opacity-40 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
       >
         Edit &amp; Resubmit
@@ -227,8 +248,8 @@ function SearchResultsPanel({
   sort,
   onSortChange,
   onViewFlight,
-  whereClause,
-  whereClauseLoading,
+  detail,
+  detailLoading,
   onResubmit,
   onDownloadCsv,
   downloadingCsv,
@@ -240,8 +261,8 @@ function SearchResultsPanel({
     return (
       <FailedSearchDetail
         reason={search.error ?? "The search failed."}
-        whereClause={whereClause}
-        whereClauseLoading={whereClauseLoading}
+        detail={detail}
+        detailLoading={detailLoading}
         onResubmit={onResubmit}
       />
     );
@@ -250,8 +271,8 @@ function SearchResultsPanel({
     return (
       <FailedSearchDetail
         reason="Search took too long -- try narrowing your filters."
-        whereClause={whereClause}
-        whereClauseLoading={whereClauseLoading}
+        detail={detail}
+        detailLoading={detailLoading}
         onResubmit={onResubmit}
       />
     );
@@ -259,16 +280,27 @@ function SearchResultsPanel({
 
   // COMPLETE from here on.
   if (resultsLoading || results === null) {
-    return <p className="p-4 text-sm text-slate-400">Loading results&hellip;</p>;
+    return (
+      <div className="flex flex-col gap-2 p-4">
+        <ResolvedRangeNote detail={detail} loading={detailLoading} />
+        <p className="text-sm text-slate-400">Loading results&hellip;</p>
+      </div>
+    );
   }
   if (results.total_rows === 0) {
-    return <p className="p-4 text-sm text-slate-400">No flights matched this search.</p>;
+    return (
+      <div className="flex flex-col gap-2 p-4">
+        <ResolvedRangeNote detail={detail} loading={detailLoading} />
+        <p className="text-sm text-slate-400">No flights matched this search.</p>
+      </div>
+    );
   }
 
   const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden">
+      <ResolvedRangeNote detail={detail} loading={detailLoading} />
       <div className="overflow-auto">
         <table className="w-full text-left text-sm">
           <thead>
@@ -376,11 +408,18 @@ export function HistoryView() {
   const [newSearchModalOpen, setNewSearchModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
-  const [whereClauseCache, setWhereClauseCache] = useState<Record<string, string>>({});
-  const [whereClauseLoading, setWhereClauseLoading] = useState(false);
+  // Per-search where_clause + resolved start_date/end_date, fetched lazily
+  // (see the detail-fetch effect below) regardless of status -- needed for
+  // FAILED/ABORTED's "Edit & Resubmit" and to show the resolved range next
+  // to any search's results, since that range may have come from
+  // derivation rather than anything the operator typed.
+  const [searchDetailCache, setSearchDetailCache] = useState<Record<string, ArchiveSearchDetail>>({});
+  const [detailLoading, setDetailLoading] = useState(false);
   // Seeds the New Search modal when resubmitting a failed/aborted search;
   // null for a blank "+ New Search" open.
-  const [resubmitSeed, setResubmitSeed] = useState<{ name: string; whereClause: string } | null>(null);
+  const [resubmitSeed, setResubmitSeed] = useState<
+    { name: string; whereClause: string; startDate: string; endDate: string } | null
+  >(null);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
@@ -453,30 +492,32 @@ export function HistoryView() {
     };
   }, [selectedSearch?.uuid, selectedSearch?.status, resultsPage, resultsPageSize, resultsSort]);
 
-  // Fetch the submitted WHERE clause for a FAILED/ABORTED search, so it can
-  // be shown and offered back for resubmission instead of forcing the user
-  // to retype it from scratch -- cached per-uuid like results above.
+  // Fetch the submitted WHERE clause and resolved date range for whichever
+  // search is selected, regardless of status -- FAILED/ABORTED needs it for
+  // "Edit & Resubmit", and every status shows the resolved range next to
+  // its results, since that range may have come from derivation rather
+  // than anything the operator typed. Cached per-uuid like results above.
   useEffect(() => {
-    if (!selectedSearch || (selectedSearch.status !== "FAILED" && selectedSearch.status !== "ABORTED")) return;
-    if (whereClauseCache[selectedSearch.uuid]) return;
+    if (!selectedSearch) return;
+    if (searchDetailCache[selectedSearch.uuid]) return;
     let cancelled = false;
-    setWhereClauseLoading(true);
+    setDetailLoading(true);
     getArchiveSearchDetail(selectedSearch.uuid)
       .then((detail) => {
         if (!cancelled) {
-          setWhereClauseCache((current) => ({ ...current, [detail.uuid]: detail.where_clause }));
+          setSearchDetailCache((current) => ({ ...current, [detail.uuid]: detail }));
         }
       })
       .catch((err) => {
-        if (!cancelled) showToast("error", err instanceof Error ? err.message : "Failed to load the submitted WHERE clause.");
+        if (!cancelled) showToast("error", err instanceof Error ? err.message : "Failed to load search details.");
       })
       .finally(() => {
-        if (!cancelled) setWhereClauseLoading(false);
+        if (!cancelled) setDetailLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedSearch?.uuid, selectedSearch?.status]);
+  }, [selectedSearch?.uuid]);
 
   function selectSearch(search: ArchiveSearchSummary) {
     setSelectedUuid((current) => (current === search.uuid ? null : search.uuid));
@@ -498,10 +539,10 @@ export function HistoryView() {
     setResultsPage(1);
   }
 
-  async function handleNewSearchConfirm(name: string, whereClause: string) {
+  async function handleNewSearchConfirm(name: string, whereClause: string, startDate: string, endDate: string) {
     setCreating(true);
     try {
-      const { uuid } = await createArchiveSearch(name, whereClause);
+      const { uuid } = await createArchiveSearch(name, whereClause, startDate, endDate);
       const updated = await listArchiveSearches();
       setSearches(updated);
       setSelectedUuid(uuid);
@@ -516,9 +557,17 @@ export function HistoryView() {
   }
 
   function handleResubmit(search: ArchiveSearchSummary) {
-    const whereClause = whereClauseCache[search.uuid];
-    if (whereClause === undefined) return;
-    setResubmitSeed({ name: search.name, whereClause });
+    const detail = searchDetailCache[search.uuid];
+    if (detail === undefined) return;
+    // Carries the persisted, already-RESOLVED dates forward verbatim (not
+    // re-derived) -- see main.py's create_archive_search docstring on why
+    // dropping these here would silently change what the resubmit matches.
+    setResubmitSeed({
+      name: search.name,
+      whereClause: detail.where_clause,
+      startDate: detail.start_date ?? "",
+      endDate: detail.end_date ?? "",
+    });
     setNewSearchModalOpen(true);
   }
 
@@ -673,8 +722,8 @@ export function HistoryView() {
                       sort={resultsSort}
                       onSortChange={handleSortChange}
                       onViewFlight={handleViewFlight}
-                      whereClause={whereClauseCache[search.uuid] ?? null}
-                      whereClauseLoading={whereClauseLoading}
+                      detail={searchDetailCache[search.uuid] ?? null}
+                      detailLoading={detailLoading}
                       onResubmit={() => handleResubmit(search)}
                       onDownloadCsv={() => handleDownloadCsv(search)}
                       downloadingCsv={downloadingCsv}
@@ -703,8 +752,8 @@ export function HistoryView() {
             sort={resultsSort}
             onSortChange={handleSortChange}
             onViewFlight={handleViewFlight}
-            whereClause={whereClauseCache[selectedSearch.uuid] ?? null}
-            whereClauseLoading={whereClauseLoading}
+            detail={searchDetailCache[selectedSearch.uuid] ?? null}
+            detailLoading={detailLoading}
             onResubmit={() => handleResubmit(selectedSearch)}
             onDownloadCsv={() => handleDownloadCsv(selectedSearch)}
             downloadingCsv={downloadingCsv}
@@ -724,6 +773,8 @@ export function HistoryView() {
         }}
         initialName={resubmitSeed?.name}
         initialWhereClause={resubmitSeed?.whereClause}
+        initialStartDate={resubmitSeed?.startDate}
+        initialEndDate={resubmitSeed?.endDate}
         title={resubmitSeed ? "Resubmit Search" : "New Search"}
       />
 

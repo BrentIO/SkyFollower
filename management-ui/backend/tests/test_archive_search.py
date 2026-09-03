@@ -19,6 +19,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from datetime import date, datetime, timezone
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
@@ -204,6 +205,21 @@ def _synchronous_thread():
         yield
 
 
+@contextmanager
+def _frozen_today(today: date):
+    """Pins ui_main's `datetime.now(timezone.utc)` to noon UTC on `today` --
+    create_archive_search's "tomorrow UTC" default and _resolve_search_range
+    both read the clock through this, so a test asserting an exact resolved
+    range needs it pinned rather than racing the real clock."""
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(today.year, today.month, today.day, 12, 0, 0, tzinfo=tz)
+
+    with patch.object(ui_main, "datetime", _Frozen):
+        yield
+
+
 def _configure_env(monkeypatch, tmp_path) -> None:
     for name, value in {
         "REDIS_HOST": "localhost",
@@ -253,9 +269,17 @@ def client(tmp_path, monkeypatch, fake_redis, fake_athena, fake_s3):
             yield c
 
 
-def _create_search(client, name="test search", where_clause="icao_hex = 'A8AE7F'"):
+def _create_search(
+    client, name="test search", where_clause="icao_hex = 'A8AE7F'",
+    start_date=None, end_date=None,
+):
+    body = {"name": name, "where_clause": where_clause}
+    if start_date is not None:
+        body["start_date"] = start_date
+    if end_date is not None:
+        body["end_date"] = end_date
     with _synchronous_thread():
-        resp = client.post("/api/archive/search", json={"name": name, "where_clause": where_clause})
+        resp = client.post("/api/archive/search", json=body)
     return resp
 
 
@@ -293,18 +317,394 @@ class TestWhereClauseValidation:
 
 class TestQueryConstruction:
     def test_select_list_and_table_are_backend_controlled(self, client, fake_athena):
-        _create_search(client, where_clause="icao_hex = 'A8AE7F'")
+        with _frozen_today(date(2026, 9, 3)):
+            _create_search(client, where_clause="icao_hex = 'A8AE7F'")
         query = fake_athena.started_queries[0]["QueryString"]
+        # No derivable timestamp predicate -> full default range
+        # (_ARCHIVE_EPOCH .. tomorrow UTC of the frozen clock).
         assert query.startswith(
             "SELECT icao_hex, registration, type_designator, military, "
             "operator_designator, ident, first_message, last_message, s3_key "
-            "FROM skyfollower.archive_flights WHERE (icao_hex = 'A8AE7F')"
+            "FROM skyfollower.archive_flights WHERE "
+            "((year='2022') OR (year='2023') OR (year='2024') OR (year='2025') "
+            "OR (year='2026' AND month BETWEEN '01' AND '08') "
+            "OR (year='2026' AND month='09' AND day BETWEEN '01' AND '04')) "
+            "AND (icao_hex = 'A8AE7F')"
         )
 
-    def test_where_clause_is_parenthesized(self, client, fake_athena):
-        _create_search(client, where_clause="a = 1 OR b = 2")
+    def test_where_clause_is_parenthesized_after_the_partition_predicate(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            _create_search(client, where_clause="a = 1 OR b = 2")
         query = fake_athena.started_queries[0]["QueryString"]
-        assert "WHERE (a = 1 OR b = 2)" in query
+        assert query.endswith("AND (a = 1 OR b = 2)")
+
+    def test_explicit_range_narrows_the_partition_predicate(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            _create_search(
+                client, where_clause="icao_hex = 'A8AE7F'",
+                start_date="2026-09-01", end_date="2026-09-01",
+            )
+        query = fake_athena.started_queries[0]["QueryString"]
+        assert "WHERE ((year='2026' AND month='09' AND day BETWEEN '01' AND '01')) AND (icao_hex = 'A8AE7F')" in query
+
+
+# ---------------------------------------------------------------------------
+# Partition predicate generator -- coarsest-clause-per-span, from the
+# worked-examples table.
+# ---------------------------------------------------------------------------
+
+class TestPartitionPredicate:
+    def test_single_day(self):
+        got = ui_main._partition_predicate(date(2026, 9, 1), date(2026, 9, 1))
+        assert got == "(year='2026' AND month='09' AND day BETWEEN '01' AND '01')"
+
+    def test_day_range_within_a_month(self):
+        got = ui_main._partition_predicate(date(2026, 9, 3), date(2026, 9, 10))
+        assert got == "(year='2026' AND month='09' AND day BETWEEN '03' AND '10')"
+
+    def test_range_spanning_two_months(self):
+        got = ui_main._partition_predicate(date(2026, 8, 3), date(2026, 9, 2))
+        assert got == (
+            "(year='2026' AND month='08' AND day BETWEEN '03' AND '31') "
+            "OR (year='2026' AND month='09' AND day BETWEEN '01' AND '02')"
+        )
+
+    def test_whole_month_collapses_even_on_a_28_day_february(self):
+        got = ui_main._partition_predicate(date(2026, 2, 1), date(2026, 2, 28))
+        assert got == "(year='2026' AND month='02')"
+
+    def test_whole_month_collapses_on_a_29_day_leap_february(self):
+        got = ui_main._partition_predicate(date(2024, 2, 1), date(2024, 2, 29))
+        assert got == "(year='2024' AND month='02')"
+
+    def test_contiguous_whole_months_collapse_to_a_month_range(self):
+        got = ui_main._partition_predicate(date(2026, 1, 1), date(2026, 8, 31))
+        assert got == "(year='2026' AND month BETWEEN '01' AND '08')"
+
+    def test_multi_year_range_mixes_whole_years_months_and_days(self):
+        got = ui_main._partition_predicate(date(2022, 1, 1), date(2026, 9, 3))
+        assert got == (
+            "(year='2022') OR (year='2023') OR (year='2024') OR (year='2025') "
+            "OR (year='2026' AND month BETWEEN '01' AND '08') "
+            "OR (year='2026' AND month='09' AND day BETWEEN '01' AND '03')"
+        )
+
+    def test_start_equals_end_is_valid(self):
+        got = ui_main._partition_predicate(date(2026, 1, 1), date(2026, 1, 1))
+        assert got == "(year='2026' AND month='01' AND day BETWEEN '01' AND '01')"
+
+    def test_whole_multi_year_span_collapses_to_bare_years(self):
+        got = ui_main._partition_predicate(date(2022, 1, 1), date(2023, 12, 31))
+        assert got == "(year='2022') OR (year='2023')"
+
+
+# ---------------------------------------------------------------------------
+# _ARCHIVE_EPOCH must stay coupled to the Glue table's own partition
+# projection lower bound -- a range wider than the projection can never
+# match anything.
+# ---------------------------------------------------------------------------
+
+class TestArchiveEpochCoupling:
+    def test_archive_epoch_matches_glue_projection_year_range_lower_bound(self):
+        from shared.glue_projection import YEAR_RANGE
+        assert ui_main._ARCHIVE_EPOCH == date(YEAR_RANGE[0], 1, 1)
+
+    def test_archive_epoch_not_earlier_than_glue_projection_year_range(self):
+        from shared.glue_projection import YEAR_RANGE
+        assert ui_main._ARCHIVE_EPOCH.year >= YEAR_RANGE[0]
+
+
+# ---------------------------------------------------------------------------
+# Partition-range derivation from the WHERE clause's own timestamp
+# predicates (see _derive_bounds) -- the highest-risk part of this change.
+# Vectors mirror the issue's own "Deriving the partition range" table.
+# ---------------------------------------------------------------------------
+
+class TestDeriveBounds:
+    def test_between_gives_both_bounds(self):
+        lo, hi = ui_main._derive_bounds(
+            "first_message BETWEEN timestamp '2026-09-01 11:00:00' AND timestamp '2026-09-01 13:00:00'"
+        )
+        assert (lo, hi) == (date(2026, 9, 1), date(2026, 9, 1))
+
+    def test_gte_gives_a_lower_bound_only(self):
+        lo, hi = ui_main._derive_bounds(
+            "icao_hex='A445B0' AND first_message >= timestamp '2026-09-01 00:00:00'"
+        )
+        assert (lo, hi) == (date(2026, 9, 1), None)
+
+    def test_flipped_orientation_still_derives(self):
+        lo, hi = ui_main._derive_bounds("timestamp '2026-09-01' <= first_message")
+        assert (lo, hi) == (date(2026, 9, 1), None)
+
+    def test_last_message_lte_gives_upper_bound_only(self):
+        lo, hi = ui_main._derive_bounds("last_message <= timestamp '2026-09-02 00:00:00'")
+        assert (lo, hi) == (None, date(2026, 9, 2))
+
+    def test_last_message_gte_gives_no_bound(self):
+        """A flight can start long before it ends -- last_message >= T says
+        nothing about how early first_message could be. Must not be
+        (mis)treated as a lower bound."""
+        lo, hi = ui_main._derive_bounds("last_message >= timestamp '2026-09-02 00:00:00'")
+        assert (lo, hi) == (None, None)
+
+    def test_or_bails_to_all_time(self):
+        lo, hi = ui_main._derive_bounds("first_message > timestamp '2026-09-01' OR icao_hex='ABC'")
+        assert (lo, hi) == (None, None)
+
+    def test_not_bails_to_all_time(self):
+        lo, hi = ui_main._derive_bounds("NOT (first_message < timestamp '2026-09-01')")
+        assert (lo, hi) == (None, None)
+
+    def test_timestamp_shaped_string_literal_is_not_a_column(self):
+        """A regex would match this inside the string literal and silently
+        narrow -- sqlglot must see 'ident' as the only real column here."""
+        lo, hi = ui_main._derive_bounds("ident = 'first_message > 2020-01-01'")
+        assert (lo, hi) == (None, None)
+
+    def test_no_timestamp_predicate_bails_to_all_time(self):
+        lo, hi = ui_main._derive_bounds("operator_designator = 'DAL'")
+        assert (lo, hi) == (None, None)
+
+    def test_parse_failure_bails_to_all_time(self):
+        lo, hi = ui_main._derive_bounds("this is not valid sql at all ((")
+        assert (lo, hi) == (None, None)
+
+    def test_equals_gives_both_bounds_for_first_message(self):
+        lo, hi = ui_main._derive_bounds("first_message = timestamp '2026-09-01 00:00:00'")
+        assert (lo, hi) == (date(2026, 9, 1), date(2026, 9, 1))
+
+    def test_equals_gives_upper_bound_only_for_last_message(self):
+        lo, hi = ui_main._derive_bounds("last_message = timestamp '2026-09-01 00:00:00'")
+        assert (lo, hi) == (None, date(2026, 9, 1))
+
+    def test_multiple_predicates_take_the_tightest_bound(self):
+        lo, hi = ui_main._derive_bounds(
+            "first_message >= timestamp '2026-09-01' AND first_message >= timestamp '2026-09-05'"
+        )
+        assert lo == date(2026, 9, 5)
+
+
+# ---------------------------------------------------------------------------
+# Range resolution -- intersecting the archive epoch/tomorrow defaults, the
+# WHERE clause's own derived bounds (widened +/-1 day), and any explicit
+# UI-supplied range.
+# ---------------------------------------------------------------------------
+
+class TestResolveSearchRange:
+    def test_all_time_default_is_epoch_to_tomorrow_utc(self):
+        with _frozen_today(date(2026, 9, 3)):
+            start, end = ui_main._resolve_search_range(
+                "operator_designator = 'DAL'", ui_main._ARCHIVE_EPOCH, date(2026, 9, 4)
+            )
+        assert (start, end) == (ui_main._ARCHIVE_EPOCH, date(2026, 9, 4))
+
+    def test_derived_range_widened_by_a_day_each_side(self):
+        with _frozen_today(date(2026, 9, 3)):
+            start, end = ui_main._resolve_search_range(
+                "first_message BETWEEN timestamp '2026-09-01 11:00:00' AND timestamp '2026-09-01 13:00:00'",
+                ui_main._ARCHIVE_EPOCH, date(2026, 9, 4),
+            )
+        assert (start, end) == (date(2026, 8, 31), date(2026, 9, 2))
+
+    def test_explicit_range_honored_verbatim_when_clause_has_no_timestamp(self):
+        start, end = ui_main._resolve_search_range(
+            "icao_hex='A445B0'", date(2026, 9, 1), date(2026, 9, 1)
+        )
+        assert (start, end) == (date(2026, 9, 1), date(2026, 9, 1))
+
+    def test_empty_intersection_returns_none_none(self):
+        """A first_message clause bounded to <= Sep 2, intersected with an
+        explicit start of Sep 5 -- no possible overlap."""
+        start, end = ui_main._resolve_search_range(
+            "first_message BETWEEN timestamp '2026-09-01' AND timestamp '2026-09-02'",
+            date(2026, 9, 5), date(2026, 9, 10),
+        )
+        assert (start, end) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# start_date/end_date validation and defaulting at the API boundary.
+# ---------------------------------------------------------------------------
+
+class TestDateRangeValidation:
+    def test_explicit_start_after_end_returns_400(self, client):
+        resp = client.post(
+            "/api/archive/search",
+            json={
+                "name": "x", "where_clause": "1=1",
+                "start_date": "2026-09-10", "end_date": "2026-09-01",
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_start_after_default_end_returns_400(self, client):
+        """No end_date given -> defaults to tomorrow UTC; an explicit
+        start_date past that default is still an operator-supplied
+        contradiction, not a derivation-only emptiness."""
+        with _frozen_today(date(2026, 9, 3)):
+            resp = client.post(
+                "/api/archive/search",
+                json={"name": "x", "where_clause": "1=1", "start_date": "2026-09-10"},
+            )
+        assert resp.status_code == 400
+
+    def test_start_equal_to_end_is_valid(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            resp = _create_search(
+                client, where_clause="1=1", start_date="2026-09-01", end_date="2026-09-01"
+            )
+        assert resp.status_code == 202
+
+    def test_resolved_dates_persisted_and_visible_on_detail(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            resp = _create_search(
+                client, where_clause="icao_hex='A445B0'",
+                start_date="2026-09-01", end_date="2026-09-01",
+            )
+        uuid = resp.json()["uuid"]
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        assert detail["start_date"] == "2026-09-01"
+        assert detail["end_date"] == "2026-09-01"
+
+    def test_legacy_record_with_no_date_fields_still_loads(self, client, fake_redis):
+        fake_redis.store["archive_search:legacy-uuid"] = json.dumps({
+            "name": "old search", "where_clause": "1=1", "status": "COMPLETE",
+            "submitted_at": "2026-01-01T00:00:00+00:00", "query_execution_id": "exec-old",
+        })
+        fake_redis.sadd("archive_search:index", "legacy-uuid")
+        resp = client.get("/api/archive/search/legacy-uuid")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["start_date"] is None
+        assert body["end_date"] is None
+
+    def test_resubmit_with_persisted_dates_reproduces_identical_query(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            first = _create_search(
+                client, where_clause="icao_hex='A445B0'",
+                start_date="2026-08-01", end_date="2026-09-01",
+            )
+        uuid = first.json()["uuid"]
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        first_query = fake_athena.started_queries[0]["QueryString"]
+
+        # Resubmit with a later frozen clock -- the persisted, already-
+        # resolved dates must be reused verbatim rather than re-resolving
+        # "tomorrow" against the new clock.
+        with _frozen_today(date(2026, 12, 25)):
+            second = _create_search(
+                client, name="resubmitted", where_clause="icao_hex='A445B0'",
+                start_date=detail["start_date"], end_date=detail["end_date"],
+            )
+        second_query = fake_athena.started_queries[1]["QueryString"]
+        assert second_query == first_query
+        assert second.status_code == 202
+
+
+# ---------------------------------------------------------------------------
+# Empty-intersection short-circuit: a contradiction only visible after
+# derivation must resolve to a real, zero-row COMPLETE search without ever
+# calling Athena -- distinct from the 400 above on the operator's own
+# explicit start > end.
+# ---------------------------------------------------------------------------
+
+class TestEmptyIntersectionShortCircuit:
+    def test_no_athena_call_is_made(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            resp = _create_search(
+                client,
+                where_clause="first_message BETWEEN timestamp '2026-09-01 00:00:00' AND timestamp '2026-09-30 00:00:00'",
+                start_date="2026-09-05", end_date="2026-09-06",
+            )
+        assert resp.status_code == 202
+        assert fake_athena.started_queries == []
+
+    def test_search_is_immediately_complete_with_zero_rows(self, client, fake_athena):
+        with _frozen_today(date(2026, 9, 3)):
+            resp = _create_search(
+                client,
+                where_clause="first_message BETWEEN timestamp '2026-09-01 00:00:00' AND timestamp '2026-09-30 00:00:00'",
+                start_date="2026-09-05", end_date="2026-09-06",
+            )
+        uuid = resp.json()["uuid"]
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        assert detail["status"] == "COMPLETE"
+
+        results = client.get(f"/api/archive/search/{uuid}/results").json()
+        assert results == {"rows": [], "total_rows": 0}
+
+    def test_delete_of_an_empty_intersection_search_does_not_touch_s3_or_athena(
+        self, client, fake_athena, fake_s3
+    ):
+        with _frozen_today(date(2026, 9, 3)):
+            resp = _create_search(
+                client,
+                where_clause="first_message BETWEEN timestamp '2026-09-01 00:00:00' AND timestamp '2026-09-30 00:00:00'",
+                start_date="2026-09-05", end_date="2026-09-06",
+            )
+        uuid = resp.json()["uuid"]
+        delete_resp = client.delete(f"/api/archive/search/{uuid}")
+        assert delete_resp.status_code == 204
+        assert fake_s3.deleted == []
+
+
+# ---------------------------------------------------------------------------
+# Property test: partition-predicate derivation is an optimisation only --
+# it must never change which rows a query matches. Executes the ACTUAL
+# generated SQL (via sqlglot's own pure-Python executor, against an
+# in-memory table) with derivation enabled (the real, possibly-narrowed
+# partition predicate) vs. forced off (a partition predicate spanning the
+# full archive range, i.e. every partition), and asserts the two produce
+# identical row sets for every vector -- not just the worked examples, a
+# real end-to-end evaluation of the generated WHERE clause.
+# ---------------------------------------------------------------------------
+
+class TestDerivationSupersetProperty:
+    # icao_hex doubles as the row's identity for comparing result sets.
+    # year/month/day mirror what the real S3 key layout/Parquet index would
+    # carry for each row's first_message -- exactly what the partition
+    # predicate is written to filter on.
+    _TABLE_ROWS = [
+        {"icao_hex": "A00001", "operator_designator": "DAL", "first_message": "2022-01-01 00:00:00.000",
+         "last_message": "2022-01-01 01:00:00.000", "year": "2022", "month": "01", "day": "01"},
+        {"icao_hex": "A00002", "operator_designator": "UAL", "first_message": "2026-07-31 12:00:00.000",
+         "last_message": "2026-07-31 13:00:00.000", "year": "2026", "month": "07", "day": "31"},
+        {"icao_hex": "A00003", "operator_designator": "AAL", "first_message": "2026-08-01 00:00:00.000",
+         "last_message": "2026-08-01 01:00:00.000", "year": "2026", "month": "08", "day": "01"},
+        {"icao_hex": "A00004", "operator_designator": "DAL", "first_message": "2026-08-15 09:00:00.000",
+         "last_message": "2026-08-15 10:00:00.000", "year": "2026", "month": "08", "day": "15"},
+        {"icao_hex": "A00005", "operator_designator": "SWA", "first_message": "2026-09-03 00:00:00.000",
+         "last_message": "2026-09-03 01:00:00.000", "year": "2026", "month": "09", "day": "03"},
+    ]
+
+    def _matching_icao_hexes(self, partition_predicate: str, where_clause: str) -> set[str]:
+        from sqlglot.executor import execute
+        query = f"SELECT icao_hex FROM skyfollower.archive_flights WHERE ({partition_predicate}) AND ({where_clause})"
+        table = execute(query, dialect="trino", tables={"skyfollower": {"archive_flights": self._TABLE_ROWS}})
+        return {row[0] for row in table.rows}
+
+    @pytest.mark.parametrize("where_clause", [
+        "first_message BETWEEN timestamp '2026-07-31 00:00:00' AND timestamp '2026-07-31 23:59:59'",
+        "first_message >= timestamp '2026-08-01 00:00:00'",
+        "last_message <= timestamp '2026-08-01 01:00:00'",
+        "icao_hex = 'A00001'",
+        "first_message > timestamp '2026-07-01' OR icao_hex = 'A00001'",
+        "NOT (first_message < timestamp '2026-08-01')",
+        "operator_designator = 'DAL'",
+    ])
+    def test_derivation_enabled_matches_derivation_forced_off(self, where_clause):
+        with _frozen_today(date(2026, 9, 3)):
+            today = ui_main.datetime.now(ui_main.timezone.utc).date()
+            tomorrow = today + ui_main.timedelta(days=1)
+            start, end = ui_main._resolve_search_range(where_clause, ui_main._ARCHIVE_EPOCH, tomorrow)
+            assert start is not None, "none of this test's vectors should derive an empty intersection"
+            derived_predicate = ui_main._partition_predicate(start, end)
+            full_range_predicate = ui_main._partition_predicate(ui_main._ARCHIVE_EPOCH, tomorrow)
+
+        enabled = self._matching_icao_hexes(derived_predicate, where_clause)
+        forced_off = self._matching_icao_hexes(full_range_predicate, where_clause)
+        assert enabled == forced_off
 
 
 # ---------------------------------------------------------------------------

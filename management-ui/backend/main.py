@@ -18,6 +18,7 @@ nginx serves the built frontend at / and proxies /api/* to this process.
 
 from __future__ import annotations
 
+import calendar
 import csv
 import hashlib
 import io
@@ -32,11 +33,12 @@ import threading
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal, Optional, Union
 
 import boto3
 import redis as redis_lib
+import sqlglot
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException, Response
 from fastapi import Query as FastAPIQuery
@@ -46,6 +48,7 @@ from pydantic import BaseModel, Field, field_validator
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query as RedisSearchQuery
+from sqlglot import exp
 from uuid_extensions import uuid7
 
 # Add the repo root to sys.path so shared/ is importable when this module is
@@ -61,6 +64,7 @@ from shared.config import RECEIVER_SOURCE_TAGS, load_config  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
+from shared.glue_projection import YEAR_RANGE as _GLUE_YEAR_RANGE  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
     AIRCRAFT_MICTRONICS_SEARCH_INDEX,
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
@@ -1621,6 +1625,11 @@ _AWS_ERROR = {502: {"description": "AWS (Athena/S3) error", "model": ErrorDetail
 class ArchiveSearchCreate(BaseModel):
     name: str = Field(..., min_length=1)
     where_clause: str = Field(..., min_length=1)
+    # Both optional -- an omitted bound defaults to the full archive range
+    # (_ARCHIVE_EPOCH .. tomorrow UTC) at creation time. UTC calendar dates,
+    # matching the year/month/day partition columns they narrow.
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ArchiveSearchSummary(BaseModel):
@@ -1636,6 +1645,13 @@ class ArchiveSearchSummary(BaseModel):
 
 class ArchiveSearchDetail(ArchiveSearchSummary):
     where_clause: str
+    # The RESOLVED range actually queried (explicit input intersected with
+    # whatever _derive_bounds could prove from where_clause, clamped to
+    # _ARCHIVE_EPOCH..tomorrow UTC) -- not the raw optional request fields.
+    # Optional here only so a record written before this field existed still
+    # deserializes (see get_archive_search's .get() reads).
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ArchiveSearchResultsPage(BaseModel):
@@ -1675,14 +1691,239 @@ def _validate_where_clause(where_clause: str) -> None:
         )
 
 
-def _build_search_query(where_clause: str) -> str:
+# Lower bound of the archive. Built from shared.glue_projection.YEAR_RANGE
+# (the same source specs/aws/cloudformation.yaml's Glue table and
+# shared/tests/test_cloudformation_template.py are checked against) rather
+# than a hand-copied literal, so this can never silently drift out of sync
+# with projection.year.range -- a range wider than the projection can't
+# match anything, so widening one always means widening both.
+#
+# Deliberately NOT tightened to the real earliest flight (2022-07-11, per the
+# S3 migration open item). Being earlier than the data costs a handful of
+# extra empty partition LISTs; being LATER than the data silently drops rows
+# with no error. Keep this aligned with the projection's lower bound, not
+# with when the archive actually starts, so the two stay coupled to each
+# other and to nothing else.
+_ARCHIVE_EPOCH = date(_GLUE_YEAR_RANGE[0], 1, 1)
+
+# Columns _derive_bounds will read a bound from. first_message gives both a
+# lower and upper bound -- it's a single instant, so any comparison against
+# it constrains both sides of the range from that one predicate.
+# last_message only ever gives an upper bound: last_message <= T implies
+# first_message <= T (the flight can't end after it starts... after T), but
+# last_message >= T says nothing about how early the flight could have
+# started. Do not add a lower-bound use of last_message.
+_LOWER_BOUND_COLUMNS = ("first_message",)
+_UPPER_BOUND_COLUMNS = ("first_message", "last_message")
+
+
+def _partition_predicate(start: date, end: date) -> str:
+    """OR-joined clauses on the year/month/day partition columns covering
+    `[start, end]` inclusive, using the coarsest clause that exactly covers
+    each span (a whole year, then whole months within a year, then a day
+    range within a month) so a wide range doesn't degenerate into 1,000+
+    single-day ORs. year is unpadded 4-digit; month/day are zero-padded to
+    2 digits, matching projection.month.digits/projection.day.digits in
+    specs/aws/cloudformation.yaml -- an unpadded 'month=9' matches no
+    partition Athena actually generates.
+
+    "Whole month" is judged against the real last day of that month
+    (calendar.monthrange), not the 31st -- partition projection generates
+    day=01..31 unconditionally regardless of the month's real length, so a
+    surplus day prefix (e.g. day=30 in February) just LISTs an empty
+    location rather than causing a mismatch.
+    """
+    clauses = []
+    cur = start
+    while cur <= end:
+        year_end = date(cur.year, 12, 31)
+        if cur.month == 1 and cur.day == 1 and year_end <= end:
+            clauses.append(f"(year='{cur.year}')")
+            cur = year_end + timedelta(days=1)
+            continue
+
+        month_last_day = calendar.monthrange(cur.year, cur.month)[1]
+        month_end = date(cur.year, cur.month, month_last_day)
+        if cur.day == 1 and month_end <= end:
+            # Extend across any further contiguous whole months, still
+            # within this calendar year (a year boundary always gets its
+            # own clause via the whole-year case above on the next lap).
+            run_end_month = cur.month
+            probe = month_end
+            while probe < date(cur.year, 12, 31):
+                next_month_first = probe + timedelta(days=1)
+                if next_month_first.year != cur.year:
+                    break
+                next_last_day = calendar.monthrange(next_month_first.year, next_month_first.month)[1]
+                next_month_end = date(next_month_first.year, next_month_first.month, next_last_day)
+                if next_month_end > end:
+                    break
+                run_end_month = next_month_first.month
+                probe = next_month_end
+            if run_end_month == cur.month:
+                clauses.append(f"(year='{cur.year}' AND month='{cur.month:02d}')")
+            else:
+                clauses.append(
+                    f"(year='{cur.year}' AND month BETWEEN '{cur.month:02d}' AND '{run_end_month:02d}')"
+                )
+            cur = probe + timedelta(days=1)
+            continue
+
+        month_last = date(cur.year, cur.month, month_last_day)
+        day_end = min(end, month_last)
+        clauses.append(
+            f"(year='{cur.year}' AND month='{cur.month:02d}' "
+            f"AND day BETWEEN '{cur.day:02d}' AND '{day_end.day:02d}')"
+        )
+        cur = day_end + timedelta(days=1)
+
+    return " OR ".join(clauses)
+
+
+def _literal_date(node: exp.Expression) -> Optional[date]:
+    """First string literal under `node`, read as a leading YYYY-MM-DD --
+    tolerant of a full timestamp literal ('2026-09-01 00:00:00') since that's
+    the only literal shape this UI's WHERE clauses actually use."""
+    for lit in node.find_all(exp.Literal):
+        if lit.is_string:
+            try:
+                return date.fromisoformat(lit.this[:10])
+            except ValueError:
+                return None
+    return None
+
+
+def _comparison_sides(node: exp.Binary) -> tuple[Optional[str], Optional[date], bool]:
+    """(column_name, literal_date, flipped) for a binary comparison node --
+    `flipped` is True when the literal appears on the left (e.g.
+    ""timestamp '...' <= first_message""), so the caller can invert which
+    side of the comparison the column is really on."""
+    left, right = node.this, node.expression
+    if isinstance(left, exp.Column):
+        return left.name, _literal_date(right), False
+    if isinstance(right, exp.Column):
+        return right.name, _literal_date(left), True
+    return None, None, False
+
+
+def _derive_bounds(where_clause: str) -> tuple[Optional[date], Optional[date]]:
+    """The widest date range that can contain every row `where_clause` could
+    possibly match, read off its own first_message/last_message predicates
+    -- or (None, None) if nothing could be proven, meaning the caller must
+    fall back to the full archive range. This is an optimisation layered on
+    top of a WHERE clause that is already fully evaluated by Athena; getting
+    it wrong must never drop a row that where_clause itself would have
+    matched, so every bail-out below is deliberately conservative.
+
+    Only sound inside a pure AND conjunction, where every conjunct is a
+    necessary condition on a matching row. An OR or a NOT breaks that --
+    `first_message > X OR icao_hex = 'ABC'` can match rows outside the
+    range implied by the first_message predicate alone -- so either one
+    anywhere in the clause bails out to (None, None) rather than risk
+    narrowing past a row Athena would have returned.
+
+    Uses sqlglot rather than a regex specifically so a column reference is
+    never confused with the same text inside a string literal --
+    e.g. ident = 'first_message > 2020-01-01' has zero real column
+    predicates on it, and a regex scanning the raw text would get that
+    wrong silently (fewer rows, no error) rather than just not narrowing.
+    """
+    try:
+        tree = sqlglot.parse_one(where_clause, dialect="trino")
+    except Exception:
+        return None, None
+    if tree is None or tree.find(exp.Or) or tree.find(exp.Not):
+        return None, None
+
+    lo: Optional[date] = None
+    hi: Optional[date] = None
+
+    for node in tree.find_all(exp.Between):
+        if isinstance(node.this, exp.Column):
+            column = node.this.name
+            if column in _LOWER_BOUND_COLUMNS:
+                low = _literal_date(node.args["low"])
+                if low is not None:
+                    lo = low if lo is None else max(lo, low)
+            if column in _UPPER_BOUND_COLUMNS:
+                high = _literal_date(node.args["high"])
+                if high is not None:
+                    hi = high if hi is None else min(hi, high)
+
+    # >=/> give a lower bound; <=/< give an upper bound -- unless the
+    # column turns out to be on the literal's side of the operator
+    # (`flipped`), which inverts which bound the comparison actually
+    # establishes (""timestamp '...' <= first_message"" is a LOWER bound
+    # on first_message, even though <= normally reads as an upper one).
+    for comparison_cls, implies in ((exp.GTE, "lo"), (exp.GT, "lo"), (exp.LTE, "hi"), (exp.LT, "hi")):
+        for node in tree.find_all(comparison_cls):
+            column, literal, flipped = _comparison_sides(node)
+            if not column or literal is None:
+                continue
+            bound = implies if not flipped else ("hi" if implies == "lo" else "lo")
+            if bound == "lo" and column in _LOWER_BOUND_COLUMNS:
+                lo = literal if lo is None else max(lo, literal)
+            elif bound == "hi" and column in _UPPER_BOUND_COLUMNS:
+                hi = literal if hi is None else min(hi, literal)
+
+    for node in tree.find_all(exp.EQ):
+        column, literal, _flipped = _comparison_sides(node)
+        if literal is None:
+            continue
+        if column in _LOWER_BOUND_COLUMNS:
+            lo = literal if lo is None else max(lo, literal)
+        if column in _UPPER_BOUND_COLUMNS:
+            hi = literal if hi is None else min(hi, literal)
+
+    return lo, hi
+
+
+def _resolve_search_range(
+    where_clause: str, explicit_start: Optional[date], explicit_end: Optional[date]
+) -> tuple[Optional[date], Optional[date]]:
+    """Intersects three independent constraints on the query's date range --
+    the archive's own bounds, what where_clause's own predicates can prove
+    (widened by a day each side as boundary/timezone insurance), and
+    whatever the operator explicitly set -- and returns the tightest result.
+    (None, None) signals an empty intersection (e.g. an explicit range that
+    doesn't overlap what where_clause could ever match): a real, zero-row
+    answer, distinguished by the caller from explicit_start > explicit_end,
+    which is a 400 on the operator's own input rather than a derived
+    emptiness.
+    """
+    derived_lo, derived_hi = _derive_bounds(where_clause)
+    today = datetime.now(timezone.utc).date()
+
+    lower_bounds = [_ARCHIVE_EPOCH]
+    if derived_lo is not None:
+        lower_bounds.append(derived_lo - timedelta(days=1))
+    if explicit_start is not None:
+        lower_bounds.append(explicit_start)
+
+    upper_bounds = [today + timedelta(days=1)]
+    if derived_hi is not None:
+        upper_bounds.append(derived_hi + timedelta(days=1))
+    if explicit_end is not None:
+        upper_bounds.append(explicit_end)
+
+    start = max(lower_bounds)
+    end = min(upper_bounds)
+    if start > end:
+        return None, None
+    return start, end
+
+
+def _build_search_query(partition_predicate: str, where_clause: str) -> str:
     """The SELECT list and FROM table are always backend-controlled, never
-    influenced by user input -- where_clause only ever fills the WHERE
-    fragment, parenthesized so it can't prematurely close the clause and
-    inject a sibling SQL construct."""
+    influenced by user input -- where_clause only ever fills the second
+    WHERE fragment, parenthesized so it can't prematurely close the clause
+    and inject a sibling SQL construct. partition_predicate is backend-
+    generated too (see _partition_predicate) -- its only purpose is
+    pruning Athena's partition scan; it must always be a superset of what
+    where_clause alone would match, never a narrower filter."""
     columns = ", ".join(_SEARCH_SELECT_COLUMNS)
     table = f'{_athena_cfg["database"]}.{_athena_cfg["table"]}'
-    return f"SELECT {columns} FROM {table} WHERE ({where_clause})"
+    return f"SELECT {columns} FROM {table} WHERE ({partition_predicate}) AND ({where_clause})"
 
 
 def _expires_at(submitted_at_iso: str) -> str:
@@ -1925,7 +2166,42 @@ def create_archive_search(body: ArchiveSearchCreate):
         raise HTTPException(status_code=400, detail="where_clause must not be empty")
     _validate_where_clause(where_clause)
 
-    query = _build_search_query(where_clause)
+    today = datetime.now(timezone.utc).date()
+    explicit_start = body.start_date or _ARCHIVE_EPOCH
+    explicit_end = body.end_date or (today + timedelta(days=1))
+    if explicit_start > explicit_end:
+        raise HTTPException(status_code=400, detail="start_date must not be after end_date")
+
+    start, end = _resolve_search_range(where_clause, explicit_start, explicit_end)
+
+    search_uuid = str(uuid7())
+    submitted_at = datetime.now(timezone.utc).isoformat()
+
+    if start is None:
+        # The operator's explicit range and what where_clause's own
+        # predicates could ever match don't overlap -- a real, zero-row
+        # answer (see _resolve_search_range's docstring), not an error.
+        # Recorded as already COMPLETE with no Athena query ever started,
+        # rather than spending a query to prove what's already provably
+        # empty.
+        record = {
+            "name": body.name,
+            "where_clause": where_clause,
+            "status": "COMPLETE",
+            "submitted_at": submitted_at,
+            "query_execution_id": None,
+            "start_date": explicit_start.isoformat(),
+            "end_date": explicit_end.isoformat(),
+        }
+        _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=ARCHIVE_SEARCH_TTL_SECONDS)
+        try:
+            _redis.sadd(archive_search_index_key(), search_uuid)
+        except redis_lib.RedisError as exc:
+            logger.warning("Failed to add search %s to the archive search index: %s", search_uuid, exc)
+        return JSONResponse(status_code=202, content={"uuid": search_uuid})
+
+    partition_predicate = _partition_predicate(start, end)
+    query = _build_search_query(partition_predicate, where_clause)
     try:
         resp = _athena_client.start_query_execution(
             QueryString=query,
@@ -1936,14 +2212,18 @@ def create_archive_search(body: ArchiveSearchCreate):
         raise HTTPException(status_code=502, detail=f"Failed to start Athena query: {exc}") from exc
     query_execution_id = resp["QueryExecutionId"]
 
-    search_uuid = str(uuid7())
-    submitted_at = datetime.now(timezone.utc).isoformat()
     record = {
         "name": body.name,
         "where_clause": where_clause,
         "status": "RUNNING",
         "submitted_at": submitted_at,
         "query_execution_id": query_execution_id,
+        # The RESOLVED range actually queried (explicit input intersected
+        # with where_clause's own derived bounds) -- persisted so a
+        # resubmit reproduces this exact range rather than re-resolving
+        # "tomorrow" against a later clock.
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
     }
     _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=ARCHIVE_SEARCH_TTL_SECONDS)
     try:
@@ -1985,7 +2265,14 @@ def list_archive_searches():
 )
 def get_archive_search(uuid: str):
     record = _get_search_record(uuid)
-    return JSONResponse(content={**_search_summary(uuid, record), "where_clause": record["where_clause"]})
+    return JSONResponse(content={
+        **_search_summary(uuid, record),
+        "where_clause": record["where_clause"],
+        # .get() rather than direct indexing -- a record written before
+        # this field existed still deserializes, just with no range shown.
+        "start_date": record.get("start_date"),
+        "end_date": record.get("end_date"),
+    })
 
 
 @app.get(
@@ -2007,6 +2294,12 @@ def get_archive_search_results(
             status_code=400,
             detail=f"Search '{uuid}' is not complete (status: {record['status']})",
         )
+    if record.get("query_execution_id") is None:
+        # Empty-intersection short-circuit from create_archive_search --
+        # no Athena query was ever run because the resolved date range and
+        # where_clause's own derived range don't overlap, so there is
+        # nothing to fetch or paginate.
+        return JSONResponse(content={"rows": [], "total_rows": 0})
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
     # Sort the whole cached result set (not just the requested page) so this
     # behaves like a real column sort -- _fetch_and_cache_results already
@@ -2036,10 +2329,13 @@ def delete_archive_search(uuid: str):
         except Exception as exc:
             logger.warning("Best-effort stop_query_execution failed for search %s: %s", uuid, exc)
 
-    if record["status"] == "COMPLETE":
-        # Delete the risky/expensive side (the S3 result file) before the
-        # Redis pointer to it, matching archive-compaction's own
-        # write-then-delete ordering principle.
+    if record["status"] == "COMPLETE" and record.get("query_execution_id") is not None:
+        # query_execution_id is None for an empty-intersection short-circuit
+        # (see create_archive_search) -- no query ever ran, so there is no
+        # result file in S3 to clean up. Delete the risky/expensive side
+        # (the S3 result file) before the Redis pointer to it otherwise,
+        # matching archive-compaction's own write-then-delete ordering
+        # principle.
         try:
             output_location = _result_output_location(record["query_execution_id"])
             bucket, key = _parse_s3_uri(output_location)

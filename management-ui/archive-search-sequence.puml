@@ -17,18 +17,31 @@ end box
 == Create a search ==
 
 Backend -> Backend : **Validate the WHERE clause**\n""_validate_where_clause(where_clause)""
-Backend -> Athena++ : **Start the query**\n""start_query_execution(QueryString, Database, WorkGroup)""
-alt start succeeds
-    Athena --> Backend-- : QueryExecutionId
-    Backend -> Redis++ : **Write the search record**\n""SET archive_search:{uuid} {...} EX 7d""
+opt explicit start_date is after explicit end_date
+    Backend --> Backend : HTTP 400
+end
+Backend -> Backend : **Resolve the date range and derive a partition predicate**\n""_resolve_search_range(where_clause, start_date, end_date)""
+alt resolved range is empty (explicit range and where_clause's own derived range don't overlap)
+    Backend -> Redis++ : **Write an already-COMPLETE, zero-row search record**\n""SET archive_search:{uuid} {status: COMPLETE, query_execution_id: null} EX 7d""
     Redis --> Backend-- : OK
     Backend -> Redis++ : **Add to the search index**\n""SADD archive_search:index {uuid}""
     Redis --> Backend-- : OK
-    Backend -\ Poll : **Spawn the polling thread**\n""threading.Thread(target=_poll_search_execution).start()""
     Backend --> Backend : HTTP 202 {uuid}
-else start fails (e.g. a permissions mismatch)
-    Athena --> Backend-- : error
-    Backend --> Backend : HTTP 502
+else resolved range is non-empty
+    Backend -> Backend : **Inject the partition predicate**\n""_build_search_query(partition_predicate, where_clause)""
+    Backend -> Athena++ : **Start the query**\n""start_query_execution(QueryString, Database, WorkGroup)""
+    alt start succeeds
+        Athena --> Backend-- : QueryExecutionId
+        Backend -> Redis++ : **Write the search record**\n""SET archive_search:{uuid} {...} EX 7d""
+        Redis --> Backend-- : OK
+        Backend -> Redis++ : **Add to the search index**\n""SADD archive_search:index {uuid}""
+        Redis --> Backend-- : OK
+        Backend -\ Poll : **Spawn the polling thread**\n""threading.Thread(target=_poll_search_execution).start()""
+        Backend --> Backend : HTTP 202 {uuid}
+    else start fails (e.g. a permissions mismatch)
+        Athena --> Backend-- : error
+        Backend --> Backend : HTTP 502
+    end
 end
 
 == Background polling (exponential backoff, 2-minute deadline) ==
