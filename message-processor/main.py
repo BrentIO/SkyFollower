@@ -54,6 +54,7 @@ from shared.models import (
 )
 from shared.mqtt import build_mqtt_client
 from shared.rabbitmq_topology import (
+    ARCHIVE_QUEUE_NAME,
     bind_adsb_queue,
     declare_adsb_topology,
     message_processor_queue_name,
@@ -1503,7 +1504,7 @@ class MessageProcessor:
             try:
                 self._rmq_channel.basic_publish(
                     exchange="",
-                    routing_key="archive",
+                    routing_key=ARCHIVE_QUEUE_NAME,
                     body=payload.encode(),
                     properties=pika.BasicProperties(delivery_mode=2),
                     mandatory=True,
@@ -1551,7 +1552,7 @@ class MessageProcessor:
                 try:
                     self._rmq_channel.basic_publish(
                         exchange="",
-                        routing_key="archive",
+                        routing_key=ARCHIVE_QUEUE_NAME,
                         body=payload.encode(),
                         properties=pika.BasicProperties(delivery_mode=2),
                         mandatory=True,

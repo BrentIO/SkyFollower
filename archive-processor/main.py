@@ -2,8 +2,8 @@
 """
 SkyFollower Archive Processor
 
-Consumes completed flight records from the RabbitMQ 'archive' queue,
-builds a 3D GeoJSON LineString with altitude interpolation, writes
+Consumes completed flight records from the RabbitMQ 'skyfollower-archive'
+queue, builds a 3D GeoJSON LineString with altitude interpolation, writes
 gzip-compressed JSON to AWS S3 alongside a per-flight Parquet index row
 (queryable via AWS Athena/Glue), and falls back to SQLite when S3 is
 unavailable.
@@ -45,6 +45,7 @@ from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
+from shared.rabbitmq_topology import ARCHIVE_QUEUE_NAME
 from shared.redis_keys import (
     archive_last_segment_key,
     config_flight_ttl_seconds_key,
@@ -506,17 +507,23 @@ class ArchiveProcessor:
         """Main loop: connect to RabbitMQ and consume messages until shutdown."""
         while not self._shutdown.is_set():
             try:
-                logger.info("Connecting to RabbitMQ (queue: archive)…")
+                logger.info(
+                    "Connecting to RabbitMQ (queue: %s)…", ARCHIVE_QUEUE_NAME
+                )
                 self._rmq_connection = pika.BlockingConnection(self._rmq_params())
                 self._rmq_channel = self._rmq_connection.channel()
-                self._rmq_channel.queue_declare(queue="archive", durable=True)
+                self._rmq_channel.queue_declare(
+                    queue=ARCHIVE_QUEUE_NAME, durable=True
+                )
                 self._rmq_channel.basic_qos(prefetch_count=1)
                 self._rmq_channel.basic_consume(
-                    queue="archive",
+                    queue=ARCHIVE_QUEUE_NAME,
                     on_message_callback=self._on_message,
                 )
                 self._rmq_connected = True
-                logger.info("RabbitMQ connected, consuming from archive.")
+                logger.info(
+                    "RabbitMQ connected, consuming from %s.", ARCHIVE_QUEUE_NAME
+                )
 
                 # Drain fallback queue now that we're connected to RabbitMQ
                 # (S3 drain happens separately in s3_reconnect_loop)

@@ -40,6 +40,7 @@ def _load_main():
 _mod = _load_main()
 replay = _mod.replay
 _load_capture = _mod._load_capture
+ADSB_EXCHANGE = _mod.ADSB_EXCHANGE
 
 
 class FakeChannel:
@@ -98,8 +99,8 @@ class TestExchangeRouting:
         replay(messages, channel, mode="stress", stop_event=threading.Event())
 
         assert [(e, k) for e, k, _ in channel.published] == [
-            ("adsb", "A8AE7F"),
-            ("adsb", "A00001"),
+            (ADSB_EXCHANGE, "A8AE7F"),
+            (ADSB_EXCHANGE, "A00001"),
         ]
 
     def test_never_publishes_to_the_default_exchange(self):
@@ -110,7 +111,7 @@ class TestExchangeRouting:
 
         replay(messages, channel, mode="stress", stop_event=threading.Event())
 
-        assert [e for e, _k, _b in channel.published] == ["adsb"] * 4
+        assert [e for e, _k, _b in channel.published] == [ADSB_EXCHANGE] * 4
 
 
 class TestReplayStressMode:
@@ -132,7 +133,7 @@ class TestReplayStressMode:
         assert count == 3
         assert len(channel.published) == 3
         for (exchange, routing_key, body), msg in zip(channel.published, messages):
-            assert exchange == "adsb"
+            assert exchange == ADSB_EXCHANGE
             assert routing_key == msg["icao_hex"]
             assert msg["raw"] in body
 
