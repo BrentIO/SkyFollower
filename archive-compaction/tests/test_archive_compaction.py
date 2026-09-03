@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from botocore.exceptions import ClientError
 
 # ---------------------------------------------------------------------------
 # Module import helper (archive-compaction/ contains a hyphen, so it can't
@@ -109,16 +110,22 @@ class _FakeS3:
         self.deleted: list[str] = []
         self.fail_get_for: set[str] = set()
         self.fail_delete_for: set[str] = set()
+        self.get_errors: dict[str, Exception] = {}
 
     def get_paginator(self, operation_name: str):
         assert operation_name == "list_objects_v2"
         return _FakePaginator(self)
 
     def get_object(self, Bucket, Key):
+        if Key in self.get_errors:
+            raise self.get_errors[Key]
         if Key in self.fail_get_for:
             raise RuntimeError(f"simulated read failure for {Key}")
         if Key not in self.objects:
-            raise KeyError(f"no such key: {Key}")
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
+                "GetObject",
+            )
         body = MagicMock()
         body.read.return_value = self.objects[Key]
         return {"Body": body}
@@ -362,7 +369,21 @@ class TestWatermark:
     def test_read_write_roundtrip(self):
         s3 = _FakeS3()
         write_watermark(s3, "bucket", date(2026, 7, 22))
-        assert read_watermark(s3, "bucket") == date(2026, 7, 22)
+        state = read_watermark(s3, "bucket")
+        assert state["last_compacted_date"] == date(2026, 7, 22)
+        assert state["mismatch_date"] is None
+        assert state["mismatch_runs"] == 0
+
+    def test_read_write_roundtrip_with_mismatch_fields(self):
+        s3 = _FakeS3()
+        write_watermark(
+            s3, "bucket", date(2026, 7, 22),
+            mismatch_date=date(2026, 7, 23), mismatch_runs=4,
+        )
+        state = read_watermark(s3, "bucket")
+        assert state["last_compacted_date"] == date(2026, 7, 22)
+        assert state["mismatch_date"] == date(2026, 7, 23)
+        assert state["mismatch_runs"] == 4
 
     def test_write_uses_sibling_prefix_not_nested_in_flights_or_index(self):
         s3 = _FakeS3()
@@ -371,10 +392,35 @@ class TestWatermark:
         assert not _WATERMARK_KEY.startswith("flights/")
         assert not _WATERMARK_KEY.startswith("index/")
 
-    def test_read_corrupt_watermark_returns_none(self):
+    def test_read_watermark_missing_mismatch_fields_defaults_cleanly(self):
+        # A watermark object written by a version of this job before
+        # mismatch tracking existed -- only last_compacted_date present.
+        s3 = _FakeS3()
+        s3.objects[_WATERMARK_KEY] = json.dumps(
+            {"last_compacted_date": "2026-07-22"}
+        ).encode("utf-8")
+        state = read_watermark(s3, "bucket")
+        assert state["last_compacted_date"] == date(2026, 7, 22)
+        assert state["mismatch_date"] is None
+        assert state["mismatch_runs"] == 0
+
+    def test_read_corrupt_watermark_raises_instead_of_returning_none(self):
+        # Corrupt/unparseable is "unreadable", not "absent" -- it must not
+        # be silently treated as a first run.
         s3 = _FakeS3()
         s3.objects[_WATERMARK_KEY] = b"not json"
-        assert read_watermark(s3, "bucket") is None
+        with pytest.raises(json.JSONDecodeError):
+            read_watermark(s3, "bucket")
+
+    def test_read_unreadable_watermark_raises_instead_of_returning_none(self):
+        # A non-NotFound S3 error (permissions, outage, ...) must also
+        # raise rather than being treated the same as a genuine first run.
+        s3 = _FakeS3()
+        s3.get_errors[_WATERMARK_KEY] = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject",
+        )
+        with pytest.raises(ClientError):
+            read_watermark(s3, "bucket")
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +445,8 @@ class TestRunCompaction:
         assert result["last_compacted_date"] == cutoff
         assert result["mismatch_date"] is None
         assert result["mismatch_uuids"] == set()
-        assert read_watermark(s3, "bucket") == cutoff
+        assert result["mismatch_runs"] == 0
+        assert read_watermark(s3, "bucket")["last_compacted_date"] == cutoff
 
     def test_catchup_compacts_every_backlogged_day_and_advances_watermark(self):
         s3 = _FakeS3()
@@ -414,7 +461,7 @@ class TestRunCompaction:
         assert result["days_compacted"] == 3
         assert result["files_compacted"] == 3
         assert result["last_compacted_date"] == cutoff
-        assert read_watermark(s3, "bucket") == cutoff
+        assert read_watermark(s3, "bucket")["last_compacted_date"] == cutoff
 
     def test_already_caught_up_is_a_noop(self):
         s3 = _FakeS3()
@@ -428,6 +475,7 @@ class TestRunCompaction:
         assert result["files_compacted"] == 0
         assert result["last_compacted_date"] == cutoff
         assert result["mismatch_uuids"] == set()
+        assert result["mismatch_runs"] == 0
 
     def test_mismatch_stops_the_loop_and_leaves_watermark_behind(self):
         s3 = _FakeS3()
@@ -448,9 +496,13 @@ class TestRunCompaction:
         assert result["last_compacted_date"] == start_watermark + timedelta(days=1)
         assert result["mismatch_date"] == cutoff
         assert result["mismatch_uuids"] == {"uuid-missing"}
+        assert result["mismatch_runs"] == 1
         # Watermark persisted in S3 matches the returned value -- the stuck
         # date and everything after it stays uncompacted for the next run.
-        assert read_watermark(s3, "bucket") == start_watermark + timedelta(days=1)
+        state = read_watermark(s3, "bucket")
+        assert state["last_compacted_date"] == start_watermark + timedelta(days=1)
+        assert state["mismatch_date"] == cutoff
+        assert state["mismatch_runs"] == 1
 
     def test_mismatch_on_first_backlogged_day_compacts_nothing(self):
         s3 = _FakeS3()
@@ -465,7 +517,77 @@ class TestRunCompaction:
         assert result["files_compacted"] == 0
         assert result["mismatch_date"] == cutoff
         assert result["mismatch_uuids"] == {"uuid-missing"}
-        assert read_watermark(s3, "bucket") == cutoff - timedelta(days=1)
+        assert result["mismatch_runs"] == 1
+        state = read_watermark(s3, "bucket")
+        assert state["last_compacted_date"] == cutoff - timedelta(days=1)
+        assert state["mismatch_runs"] == 1
+
+    def test_mismatch_runs_increments_across_consecutive_runs_on_same_date(self):
+        s3 = _FakeS3()
+        now = datetime(2026, 7, 25, 5, 0, tzinfo=timezone.utc)
+        cutoff = _mod._cutoff_date(now)
+        write_watermark(s3, "bucket", cutoff - timedelta(days=1))
+        s3.objects[_flight_key(cutoff, "uuid-missing")] = b"flight-json-gz"
+
+        first = run_compaction(s3, "bucket", now)
+        assert first["mismatch_runs"] == 1
+
+        second = run_compaction(s3, "bucket", now)
+        assert second["mismatch_runs"] == 2
+        assert second["mismatch_date"] == cutoff
+
+        third = run_compaction(s3, "bucket", now)
+        assert third["mismatch_runs"] == 3
+
+        state = read_watermark(s3, "bucket")
+        assert state["mismatch_runs"] == 3
+        assert state["mismatch_date"] == cutoff
+
+    def test_mismatch_runs_resets_when_the_blocked_date_resolves(self):
+        s3 = _FakeS3()
+        now = datetime(2026, 7, 25, 5, 0, tzinfo=timezone.utc)
+        cutoff = _mod._cutoff_date(now)
+        write_watermark(s3, "bucket", cutoff - timedelta(days=1))
+        s3.objects[_flight_key(cutoff, "uuid-missing")] = b"flight-json-gz"
+
+        blocked = run_compaction(s3, "bucket", now)
+        assert blocked["mismatch_runs"] == 1
+
+        # The missing index row lands late -- the date is now clean.
+        s3.objects[_index_key(cutoff, "uuid-missing")] = _make_parquet_bytes(_make_row())
+
+        resolved = run_compaction(s3, "bucket", now)
+        assert resolved["mismatch_runs"] == 0
+        assert resolved["mismatch_date"] is None
+        assert resolved["days_compacted"] == 1
+
+        state = read_watermark(s3, "bucket")
+        assert state["mismatch_runs"] == 0
+        assert state["mismatch_date"] is None
+        assert state["last_compacted_date"] == cutoff
+
+    def test_mismatch_runs_resets_to_one_when_the_blocked_date_changes(self):
+        s3 = _FakeS3()
+        now = datetime(2026, 7, 25, 5, 0, tzinfo=timezone.utc)
+        cutoff = _mod._cutoff_date(now)
+        watermark_start = cutoff - timedelta(days=1)
+
+        # Seed a prior state as if a different date was previously blocked
+        # several runs in a row.
+        write_watermark(
+            s3, "bucket", watermark_start - timedelta(days=1),
+            mismatch_date=watermark_start, mismatch_runs=5,
+        )
+        # watermark_start itself is now clean, but the *next* date
+        # (cutoff) is missing its index row -- a new, different blocker.
+        self._seed_clean_date(s3, watermark_start, uuid_str="uuid-clean")
+        s3.objects[_flight_key(cutoff, "uuid-missing")] = b"flight-json-gz"
+
+        result = run_compaction(s3, "bucket", now)
+
+        assert result["days_compacted"] == 1
+        assert result["mismatch_date"] == cutoff
+        assert result["mismatch_runs"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +605,7 @@ class TestPublishCompletionStats:
             "last_compacted_date": None,
             "mismatch_date": None,
             "mismatch_uuids": set(),
+            "mismatch_runs": 0,
         }
         result.update(overrides)
         return result
@@ -566,6 +689,21 @@ class TestPublishCompletionStats:
         assert calls[f"{self._base_topic}/mismatch_uuids"] == "uuid-a,uuid-b"
         assert calls[f"{self._base_topic}/last_run_status"] == "Mismatch"
 
+    def test_publishes_mismatch_runs(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        result = self._make_result(
+            mismatch_date=date(2026, 7, 23),
+            mismatch_uuids={"uuid-a"},
+            mismatch_runs=7,
+        )
+        with patch("archive_compaction_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, result, "mismatch")
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        assert calls[f"{self._base_topic}/mismatch_runs"] == "7"
+
     def test_stat_topics_retained(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
@@ -574,7 +712,7 @@ class TestPublishCompletionStats:
                 publish_completion_stats(cfg, self._make_result(files_compacted=5), "success")
         stat_calls = [c for c in mc.publish.call_args_list
                       if c.args[0].startswith(self._base_topic)]
-        assert len(stat_calls) == 9
+        assert len(stat_calls) == 10
         for call in stat_calls:
             assert call.kwargs.get("retain") is True
 
@@ -602,7 +740,7 @@ class TestPublishHaAutodiscovery:
             for c in mc.publish.call_args_list
             if c.args[0].startswith("homeassistant/sensor/")
         }
-        assert len(configs) == 9
+        assert len(configs) == 10
         version_topic = "homeassistant/sensor/SkyFollower_archive_compaction_version/config"
         assert version_topic in configs
         version_config = configs[version_topic]
@@ -610,3 +748,85 @@ class TestPublishHaAutodiscovery:
         assert version_config["state_topic"] == f"{MQTT_ROOT}/statistic/version"
         assert version_config["icon"] == "mdi:tag"
         assert version_config["unique_id"] == "SkyFollower_archive_compaction_version"
+
+    def test_mismatch_runs_entry(self):
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mc.publish.call_args_list
+            if c.args[0].startswith("homeassistant/sensor/")
+        }
+        topic = "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_runs/config"
+        assert topic in configs
+        config = configs[topic]
+        assert config["name"] == "Archive Compaction Mismatch Consecutive Runs"
+        assert config["state_topic"] == f"{MQTT_ROOT}/statistic/mismatch_runs"
+        assert config["icon"] == "mdi:counter"
+        assert config["unique_id"] == "SkyFollower_archive_compaction_mismatch_runs"
+        assert config["state_class"] == "measurement"
+
+
+# ---------------------------------------------------------------------------
+# main() exit codes
+# ---------------------------------------------------------------------------
+
+class TestMainExitCodes:
+    _cfg = {"mqtt": {"host": "localhost", "port": 1883}, "s3": {"bucket": "bucket"}}
+
+    def _run_main(self, result: dict):
+        with patch("archive_compaction_main.load_config", return_value=self._cfg):
+            with patch("archive_compaction_main.connect_s3", return_value=MagicMock()):
+                with patch("archive_compaction_main.run_compaction", return_value=result):
+                    with patch("archive_compaction_main.publish_completion_stats"):
+                        main()
+
+    def test_success_does_not_exit_nonzero(self):
+        result = {
+            "files_compacted": 1,
+            "files_delete_failed": 0,
+            "days_compacted": 1,
+            "last_compacted_date": date(2026, 7, 22),
+            "mismatch_date": None,
+            "mismatch_uuids": set(),
+            "mismatch_runs": 0,
+        }
+        # main() falls through with no sys.exit() call at all on success --
+        # asserting no SystemExit is raised is the correct way to observe
+        # "exits 0" for a function that returns normally in that case.
+        self._run_main(result)
+
+    def test_mismatch_exits_2(self):
+        result = {
+            "files_compacted": 0,
+            "files_delete_failed": 0,
+            "days_compacted": 0,
+            "last_compacted_date": date(2026, 7, 21),
+            "mismatch_date": date(2026, 7, 22),
+            "mismatch_uuids": {"uuid-missing"},
+            "mismatch_runs": 3,
+        }
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_main(result)
+        assert exc_info.value.code == 2
+
+    def test_failure_exits_1(self):
+        with patch("archive_compaction_main.load_config", return_value=self._cfg):
+            with patch("archive_compaction_main.connect_s3", return_value=MagicMock()):
+                with patch(
+                    "archive_compaction_main.run_compaction",
+                    side_effect=RuntimeError("simulated S3 outage"),
+                ):
+                    with patch("archive_compaction_main.publish_completion_stats"):
+                        with pytest.raises(SystemExit) as exc_info:
+                            main()
+        assert exc_info.value.code == 1
+
+    def test_config_error_exits_1(self):
+        with patch(
+            "archive_compaction_main.load_config",
+            side_effect=_mod.ConfigError("missing required config"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+        assert exc_info.value.code == 1
