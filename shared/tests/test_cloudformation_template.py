@@ -103,8 +103,8 @@ def test_no_short_form_intrinsics():
 
 # ---------------------------------------------------------------------------
 # 2. Glue columns match the data dictionary, as an ordered list.
-#    Order is load-bearing: management-ui's _row_from_csv_fields
-#    destructures Athena's result CSV positionally.
+#    Order is load-bearing: management-ui's _row_from_athena_result_row
+#    destructures Athena's result rows positionally.
 # ---------------------------------------------------------------------------
 
 def test_glue_columns_match_data_dictionary_in_order():

@@ -532,20 +532,22 @@ lever), changing `ResourceNamePrefix`, and deleting the stack. Bumping
 and re-running `install.sh` to pick up the new keys; during it
 `archive-processor` falls back to `s3.db` with no data loss.
 
-**Adding an index column** is an append-only change across five places:
+**Adding an index column** is an append-only change across six places:
 
 1. `specs/data-dictionary.yaml` — `archive_parquet_index.fields`
 2. `archive-processor/main.py` — `_PARQUET_INDEX_SCHEMA`
 3. `specs/aws/cloudformation.yaml` — the Glue table's `Columns`
 4. `management-ui/backend/main.py` — `_SEARCH_SELECT_COLUMNS`
-5. `management-ui/backend/main.py` — `_row_from_csv_fields`
+5. `management-ui/backend/main.py` — `_row_from_athena_result_row`
+6. `management-ui/backend/main.py` — `_DOWNLOAD_SELECT_COLUMNS` (the
+   download endpoint's own SELECT list, everything in #4 except `s3_key`)
 
 **Rule: only ever append at the end; never reorder or rename.** Parquet
 resolves columns by name, so old files backfill as `NULL`; but
-`_row_from_csv_fields` resolves Athena's result CSV *by position* and will
-silently shift every value if the order changes. The anti-drift test
-`shared/tests/test_cloudformation_template.py` enforces that the template's
-columns match the data dictionary, in order.
+`_row_from_athena_result_row` resolves each Athena result row *by
+position* and will silently shift every value if the order changes. The
+anti-drift test `shared/tests/test_cloudformation_template.py` enforces
+that the template's columns match the data dictionary, in order.
 
 **Never change `ArchiveBucketName` on an existing stack.** In create mode
 CloudFormation *replaces* the bucket; `UpdateReplacePolicy: Retain` keeps

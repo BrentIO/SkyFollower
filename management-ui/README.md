@@ -236,7 +236,8 @@ record for the 9 underlying columns), with a History page
 | `POST` | `/api/archive/search` | Start a search: `{name, where_clause, start_date?, end_date?}` body (`start_date`/`end_date` are optional UTC calendar dates, `YYYY-MM-DD`; see Partition pruning below). `HTTP 202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below), unless the resolved date range comes up empty, in which case the search is recorded already `COMPLETE` with zero rows and no Athena query is ever started. `HTTP 400` if an explicit `start_date` is after `end_date`. `HTTP 502` if Athena rejects the query outright (e.g. a permissions mismatch) |
 | `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at, error}` each (`error` is only ever set for `FAILED`/`ABORTED`) |
 | `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause` and the RESOLVED `start_date`/`end_date` actually queried (`null` for a record predating this field). `HTTP 404` if not found |
-| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results: `{rows: [...], total_rows}` — `total_rows` is the full match count, not just this page's length, for the frontend's Prev/Next/"Page X of Y" pagination. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 502` if Athena/S3 fails to locate or return the result file (e.g. a permissions mismatch, or the file is already gone) |
+| `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page of a `COMPLETE` search's cached results (page size is caller-selectable, 25-500, default 100): `{rows: [...], total_rows, truncated}`. `rows`/`total_rows` only ever reflect the first 500 matching rows — see [Result retrieval and pagination](#result-retrieval-and-pagination) — `truncated` is `true` when more than 500 rows actually matched. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet or `page` is past the cached results, `HTTP 502` if Athena fails to return the result window (e.g. a permissions mismatch) |
+| `GET` | `/api/archive/search/{uuid}/download` | Full result set, every row, direct from S3 — see [Download](#download) below. `HTTP 307` redirect to a short-lived presigned URL. `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 404` if not found, `HTTP 502` if Athena/S3 fails |
 | `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `HTTP 204`, or `HTTP 404` if not found |
 | `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `HTTP 400` on an invalid/expired token, `HTTP 502` if S3 fails to return the object (e.g. it's already gone, or a permissions mismatch) |
 
@@ -365,23 +366,87 @@ that stale uuid right there, pruning it the next time anyone asks.
 
 ### Result retrieval and pagination
 
-Redis stores a pointer (the Athena `QueryExecutionId`) to the result set
-in S3, not the result data itself — the polling thread never fetches or
-caches rows at completion time. Rows are only fetched from S3 the first
-time a user actually opens a completed search's results: one `GetObject`
-downloads the entire result CSV (evaluated and rejected: S3 Select,
-byte-range reads, and Athena's own sequential `GetQueryResults`
-pagination — the whole archive index is only ~820MB per the original
-design's own estimate, so any single query's matching rows are realistically
-KB to low-single-digit-MB, well within "download it all and paginate from
-memory" territory), parsed once, and cached in a bounded in-process LRU
-(`OrderedDict`, move-to-end on access, capped at 10 concurrently-cached
-result sets) keyed by search UUID — every subsequent page for that same
-search slices the already-parsed list, no repeat S3 call. The cache lives
-only in process memory and is wiped on restart: a page request for a
-search that was mid-viewing when the container restarted is just a cache
-miss (one slower request, cached again from there), not an error or data
-loss.
+Redis stores a pointer (the Athena `QueryExecutionId`) to the result set,
+not the result data itself — the polling thread never fetches or caches
+rows at completion time. Two independent read paths exist over that same
+pointer, deliberately shaped differently:
+
+- The **paged view** (`GET .../results`, this section) is served from a
+  bounded, in-process cache holding at most the first 500 matching rows —
+  fast, and no repeat Athena/S3 call per page.
+- **Download** (`GET .../download`, see [Download](#download) below)
+  always goes straight to S3 via a presigned URL, for every result size,
+  with the backend never reading the bytes at all.
+
+Rows for the paged view are only fetched the first time a user actually
+opens a completed search's results, via one `GetQueryResults` call bounded
+at `MaxResults=501` — not the full result CSV Athena also writes to S3
+(evaluated and rejected: downloading and parsing the whole file scales
+with the *match* count, not a fixed cap, which is exactly the unbounded-
+memory failure mode this design avoids — an ordinary search with no date
+range against a multi-year, multi-million-flight archive can match
+hundreds of thousands of rows). Requesting one row past the 500-row cap
+makes "did more than 500 rows match" answerable from that single call:
+getting back 501 data rows (after skipping `GetQueryResults`' own column-
+header row) means `truncated` is `true` on every page's response, and only
+the first 500 are ever cached or paginated. Building all 500 rows (fetch
+tokens included) happens once, up front, on the first request — 500
+`Fernet` encryptions per search is negligible; it's what keeps every page
+after the first a pure cache hit with zero further Athena calls.
+
+The cached window is a bounded in-process LRU (`OrderedDict`, move-to-end
+on access, capped at 10 concurrently-cached searches) keyed by search
+UUID — 10 × 500 rows is roughly 4MB worst case, a fixed, small ceiling
+regardless of how many rows actually matched (versus roughly 800MB for a
+single large, ungapped search under the old whole-CSV design). Raising
+either the 500-row cap or the 10-search cap without reconsidering the
+other reopens the unbounded-memory failure this pair exists to close. The
+cache lives only in process memory and is wiped on restart: a page request
+for a search that was mid-viewing when the container restarted is just a
+cache miss (one slower request, cached again from there), not an error or
+data loss. Requesting a page beyond what's cached (e.g. page 6 at 100 rows
+per page, with only 500 rows ever cached) is a clean `HTTP 400`, never a
+silently empty page.
+
+### Download
+
+`GET /api/archive/search/{uuid}/download` is the only way to get every
+matching row — 3 or 400,000 — with no size threshold and no separate
+"large result" code path. It never routes through the 500-row cache above,
+and the backend never reads the result bytes at any point:
+
+1. A second, independently-submitted Athena query reuses the exact same
+   `partition_predicate` and `where_clause` the original search resolved,
+   but with a different `SELECT` list — `s3_key` is never selected. The
+   flight `uuid` is derived from it in SQL instead, via
+   `regexp_extract(s3_key, '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json\.gz$', 1)`
+   — anchored on the UUID immediately before `.json.gz`, so it matches both
+   the legacy `{icao_hex}_{ident}_{uuid}.json.gz` key shape and the
+   current, simplified `{uuid}.json.gz` shape (see the archive processor's
+   S3 key format). This query runs **at most once per search** — its
+   `QueryExecutionId` and eventual S3 output location are persisted on the
+   search's Redis record, so a second click presigns the same object with
+   no new Athena call at all. A search that's never downloaded never pays
+   for this query.
+2. Once that query succeeds, its own S3 output object — a plain CSV, uuid
+   first, the same eight other columns in the same order the paged view
+   exposes — is presigned (`ExpiresIn` ~15 minutes) and the endpoint
+   returns `HTTP 307` straight to it. Because the download re-runs the
+   search rather than reusing its original query execution, a flight
+   archived after the search was submitted can show up in the download
+   that wasn't in the paged view — only affects the most recent days;
+   older partitions are immutable once compacted.
+3. The frontend follows the redirect via a real browser navigation (an
+   `<a>`/`window.open`, never `fetch()`) specifically so this needs no S3
+   CORS configuration: a plain navigation isn't subject to the same-origin
+   read restrictions a script-readable `fetch()` response would be.
+
+The object S3 ultimately serves contains no bucket name, no date-folder
+prefix, and no `.json.gz` suffix anywhere in it — the storage layout is
+absent from the object entirely (via the `SELECT` list above) rather than
+stripped in transit, which is the property that actually matters: a
+backend step that stripped it after the fact would still have had it in
+hand at some point.
 
 ### Flight fetch: encryption, not a raw or encoded key
 
@@ -413,7 +478,14 @@ deployment model (no horizontal scaling anywhere in its design).
   Redis TTL so Redis's own pointer always drops before the file it
   references actually disappears (an S3 lifecycle rule on the
   query-results prefix — part of [AWS Setup](#aws-setup) below, not
-  something this backend enforces itself).
+  something this backend enforces itself). This covers the download
+  query's own output file too — deleting a search only ever cleans up its
+  *original* search query's result file (see the `DELETE` row above); a
+  download result file, if one was ever generated, is left for the same
+  8-day lifecycle rule to age out rather than cleaned up explicitly.
+- Download presigned URLs: **15 minutes** (`_DOWNLOAD_PRESIGN_TTL_SECONDS`)
+  — short enough that a leaked link is only briefly useful, long enough to
+  cover a slow save-as dialog or a large file transfer.
 
 ### AWS Setup
 

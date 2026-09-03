@@ -42,7 +42,12 @@ export interface ArchiveSearchResultRow {
 
 export interface ArchiveSearchResultsPage {
   rows: ArchiveSearchResultRow[];
+  // Exact whenever `truncated` is false; when true, this is the backend's
+  // cache cap (see `truncated`), not the real (unread) match count.
   total_rows: number;
+  // True when more than the cached window actually matched -- the exact
+  // count beyond that is never computed. Use Download for the full set.
+  truncated: boolean;
 }
 
 // Every column the results table lets a user sort by -- mirrors main.py's
@@ -105,6 +110,16 @@ export function getArchiveSearchResults(
 
 export function deleteArchiveSearch(uuid: string): Promise<void> {
   return apiClient.delete(`/api/archive/search/${encodeURIComponent(uuid)}`);
+}
+
+// A plain URL, not a fetch() helper -- the endpoint 307s to a presigned S3
+// URL, and following that via a real browser navigation (an <a href>/
+// window.open, not fetch()) avoids the S3 bucket needing its own CORS
+// policy just for this: fetch() would need to read a cross-origin
+// response's body, a plain navigation doesn't. Works for every result
+// size, no threshold -- the backend never reads the bytes either way.
+export function archiveSearchDownloadUrl(uuid: string): string {
+  return `/api/archive/search/${encodeURIComponent(uuid)}/download`;
 }
 
 // Downloads via fetch + Blob rather than a plain navigation/window.open --

@@ -249,6 +249,22 @@ def build_s3_key(flight: CompletedFlight) -> str:
     return f"flights/{yyyy}/{mm}/{dd}/{uuid}.json.gz"
 
 
+def _drop_default_value_fields(payload_dict: dict) -> None:
+    """
+    Drop force_archive/matched_rules from an S3 upload payload dict when
+    they carry no information -- force_archive False (the overwhelming
+    default) and matched_rules [] (no rule matched) are both the common
+    case, and persisting them on every flight is pure bloat. Only affects
+    the S3 upload payload; the in-memory CompletedFlight model and every
+    other consumer (RabbitMQ fallback queues, the Parquet index) are
+    unaffected.
+    """
+    if payload_dict.get("force_archive") is False:
+        del payload_dict["force_archive"]
+    if payload_dict.get("matched_rules") == []:
+        del payload_dict["matched_rules"]
+
+
 # ---------------------------------------------------------------------------
 # Parquet index helpers
 # ---------------------------------------------------------------------------
@@ -690,6 +706,7 @@ class ArchiveProcessor:
             flight, s3_key = stitched
 
         payload_dict = flight.model_dump(by_alias=True, mode="json", exclude_none=True)
+        _drop_default_value_fields(payload_dict)
         feature = build_geojson_feature(flight)
         if feature is not None:
             payload_dict["flight_path"] = feature

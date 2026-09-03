@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { NewSearchModal } from "../components/NewSearchModal";
 import {
+  archiveSearchDownloadUrl,
   createArchiveSearch,
   deleteArchiveSearch,
   downloadArchiveFlight,
@@ -10,14 +11,12 @@ import {
   getArchiveSearchResults,
   listArchiveSearches,
   type ArchiveSearchDetail,
-  type ArchiveSearchResultRow,
   type ArchiveSearchResultsPage,
   type ArchiveSearchSortColumn,
   type ArchiveSearchSummary,
 } from "../api/archiveSearch";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
-import { downloadTextFile, rowsToCsv } from "../lib/csv";
 import { nextSortState, type ResultsSortState } from "../lib/resultsSort";
 
 // A couple of seconds' interval, per the design -- frequent enough that
@@ -59,10 +58,7 @@ function formatAthenaTimestamp(raw: string): string {
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
 }
 
-// Default/CSV-export page size -- independent of whatever the user has
-// picked in the results table's page-size selector (see PAGE_SIZE_OPTIONS),
-// so a CSV export's chunking doesn't change just because someone changed
-// how many rows they like to see on screen.
+// Default results-table page size.
 const DEFAULT_PAGE_SIZE = 100;
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 
@@ -87,46 +83,6 @@ function resultsCacheKey(uuid: string, page: number, pageSize: number, sort: Res
   return `${uuid}:${page}:${pageSize}:${sort ? `${sort.column}:${sort.dir}` : "none"}`;
 }
 
-// `token` is deliberately excluded -- it's an ephemeral, per-process
-// download credential (see ArchiveSearchResultRow), not data worth
-// persisting into a file the user keeps after the search itself expires.
-const CSV_HEADERS = [
-  "uuid",
-  "icao_hex",
-  "registration",
-  "type_designator",
-  "military",
-  "operator_designator",
-  "ident",
-  "first_message",
-  "last_message",
-];
-
-function resultRowToCsvRow(row: ArchiveSearchResultRow): string[] {
-  return [
-    row.uuid,
-    row.icao_hex,
-    row.registration,
-    row.type_designator,
-    String(row.military),
-    row.operator_designator,
-    row.ident,
-    row.first_message,
-    row.last_message,
-  ];
-}
-
-// Filesystem-safe stand-in for a search's display name -- falls back to
-// the uuid if the name is empty after stripping (e.g. all-punctuation).
-function csvFilename(search: ArchiveSearchSummary): string {
-  const slug = search.name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `${slug || "archive-search"}-${search.uuid}.csv`;
-}
-
 interface SearchResultsPanelProps {
   search: ArchiveSearchSummary;
   results: ArchiveSearchResultsPage | null;
@@ -146,7 +102,6 @@ interface SearchResultsPanelProps {
   detailLoading: boolean;
   onResubmit: () => void;
   onDownloadCsv: () => void;
-  downloadingCsv: boolean;
 }
 
 // "2022-01-01 to 2026-09-04 (UTC)" -- absent entirely for a legacy record
@@ -252,7 +207,6 @@ function SearchResultsPanel({
   detailLoading,
   onResubmit,
   onDownloadCsv,
-  downloadingCsv,
 }: SearchResultsPanelProps) {
   if (search.status === "RUNNING") {
     return <p className="p-4 text-sm text-slate-400">Search is running&hellip;</p>;
@@ -301,6 +255,12 @@ function SearchResultsPanel({
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden">
       <ResolvedRangeNote detail={detail} loading={detailLoading} />
+      {results.truncated && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          More than {results.total_rows} results -- showing the first {results.total_rows}. Use Download for the
+          full set.
+        </p>
+      )}
       <div className="overflow-auto">
         <table className="w-full text-left text-sm">
           <thead>
@@ -346,12 +306,11 @@ function SearchResultsPanel({
       <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
         <button
           type="button"
-          disabled={downloadingCsv}
           onClick={onDownloadCsv}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
         >
           <Download size={14} />
-          {downloadingCsv ? "Downloading…" : "Download CSV"}
+          Download CSV
         </button>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
@@ -425,7 +384,6 @@ export function HistoryView() {
   const [resubmitSeed, setResubmitSeed] = useState<
     { name: string; whereClause: string; startDate: string; endDate: string } | null
   >(null);
-  const [downloadingCsv, setDownloadingCsv] = useState(false);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
 
@@ -576,37 +534,15 @@ export function HistoryView() {
     setNewSearchModalOpen(true);
   }
 
-  // Fetches every page sequentially (not in parallel -- matches the design's
-  // intent of reusing the same paginated endpoint the results table already
-  // drives, rather than hammering Athena/the backend with concurrent page
-  // requests for a one-off export) and assembles them into a CSV client-side.
-  // No new backend endpoint: same already-sanitized rows the table renders,
-  // so the s3_key/token protections those rows already have carry over here
-  // for free. Always paged at DEFAULT_PAGE_SIZE regardless of the table's
-  // own page-size selection, so the export's chunking is independent of
-  // what the user happens to have the results table set to. Also always
-  // unsorted (server-default order), independent of the table's own sort
-  // state, for the same reason.
-  async function handleDownloadCsv(search: ArchiveSearchSummary) {
-    setDownloadingCsv(true);
-    try {
-      const firstPageKey = resultsCacheKey(search.uuid, 1, DEFAULT_PAGE_SIZE, null);
-      const firstPage =
-        resultsCache[firstPageKey] ?? (await getArchiveSearchResults(search.uuid, 1, DEFAULT_PAGE_SIZE));
-      const allRows = [...firstPage.rows];
-      const totalPages = Math.max(1, Math.ceil(firstPage.total_rows / DEFAULT_PAGE_SIZE));
-      for (let p = 2; p <= totalPages; p++) {
-        const cached = resultsCache[resultsCacheKey(search.uuid, p, DEFAULT_PAGE_SIZE, null)];
-        const nextPage = cached ?? (await getArchiveSearchResults(search.uuid, p, DEFAULT_PAGE_SIZE));
-        allRows.push(...nextPage.rows);
-      }
-      const csv = rowsToCsv(CSV_HEADERS, allRows.map(resultRowToCsvRow));
-      downloadTextFile(csvFilename(search), csv, "text/csv;charset=utf-8");
-    } catch (err) {
-      showToast("error", err instanceof ApiError ? err.message : "Failed to download CSV.");
-    } finally {
-      setDownloadingCsv(false);
-    }
+  // A real browser navigation (new tab), not a fetch() -- the endpoint 307s
+  // to a presigned S3 URL, and only a real navigation follows that without
+  // the S3 bucket needing its own CORS policy (see archiveSearchDownloadUrl).
+  // One code path for every result size: the backend re-runs the search via
+  // a second, sanitized query and serves the CSV straight from S3, so this
+  // never reads the result set into the browser at all, unlike the paged
+  // table view's capped, in-memory cache.
+  function handleDownloadCsv(search: ArchiveSearchSummary) {
+    window.open(archiveSearchDownloadUrl(search.uuid), "_blank");
   }
 
   async function handleDeleteConfirmed() {
@@ -718,7 +654,6 @@ export function HistoryView() {
                       detailLoading={detailLoading}
                       onResubmit={() => handleResubmit(search)}
                       onDownloadCsv={() => handleDownloadCsv(search)}
-                      downloadingCsv={downloadingCsv}
                     />
                   </div>
                 )}
@@ -748,7 +683,6 @@ export function HistoryView() {
             detailLoading={detailLoading}
             onResubmit={() => handleResubmit(selectedSearch)}
             onDownloadCsv={() => handleDownloadCsv(selectedSearch)}
-            downloadingCsv={downloadingCsv}
           />
         ) : (
           <p className="p-4 text-sm text-slate-400">Select a search from the list, or start a new one.</p>

@@ -105,20 +105,74 @@ alt search not found
 else status != COMPLETE
     Backend --> Backend : HTTP 400
 else status == COMPLETE
-    Backend -> Athena++ : **Find the result file**\n""get_query_execution(QueryExecutionId).ResultConfiguration.OutputLocation""
-    alt locate succeeds
-        Athena --> Backend-- : s3://bucket/athena-results/{id}.csv
-        Backend -> S3++ : **Download the full result CSV**\n""GetObject""
-        alt download succeeds
-            S3 --> Backend-- : CSV body
-            Backend -> Backend : **Parse once, cache in the bounded LRU**\n""_result_cache.put(uuid, rows)""
-            Backend -> Backend : **Encrypt each row's s3_key into a fetch token**\n""Fernet(...).encrypt(s3_key)""
-            Backend --> Backend : HTTP 200 [rows][page]
-        else download fails (e.g. the file is gone, or a permissions mismatch)
-            S3 --> Backend-- : error
-            Backend --> Backend : HTTP 502
+    Backend -> Athena++ : **Fetch up to 501 result rows (one call, ever, per search)**\n""get_query_results(QueryExecutionId, MaxResults=501)""
+    alt fetch succeeds
+        Athena --> Backend-- : header row + up to 501 data rows
+        Backend -> Backend : **Cache the first 500, note whether a 501st exists**\n""_result_cache.put(uuid, {rows: rows[:500], truncated})""
+        Backend -> Backend : **Encrypt each cached row's s3_key into a fetch token**\n""Fernet(...).encrypt(s3_key)""
+        alt requested page is beyond the cached rows
+            Backend --> Backend : HTTP 400
+        else
+            Backend --> Backend : HTTP 200 [rows][page][truncated]
         end
-    else locate fails (e.g. a permissions mismatch)
+    else fetch fails (e.g. a permissions mismatch)
+        Athena --> Backend-- : error
+        Backend --> Backend : HTTP 502
+    end
+end
+
+note over Backend, Athena
+    Every later page for the same search, including a re-sort of it, is
+    served from the cache above with no further Athena call at all.
+end note
+
+== Download the full result set (every row, no size threshold -- see the "Download" README section) ==
+
+Backend -> Redis++ : **Load the search record**\n""GET archive_search:{uuid}""
+Redis --> Backend-- : record or none
+alt search not found
+    Backend --> Backend : HTTP 404
+else status != COMPLETE
+    Backend --> Backend : HTTP 400
+else a download result location is already persisted (a previous click already ran this query)
+    Backend -> Backend : **Reuse it -- no new Athena call at all**
+    Backend -> Backend : **Presign the result object**\n""generate_presigned_url(Bucket, Key, ExpiresIn=15m)""
+    Backend --> Backend : HTTP 307 -> presigned URL
+else first download click for this search
+    Backend -> Backend : **Build the sanitized, s3_key-free query**\n""_build_download_query(partition_predicate, where_clause)""
+    Backend -> Athena++ : **Start the download query**\n""start_query_execution(QueryString, Database, WorkGroup)""
+    alt start succeeds
+        Athena --> Backend-- : QueryExecutionId
+        Backend -> Redis++ : **Persist it on the search record**\n""SET ... XX KEEPTTL {download_query_execution_id}""
+        Redis --> Backend-- : OK
+        loop until terminal state or deadline
+            Backend -> Athena++ : **Check status**\n""get_query_execution(QueryExecutionId)""
+            Athena --> Backend-- : State
+            alt SUCCEEDED
+                break
+                    Backend -> Backend : **Done**
+                end
+            else FAILED or CANCELLED
+                break
+                    Backend -> Backend : **Done**
+                end
+            else still running
+                Backend -> Backend : **Sleep (backoff)**\n""1s, 2s, 4s, 8s, 16s, then capped at 30s""
+            end
+        end
+        alt query succeeded
+            Backend -> Athena++ : **Find the result file**\n""get_query_execution(QueryExecutionId).ResultConfiguration.OutputLocation""
+            Athena --> Backend-- : s3://bucket/athena-results/{id}.csv
+            Backend -> Redis++ : **Persist it on the search record**\n""SET ... XX KEEPTTL {download_output_location}""
+            Redis --> Backend-- : OK
+            Backend -> Backend : **Presign the result object**\n""generate_presigned_url(Bucket, Key, ExpiresIn=15m)""
+            Backend --> Backend : HTTP 307 -> presigned URL
+        else query failed
+            Backend --> Backend : HTTP 502
+        else deadline exceeded without ever reaching a terminal state
+            Backend --> Backend : HTTP 504
+        end
+    else start fails (e.g. a permissions mismatch)
         Athena --> Backend-- : error
         Backend --> Backend : HTTP 502
     end
