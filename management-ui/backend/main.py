@@ -19,9 +19,7 @@ nginx serves the built frontend at / and proxies /api/* to this process.
 from __future__ import annotations
 
 import calendar
-import csv
 import hashlib
-import io
 import json
 import logging
 import os
@@ -34,7 +32,7 @@ import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import boto3
 import redis as redis_lib
@@ -43,7 +41,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException, Response
 from fastapi import Query as FastAPIQuery
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
@@ -1573,9 +1571,19 @@ def get_route(ident: str):
 # index (see archive-processor's Parquet Index section and
 # specs/data-dictionary.yaml's archive_parquet_index record for the 9
 # underlying columns). A search record lives at archive_search:{uuid} in
-# Redis for a fixed 7 days from creation (never refreshed on access);
-# result rows themselves are never cached in Redis, only a pointer to
-# where Athena wrote them in S3 -- see _fetch_and_cache_results below.
+# Redis for a fixed 7 days from creation (never refreshed on access).
+#
+# Two independent read paths over the same search, deliberately shaped
+# differently:
+#  - The PAGED VIEW (get_archive_search_results) is served from a bounded,
+#    in-process LRU (_result_cache) holding at most _RESULT_ROW_CAP rows per
+#    search -- one get_query_results call ever, no S3 read at all. See
+#    _fetch_and_cache_results.
+#  - DOWNLOAD (download_archive_search) always goes straight to S3 via a
+#    presigned URL, for every result size, via a second, separate query
+#    that never selects s3_key -- see _build_download_query and
+#    _run_or_get_download_query_execution. The backend never reads those
+#    result bytes.
 # ---------------------------------------------------------------------------
 
 # ARCHIVE_SEARCH_TTL_SECONDS must expire a search's Redis record before the
@@ -1589,16 +1597,35 @@ _PAGE_SIZE_MAX = 500
 ATHENA_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
 ATHENA_POLL_DEADLINE_SECONDS = 120
 _RESULT_CACHE_MAX_ENTRIES = 10
+# The paged view's whole memory budget is these two numbers multiplied
+# together (10 x 500 rows =~ 4MB worst case) -- raise one only after
+# reconsidering the other, or the unbounded-memory failure this pair exists
+# to prevent comes back. Requesting _RESULT_ROW_CAP + 1 rows from Athena
+# makes "does a 501st row exist" answerable from a single get_query_results
+# call: getting back more than _RESULT_ROW_CAP data rows means the true
+# match count is larger, without ever running a separate COUNT query.
+_RESULT_ROW_CAP = 500
+_DOWNLOAD_PRESIGN_TTL_SECONDS = 15 * 60
 
 # Column order here is exactly what the Athena SELECT below returns, so
-# _fetch_and_cache_results can map each CSV row positionally without
-# needing to consult the header row Athena also writes. s3_key IS selected
-# (needed server-side to mint each row's fetch token and derive its flight
-# UUID -- see _row_from_csv_fields) but is never included in the dict a
-# response actually returns to the browser.
+# _row_from_athena_result_row can map each result row positionally without
+# needing to consult the header row Athena also returns as row 0. s3_key IS
+# selected (needed server-side to mint each row's fetch token and derive its
+# flight UUID -- see _row_from_athena_result_row) but is never included in
+# the dict a response actually returns to the browser.
 _SEARCH_SELECT_COLUMNS = [
     "icao_hex", "registration", "type_designator", "military",
     "operator_designator", "ident", "first_message", "last_message", "s3_key",
+]
+
+# Columns the download endpoint's own sanitized query selects -- everything
+# _SEARCH_SELECT_COLUMNS has except s3_key, which must never be selected
+# there at all (see _build_download_query): the object S3 hands the browser
+# is what this list produces, so the storage layout can only leak here by
+# being added back to this list.
+_DOWNLOAD_SELECT_COLUMNS = [
+    "icao_hex", "registration", "type_designator", "military",
+    "operator_designator", "ident", "first_message", "last_message",
 ]
 
 # Columns a results-page request may sort by -- every field
@@ -1656,10 +1683,15 @@ class ArchiveSearchDetail(ArchiveSearchSummary):
 
 class ArchiveSearchResultsPage(BaseModel):
     rows: list[ArchiveSearchResultRow]
-    # The full match count, not just len(rows) -- rows is only this page's
-    # slice. The backend already has this for free: _fetch_and_cache_results
-    # downloads and fully parses the CSV before any pagination slicing.
+    # The cached match count, not just len(rows) -- rows is only this page's
+    # slice. Exact whenever `truncated` is False; when True, this is the
+    # _RESULT_ROW_CAP cache size, not the real (unknown, unread) match count.
     total_rows: int
+    # True when more than _RESULT_ROW_CAP rows actually matched -- the exact
+    # count beyond the cap is deliberately never computed (that would mean
+    # reading the whole result just to count it). See Download for the full
+    # set in this case.
+    truncated: bool = False
 
 
 class ArchiveSearchResultRow(BaseModel):
@@ -1926,6 +1958,30 @@ def _build_search_query(partition_predicate: str, where_clause: str) -> str:
     return f"SELECT {columns} FROM {table} WHERE ({partition_predicate}) AND ({where_clause})"
 
 
+# Anchors on the UUID immediately preceding ".json.gz", so it matches both
+# the legacy `{icao_hex}_{ident}_{uuid}.json.gz` key shape and the current,
+# simplified `{uuid}.json.gz` shape -- the Python-side _UUID_FROM_S3_KEY_RE
+# below uses the identical pattern so the two derivations can never disagree.
+_UUID_FROM_S3_KEY_PATTERN = r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json\.gz$"
+
+
+def _build_download_query(partition_predicate: str, where_clause: str) -> str:
+    """Same partition-predicate/where_clause contract as _build_search_query
+    (see its docstring) -- the difference is entirely in the SELECT list.
+    s3_key is never selected here, so the archive's storage layout (bucket,
+    date-folder prefix, filename) can never reach the browser via this
+    query's result object; the flight uuid is instead derived from s3_key
+    in SQL via regexp_extract, using the same pattern
+    _UUID_FROM_S3_KEY_PATTERN names for the Python-side equivalent."""
+    columns = ", ".join(_DOWNLOAD_SELECT_COLUMNS)
+    table = f'{_athena_cfg["database"]}.{_athena_cfg["table"]}'
+    uuid_expr = f"regexp_extract(s3_key, '{_UUID_FROM_S3_KEY_PATTERN}', 1)"
+    return (
+        f"SELECT {uuid_expr} AS uuid, {columns} FROM {table} "
+        f"WHERE ({partition_predicate}) AND ({where_clause})"
+    )
+
+
 def _expires_at(submitted_at_iso: str) -> str:
     submitted = datetime.fromisoformat(submitted_at_iso)
     return (submitted + timedelta(seconds=ARCHIVE_SEARCH_TTL_SECONDS)).isoformat()
@@ -2061,17 +2117,17 @@ class _BoundedResultCache:
 
     def __init__(self, max_entries: int) -> None:
         self._max_entries = max_entries
-        self._data: OrderedDict[str, list[dict]] = OrderedDict()
+        self._data: OrderedDict[str, Any] = OrderedDict()
         self._lock = threading.Lock()
 
-    def get(self, key: str) -> Optional[list[dict]]:
+    def get(self, key: str) -> Optional[Any]:
         with self._lock:
             if key not in self._data:
                 return None
             self._data.move_to_end(key)
             return self._data[key]
 
-    def put(self, key: str, value: list[dict]) -> None:
+    def put(self, key: str, value: Any) -> None:
         with self._lock:
             self._data[key] = value
             self._data.move_to_end(key)
@@ -2097,11 +2153,18 @@ def _result_output_location(query_execution_id: str) -> str:
     return resp["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
 
 
+_UUID_FROM_S3_KEY_RE = re.compile(_UUID_FROM_S3_KEY_PATTERN)
+
+
 def _uuid_from_s3_key(s3_key: str) -> str:
-    """Extract the flight UUID from an S3 flight object key
-    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz)."""
-    filename = s3_key.rsplit("/", 1)[-1]
-    return filename.removesuffix(".json.gz")
+    """Extract the flight UUID from an S3 flight object key -- anchored on
+    the UUID immediately preceding ".json.gz" (see
+    _UUID_FROM_S3_KEY_PATTERN's own comment), so this works against both the
+    legacy `flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz` key
+    shape and the current, simplified
+    `flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz` shape."""
+    match = _UUID_FROM_S3_KEY_RE.search(s3_key)
+    return match.group(1) if match else ""
 
 
 def _encrypt_s3_key(s3_key: str) -> str:
@@ -2115,27 +2178,35 @@ def _decrypt_token(token: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid or expired flight token") from exc
 
 
-def _fetch_and_cache_results(uuid: str, query_execution_id: str) -> list[dict]:
+def _fetch_and_cache_results(uuid: str, query_execution_id: str) -> tuple[list[dict], bool]:
+    """Returns (rows, truncated), where `rows` never exceeds
+    _RESULT_ROW_CAP. A single get_query_results call, bounded at
+    _RESULT_ROW_CAP + 1 rows, both builds the cached page window and answers
+    "did more than _RESULT_ROW_CAP rows match" without a separate count
+    query -- see _RESULT_ROW_CAP's own comment. No S3 read of any kind
+    happens on this path; the full result set is never downloaded to the
+    backend."""
     cached = _result_cache.get(uuid)
     if cached is not None:
-        return cached
+        return cached["rows"], cached["truncated"]
 
     try:
-        output_location = _result_output_location(query_execution_id)
-        bucket, key = _parse_s3_uri(output_location)
-        obj = _s3_client.get_object(Bucket=bucket, Key=key)
-        body = obj["Body"].read().decode("utf-8")
+        resp = _athena_client.get_query_results(
+            QueryExecutionId=query_execution_id, MaxResults=_RESULT_ROW_CAP + 1,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch search results: {exc}") from exc
 
-    reader = csv.reader(io.StringIO(body))
-    data_rows = list(reader)[1:]  # skip Athena's own header row
-    rows = [_row_from_csv_fields(fields) for fields in data_rows]
-    _result_cache.put(uuid, rows)
-    return rows
+    # get_query_results returns the column header as its first row -- skip it.
+    data_rows = resp["ResultSet"]["Rows"][1:]
+    truncated = len(data_rows) > _RESULT_ROW_CAP
+    rows = [_row_from_athena_result_row(row["Data"]) for row in data_rows[:_RESULT_ROW_CAP]]
+    _result_cache.put(uuid, {"rows": rows, "truncated": truncated})
+    return rows, truncated
 
 
-def _row_from_csv_fields(fields: list[str]) -> dict:
+def _row_from_athena_result_row(data: list[dict]) -> dict:
+    fields = [cell.get("VarCharValue", "") for cell in data]
     (
         icao_hex, registration, type_designator, military,
         operator_designator, ident, first_message, last_message, s3_key,
@@ -2299,17 +2370,157 @@ def get_archive_search_results(
         # no Athena query was ever run because the resolved date range and
         # where_clause's own derived range don't overlap, so there is
         # nothing to fetch or paginate.
-        return JSONResponse(content={"rows": [], "total_rows": 0})
-    rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
+        return JSONResponse(content={"rows": [], "total_rows": 0, "truncated": False})
+    rows, truncated = _fetch_and_cache_results(uuid, record["query_execution_id"])
     # Sort the whole cached result set (not just the requested page) so this
     # behaves like a real column sort -- _fetch_and_cache_results already
-    # has every row in memory, so no new Athena query is needed. sorted()
-    # returns a new list, leaving the cached one untouched for other
-    # pages/sort orders to reuse.
+    # has every row in memory (up to the cache cap), so no new Athena call is
+    # needed. sorted() returns a new list, leaving the cached one untouched
+    # for other pages/sort orders to reuse.
     if sort_by is not None:
         rows = sorted(rows, key=lambda row: row[sort_by], reverse=sort_dir == "desc")
+    total_pages = max(1, -(-len(rows) // page_size))  # ceil division
+    if page > total_pages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Page {page} exceeds the cached results ({total_pages} page(s) available)",
+        )
     start = (page - 1) * page_size
-    return JSONResponse(content={"rows": rows[start:start + page_size], "total_rows": len(rows)})
+    return JSONResponse(content={
+        "rows": rows[start:start + page_size],
+        "total_rows": len(rows),
+        "truncated": truncated,
+    })
+
+
+_FILENAME_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _download_filename(name: str, uuid: str) -> str:
+    """Filesystem-safe stand-in for a search's display name, used as the
+    browser-facing download filename (see download_archive_search) --
+    falls back to the uuid alone if the name is empty after stripping
+    (e.g. all-punctuation)."""
+    slug = _FILENAME_SLUG_RE.sub("-", name.strip().lower()).strip("-")
+    return f"{slug or 'archive-search'}-{uuid}.csv"
+
+
+def _search_query_range(record: dict) -> tuple[date, date]:
+    """(start, end) to build a partition predicate from, for a search
+    record that may predate start_date/end_date being persisted (see
+    ArchiveSearchDetail's own Optional fields) -- falls back to the full
+    archive range in that case, exactly like create_archive_search's own
+    default for an omitted explicit bound."""
+    today = datetime.now(timezone.utc).date()
+    start = date.fromisoformat(record["start_date"]) if record.get("start_date") else _ARCHIVE_EPOCH
+    end = date.fromisoformat(record["end_date"]) if record.get("end_date") else today + timedelta(days=1)
+    return start, end
+
+
+def _poll_until_terminal(query_execution_id: str) -> tuple[str, str]:
+    """Synchronous variant of _poll_search_execution's loop, for a request
+    handler that needs the answer inline rather than via a background
+    thread + Redis write. Checks immediately before ever sleeping (unlike
+    the background poller, a query already finished by the time this is
+    called must not pay an up-front sleep first). Returns (state, reason);
+    reason is only ever non-empty for FAILED/CANCELLED."""
+    deadline = time.monotonic() + ATHENA_POLL_DEADLINE_SECONDS
+    attempt = 0
+    while True:
+        resp = _athena_client.get_query_execution(QueryExecutionId=query_execution_id)
+        state = resp["QueryExecution"]["Status"]["State"]
+        if state in ("SUCCEEDED", "FAILED", "CANCELLED"):
+            return state, resp["QueryExecution"]["Status"].get("StateChangeReason", "")
+        if time.monotonic() >= deadline:
+            return state, "Deadline exceeded"
+        delay = ATHENA_POLL_BACKOFF_SECONDS[min(attempt, len(ATHENA_POLL_BACKOFF_SECONDS) - 1)]
+        attempt += 1
+        time.sleep(min(delay, 30))
+
+
+def _run_or_get_download_query_execution(uuid: str, record: dict) -> str:
+    """Returns the S3 output location of the download query's results,
+    running (and persisting) that query at most once per search -- a
+    second call for the same uuid, whether from this same request or a
+    later one, reuses download_output_location straight off the record
+    with no new Athena call at all. Reuses the SAME partition predicate and
+    where_clause the original search resolved (see _search_query_range),
+    submitted fresh here rather than reusing query_execution_id: the
+    download query's SELECT list differs (no s3_key -- see
+    _build_download_query)."""
+    output_location = record.get("download_output_location")
+    if output_location:
+        return output_location
+
+    query_execution_id = record.get("download_query_execution_id")
+    if query_execution_id is None:
+        start, end = _search_query_range(record)
+        query = _build_download_query(_partition_predicate(start, end), record["where_clause"])
+        try:
+            resp = _athena_client.start_query_execution(
+                QueryString=query,
+                QueryExecutionContext={"Database": _athena_cfg["database"]},
+                WorkGroup=_athena_cfg["workgroup"],
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to start download query: {exc}") from exc
+        query_execution_id = resp["QueryExecutionId"]
+        _update_search_record(uuid, download_query_execution_id=query_execution_id)
+
+    state, reason = _poll_until_terminal(query_execution_id)
+    if state == "SUCCEEDED":
+        output_location = _result_output_location(query_execution_id)
+        _update_search_record(uuid, download_output_location=output_location)
+        return output_location
+    if state in ("FAILED", "CANCELLED"):
+        raise HTTPException(status_code=502, detail=f"Download query failed: {reason}")
+    raise HTTPException(status_code=504, detail="Download query did not complete in time")
+
+
+@app.get(
+    "/api/archive/search/{uuid}/download",
+    tags=["archive"],
+    responses={
+        307: {"description": "Redirect to a short-lived presigned S3 URL for the full result CSV"},
+        **_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR,
+    },
+)
+def download_archive_search(uuid: str):
+    """Always S3-direct, for every result size -- no branch on how many
+    rows matched. The backend never reads the result bytes; it only submits
+    a sanitized, s3_key-free query (see _build_download_query) and hands
+    the browser a presigned URL to Athena's own S3 output for it. Because
+    this reruns the search rather than reusing its original query
+    execution, a flight archived after the search was submitted can appear
+    in the download that wasn't in the paged view -- only affects the most
+    recent days; see management-ui/README.md."""
+    record = _get_search_record(uuid)
+    if record["status"] != "COMPLETE":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Search '{uuid}' is not complete (status: {record['status']})",
+        )
+
+    output_location = _run_or_get_download_query_execution(uuid, record)
+    bucket, key = _parse_s3_uri(output_location)
+    try:
+        presigned_url = _s3_client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                # Overrides the response headers S3 actually serves for this
+                # one presigned GET -- gives the browser a friendly filename
+                # and a real download prompt, without the backend ever
+                # touching the object's bytes.
+                "ResponseContentDisposition": f'attachment; filename="{_download_filename(record["name"], uuid)}"',
+                "ResponseContentType": "text/csv",
+            },
+            ExpiresIn=_DOWNLOAD_PRESIGN_TTL_SECONDS,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to presign download: {exc}") from exc
+    return RedirectResponse(url=presigned_url, status_code=307)
 
 
 @app.delete(
