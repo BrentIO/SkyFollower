@@ -1,5 +1,4 @@
 import { mdiExportVariant, mdiFileImportOutline } from "@mdi/js";
-import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { ImportConflictModal, type ConflictChoice } from "../components/ImportConflictModal";
@@ -129,11 +128,6 @@ export function RulesView() {
   const [draft, setDraft] = useState<Rule | null>(null);
   const [isNew, setIsNew] = useState(false);
 
-  // Mobile-only accordion state for the rule list -- ignored at the md+
-  // breakpoint, where the list is always visible regardless (see the
-  // className on the <ul> below).
-  const [mobileListOpen, setMobileListOpen] = useState(false);
-
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -188,7 +182,6 @@ export function RulesView() {
       setDraft(clone(sorted));
       setOriginal(clone(sorted));
       setIsNew(false);
-      setMobileListOpen(false);
     });
   }
 
@@ -198,7 +191,6 @@ export function RulesView() {
       setDraft(clone(fresh));
       setOriginal(clone(fresh));
       setIsNew(true);
-      setMobileListOpen(false);
     });
   }
 
@@ -376,6 +368,12 @@ export function RulesView() {
     return <p className="text-slate-400">Loading rules...</p>;
   }
 
+  // Shared by every RuleForm instance below (mobile inline cards and the
+  // desktop panel alike) -- excludes the rule currently being edited from
+  // its own duplicate-identifier check, same as before this view grew a
+  // mobile accordion.
+  const otherRulesForDraft = rules.filter((r) => r.identifier !== original?.identifier || isNew);
+
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
       <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
@@ -409,20 +407,33 @@ export function RulesView() {
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setMobileListOpen((open) => !open)}
-          aria-expanded={mobileListOpen}
-          className="flex items-center justify-center gap-2 rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:hidden"
-        >
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <span>Rules</span>
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
+        <ul className="flex flex-col gap-2 overflow-y-auto md:gap-1">
+          {/* Mobile-only "new rule" card -- there's no existing list item to
+              expand inline under, so a new rule gets its own leading card
+              instead, using the same selected-card treatment as the real
+              rows below. Desktop renders the new-rule form in the panel to
+              the right instead (see the hidden md:block panel further
+              down), so this card never shows there. */}
+          {isNew && draft && (
+            <li className="rounded-md border-l-4 border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800 md:hidden">
+              <div className="p-4">
+                <RuleForm
+                  key="__new__"
+                  rule={draft}
+                  isNew
+                  otherRules={otherRulesForDraft}
+                  areaOptions={areas}
+                  onChange={setDraft}
+                  onSave={handleSave}
+                  onDiscard={handleDiscard}
+                  onDelete={() => setDeleteTarget(draft)}
+                  saving={saving}
+                  dirty={dirty}
+                />
+              </div>
+            </li>
+          )}
 
-        <ul
-          className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
-        >
           {[...rules]
             .sort((a, b) =>
               (a.name || a.identifier).localeCompare(b.name || b.identifier),
@@ -433,10 +444,10 @@ export function RulesView() {
             return (
               <li
                 key={rule.identifier}
-                className={`rounded-r-md border-l-4 ${
+                className={`rounded-md border-l-4 md:rounded-l-none md:rounded-r-md ${
                   isSelected
                     ? "border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800"
-                    : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800"
+                    : "border-transparent bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 md:bg-transparent dark:md:bg-transparent"
                 }`}
               >
                 <button
@@ -456,6 +467,29 @@ export function RulesView() {
                     <StatusPill label="Inactive" tone="neutral" />
                   ) : null}
                 </button>
+
+                {/* Mobile accordion: the full editor renders inline under
+                    the selected row instead of in a separate below-the-fold
+                    area, since there's no persistent side-by-side space
+                    below md:. Desktop shows the same content in the panel
+                    to the right instead (hidden here via md:hidden). */}
+                {isSelected && draft && (
+                  <div className="border-t border-slate-200 p-4 dark:border-slate-700 md:hidden">
+                    <RuleForm
+                      key={original?.identifier ?? rule.identifier}
+                      rule={draft}
+                      isNew={false}
+                      otherRules={otherRulesForDraft}
+                      areaOptions={areas}
+                      onChange={setDraft}
+                      onSave={handleSave}
+                      onDiscard={handleDiscard}
+                      onDelete={() => setDeleteTarget(draft)}
+                      saving={saving}
+                      dirty={dirty}
+                    />
+                  </div>
+                )}
               </li>
             );
           })}
@@ -463,15 +497,13 @@ export function RulesView() {
         </ul>
       </div>
 
-      <hr className="border-slate-200 dark:border-slate-700 md:hidden" />
-
-      <div className="flex-1 overflow-y-auto md:min-h-0 md:overflow-hidden">
+      <div className="hidden flex-1 overflow-y-auto md:block md:min-h-0 md:overflow-hidden">
         {draft ? (
           <RuleForm
             key={isNew ? "__new__" : original?.identifier ?? "__new__"}
             rule={draft}
             isNew={isNew}
-            otherRules={rules.filter((r) => r.identifier !== original?.identifier || isNew)}
+            otherRules={otherRulesForDraft}
             areaOptions={areas}
             onChange={setDraft}
             onSave={handleSave}
