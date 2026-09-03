@@ -611,7 +611,7 @@ class ArchiveProcessor:
                 self._incr_period_counters(metrics_flights_skipped_key, ("hour", "today"))
             except Exception as exc:
                 logger.warning("Redis counter update failed: %s", exc)
-            logger.info("Skipped external-only flight %s (no force_archive match).", flight.id)
+            logger.debug("Skipped external-only flight %s (no force_archive match).", flight.id)
             return
 
         with self._s3_lock:
@@ -816,7 +816,7 @@ class ArchiveProcessor:
         except Exception as exc:
             logger.warning("Redis counter update failed: %s", exc)
 
-        logger.info("Archived flight %s -> s3://%s", flight.id, s3_key)
+        logger.debug("Archived flight %s -> s3://%s", flight.id, s3_key)
 
     # ------------------------------------------------------------------
     # MQTT
