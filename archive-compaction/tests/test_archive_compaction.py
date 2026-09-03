@@ -61,6 +61,7 @@ is_per_flight_file = _mod.is_per_flight_file
 build_compacted_key = _mod.build_compacted_key
 delete_keys = _mod.delete_keys
 compact_partition = _mod.compact_partition
+_uuid_from_flight_key = _mod._uuid_from_flight_key
 check_date_parity = _mod.check_date_parity
 read_watermark = _mod.read_watermark
 write_watermark = _mod.write_watermark
@@ -301,11 +302,35 @@ class TestCompactPartition:
 # ---------------------------------------------------------------------------
 
 def _flight_key(d: date, uuid_str: str, icao_hex: str = "A1B2C3", ident: str = "DAL123") -> str:
+    """Legacy-format flight key (icao_hex/ident segments still present)."""
     return f"{flights_prefix_for_date(d)}{icao_hex}_{ident}_{uuid_str}.json.gz"
+
+
+def _new_flight_key(d: date, uuid_str: str) -> str:
+    """Current-format flight key -- bare uuid basename, no icao_hex/ident."""
+    return f"{flights_prefix_for_date(d)}{uuid_str}.json.gz"
 
 
 def _index_key(d: date, uuid_str: str) -> str:
     return f"{index_prefix_for_date(d)}{uuid_str}.parquet"
+
+
+class TestUuidFromFlightKey:
+    def test_legacy_three_segment_key(self):
+        key = "flights/2026/07/23/A1B2C3_DAL123_uuid-a.json.gz"
+        assert _uuid_from_flight_key(key) == "uuid-a"
+
+    def test_current_bare_uuid_key(self):
+        key = "flights/2026/07/23/uuid-a.json.gz"
+        assert _uuid_from_flight_key(key) == "uuid-a"
+
+    def test_unrecognized_shape_returns_none(self):
+        key = "flights/2026/07/23/A1B2C3_uuid-a.json.gz"  # two segments
+        assert _uuid_from_flight_key(key) is None
+
+    def test_non_json_gz_suffix_returns_none(self):
+        key = "flights/2026/07/23/uuid-a.parquet"
+        assert _uuid_from_flight_key(key) is None
 
 
 class TestCheckDateParity:
@@ -348,6 +373,38 @@ class TestCheckDateParity:
     def test_no_flights_no_mismatch(self):
         s3 = _FakeS3()
         assert check_date_parity(s3, "bucket", self._DATE) == set()
+
+    def test_missing_index_row_detected_for_new_format_key(self):
+        # Regression test: under the old three-segment-only parsing,
+        # every new-format (bare-uuid) flight key was unparseable, so
+        # flight_uuids came back empty and this mismatch was silently
+        # never reported. Proves the parity guard is still live, not
+        # merely still present, once flights use the simplified key.
+        s3 = _FakeS3()
+        s3.objects[_new_flight_key(self._DATE, "uuid-a")] = b"flight-json-gz"
+        s3.objects[_new_flight_key(self._DATE, "uuid-b")] = b"flight-json-gz"
+        s3.objects[_index_key(self._DATE, "uuid-a")] = _make_parquet_bytes(_make_row())
+        # uuid-b's index row never landed.
+
+        assert check_date_parity(s3, "bucket", self._DATE) == {"uuid-b"}
+
+    def test_clean_match_for_new_format_key(self):
+        s3 = _FakeS3()
+        s3.objects[_new_flight_key(self._DATE, "uuid-a")] = b"flight-json-gz"
+        s3.objects[_index_key(self._DATE, "uuid-a")] = _make_parquet_bytes(_make_row())
+
+        assert check_date_parity(s3, "bucket", self._DATE) == set()
+
+    def test_mixed_legacy_and_new_format_keys(self):
+        # Old and new key shapes coexist in the same partition -- no
+        # backfill migrates one into the other.
+        s3 = _FakeS3()
+        s3.objects[_flight_key(self._DATE, "uuid-legacy")] = b"flight-json-gz"
+        s3.objects[_new_flight_key(self._DATE, "uuid-new")] = b"flight-json-gz"
+        s3.objects[_index_key(self._DATE, "uuid-legacy")] = _make_parquet_bytes(_make_row())
+        # uuid-new's index row never landed.
+
+        assert check_date_parity(s3, "bucket", self._DATE) == {"uuid-new"}
 
 
 # ---------------------------------------------------------------------------

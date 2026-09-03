@@ -719,3 +719,8 @@ class TestUuidFromS3Key:
     def test_handles_unknown_ident(self):
         key = "flights/2026/07/31/A8AE7F_unknown_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         assert ui_main._uuid_from_s3_key(key) == "0198abcd-1234-7abc-8def-1234567890ab"
+
+    def test_handles_current_bare_uuid_key(self):
+        # Current key shape carries no icao_hex/ident segment at all.
+        key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
+        assert ui_main._uuid_from_s3_key(key) == "0198abcd-1234-7abc-8def-1234567890ab"

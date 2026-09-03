@@ -1025,7 +1025,7 @@ records:
       merged enrichment; neither key nor the merged result is persisted under
       any icao_hex:{hex} key.
     storage: S3
-    s3_path: "flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz"
+    s3_path: "flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz"
     fields:
 
       _id:
@@ -3952,7 +3952,7 @@ records:
 
       s3_key:
         type: string
-        description: "Full S3 key of the matching flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz object; a search result's s3_key is what the UI backend uses to fetch the full flight record"
+        description: "Full S3 key of the matching flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz object (older objects may still carry the previous flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz shape); a search result's s3_key is what the UI backend uses to fetch the full flight record"
         persisted: true
         sources:
           - source: archive-processor

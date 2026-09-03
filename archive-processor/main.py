@@ -18,7 +18,6 @@ import logging
 import logging.handlers
 import os
 import pathlib
-import re
 import signal
 import sys
 import threading
@@ -210,13 +209,10 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
 # S3 key builder
 # ---------------------------------------------------------------------------
 
-_NON_ALNUM_RE = re.compile(r"[^a-zA-Z0-9]")
-
-
 def build_s3_key(flight: CompletedFlight) -> str:
     """
     Build the S3 object key for a completed flight.
-    Format: flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz
+    Format: flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz
 
     Dated by first_message, not last_message: split-flight stitching
     (_merge_segments) always preserves the *original* segment's
@@ -233,12 +229,9 @@ def build_s3_key(flight: CompletedFlight) -> str:
     mm = dt.strftime("%m")
     dd = dt.strftime("%d")
 
-    icao_hex = flight.aircraft.get("icao_hex", "unknown")
-    ident_raw = flight.ident or "unknown"
-    ident = _NON_ALNUM_RE.sub("", ident_raw) or "unknown"
     uuid = flight.id  # alias for _id field
 
-    return f"flights/{yyyy}/{mm}/{dd}/{icao_hex}_{ident}_{uuid}.json.gz"
+    return f"flights/{yyyy}/{mm}/{dd}/{uuid}.json.gz"
 
 
 # ---------------------------------------------------------------------------

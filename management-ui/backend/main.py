@@ -1847,10 +1847,13 @@ def _result_output_location(query_execution_id: str) -> str:
 
 
 def _uuid_from_s3_key(s3_key: str) -> str:
-    """flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz -- icao_hex
-    and ident never contain underscores (icao_hex is hex digits; ident is
-    sanitized to alnum-only by archive-processor's build_s3_key), so the
-    final underscore-separated segment is always the uuid."""
+    """Two flight key shapes coexist with no backfill migrating one into
+    the other: the current flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz, and
+    the legacy flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz.
+    A uuid never contains an underscore, so rsplit("_", 1) followed by the
+    last element yields the uuid either way -- the whole string when there
+    is no underscore to split on, or just the final segment when there
+    is."""
     filename = s3_key.rsplit("/", 1)[-1]
     stem = filename.removesuffix(".json.gz")
     return stem.rsplit("_", 1)[-1]
