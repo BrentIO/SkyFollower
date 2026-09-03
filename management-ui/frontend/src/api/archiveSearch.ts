@@ -16,6 +16,12 @@ export interface ArchiveSearchSummary {
 
 export interface ArchiveSearchDetail extends ArchiveSearchSummary {
   where_clause: string;
+  // The RESOLVED range actually queried (explicit input intersected with
+  // whatever the WHERE clause's own predicates could prove) -- UTC
+  // calendar dates, YYYY-MM-DD. Null for a record written before this
+  // field existed.
+  start_date: string | null;
+  end_date: string | null;
 }
 
 export interface ArchiveSearchResultRow {
@@ -54,8 +60,21 @@ export type ArchiveSearchSortColumn =
 
 export type ArchiveSearchSortDir = "asc" | "desc";
 
-export function createArchiveSearch(name: string, whereClause: string): Promise<{ uuid: string }> {
-  return apiClient.post<{ uuid: string }>("/api/archive/search", { name, where_clause: whereClause });
+// startDate/endDate are UTC calendar dates (YYYY-MM-DD), or undefined/""
+// for "all time" on that side -- the backend resolves an omitted bound to
+// the full archive range (see ArchiveSearchDetail's start_date/end_date).
+export function createArchiveSearch(
+  name: string,
+  whereClause: string,
+  startDate?: string,
+  endDate?: string,
+): Promise<{ uuid: string }> {
+  return apiClient.post<{ uuid: string }>("/api/archive/search", {
+    name,
+    where_clause: whereClause,
+    start_date: startDate || null,
+    end_date: endDate || null,
+  });
 }
 
 export function listArchiveSearches(): Promise<ArchiveSearchSummary[]> {

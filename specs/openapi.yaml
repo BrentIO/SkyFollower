@@ -1373,6 +1373,24 @@ components:
           type: string
           minLength: 1
           title: Where Clause
+        start_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+          description: >-
+            UTC calendar date, inclusive. Omitted or null defaults to the
+            start of the archive.
+        end_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+          description: >-
+            UTC calendar date, inclusive. Omitted or null defaults to
+            tomorrow UTC.
       type: object
       required:
       - name
@@ -1408,6 +1426,24 @@ components:
         where_clause:
           type: string
           title: Where Clause
+        start_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Start Date
+          description: >-
+            The RESOLVED lower bound actually queried (explicit input
+            intersected with what the WHERE clause's own predicates could
+            prove) -- null for a record written before this field existed.
+        end_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: End Date
+          description: >-
+            The RESOLVED upper bound actually queried -- see start_date.
       type: object
       required:
       - uuid

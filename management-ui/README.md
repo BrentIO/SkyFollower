@@ -233,9 +233,9 @@ record for the 9 underlying columns), with a History page
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/archive/search` | Start a search: `{name, where_clause}` body. `HTTP 202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below). `HTTP 502` if Athena rejects the query outright (e.g. a permissions mismatch) |
+| `POST` | `/api/archive/search` | Start a search: `{name, where_clause, start_date?, end_date?}` body (`start_date`/`end_date` are optional UTC calendar dates, `YYYY-MM-DD`; see Partition pruning below). `HTTP 202` with `{uuid}` immediately — the query itself runs in the background (see Background polling below), unless the resolved date range comes up empty, in which case the search is recorded already `COMPLETE` with zero rows and no Athena query is ever started. `HTTP 400` if an explicit `start_date` is after `end_date`. `HTTP 502` if Athena rejects the query outright (e.g. a permissions mismatch) |
 | `GET` | `/api/archive/search` | List all current search records: `{uuid, name, status, submitted_at, expires_at, error}` each (`error` is only ever set for `FAILED`/`ABORTED`) |
-| `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause`. `HTTP 404` if not found |
+| `GET` | `/api/archive/search/{uuid}` | One search record, including its `where_clause` and the RESOLVED `start_date`/`end_date` actually queried (`null` for a record predating this field). `HTTP 404` if not found |
 | `GET` | `/api/archive/search/{uuid}/results?page={n}` | One page (100 rows) of a `COMPLETE` search's results: `{rows: [...], total_rows}` — `total_rows` is the full match count, not just this page's length, for the frontend's Prev/Next/"Page X of Y" pagination. `HTTP 404` if not found, `HTTP 400` if the search isn't `COMPLETE` yet, `HTTP 502` if Athena/S3 fails to locate or return the result file (e.g. a permissions mismatch, or the file is already gone) |
 | `DELETE` | `/api/archive/search/{uuid}` | Delete a search record — best-effort-cancels the Athena query if still `RUNNING`, deletes the Athena result file from S3 if `COMPLETE`, always deletes the Redis record. `HTTP 204`, or `HTTP 404` if not found |
 | `GET` | `/api/archive/flights/{token}` | Download one flight's full archived record (gzipped JSON) by its opaque, encrypted fetch token — never a raw S3 key. `HTTP 400` on an invalid/expired token, `HTTP 502` if S3 fails to return the object (e.g. it's already gone, or a permissions mismatch) |
@@ -253,21 +253,21 @@ oversight. The backend always controls the rest of the statement:
 SELECT icao_hex, registration, type_designator, military, operator_designator,
        ident, first_message, last_message, s3_key
 FROM {athena.database}.{athena.table}
-WHERE ({where_clause})
+WHERE ({partition_predicate}) AND ({where_clause})
 ```
 
-`where_clause` only ever fills the parenthesized `WHERE` fragment — the
-`SELECT` list, `FROM` table, and parentheses are never influenced by user
-input, and there's no way to reach a different table. Still bounded by
-more than the application layer alone: the querying IAM identity is
-already read-only on just this one table (see [AWS Setup](#aws-setup)
-below), and Athena executes one statement per `start_query_execution`
-call, so no `;`-chained multi-statement injection is possible regardless
-of content. On top of that, a cheap early rejection (before ever calling
-Athena) 400s a `where_clause` containing `;` or a DDL/DML keyword
-(`DROP`/`CREATE`/`ALTER`/`INSERT`/`DELETE`/`UPDATE`/`GRANT`, matched
-word-boundary so `ident = 'INSERT1'` doesn't false-positive) — not a real
-security boundary given the IAM scoping above, purely so a mistake
+`where_clause` only ever fills the second, parenthesized `WHERE` fragment —
+the `SELECT` list, `FROM` table, `partition_predicate`, and both sets of
+parentheses are never influenced by user input, and there's no way to reach
+a different table. Still bounded by more than the application layer alone:
+the querying IAM identity is already read-only on just this one table (see
+[AWS Setup](#aws-setup) below), and Athena executes one statement per
+`start_query_execution` call, so no `;`-chained multi-statement injection is
+possible regardless of content. On top of that, a cheap early rejection
+(before ever calling Athena) 400s a `where_clause` containing `;` or a
+DDL/DML keyword (`DROP`/`CREATE`/`ALTER`/`INSERT`/`DELETE`/`UPDATE`/`GRANT`,
+matched word-boundary so `ident = 'INSERT1'` doesn't false-positive) — not a
+real security boundary given the IAM scoping above, purely so a mistake
 produces an instant, clear `400` instead of a slower, more opaque Athena
 `AccessDenied`.
 
@@ -275,6 +275,58 @@ produces an instant, clear `400` instead of a slower, more opaque Athena
 mint each row's fetch token and derive its flight UUID — see "Flight
 fetch" below) but is never included in any HTTP response body a browser
 receives.
+
+### Partition pruning
+
+The Glue table's `year`/`month`/`day` partition columns use partition
+projection with no crawler (`specs/aws/cloudformation.yaml`) — Athena
+generates and `LIST`s every one of the ~29,000 projected partitions
+(`2022,2100` × 12 × 31) at query time unless the query's own `WHERE`
+clause narrows them. Without a predicate on those columns, every search —
+even one matching a single `icao_hex` — scans the entire projected range,
+measured at ~40 seconds against the live archive account regardless of how
+little data actually matches.
+
+`partition_predicate` above is always backend-generated and always injected
+— there is no way to run a search without it. It is built from three
+constraints, intersected to the tightest overlap:
+
+1. **The archive's own bounds** — `_ARCHIVE_EPOCH` (built from
+   `shared/glue_projection.YEAR_RANGE`'s lower bound, so it can never widen
+   past what the Glue table actually projects) through tomorrow UTC.
+2. **An operator-supplied `start_date`/`end_date`** on the search request
+   (both optional; a missing bound defaults to the corresponding side of
+   #1). UTC calendar dates, since that's what the partition columns
+   themselves encode.
+3. **Whatever `where_clause`'s own `first_message`/`last_message`
+   predicates can prove** (`_derive_bounds`) — e.g. a clause containing
+   `first_message >= timestamp '2026-01-01 00:00:00'` derives a lower
+   bound with no operator action needed. Widened by one day each side as
+   timezone/boundary insurance. Only sound inside a pure `AND` conjunction
+   — an `OR` or a `NOT` anywhere in the clause makes the derivation
+   unsound, so either one bails out to "no bound derivable" rather than
+   risk excluding a row Athena would otherwise have matched. Parsed with
+   `sqlglot` rather than a regex specifically so a column reference is
+   never confused with the same text appearing inside a string literal.
+
+If the three constraints don't overlap (e.g. an explicit `start_date` after
+what `where_clause` could ever match), the search is recorded as an
+already-`COMPLETE`, zero-row result with **no Athena query ever run** — a
+real, correct answer to a range that provably can't match anything, not an
+error. This is distinct from an explicit `start_date` after `end_date` on
+the request itself, which is a `400` at creation time.
+
+The RESOLVED range (after intersection) is persisted on the search record
+and returned by `GET /api/archive/search/{uuid}` so it stays visible next
+to results that may have come from a derived, not just a typed, range.
+Resubmitting a search reuses its persisted resolved range verbatim, rather
+than re-resolving "tomorrow" against whatever the clock reads at resubmit
+time.
+
+`_partition_predicate` always emits the coarsest clause that exactly covers
+a span — a whole year, then whole months within a year, then a day range
+within a month — rather than one clause per day, so a multi-year range
+doesn't degenerate into thousands of `OR`ed day clauses.
 
 ### Background polling
 

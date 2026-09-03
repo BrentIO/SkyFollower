@@ -4,4 +4,5 @@ boto3==1.43.81
 cryptography==50.0.1
 shapely==2.1.2
 redis==8.1.0
+sqlglot==30.18.0
 uuid7==0.1.0
