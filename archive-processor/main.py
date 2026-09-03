@@ -69,6 +69,19 @@ logger = logging.getLogger("archive-processor")
 # "last archived segment" stitch pointer TTL is STITCH_POINTER_TTL_SECONDS).
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
+# Each completed flight is written to S3 independently with no shared
+# mutable state between flights, so -- unlike message-processor's
+# consistent-hash-exchange affinity concerns -- there's no fair-dispatch or
+# ordering reason to keep this at 1. A prefetch_count of 1 forces a full
+# ack round trip before RabbitMQ delivers the next message, capping
+# throughput at the connection's round-trip latency rather than actual
+# processing capacity. 100 matches message-processor's
+# _RMQ_PREFETCH_COUNT precedent: enough to remove the round-trip stall as
+# the throughput ceiling, without buffering an excessive number of
+# messages client-side that would need reprocessing if the connection
+# drops mid-batch.
+_RMQ_PREFETCH_COUNT = 100
+
 
 # ---------------------------------------------------------------------------
 # GeoJSON builder
@@ -524,7 +537,7 @@ class ArchiveProcessor:
                 self._rmq_channel.queue_declare(
                     queue=ARCHIVE_QUEUE_NAME, durable=True
                 )
-                self._rmq_channel.basic_qos(prefetch_count=1)
+                self._rmq_channel.basic_qos(prefetch_count=_RMQ_PREFETCH_COUNT)
                 self._rmq_channel.basic_consume(
                     queue=ARCHIVE_QUEUE_NAME,
                     on_message_callback=self._on_message,
