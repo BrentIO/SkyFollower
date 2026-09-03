@@ -91,11 +91,7 @@ flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz
 
 The key carries no `icao_hex`/`ident` segment — the Parquet index row already
 stores those as their own indexed columns, and no query path recovers them
-by parsing the key. Objects written before this change still exist under
-the previous `flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz`
-shape; each object's `s3_key` is recorded in the Parquet index at write
-time and never recomputed, so old- and new-format keys coexist with no
-migration needed.
+by parsing the key.
 
 The object body is the completed flight record (see
 [shared/README.md](../shared/README.md)

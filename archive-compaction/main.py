@@ -187,28 +187,17 @@ def delete_keys(s3_client, bucket: str, keys: list[str]) -> int:
 
 def _uuid_from_flight_key(key: str) -> str | None:
     """
-    Extract the flight UUID from a flights/ object key. Two coexisting
-    key shapes are in play, with no backfill migrating one into the
-    other, so both are accepted:
-
-    flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz                  (current)
-    flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz  (legacy)
-
-    icao_hex and ident never contain underscores (icao_hex is hex digits;
-    ident is alnum-only), so a legacy basename splits on "_" into exactly
-    three segments, while a current basename has no underscores at all
-    and splits into exactly one. Returns None for a key that doesn't
-    match either shape.
+    Extract the flight UUID from a flights/ object key
+    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz). Returns None for a key
+    that doesn't match this shape.
     """
     basename = key.rsplit("/", 1)[-1]
     if not basename.endswith(".json.gz"):
         return None
-    parts = basename[: -len(".json.gz")].split("_")
-    if len(parts) == 1:
-        return parts[0]
-    if len(parts) == 3:
-        return parts[2]
-    return None
+    uuid = basename[: -len(".json.gz")]
+    if not uuid or "_" in uuid:
+        return None
+    return uuid
 
 
 def _uuid_from_index_key(key: str) -> str | None:
