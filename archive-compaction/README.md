@@ -10,8 +10,8 @@
 
 The archive processor writes one small Parquet index row per flight to
 `index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet` alongside the
-flight's own `flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz`
-object (see `archive-processor/README.md` and
+flight's own `flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz` object (see
+`archive-processor/README.md` and
 `specs/data-dictionary.yaml`'s `archive_parquet_index` record). Each run of
 this job:
 

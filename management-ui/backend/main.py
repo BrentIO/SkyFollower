@@ -1849,13 +1849,10 @@ def _result_output_location(query_execution_id: str) -> str:
 
 
 def _uuid_from_s3_key(s3_key: str) -> str:
-    """flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz -- icao_hex
-    and ident never contain underscores (icao_hex is hex digits; ident is
-    sanitized to alnum-only by archive-processor's build_s3_key), so the
-    final underscore-separated segment is always the uuid."""
+    """Extract the flight UUID from an S3 flight object key
+    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz)."""
     filename = s3_key.rsplit("/", 1)[-1]
-    stem = filename.removesuffix(".json.gz")
-    return stem.rsplit("_", 1)[-1]
+    return filename.removesuffix(".json.gz")
 
 
 def _encrypt_s3_key(s3_key: str) -> str:

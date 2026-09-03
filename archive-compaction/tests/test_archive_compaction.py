@@ -62,6 +62,7 @@ is_per_flight_file = _mod.is_per_flight_file
 build_compacted_key = _mod.build_compacted_key
 delete_keys = _mod.delete_keys
 compact_partition = _mod.compact_partition
+_uuid_from_flight_key = _mod._uuid_from_flight_key
 check_date_parity = _mod.check_date_parity
 read_watermark = _mod.read_watermark
 write_watermark = _mod.write_watermark
@@ -88,7 +89,7 @@ def _make_row(**overrides) -> dict:
         "ident": "DAL123",
         "first_message": datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
         "last_message": datetime(2026, 7, 20, 12, 5, tzinfo=timezone.utc),
-        "s3_key": "flights/2026/07/20/A1B2C3_DAL123_uuid.json.gz",
+        "s3_key": "flights/2026/07/20/uuid.json.gz",
     }
     row.update(overrides)
     return row
@@ -307,12 +308,26 @@ class TestCompactPartition:
 # check_date_parity
 # ---------------------------------------------------------------------------
 
-def _flight_key(d: date, uuid_str: str, icao_hex: str = "A1B2C3", ident: str = "DAL123") -> str:
-    return f"{flights_prefix_for_date(d)}{icao_hex}_{ident}_{uuid_str}.json.gz"
+def _flight_key(d: date, uuid_str: str) -> str:
+    return f"{flights_prefix_for_date(d)}{uuid_str}.json.gz"
 
 
 def _index_key(d: date, uuid_str: str) -> str:
     return f"{index_prefix_for_date(d)}{uuid_str}.parquet"
+
+
+class TestUuidFromFlightKey:
+    def test_valid_key(self):
+        key = "flights/2026/07/23/uuid-a.json.gz"
+        assert _uuid_from_flight_key(key) == "uuid-a"
+
+    def test_underscore_in_stem_returns_none(self):
+        key = "flights/2026/07/23/A1B2C3_uuid-a.json.gz"
+        assert _uuid_from_flight_key(key) is None
+
+    def test_non_json_gz_suffix_returns_none(self):
+        key = "flights/2026/07/23/uuid-a.parquet"
+        assert _uuid_from_flight_key(key) is None
 
 
 class TestCheckDateParity:
