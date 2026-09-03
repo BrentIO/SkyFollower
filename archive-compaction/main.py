@@ -194,12 +194,11 @@ def _uuid_from_flight_key(key: str) -> str | None:
     flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz                  (current)
     flights/{YYYY}/{MM}/{DD}/{icao_hex}_{ident}_{uuid}.json.gz  (legacy)
 
-    icao_hex and ident never contain underscores themselves (icao_hex is
-    hex digits; ident was sanitized to alnum-only in archive-processor's
-    build_s3_key), so a legacy basename splits on "_" into exactly three
-    segments, while a current basename has no underscores at all and
-    splits into exactly one. Returns None for a key that doesn't match
-    either shape.
+    icao_hex and ident never contain underscores (icao_hex is hex digits;
+    ident is alnum-only), so a legacy basename splits on "_" into exactly
+    three segments, while a current basename has no underscores at all
+    and splits into exactly one. Returns None for a key that doesn't
+    match either shape.
     """
     basename = key.rsplit("/", 1)[-1]
     if not basename.endswith(".json.gz"):
