@@ -1578,41 +1578,6 @@ class TestDeadLetterQueueDepthTelemetry:
 
 
 # ---------------------------------------------------------------------------
-# Running version telemetry
-# ---------------------------------------------------------------------------
-
-class TestPublishTelemetryVersion:
-    _TOPIC = "SkyFollower/archive/statistic/version"
-
-    def test_reads_version_env_var(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
-                processor, _ = _make_processor(tmp_dir)
-            mock_mqtt = MagicMock()
-            processor._mqtt = mock_mqtt
-            processor._mqtt_connected = True
-
-            processor._publish_telemetry()
-
-            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-            assert calls[self._TOPIC] == "2026.08.01"
-
-    def test_falls_back_to_dev_when_unset(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            with patch.dict(os.environ, {}, clear=False):
-                os.environ.pop("VERSION", None)
-                processor, _ = _make_processor(tmp_dir)
-            mock_mqtt = MagicMock()
-            processor._mqtt = mock_mqtt
-            processor._mqtt_connected = True
-
-            processor._publish_telemetry()
-
-            calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
-            assert calls[self._TOPIC] == "dev"
-
-
-# ---------------------------------------------------------------------------
 # HA autodiscovery
 # ---------------------------------------------------------------------------
 
@@ -1635,3 +1600,54 @@ class TestHaAutodiscoveryStartedAt:
             }
             cfg = configs["homeassistant/sensor/SkyFollower_archive_started_at/config"]
             assert cfg["name"] == "Start Time"
+
+    def test_started_at_discovery_uses_timestamp_device_class(self):
+        # device_class: timestamp is what makes Home Assistant render this
+        # as relative time ("3 minutes ago") instead of a raw ISO string --
+        # matching every other component's Start Time sensor.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            cfg = configs["homeassistant/sensor/SkyFollower_archive_started_at/config"]
+            assert cfg["device_class"] == "timestamp"
+
+    def test_no_standalone_version_sensor(self):
+        # Version is already carried in every discovery payload's device
+        # block via sw_version -- no other component also publishes it as
+        # its own sensor entity, and archive shouldn't either.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            assert "homeassistant/sensor/SkyFollower_archive_version/config" not in configs
+
+    def test_no_version_telemetry_published(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
+            assert "SkyFollower/archive/statistic/version" not in topics

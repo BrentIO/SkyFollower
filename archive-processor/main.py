@@ -873,19 +873,18 @@ class ArchiveProcessor:
         }
         base = "SkyFollower/archive/statistic"
         sensors = [
-            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None),
-            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None),
-            ("flights_skipped_hour", "Flights Skipped External-Only (Hour)", "mdi:airplane-off", "total_increasing", None),
-            ("flights_skipped_today", "Flights Skipped External-Only (Today)", "mdi:airplane-off", "total_increasing", None),
-            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None),
-            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None),
-            ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None),
-            ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None),
-            ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None),
-            ("started_at", "Start Time", "mdi:clock", None, None),
-            ("version", "Archive Version", "mdi:tag", None, None),
+            ("flights_archived_hour", "Flights Archived (Hour)", "mdi:airplane-landing", "total_increasing", None, None),
+            ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, None),
+            ("flights_skipped_hour", "Flights Skipped External-Only (Hour)", "mdi:airplane-off", "total_increasing", None, None),
+            ("flights_skipped_today", "Flights Skipped External-Only (Today)", "mdi:airplane-off", "total_increasing", None, None),
+            ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, None),
+            ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, None),
+            ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, None),
+            ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None, None),
+            ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None, None),
+            ("started_at", "Start Time", "mdi:clock", None, None, "timestamp"),
         ]
-        for name, desc, icon, state_class, unit in sensors:
+        for name, desc, icon, state_class, unit, device_class in sensors:
             payload: dict = {
                 **availability,
                 "state_topic": f"{base}/{name}",
@@ -899,6 +898,8 @@ class ArchiveProcessor:
                 payload["state_class"] = state_class
             if unit:
                 payload["unit_of_measurement"] = unit
+            if device_class:
+                payload["device_class"] = device_class
             self._mqtt.publish(
                 f"homeassistant/sensor/SkyFollower_archive_{name}/config",
                 json.dumps(payload),
@@ -970,7 +971,6 @@ class ArchiveProcessor:
             retain=True,
         )
         self._mqtt.publish(f"{base}/started_at", self._started_at, retain=True)
-        self._mqtt.publish(f"{base}/version", self._version, retain=True)
 
     def _redis_counter(self, key: str) -> int:
         try:
