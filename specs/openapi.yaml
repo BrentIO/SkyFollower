@@ -1053,6 +1053,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/search/{uuid}/download:
+    get:
+      tags:
+      - archive
+      summary: Download Archive Search
+      description: 'Always S3-direct, for every result size -- no branch on how many
+
+        rows matched. The backend never reads the result bytes; it only submits
+
+        a sanitized, s3_key-free query (see _build_download_query) and hands
+
+        the browser a presigned URL to Athena''s own S3 output for it. Because
+
+        this reruns the search rather than reusing its original query
+
+        execution, a flight archived after the search was submitted can appear
+
+        in the download that wasn''t in the paged view -- only affects the most
+
+        recent days; see management-ui/README.md.'
+      operationId: download_archive_search_api_archive_search__uuid__download_get
+      parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '307':
+          description: Redirect to a short-lived presigned S3 URL for the full result
+            CSV
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '500':
+          description: Redis error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/archive/flights/{token}:
     get:
       tags:
@@ -1515,6 +1582,10 @@ components:
         total_rows:
           type: integer
           title: Total Rows
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
       type: object
       required:
       - rows

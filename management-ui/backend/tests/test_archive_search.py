@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -113,11 +114,18 @@ class FakeAthenaClient:
         self.started_queries: list[dict] = []
         self.stopped: list[str] = []
         self._next_id = 1
+        # QueryExecutionId -> list of data-row tuples (column order matching
+        # whatever SELECT that execution's query actually used) -- what
+        # get_query_results serves back for that id. Never touches fake_s3;
+        # this models Athena's own result-rows API, independent of the CSV
+        # file Athena separately writes to S3 for the same execution.
+        self.results: dict[str, list[tuple]] = {}
         # Set by a test to simulate an AWS-side failure (e.g. a permissions
         # mismatch) on the next call -- covers the 502 paths in main.py that
         # a plain state-transition can't exercise.
         self.raise_on_start: Optional[Exception] = None
         self.raise_on_get_query_execution: Optional[Exception] = None
+        self.raise_on_get_query_results: Optional[Exception] = None
 
     def start_query_execution(self, QueryString, QueryExecutionContext=None, WorkGroup=None):
         if self.raise_on_start is not None:
@@ -150,6 +158,20 @@ class FakeAthenaClient:
             }
         }
 
+    def get_query_results(self, QueryExecutionId, MaxResults=1000, NextToken=None):
+        """Row 0 is always the column header (real Athena behavior, which
+        main.py's _fetch_and_cache_results skips) -- unlike real Athena,
+        MaxResults here bounds DATA rows only (not the header), matching how
+        main.py requests _RESULT_ROW_CAP + 1 to learn whether a
+        (_RESULT_ROW_CAP + 1)th row exists in a single call."""
+        if self.raise_on_get_query_results is not None:
+            raise self.raise_on_get_query_results
+        all_rows = self.results.get(QueryExecutionId, [])
+        sliced = all_rows[:MaxResults] if MaxResults is not None else all_rows
+        header = {"Data": [{"VarCharValue": "column_header"}]}
+        data = [{"Data": [{"VarCharValue": "" if v is None else str(v)} for v in row]} for row in sliced]
+        return {"ResultSet": {"Rows": [header, *data]}}
+
     def stop_query_execution(self, QueryExecutionId):
         self.stopped.append(QueryExecutionId)
         self.executions[QueryExecutionId]["State"] = "CANCELLED"
@@ -159,6 +181,8 @@ class FakeS3Client:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
         self.deleted: list[str] = []
+        self.presigned_calls: list[dict] = []
+        self.raise_on_presign: Optional[Exception] = None
 
     def get_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -170,6 +194,12 @@ class FakeS3Client:
     def delete_object(self, Bucket, Key):
         self.deleted.append(Key)
         self.objects.pop(Key, None)
+
+    def generate_presigned_url(self, ClientMethod, Params, ExpiresIn=3600):
+        if self.raise_on_presign is not None:
+            raise self.raise_on_presign
+        self.presigned_calls.append({"Params": Params, "ExpiresIn": ExpiresIn})
+        return f"https://{Params['Bucket']}.s3.amazonaws.com/{Params['Key']}?presigned=1&expires={ExpiresIn}"
 
 
 def _csv_body(rows: list[tuple]) -> bytes:
@@ -660,7 +690,7 @@ class TestEmptyIntersectionShortCircuit:
         assert detail["status"] == "COMPLETE"
 
         results = client.get(f"/api/archive/search/{uuid}/results").json()
-        assert results == {"rows": [], "total_rows": 0}
+        assert results == {"rows": [], "total_rows": 0, "truncated": False}
 
     def test_delete_of_an_empty_intersection_search_does_not_touch_s3_or_athena(
         self, client, fake_athena, fake_s3
@@ -881,18 +911,18 @@ class TestBackgroundPolling:
 
 class TestResultsRetrieval:
     def _complete_search(self, client, fake_athena, fake_s3, rows):
+        """Registers `rows` (9-field tuples, s3_key last -- same shape
+        _SEARCH_SELECT_COLUMNS produces) as what get_query_results will hand
+        back for the search's own query execution. No fake_s3 interaction at
+        all -- the paged view never reads S3."""
         real_start = fake_athena.start_query_execution
 
-        def start_and_complete(*a, **k):
+        def start_and_register(*a, **k):
             result = real_start(*a, **k)
-            qid = result["QueryExecutionId"]
-            fake_athena.executions[qid]["State"] = "SUCCEEDED"
-            output = fake_athena.executions[qid]["OutputLocation"]
-            key = output.removeprefix("s3://test-bucket/")
-            fake_s3.objects[key] = _csv_body(rows)
+            fake_athena.results[result["QueryExecutionId"]] = rows
             return result
 
-        fake_athena.start_query_execution = start_and_complete
+        fake_athena.start_query_execution = start_and_register
         resp = _create_search(client)
         return resp.json()["uuid"]
 
@@ -905,21 +935,12 @@ class TestResultsRetrieval:
         results_resp = client.get(f"/api/archive/search/{uuid}/results")
         assert results_resp.status_code == 400
 
-    def test_athena_failure_locating_results_returns_502_not_500(self, client, fake_athena, fake_s3):
-        """_result_output_location's get_query_execution call must be
-        covered by the same try/except as the S3 download -- a permissions
-        mismatch or other AWS-side failure there must not surface as an
-        unhandled 500."""
+    def test_get_query_results_failure_returns_502_not_500(self, client, fake_athena, fake_s3):
+        """A permissions mismatch or other AWS-side failure fetching the
+        cached page window must surface as a clean 502, not an unhandled
+        500."""
         uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
-        fake_athena.raise_on_get_query_execution = Exception("AccessDeniedException: not authorized")
-        resp = client.get(f"/api/archive/search/{uuid}/results")
-        assert resp.status_code == 502
-
-    def test_missing_result_file_returns_502_not_500(self, client, fake_athena, fake_s3):
-        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
-        # Simulate the CSV having been deleted/never written -- fake_s3
-        # raises KeyError for a missing key, same as a real 404/NoSuchKey.
-        fake_s3.objects.clear()
+        fake_athena.raise_on_get_query_results = Exception("AccessDeniedException: not authorized")
         resp = client.get(f"/api/archive/search/{uuid}/results")
         assert resp.status_code == 502
 
@@ -967,19 +988,19 @@ class TestResultsRetrieval:
         assert page1["total_rows"] == 150
         assert page2["total_rows"] == 150
 
-    def test_second_page_request_reuses_cache_no_second_s3_fetch(self, client, fake_athena, fake_s3):
+    def test_second_page_request_reuses_cache_no_second_athena_call(self, client, fake_athena, fake_s3):
         rows = [("A1", "N1", "B738", "false", "DAL", "DAL1",
                   "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
                   "flights/2026/07/31/uuid-0.json.gz")]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
 
         client.get(f"/api/archive/search/{uuid}/results?page=1")
-        original_get_object = fake_s3.get_object
-        fake_s3.get_object = MagicMock(side_effect=AssertionError("should not refetch from S3"))
+        original_get_query_results = fake_athena.get_query_results
+        fake_athena.get_query_results = MagicMock(side_effect=AssertionError("should not refetch from Athena"))
         try:
             client.get(f"/api/archive/search/{uuid}/results?page=1")
         finally:
-            fake_s3.get_object = original_get_object
+            fake_athena.get_query_results = original_get_query_results
 
     def test_page_size_param_controls_slice_size(self, client, fake_athena, fake_s3):
         rows = [
@@ -1065,16 +1086,16 @@ class TestResultsSorting:
         assert page2["rows"][0]["icao_hex"] == f"A{49:05X}"
         assert page2["rows"][-1]["icao_hex"] == f"A{0:05X}"
 
-    def test_sort_does_not_trigger_a_second_s3_fetch(self, client, fake_athena, fake_s3):
+    def test_sort_does_not_trigger_a_second_athena_call(self, client, fake_athena, fake_s3):
         uuid = self._complete_search(client, fake_athena, fake_s3, self._ROWS)
         client.get(f"/api/archive/search/{uuid}/results")
-        original_get_object = fake_s3.get_object
-        fake_s3.get_object = MagicMock(side_effect=AssertionError("should not refetch from S3 just to sort"))
+        original_get_query_results = fake_athena.get_query_results
+        fake_athena.get_query_results = MagicMock(side_effect=AssertionError("should not refetch just to sort"))
         try:
             resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc")
             assert resp.status_code == 200
         finally:
-            fake_s3.get_object = original_get_object
+            fake_athena.get_query_results = original_get_query_results
 
     def test_invalid_sort_by_returns_422(self, client, fake_athena, fake_s3):
         uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
@@ -1085,6 +1106,112 @@ class TestResultsSorting:
         uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
         resp = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=sideways")
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The 500/501 boundary -- the core memory-bound fix. Off-by-one is the easy
+# thing to get wrong here, so both edges (exactly the cap, one past it) get
+# their own test rather than relying on a single "big" number.
+# ---------------------------------------------------------------------------
+
+def _row(i: int) -> tuple:
+    return (
+        f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
+        "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
+        f"flights/2026/07/31/uuid-{i}.json.gz",
+    )
+
+
+class TestResultCap:
+    def _complete_search(self, client, fake_athena, fake_s3, rows):
+        return TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows)
+
+    def test_exactly_500_rows_is_not_truncated_and_total_rows_is_exact(self, client, fake_athena, fake_s3):
+        rows = [_row(i) for i in range(500)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        resp = client.get(f"/api/archive/search/{uuid}/results?page_size=500")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["truncated"] is False
+        assert body["total_rows"] == 500
+        assert len(body["rows"]) == 500
+
+    def test_501_rows_caches_exactly_500_and_marks_truncated(self, client, fake_athena, fake_s3):
+        rows = [_row(i) for i in range(501)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        resp = client.get(f"/api/archive/search/{uuid}/results?page_size=500")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["truncated"] is True
+        assert body["total_rows"] == 500
+        assert len(body["rows"]) == 500
+        # The discarded 501st row (the highest icao_hex) must never surface.
+        assert f"A{500:05X}" not in [r["icao_hex"] for r in body["rows"]]
+
+    def test_only_501_rows_ever_requested_from_athena_regardless_of_true_match_count(
+        self, client, fake_athena, fake_s3
+    ):
+        """The fake models a search that "really" matched far more than 500
+        rows (Athena would never hand all of those back in one call in
+        production either) -- get_query_results must still only ever be
+        asked for _RESULT_ROW_CAP + 1."""
+        rows = [_row(i) for i in range(5000)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        original_get_query_results = fake_athena.get_query_results
+        calls = []
+
+        def spy(QueryExecutionId, MaxResults=1000, NextToken=None):
+            calls.append(MaxResults)
+            return original_get_query_results(QueryExecutionId, MaxResults=MaxResults, NextToken=NextToken)
+
+        fake_athena.get_query_results = spy
+        client.get(f"/api/archive/search/{uuid}/results")
+        assert calls == [ui_main._RESULT_ROW_CAP + 1]
+
+    def test_page_beyond_cached_range_returns_a_clear_error(self, client, fake_athena, fake_s3):
+        rows = [_row(i) for i in range(501)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        # 500 cached rows / 100 per page = 5 valid pages.
+        last_valid = client.get(f"/api/archive/search/{uuid}/results?page=5&page_size=100")
+        assert last_valid.status_code == 200
+        assert len(last_valid.json()["rows"]) == 100
+
+        beyond = client.get(f"/api/archive/search/{uuid}/results?page=6&page_size=100")
+        assert beyond.status_code == 400
+        assert "page" in beyond.json()["detail"].lower()
+
+    def test_unaffected_small_result_is_byte_identical_in_shape(self, client, fake_athena, fake_s3):
+        """A 12-row match -- today's common case -- behaves exactly as
+        before, plus the new (always-False-here) `truncated` field."""
+        rows = [_row(i) for i in range(12)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        resp = client.get(f"/api/archive/search/{uuid}/results")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["truncated"] is False
+        assert body["total_rows"] == 12
+        assert len(body["rows"]) == 12
+
+    def test_encrypt_s3_key_called_at_most_page_size_times_never_per_matching_row(
+        self, client, fake_athena, fake_s3
+    ):
+        """Simulates far more real matches (5000) than could ever be cached
+        (500) -- a single results request must mint at most page_size
+        tokens (the whole cached window, when page_size is the 500 max),
+        never one per matching row."""
+        rows = [_row(i) for i in range(5000)]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        with patch.object(ui_main, "_encrypt_s3_key", wraps=ui_main._encrypt_s3_key) as spy:
+            resp = client.get(f"/api/archive/search/{uuid}/results?page_size=500")
+        assert resp.status_code == 200
+        assert spy.call_count <= 500
+        assert spy.call_count != 5000
 
 
 # ---------------------------------------------------------------------------
@@ -1137,6 +1264,169 @@ class TestDeleteSearch:
         ui_main._update_search_record(uuid, status="COMPLETE")
 
         assert fake_redis.get(f"archive_search:{uuid}") is None
+
+
+# ---------------------------------------------------------------------------
+# Download -- always S3-direct via a presigned URL, for every result size,
+# backed by a second, sanitized query that never selects s3_key.
+# ---------------------------------------------------------------------------
+
+class TestDownload:
+    def _complete_search(self, client, fake_athena, fake_s3, rows=()):
+        return TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, list(rows))
+
+    def test_not_complete_returns_400(self, client):
+        resp = client.post("/api/archive/search", json={"name": "x", "where_clause": "1=1"})
+        uuid = resp.json()["uuid"]
+        resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert resp.status_code == 400
+
+    def test_nonexistent_search_404s(self, client):
+        resp = client.get("/api/archive/search/nope/download", follow_redirects=False)
+        assert resp.status_code == 404
+
+    def test_download_query_excludes_s3_key_column_and_reuses_partition_and_where(
+        self, client, fake_athena, fake_s3
+    ):
+        with _frozen_today(date(2026, 9, 3)):
+            uuid = self._complete_search(client, fake_athena, fake_s3, rows=[_row(0)])
+        client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+
+        assert len(fake_athena.started_queries) == 2
+        search_query = fake_athena.started_queries[0]["QueryString"]
+        download_query = fake_athena.started_queries[1]["QueryString"]
+
+        # Same partition predicate + where_clause as the original search --
+        # everything from WHERE onward is byte-identical between the two.
+        assert search_query.split(" WHERE ", 1)[1] == download_query.split(" WHERE ", 1)[1]
+
+        select_clause = download_query.split(" FROM ", 1)[0]
+        assert select_clause == (
+            f"SELECT regexp_extract(s3_key, '{ui_main._UUID_FROM_S3_KEY_PATTERN}', 1) AS uuid, "
+            "icao_hex, registration, type_designator, military, operator_designator, ident, "
+            "first_message, last_message"
+        )
+        # Today's nine columns, in today's order, uuid first -- and s3_key
+        # is never a standalone selected column (only an argument to
+        # regexp_extract, which must reference it to derive uuid at all).
+        assert select_clause.count("s3_key") == 1
+
+    def test_download_returns_a_307_redirect_to_a_presigned_s3_url(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[_row(0)])
+        resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert resp.status_code == 307
+        assert resp.headers["location"].startswith("https://test-bucket.s3.amazonaws.com/")
+        assert len(fake_s3.presigned_calls) == 1
+        call = fake_s3.presigned_calls[0]
+        assert call["ExpiresIn"] == ui_main._DOWNLOAD_PRESIGN_TTL_SECONDS
+        # The friendly download filename must never leak the real S3 key
+        # layout either -- it's derived from the search's own name + uuid.
+        content_disposition = call["Params"]["ResponseContentDisposition"]
+        assert "flights/" not in content_disposition
+        assert "test-bucket" not in content_disposition
+        assert content_disposition.startswith("attachment; filename=")
+
+    def test_download_query_submitted_at_most_once_per_search(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3)
+        queries_before = len(fake_athena.started_queries)
+
+        client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert len(fake_athena.started_queries) == queries_before + 1
+
+        client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert len(fake_athena.started_queries) == queries_before + 1  # no second query, ever
+
+    def test_downloaded_object_contains_no_s3_path_and_a_bare_uuid_first_column(
+        self, client, fake_athena, fake_s3
+    ):
+        """Models what Athena would actually write for the download query
+        (uuid first, no s3_key/bucket/date-folder path anywhere) and
+        confirms the presigned redirect points at exactly that object --
+        the backend never transforms the object in transit, so what's
+        written is what a browser following the redirect would receive."""
+        uuid = self._complete_search(client, fake_athena, fake_s3)
+
+        real_start = fake_athena.start_query_execution
+        written_csv = (
+            "uuid,icao_hex,registration,type_designator,military,operator_designator,"
+            "ident,first_message,last_message\n"
+            "0198abcd-1234-7abc-8def-1234567890ab,A8AE7F,N659DL,B738,false,DAL,DAL123,"
+            "2026-07-31 12:00:00.000,2026-07-31 13:00:00.000\n"
+        )
+
+        def start_and_write(*a, **k):
+            result = real_start(*a, **k)
+            qid = result["QueryExecutionId"]
+            key = fake_athena.executions[qid]["OutputLocation"].removeprefix("s3://test-bucket/")
+            fake_s3.objects[key] = written_csv.encode("utf-8")
+            return result
+
+        fake_athena.start_query_execution = start_and_write
+        resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert resp.status_code == 307
+
+        presigned_key = fake_s3.presigned_calls[-1]["Params"]["Key"]
+        content = fake_s3.objects[presigned_key].decode("utf-8")
+        assert "flights/" not in content
+        assert ".json.gz" not in content
+        assert "test-bucket" not in content
+
+        header, first_row, *_ = content.strip().splitlines()
+        assert header == (
+            "uuid,icao_hex,registration,type_designator,military,operator_designator,"
+            "ident,first_message,last_message"
+        )
+        first_uuid = first_row.split(",")[0]
+        assert re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", first_uuid
+        )
+
+    def test_download_query_failure_returns_502_not_500(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3)
+        fake_athena.raise_on_start = Exception("AccessDeniedException: not authorized")
+        resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert resp.status_code == 502
+
+    def test_failed_download_query_returns_502(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3)
+        real_start = fake_athena.start_query_execution
+
+        def start_and_fail(*a, **k):
+            result = real_start(*a, **k)
+            qid = result["QueryExecutionId"]
+            fake_athena.executions[qid]["State"] = "FAILED"
+            fake_athena.executions[qid]["Reason"] = "SYNTAX_ERROR"
+            return result
+
+        fake_athena.start_query_execution = start_and_fail
+        resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert resp.status_code == 502
+
+    def test_legacy_record_missing_date_fields_still_downloads(self, client, fake_athena, fake_s3, fake_redis):
+        """A search record written before start_date/end_date existed (see
+        ArchiveSearchDetail's Optional fields) must still be downloadable --
+        falls back to the full archive range, same as create_archive_search's
+        own default for an omitted explicit bound."""
+        fake_redis.store["archive_search:legacy-uuid"] = json.dumps({
+            "name": "legacy", "where_clause": "icao_hex = 'A8AE7F'", "status": "COMPLETE",
+            "submitted_at": "2026-01-01T00:00:00+00:00", "query_execution_id": "exec-old",
+        })
+        fake_redis.sadd("archive_search:index", "legacy-uuid")
+        fake_athena.executions["exec-old"] = {
+            "State": "SUCCEEDED", "OutputLocation": "s3://test-bucket/athena-results/exec-old.csv", "Reason": "",
+        }
+
+        resp = client.get("/api/archive/search/legacy-uuid/download", follow_redirects=False)
+        assert resp.status_code == 307
+
+
+class TestDownloadFilename:
+    def test_slugifies_the_search_name(self):
+        assert ui_main._download_filename("My Search!", "abc-123") == "my-search-abc-123.csv"
+
+    def test_falls_back_to_archive_search_for_an_all_punctuation_name(self):
+        assert ui_main._download_filename("***", "abc-123") == "archive-search-abc-123.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -1247,3 +1537,27 @@ class TestUuidFromS3Key:
     def test_extracts_uuid(self):
         key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         assert ui_main._uuid_from_s3_key(key) == "0198abcd-1234-7abc-8def-1234567890ab"
+
+    _UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+    def test_extracts_well_formed_uuid_from_current_simplified_key_shape(self):
+        """Current key layout: flights/{Y}/{M}/{D}/{uuid}.json.gz -- no
+        icao_hex/ident prefix."""
+        key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
+        extracted = ui_main._uuid_from_s3_key(key)
+        assert extracted
+        assert re.fullmatch(self._UUID_RE, extracted)
+
+    def test_extracts_well_formed_uuid_from_legacy_key_shape(self):
+        """Legacy key layout: flights/{Y}/{M}/{D}/{icao_hex}_{ident}_{uuid}.json.gz
+        -- extraction must anchor on the uuid immediately before ".json.gz",
+        not just strip the suffix off the whole filename (which would wrongly
+        include the icao_hex/ident prefix)."""
+        key = "flights/2026/07/31/A8AE7F_DAL123_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
+        extracted = ui_main._uuid_from_s3_key(key)
+        assert extracted
+        assert re.fullmatch(self._UUID_RE, extracted)
+        assert extracted == "0198abcd-1234-7abc-8def-1234567890ab"
+
+    def test_unrecognized_shape_returns_empty_string_not_garbage(self):
+        assert ui_main._uuid_from_s3_key("flights/2026/07/31/not-a-uuid.json.gz") == ""
