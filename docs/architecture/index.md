@@ -14,7 +14,7 @@ on that host — as a starting point, (CPU threads − 1). A Raspberry Pi
 Compute Module 4 has 4 threads, so 3 message processors is the suggested
 maximum there, not 4.
 
-Receivers publish every message to the durable `adsb` exchange, of type
+Receivers publish every message to the durable `skyfollower-adsb` exchange, of type
 `x-consistent-hash`, keyed by the aircraft's ICAO hex. Each message processor
 declares and binds its own durable queue,
 `skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, with a weight of `1`.

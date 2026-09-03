@@ -15,7 +15,7 @@ Two independent background loops, neither blocking the other:
   itself doesn't carry these despite being the endpoint originally named for
   this data point during design; polling `/api/nodes` too is what actually
   answers it), `GET /api/queues/%2F` (every queue in one call), and
-  `GET /api/exchanges/%2F/adsb` (the `adsb` exchange's own aggregate
+  `GET /api/exchanges/%2F/skyfollower-adsb` (the `skyfollower-adsb` exchange's own aggregate
   publish velocity — `shared/rabbitmq_topology.py`'s `ADSB_EXCHANGE`
   constant, no discovery needed). The queue list is filtered to
   SkyFollower's own queues via `shared/rabbitmq_topology.py`'s
@@ -51,8 +51,8 @@ other component's code, only know its device-identifier convention:
 | Queue | Device | Identifier |
 |---|---|---|
 | `skyfollower-message-processor-{id}` | That processor's own existing device | `SkyFollower_message_processor_{id}` (matches `message-processor/main.py`) |
-| `archive` | The archive processor's own existing device | `SkyFollower_archive` (matches `archive-processor/main.py`) |
-| `adsb-unroutable`, anything else SkyFollower-owned with no natural owner | New `SkyFollower Core` device | `SkyFollower_Core` |
+| `skyfollower-archive` | The archive processor's own existing device | `SkyFollower_archive` (matches `archive-processor/main.py`) |
+| `skyfollower-adsb-unroutable`, anything else SkyFollower-owned with no natural owner | New `SkyFollower Core` device | `SkyFollower_Core` |
 
 Broker-wide RabbitMQ stats and all of Redis also land on the `SkyFollower
 Core` device. Per-queue entity `unique_id`/`object_id`s are suffixed
@@ -62,20 +62,21 @@ same device (e.g. `SkyFollower_message_processor_{id}_processing_time_hwm_ms`).
 
 ### Archive queue missing detection
 
-Not every deployment installs archive-processor, so the `archive` queue
-being absent from the polled `/api/queues/%2F` list is a normal, valid
+Not every deployment installs archive-processor, so the `skyfollower-archive`
+queue being absent from the polled `/api/queues/%2F` list is a normal, valid
 state — not an error. But it's also indistinguishable, from an operator's
 perspective, from "core-health hasn't polled yet" unless something says so
 explicitly. Every RabbitMQ poll checks the (already-filtered)
-SkyFollower-owned queue list for `archive`'s presence and publishes
+SkyFollower-owned queue list for `skyfollower-archive`'s presence and publishes
 `archive_queue_missing` (`rabbitmq_connections_total`'s sibling on the
 `SkyFollower Core` device) accordingly — `True` when it's expected but not
-found, `False` once it exists. This is scoped specifically to `archive`,
-the one queue every deployment eventually has; it deliberately does not
-attempt to distinguish "archive-processor never installed" from
-"installed, then the queue got deleted/misconfigured" — both look
-identical via the Management API, and the retained flag clears itself
-automatically the next time `archive` shows up in the poll either way.
+found, `False` once it exists. This is scoped specifically to
+`skyfollower-archive`, the one queue every deployment eventually has; it
+deliberately does not attempt to distinguish "archive-processor never
+installed" from "installed, then the queue got deleted/misconfigured" —
+both look identical via the Management API, and the retained flag clears
+itself automatically the next time `skyfollower-archive` shows up in the
+poll either way.
 
 ### Counter mimicry (message-processor and the receiver)
 
@@ -194,7 +195,7 @@ passthrough fields described above:
 | `SkyFollower/core-health/redis/statistic/{field}` | Redis stats |
 | `SkyFollower/core-health/message-processor/{id}/statistic/{field}` | A processor's queue stats |
 | `SkyFollower/core-health/archive/statistic/{field}` | The archive queue's stats |
-| `SkyFollower/core-health/queue/{queue}/statistic/{field}` | Any other SkyFollower-owned queue's stats (e.g. `adsb-unroutable`) |
+| `SkyFollower/core-health/queue/{queue}/statistic/{field}` | Any other SkyFollower-owned queue's stats (e.g. `skyfollower-adsb-unroutable`) |
 | `SkyFollower/message-processor/{id}/statistic/{field}` | Mimicked message-processor counters (exact existing topic) |
 | `SkyFollower/receiver/{name}/statistic/{field}` | Mimicked receiver counters (exact existing topic) |
 

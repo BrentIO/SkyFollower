@@ -5,7 +5,7 @@ queue, maintains per-aircraft flight state in a file-backed (WAL-mode) SQLite
 database so it survives a process restart, enriches each flight with
 registration and operator data from Redis, evaluates
 the configured rules engine, publishes MQTT notifications when rules match, and
-routes completed flights to the archive queue (or a local SQLite fallback when
+routes completed flights to the `skyfollower-archive` queue (or a local SQLite fallback when
 RabbitMQ is unavailable). One container equals one message processor instance;
 scale horizontally by adding message processor containers, whether on the
 same host or on separate hosts -- see `MESSAGE_PROCESSOR_ID` below for how
@@ -75,7 +75,7 @@ every artifact belonging to that processor:
 
 The message processor declares and consumes from
 `skyfollower-message-processor-{MESSAGE_PROCESSOR_ID}`, binding that queue to
-the `adsb` consistent-hash exchange with a weight of `1` (see
+the `skyfollower-adsb` consistent-hash exchange with a weight of `1` (see
 [Routing](https://github.com/BrentIO/SkyFollower/blob/main/receiver/README.md#routing)
 in the receiver's README for the exchange's shape and its operational
 consequences). Because the ID is embedded in the queue name, an abandoned
@@ -407,7 +407,7 @@ Draining is also attempted independently every `MQTT_PUBLISH_INTERVAL_SECONDS`,
 not just on a detected reconnect. `_archive()` queues a completed flight to
 the fallback on any publish exception without necessarily affecting
 `_rmq_connected` or the consume side at all — so a run of publish-only
-failures (e.g. a broker-side rejection on the `archive` routing key, with the
+failures (e.g. a broker-side rejection on the `skyfollower-archive` routing key, with the
 consumer connection itself unaffected) would otherwise never trigger a drain
 again, since that's only ever spawned from the consumer's own reconnect
 path. The periodic check is a cheap no-op when the queue is already empty.
@@ -455,7 +455,7 @@ time — not just a burst of rapid reconnect attempts.
 
 **A missing archive queue is not poison.** `_archive()` and
 `_drain_fallback()` publish completed flights with `mandatory=True`
-against the well-known `archive` queue, which only exists once an
+against the well-known `skyfollower-archive` queue, which only exists once an
 archive-processor has connected and declared it. A deployment that
 deliberately runs no archiver never has that queue, so every publish
 returns `pika.exceptions.UnroutableError` — a healthy-connection
