@@ -1015,6 +1015,47 @@ class TestStitching:
 
 
 # ---------------------------------------------------------------------------
+# Default-value force_archive/matched_rules omission from the S3 payload
+# ---------------------------------------------------------------------------
+
+class TestDefaultValueFieldOmission:
+    def _upload(self, flight: CompletedFlight) -> dict:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(flight)
+            key = next(iter(processor._s3_client.objects))
+            return processor._s3_client.read_json(key)
+
+    def test_force_archive_false_omitted(self):
+        doc = self._upload(_make_flight(force_archive=False))
+        assert "force_archive" not in doc
+
+    def test_force_archive_true_included(self):
+        doc = self._upload(_make_flight(force_archive=True))
+        assert doc["force_archive"] is True
+
+    def test_matched_rules_empty_omitted(self):
+        doc = self._upload(_make_flight(matched_rules=[]))
+        assert "matched_rules" not in doc
+
+    def test_matched_rules_nonempty_included(self):
+        doc = self._upload(_make_flight(matched_rules=["rule_a", "rule_b"]))
+        assert doc["matched_rules"] == ["rule_a", "rule_b"]
+
+    def test_no_other_fields_affected(self):
+        flight = _make_flight(force_archive=False, matched_rules=[])
+        doc = self._upload(flight)
+        expected = flight.model_dump(by_alias=True, mode="json", exclude_none=True)
+        del expected["force_archive"]
+        del expected["matched_rules"]
+        for k, v in expected.items():
+            assert doc[k] == v, f"field {k!r} unexpectedly changed"
+
+
+# ---------------------------------------------------------------------------
 # Parquet index write, alongside the flight object, and its retry queue
 # ---------------------------------------------------------------------------
 
