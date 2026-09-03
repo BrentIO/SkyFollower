@@ -47,8 +47,9 @@ const ROUTE_BY_DIR = new Map([
 
 // Matches a markdown link target that is a relative path ending in
 // `<dirname>/README.md`, e.g. "../message-processor/README.md" or
-// "runners/ourairports/README.md".
-const README_LINK_RE = /\]\((?:\.\.\/|[\w.-]+\/)*([\w.-]+)\/README\.md\)/g;
+// "runners/ourairports/README.md", with an optional trailing `#heading`
+// anchor into a specific section, e.g. "../archive-processor/README.md#local-index-cache".
+const README_LINK_RE = /\]\((?:\.\.\/|[\w.-]+\/)*([\w.-]+)\/README\.md(#[\w-]*)?\)/g;
 
 // Matches a markdown link target that is a relative path into docs/ itself
 // (a flat page, not a component README), e.g. "../docs/aws-setup.md" from
@@ -58,9 +59,9 @@ const DOCS_PAGE_LINK_RE = /\]\((?:\.\.\/)*docs\/([\w.-]+)\.md\)/g;
 
 function rewriteReadmeLinks(content) {
   return content
-    .replace(README_LINK_RE, (match, dirName) => {
+    .replace(README_LINK_RE, (match, dirName, anchor = "") => {
       const route = ROUTE_BY_DIR.get(dirName);
-      return route ? `](${route})` : match;
+      return route ? `](${route}${anchor || ""})` : match;
     })
     .replace(DOCS_PAGE_LINK_RE, (match, page) => `](/${page})`);
 }
