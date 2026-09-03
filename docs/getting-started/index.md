@@ -122,7 +122,11 @@ against its RediSearch index; the rest follow alphabetically, with
 take far longer than the others — each does a per-record detail fetch
 (`cz-caa-registry` with a 0.25s delay between requests, `uk-caa-registry`
 with 676+ prefix searches on top). `cz-caa-registry` runs immediately
-before `uk-caa-registry`.
+before `uk-caa-registry`. The whole sequence can take hours, so accepting
+the offer runs it detached from the installer (it keeps going after the
+installer moves on to the next role, or exits entirely) and prints the
+path to a log file to `tail -f` for progress; `docker compose ps` in the
+core host's directory also shows whichever runner is currently mid-run.
 
 To do this manually instead — or to bulk-load again later — from the core
 host's directory:
