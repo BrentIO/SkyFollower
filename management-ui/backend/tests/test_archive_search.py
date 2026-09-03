@@ -985,7 +985,7 @@ class TestResultsRetrieval:
         rows = [
             (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
              "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
-             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+             f"flights/2026/07/31/uuid-{i}.json.gz")
             for i in range(60)
         ]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
