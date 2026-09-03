@@ -1619,6 +1619,17 @@ _FORBIDDEN_WHERE_CLAUSE_RE = re.compile(
     r"\b(DROP|CREATE|ALTER|INSERT|DELETE|UPDATE|GRANT)\b", re.IGNORECASE
 )
 
+# Athena (Presto/Trino) follows strict ANSI SQL: double quotes denote an
+# identifier (column/table reference), single quotes denote a string
+# literal. A clause like operator_designator = "DAL" is parsed as a
+# comparison against a column named DAL, not the string 'DAL' -- an easy
+# mistake since most languages treat both quote styles as equivalent for
+# strings. Flag any double-quoted, identifier-shaped token that isn't
+# actually one of the known searchable columns, since it's almost
+# certainly a mistaken string literal rather than a legitimate quoted
+# column reference.
+_DOUBLE_QUOTED_RE = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
+
 _AWS_ERROR = {502: {"description": "AWS (Athena/S3) error", "model": ErrorDetail}}
 
 
@@ -1689,6 +1700,17 @@ def _validate_where_clause(where_clause: str) -> None:
             status_code=400,
             detail=f"where_clause contains a forbidden keyword: '{match.group(1)}'",
         )
+    for quoted in _DOUBLE_QUOTED_RE.finditer(where_clause):
+        name = quoted.group(1)
+        if name not in _SEARCH_SELECT_COLUMNS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'"{name}" is double-quoted, which Athena treats as a column '
+                    f"reference, not a string literal -- did you mean '{name}' "
+                    "(single quotes)?"
+                ),
+            )
 
 
 # Lower bound of the archive. Built from shared.glue_projection.YEAR_RANGE

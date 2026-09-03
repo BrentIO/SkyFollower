@@ -314,6 +314,34 @@ class TestWhereClauseValidation:
             )
         assert resp.status_code == 202
 
+    def test_double_quoted_string_literal_rejected(self, client):
+        """operator_designator = "DAL" is the classic mistake: Athena parses
+        the double-quoted token as a column reference, not a string
+        literal. Must be caught before ever reaching Athena."""
+        resp = client.post(
+            "/api/archive/search",
+            json={"name": "x", "where_clause": 'operator_designator = "DAL"'},
+        )
+        assert resp.status_code == 400
+        assert "DAL" in resp.json()["detail"]
+
+    def test_legitimately_quoted_column_name_accepted(self, client, fake_athena):
+        """"operator_designator" = 'DAL' double-quotes an actual column
+        name, which is valid ANSI SQL -- must not be flagged."""
+        with _synchronous_thread():
+            resp = client.post(
+                "/api/archive/search",
+                json={"name": "x", "where_clause": '"operator_designator" = \'DAL\''},
+            )
+        assert resp.status_code == 202
+
+    def test_no_double_quotes_unaffected(self, client, fake_athena):
+        with _synchronous_thread():
+            resp = client.post(
+                "/api/archive/search", json={"name": "x", "where_clause": "ident = 'DAL123'"}
+            )
+        assert resp.status_code == 202
+
 
 class TestQueryConstruction:
     def test_select_list_and_table_are_backend_controlled(self, client, fake_athena):
