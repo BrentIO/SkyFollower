@@ -44,6 +44,26 @@ variables -- they are fixed constants in `shared/timing.py`. See
 see [Fault Tolerance](#fault-tolerance)) is always written to `/app/data`, a
 fixed, non-configurable bind mount -- see `docker-compose.archive.yaml`.
 
+## Local Index Cache
+
+Right after a flight's Parquet index row is successfully uploaded to S3
+(both on the normal path and when a previously-failed row drains from the
+retry queue), the same bytes are also written to `/app/index-cache`, a
+second fixed bind mount shared with `archive-compaction` on the same host
+(`docker-compose.archive.yaml`). The local path mirrors the S3 key's own
+layout, minus the `index/` prefix:
+`/app/index-cache/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet`.
+
+This exists purely so `archive-compaction` can read each row back from
+local disk instead of re-downloading it from S3 days later — see
+[archive-compaction/README.md](../archive-compaction/README.md)'s own
+Local Index Cache section for the read side and the cleanup that keeps the
+shared volume from growing without bound. The local write is best-effort:
+a failure here is logged and otherwise ignored, never treated as an index
+write failure and never queued for retry — the S3 upload above already
+succeeded and is what makes the row durable; the local copy only ever
+saves `archive-compaction` a GetObject call.
+
 `flight_ttl_seconds` is not an environment variable — it's read from
 `config:flight_ttl_seconds` in Redis (shared with the message processor)
 once at startup and cached; not hot-reloaded, restart the container to
@@ -204,7 +224,9 @@ via Athena/Glue partition projection, once that querying setup exists (see
 [AWS Setup](#aws-setup) below) — with no local-only, single-instance state
 to lose or rebuild in the meantime. Daily compaction of these small
 per-flight files into one file per partition is a separate job — see
-`archive-compaction`'s own README (`archive-compaction/README.md`).
+`archive-compaction`'s own README (`archive-compaction/README.md`). A local
+copy of each row is also kept for that job to read without re-downloading
+it — see [Local Index Cache](#local-index-cache) above.
 
 ## AWS Setup
 

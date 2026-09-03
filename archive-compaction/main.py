@@ -24,6 +24,12 @@ how many consecutive runs have been blocked on that date, published over
 MQTT so a stuck compactor is visible without reading container logs, and
 the process exits with a distinct status code so exit-status monitoring can
 tell a parity mismatch apart from a genuine failure.
+
+Each per-flight row is read from the shared local index cache (see
+shared/index_cache.py) archive-processor populates on the same host,
+falling back to a real S3 GetObject only when the local copy is missing --
+see read_parquet_table(). Once a row's S3 object is confirmed deleted after
+compaction, its local cache copy is removed too (see compact_partition()).
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import ConfigError, load_config
 from shared.ha_discovery import build_ha_device
+from shared.index_cache import INDEX_CACHE_DIR, delete_local_index, local_index_path
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
 
@@ -153,9 +160,24 @@ def list_partition_objects(s3_client, bucket: str, prefix: str) -> list[str]:
     return keys
 
 
-def read_parquet_table(s3_client, bucket: str, key: str) -> pa.Table:
-    response = s3_client.get_object(Bucket=bucket, Key=key)
-    body = response["Body"].read()
+def read_parquet_table(
+    s3_client, bucket: str, key: str, local_dir: str = INDEX_CACHE_DIR
+) -> pa.Table:
+    """
+    Read a per-flight Parquet index row, preferring the local copy
+    archive-processor already wrote to the shared index cache on this same
+    host (see shared/index_cache.py) -- avoiding a GetObject call for bytes
+    already on local disk. Falls back to a real S3 read only when the
+    local copy is missing (a partial/failed local write on
+    archive-processor's side, or a row written before the cache existed).
+    """
+    local_path = local_index_path(key, local_dir)
+    try:
+        with open(local_path, "rb") as f:
+            body = f.read()
+    except FileNotFoundError:
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        body = response["Body"].read()
     return pq.read_table(io.BytesIO(body))
 
 
@@ -163,11 +185,15 @@ def build_compacted_key(prefix: str) -> str:
     return f"{prefix}{_COMPACTED_PREFIX}{uuid.uuid4()}.parquet"
 
 
-def delete_keys(s3_client, bucket: str, keys: list[str]) -> int:
+def delete_keys(s3_client, bucket: str, keys: list[str]) -> tuple[int, list[str]]:
     """Batch-delete `keys` (up to 1000 per API call, the S3 limit). Returns
     the count of individual failures reported in the response's Errors
-    list, plus every key in a chunk whose whole request call raised."""
+    list (plus every key in a chunk whose whole request call raised), and
+    the list of keys actually confirmed deleted -- the caller uses that
+    list to know which local index-cache copies are now safe to remove
+    too."""
     failed = 0
+    deleted: list[str] = []
     for i in range(0, len(keys), 1000):
         chunk = keys[i:i + 1000]
         try:
@@ -183,7 +209,9 @@ def delete_keys(s3_client, bucket: str, keys: list[str]) -> int:
         for err in errors:
             logger.warning("Failed to delete %s: %s", err.get("Key"), err.get("Message"))
         failed += len(errors)
-    return failed
+        failed_keys = {err.get("Key") for err in errors}
+        deleted.extend(k for k in chunk if k not in failed_keys)
+    return failed, deleted
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +338,9 @@ def write_watermark(
 # Compaction
 # ---------------------------------------------------------------------------
 
-def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
+def compact_partition(
+    s3_client, bucket: str, prefix: str, local_dir: str = INDEX_CACHE_DIR
+) -> dict:
     """
     Compact one day's partition: read every per-flight Parquet file under
     `prefix`, write one consolidated file, then delete only the source
@@ -323,6 +353,12 @@ def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
     listing (a late straggler) is simply never seen by this run. Both
     cases are the same accepted, self-healing shape: an extra small file
     left in the partition, queryable on its own, no duplication risk.
+
+    Each per-flight read prefers the local index cache over S3 (see
+    read_parquet_table) -- once a source key's S3 object is confirmed
+    deleted, its local cache copy is removed too, so the shared volume
+    only ever holds the not-yet-compacted backlog rather than growing
+    without bound.
     """
     all_keys = list_partition_objects(s3_client, bucket, prefix)
     source_keys = [k for k in all_keys if is_per_flight_file(k)]
@@ -335,7 +371,7 @@ def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
     included_keys = []
     for key in source_keys:
         try:
-            tables.append(read_parquet_table(s3_client, bucket, key))
+            tables.append(read_parquet_table(s3_client, bucket, key, local_dir))
             included_keys.append(key)
         except Exception as exc:
             logger.warning("Skipping unreadable object %s: %s", key, exc)
@@ -360,7 +396,9 @@ def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
         compacted_key, combined.num_rows, len(included_keys),
     )
 
-    files_delete_failed = delete_keys(s3_client, bucket, included_keys)
+    files_delete_failed, deleted_keys = delete_keys(s3_client, bucket, included_keys)
+    for key in deleted_keys:
+        delete_local_index(key, local_dir)
 
     return {
         "files_compacted": len(included_keys),
@@ -368,7 +406,9 @@ def compact_partition(s3_client, bucket: str, prefix: str) -> dict:
     }
 
 
-def run_compaction(s3_client, bucket: str, now: datetime | None = None) -> dict:
+def run_compaction(
+    s3_client, bucket: str, now: datetime | None = None, local_dir: str = INDEX_CACHE_DIR
+) -> dict:
     """
     Catch-up loop: starting the day after the watermark (or cutoff - 1 day
     if no watermark exists yet, matching the old fixed single-date
@@ -385,6 +425,13 @@ def run_compaction(s3_client, bucket: str, now: datetime | None = None) -> dict:
     compactor is visible as a climbing number rather than only a daily
     ERROR log line. The count resets to 1 whenever the blocked date
     changes, and to 0 once a run gets past it.
+
+    `local_dir` is the shared index-cache root (see shared/index_cache.py)
+    each compacted date's per-flight reads and post-delete local cleanup
+    use -- one directory tree, organized the same year=/month=/day= way as
+    the S3 index/ prefix, so a multi-day catch-up run naturally reads and
+    cleans up whichever dates it actually touches without any extra
+    bookkeeping for "how many days are outstanding."
     """
     cutoff = _cutoff_date(now)
     state = read_watermark(s3_client, bucket)
@@ -427,7 +474,7 @@ def run_compaction(s3_client, bucket: str, now: datetime | None = None) -> dict:
 
         prefix = index_prefix_for_date(target)
         logger.info("Compacting partition %s", prefix)
-        result = compact_partition(s3_client, bucket, prefix)
+        result = compact_partition(s3_client, bucket, prefix, local_dir)
         files_compacted += result["files_compacted"]
         files_delete_failed += result["files_delete_failed"]
         days_compacted += 1

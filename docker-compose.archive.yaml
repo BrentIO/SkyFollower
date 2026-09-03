@@ -41,6 +41,14 @@ services:
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/archive-processor:/app/data
+      # Shared with archive-compaction below (same host directory, mounted
+      # into both containers) -- archive-processor writes a local copy of
+      # each per-flight Parquet index row here right after uploading it to
+      # S3, so archive-compaction can read it back from local disk instead
+      # of downloading the same bytes again days later. See
+      # archive-processor/README.md's and archive-compaction/README.md's
+      # index-cache sections.
+      - ./data/archive-index-cache:/app/index-cache
     # RAM-backed, not the container's writable layer -- the healthcheck
     # heartbeat file is rewritten every 15s and must never hit the host's
     # storage the way /app/data (the S3 fallback queue) legitimately does.
@@ -78,6 +86,11 @@ services:
       # Bind mount, matching rabbitmq/redis on the core host -- the data
       # directory stays directly readable by the operator on the host.
       - ./data/archive-compaction:/app/data
+      # Shared with archive-processor above -- this job only ever reads
+      # from it, falling back to a real S3 GetObject for any per-flight
+      # row whose local copy is unexpectedly missing, and removes a row's
+      # local copy once its S3 counterpart is confirmed deleted.
+      - ./data/archive-index-cache:/app/index-cache
 
   # Runs in label mode (`daemon --docker`), overriding the image's default
   # `daemon --config /etc/ofelia/config.ini` CMD. Ofelia requires job-run
@@ -112,6 +125,14 @@ services:
       ofelia.enabled: "true"
       ofelia.job-run.archive-compaction.schedule: "0 50 4 * * *"
       ofelia.job-run.archive-compaction.image: "ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}"
+      # Ofelia's job-run creates its container through the Docker Engine
+      # API directly, not via this file's `volumes:`, so the shared index
+      # cache has to be mounted here too -- an absolute host path via
+      # SKYFOLLOWER_ROOT (see docker-compose.core.yaml's own ofelia jobs
+      # for why a relative "./data/..." path doesn't work here). Must
+      # resolve to the same host directory as archive-processor's
+      # /app/index-cache mount above.
+      ofelia.job-run.archive-compaction.volume: '["${SKYFOLLOWER_ROOT}/data/archive-index-cache:/app/index-cache"]'
       # Credentials MUST match the archive-compaction service definition above:
       # the ARCHIVE_COMPACTION_AWS_* keys, not archive-processor's and not a
       # shared pair. This scheduled run and the manual

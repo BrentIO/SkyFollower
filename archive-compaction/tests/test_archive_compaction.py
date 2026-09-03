@@ -41,6 +41,8 @@ _REPO_ROOT = os.path.abspath(os.path.join(_TOOL_DIR, ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+from shared.index_cache import local_index_path, write_local_index  # noqa: E402
+
 
 def _load_main():
     spec = importlib.util.spec_from_file_location(
@@ -62,6 +64,7 @@ is_per_flight_file = _mod.is_per_flight_file
 build_compacted_key = _mod.build_compacted_key
 delete_keys = _mod.delete_keys
 compact_partition = _mod.compact_partition
+read_parquet_table = _mod.read_parquet_table
 _uuid_from_flight_key = _mod._uuid_from_flight_key
 check_date_parity = _mod.check_date_parity
 read_watermark = _mod.read_watermark
@@ -111,6 +114,7 @@ class _FakeS3:
         self.deleted: list[str] = []
         self.fail_get_for: set[str] = set()
         self.fail_delete_for: set[str] = set()
+        self.get_calls: list[str] = []
         self.get_errors: dict[str, Exception] = {}
 
     def get_paginator(self, operation_name: str):
@@ -118,6 +122,7 @@ class _FakeS3:
         return _FakePaginator(self)
 
     def get_object(self, Bucket, Key):
+        self.get_calls.append(Key)
         if Key in self.get_errors:
             raise self.get_errors[Key]
         if Key in self.fail_get_for:
@@ -207,18 +212,20 @@ class TestDeleteKeys:
     def test_all_succeed(self):
         s3 = _FakeS3()
         s3.objects = {"a": b"x", "b": b"y"}
-        failed = delete_keys(s3, "bucket", ["a", "b"])
+        failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
         assert failed == 0
         assert set(s3.deleted) == {"a", "b"}
+        assert set(deleted) == {"a", "b"}
 
     def test_reports_partial_failures(self):
         s3 = _FakeS3()
         s3.objects = {"a": b"x", "b": b"y"}
         s3.fail_delete_for = {"b"}
-        failed = delete_keys(s3, "bucket", ["a", "b"])
+        failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
         assert failed == 1
         assert s3.deleted == ["a"]
         assert "b" in s3.objects
+        assert deleted == ["a"]
 
     def test_whole_batch_call_raising_counts_all_as_failed(self):
         s3 = _FakeS3()
@@ -227,8 +234,9 @@ class TestDeleteKeys:
             raise RuntimeError("boom")
 
         s3.delete_objects = _raise
-        failed = delete_keys(s3, "bucket", ["a", "b", "c"])
+        failed, deleted = delete_keys(s3, "bucket", ["a", "b", "c"])
         assert failed == 3
+        assert deleted == []
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +310,110 @@ class TestCompactPartition:
         # Source lingers because the delete failed, but the compacted
         # output already contains its row -- reported, not silently lost.
         assert key in s3.objects
+
+
+# ---------------------------------------------------------------------------
+# Local index cache: read_parquet_table / compact_partition local-first
+# reads and post-compaction local cleanup
+# ---------------------------------------------------------------------------
+
+class TestLocalIndexCachePreferredOnRead:
+    _PREFIX = "index/year=2026/month=07/day=23/"
+
+    def test_reads_local_copy_without_calling_s3(self, tmp_path):
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        payload = _make_parquet_bytes(_make_row(icao_hex="LOCAL0"))
+        write_local_index(key, payload, base_dir=str(tmp_path))
+        # Deliberately not in s3.objects -- if this reads from S3 at all,
+        # get_object raises KeyError and the test fails loudly instead of
+        # silently reading the wrong (empty) source.
+
+        table = read_parquet_table(s3, "bucket", key, str(tmp_path))
+
+        assert table.num_rows == 1
+        assert table.column("icao_hex").to_pylist() == ["LOCAL0"]
+        assert s3.get_calls == []
+
+    def test_falls_back_to_s3_when_local_copy_missing(self, tmp_path):
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        s3.objects[key] = _make_parquet_bytes(_make_row(icao_hex="FROMS3"))
+        # No local file written under tmp_path for this key.
+
+        table = read_parquet_table(s3, "bucket", key, str(tmp_path))
+
+        assert table.column("icao_hex").to_pylist() == ["FROMS3"]
+        assert s3.get_calls == [key]
+
+
+class TestCompactPartitionLocalCache:
+    _PREFIX = "index/year=2026/month=07/day=23/"
+
+    def test_compacts_from_local_cache_with_no_s3_gets(self, tmp_path):
+        s3 = _FakeS3()
+        keys = [f"{self._PREFIX}{i:08x}-0000-7000-8000-000000000000.parquet" for i in range(3)]
+        for i, key in enumerate(keys):
+            payload = _make_parquet_bytes(_make_row(icao_hex=f"AAAA0{i}"))
+            # Present in S3 (so listing finds it, matching reality) but
+            # also cached locally -- get_calls staying empty below proves
+            # the read path never issues a GetObject when the cache is warm.
+            s3.objects[key] = payload
+            write_local_index(key, payload, base_dir=str(tmp_path))
+
+        result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 3, "files_delete_failed": 0}
+        assert s3.get_calls == []
+
+    def test_local_cleanup_after_successful_compaction(self, tmp_path):
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        payload = _make_parquet_bytes(_make_row())
+        s3.objects[key] = payload
+        write_local_index(key, payload, base_dir=str(tmp_path))
+        assert os.path.exists(local_index_path(key, str(tmp_path)))
+
+        result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 1, "files_delete_failed": 0}
+        # S3 source deleted, and its local cache copy cleaned up right
+        # alongside it -- the shared volume must not grow unbounded.
+        assert key not in s3.objects
+        assert not os.path.exists(local_index_path(key, str(tmp_path)))
+
+    def test_local_copy_kept_when_s3_delete_fails(self, tmp_path):
+        """A post-inclusion S3 delete failure leaves the source object (and
+        therefore a duplicate row) in place -- the local cache copy for
+        that specific key should also survive, since only confirmed S3
+        deletions trigger local cleanup."""
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        payload = _make_parquet_bytes(_make_row())
+        s3.objects[key] = payload
+        s3.fail_delete_for = {key}
+        write_local_index(key, payload, base_dir=str(tmp_path))
+
+        result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 1, "files_delete_failed": 1}
+        assert key in s3.objects
+        assert os.path.exists(local_index_path(key, str(tmp_path)))
+
+    def test_missing_local_copy_falls_back_and_still_compacts(self, tmp_path):
+        """A row never cached locally (a partial/failed write on
+        archive-processor's side, or one written before the cache existed)
+        must not break compaction -- it just costs one S3 GetObject."""
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        s3.objects[key] = _make_parquet_bytes(_make_row())
+        # No local write for this key.
+
+        result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 1, "files_delete_failed": 0}
+        assert s3.get_calls == [key]
+        assert key not in s3.objects
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +603,43 @@ class TestRunCompaction:
         assert result["last_compacted_date"] == cutoff
         assert result["mismatch_uuids"] == set()
         assert result["mismatch_runs"] == 0
+
+    def test_multi_day_backlog_reads_and_cleans_up_local_cache_per_date(self, tmp_path):
+        """A local cache organized by date (mirroring index/year=/month=/
+        day=/) must serve every backlogged date a catch-up run touches, and
+        each date's local copies are cleaned up as that date compacts --
+        not deferred until the whole run finishes."""
+        s3 = _FakeS3()
+        now = datetime(2026, 7, 25, 5, 0, tzinfo=timezone.utc)
+        cutoff = _mod._cutoff_date(now)  # 2026-07-23
+        write_watermark(s3, "bucket", cutoff - timedelta(days=3))
+
+        local_keys = []
+        for offset in (2, 1, 0):
+            d = cutoff - timedelta(days=offset)
+            uuid_str = f"uuid-{offset}"
+            self._seed_clean_date(s3, d, uuid_str=uuid_str)
+            index_key = _index_key(d, uuid_str)
+            local_keys.append(index_key)
+            # Still present in S3 (parity checking and the post-compaction
+            # delete both stay S3-based) but also cached locally, so the
+            # read step below can be proven to prefer the local copy via
+            # s3.get_calls staying empty.
+            write_local_index(index_key, s3.objects[index_key], base_dir=str(tmp_path))
+
+        result = run_compaction(s3, "bucket", now, str(tmp_path))
+
+        assert result["days_compacted"] == 3
+        assert result["files_compacted"] == 3
+        # The only S3 GetObject calls made are for the watermark itself --
+        # never for any of the per-flight index rows, which all came from
+        # the local cache.
+        assert set(s3.get_calls) <= {_WATERMARK_KEY}
+        assert not any(k in s3.get_calls for k in local_keys)
+        # Every backlogged date's local copy is gone once its S3 source is
+        # confirmed deleted by the compaction that just ran.
+        for index_key in local_keys:
+            assert not os.path.exists(local_index_path(index_key, str(tmp_path)))
 
     def test_mismatch_stops_the_loop_and_leaves_watermark_behind(self):
         s3 = _FakeS3()

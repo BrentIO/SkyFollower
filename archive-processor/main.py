@@ -38,6 +38,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.index_cache import INDEX_CACHE_DIR, write_local_index
 from shared.metrics import next_period_boundary
 from shared.redis_client import build_redis_client
 from shared.fallback_queue import FallbackQueue
@@ -484,6 +485,21 @@ class ArchiveProcessor:
             ContentType="application/octet-stream",
         )
 
+    def _write_local_index_cache(self, index_key: str, index_bytes: bytes) -> None:
+        """
+        Best-effort local copy of a Parquet index row already durably
+        written to S3 above, on the volume shared with archive-compaction
+        (see docker-compose.archive.yaml). Lets archive-compaction read the
+        row back from local disk instead of downloading it again days
+        later. A failure here costs archive-compaction one S3 GetObject
+        call for this specific row when it eventually compacts — it never
+        affects archiving itself and never triggers a retry.
+        """
+        try:
+            write_local_index(index_key, index_bytes, base_dir=INDEX_CACHE_DIR)
+        except Exception as exc:
+            logger.warning("Local index cache write failed for %s: %s", index_key, exc)
+
     # ------------------------------------------------------------------
     # RabbitMQ
     # ------------------------------------------------------------------
@@ -637,6 +653,7 @@ class ArchiveProcessor:
             index_key = build_index_s3_key(flight)
             index_bytes = build_parquet_index_row(flight, s3_key)
             self._write_index_to_s3(index_bytes, index_key)
+            self._write_local_index_cache(index_key, index_bytes)
 
         def _log_done() -> None:
             logger.info(
@@ -777,6 +794,8 @@ class ArchiveProcessor:
                 }))
             except Exception as queue_exc:
                 logger.warning("Failed to queue index retry for %s: %s", flight.id, queue_exc)
+        else:
+            self._write_local_index_cache(index_key, index_bytes)
 
         # Redis counters
         try:
