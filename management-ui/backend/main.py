@@ -1580,6 +1580,8 @@ def get_route(ident: str):
 # resolve to a deleted S3 object. Keep this comfortably under that lifecycle.
 ARCHIVE_SEARCH_TTL_SECONDS = 7 * 86400
 _PAGE_SIZE = 100
+_PAGE_SIZE_MIN = 25
+_PAGE_SIZE_MAX = 500
 ATHENA_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
 ATHENA_POLL_DEADLINE_SECONDS = 120
 _RESULT_CACHE_MAX_ENTRIES = 10
@@ -1987,7 +1989,11 @@ def get_archive_search(uuid: str):
     response_model=ArchiveSearchResultsPage,
     responses={**_NOT_FOUND, **_VALIDATION_ERROR, **_REDIS_ERROR, **_AWS_ERROR},
 )
-def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge=1)):
+def get_archive_search_results(
+    uuid: str,
+    page: int = FastAPIQuery(default=1, ge=1),
+    page_size: int = FastAPIQuery(default=_PAGE_SIZE, ge=_PAGE_SIZE_MIN, le=_PAGE_SIZE_MAX),
+):
     record = _get_search_record(uuid)
     if record["status"] != "COMPLETE":
         raise HTTPException(
@@ -1995,8 +2001,8 @@ def get_archive_search_results(uuid: str, page: int = FastAPIQuery(default=1, ge
             detail=f"Search '{uuid}' is not complete (status: {record['status']})",
         )
     rows = _fetch_and_cache_results(uuid, record["query_execution_id"])
-    start = (page - 1) * _PAGE_SIZE
-    return JSONResponse(content={"rows": rows[start:start + _PAGE_SIZE], "total_rows": len(rows)})
+    start = (page - 1) * page_size
+    return JSONResponse(content={"rows": rows[start:start + page_size], "total_rows": len(rows)})
 
 
 @app.delete(

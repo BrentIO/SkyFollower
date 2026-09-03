@@ -553,6 +553,30 @@ class TestResultsRetrieval:
         finally:
             fake_s3.get_object = original_get_object
 
+    def test_page_size_param_controls_slice_size(self, client, fake_athena, fake_s3):
+        rows = [
+            (f"A{i:05X}", "N1", "B738", "false", "DAL", "DAL1",
+             "2026-07-31 12:00:00.000", "2026-07-31 13:00:00.000",
+             f"flights/2026/07/31/A{i:05X}_DAL1_uuid-{i}.json.gz")
+            for i in range(60)
+        ]
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows)
+
+        page1 = client.get(f"/api/archive/search/{uuid}/results?page=1&page_size=25").json()
+        page2 = client.get(f"/api/archive/search/{uuid}/results?page=2&page_size=25").json()
+        page3 = client.get(f"/api/archive/search/{uuid}/results?page=3&page_size=25").json()
+        assert len(page1["rows"]) == 25
+        assert len(page2["rows"]) == 25
+        assert len(page3["rows"]) == 10
+        assert page1["total_rows"] == 60
+
+    def test_page_size_out_of_bounds_returns_422(self, client, fake_athena, fake_s3):
+        uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
+        too_small = client.get(f"/api/archive/search/{uuid}/results?page_size=24")
+        too_large = client.get(f"/api/archive/search/{uuid}/results?page_size=501")
+        assert too_small.status_code == 422
+        assert too_large.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Delete
