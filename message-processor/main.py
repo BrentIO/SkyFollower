@@ -1854,7 +1854,7 @@ class MessageProcessor:
         device = build_ha_device(
             identifier=f"SkyFollower_message_processor_{pid}",
             name=f"SkyFollower Message Processor {pid}",
-            model=f"Message Processor {pid}",
+            model="Message Processor",
         )
         availability = {
             "availability_topic": f"SkyFollower/message-processor/{pid}/status",
