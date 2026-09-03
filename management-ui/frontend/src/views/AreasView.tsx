@@ -9,7 +9,7 @@ import {
   type HexColor,
 } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import { ChevronDown, ChevronUp, Lock, MapPinPlusInside, Unlock } from "lucide-react";
+import { Lock, MapPinPlusInside, Unlock } from "lucide-react";
 import { mdiExportVariant, mdiFileImportOutline, mdiShapePolygonPlus, mdiVectorPolylinePlus } from "@mdi/js";
 import { useEffect, useRef, useState } from "react";
 import { AreaNameModal, IDENTIFIER_PATTERN } from "../components/AreaNameModal";
@@ -543,11 +543,6 @@ export function AreasView() {
   const [original, setOriginal] = useState<Area | null>(null);
   const [draft, setDraft] = useState<Area | null>(null);
 
-  // Mobile-only accordion state for the area list -- ignored at the md+
-  // breakpoint, where the list is always visible regardless (see the
-  // className on the <ul> below).
-  const [mobileListOpen, setMobileListOpen] = useState(false);
-
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -975,7 +970,6 @@ export function AreasView() {
       setOriginal(clone(area));
       setSelectDraggable(area.locked);
       drawRef.current?.selectFeature(area.identifier);
-      setMobileListOpen(false);
     });
   }
 
@@ -984,7 +978,6 @@ export function AreasView() {
       setDraft(null);
       setOriginal(null);
       drawRef.current?.setMode(type);
-      setMobileListOpen(false);
     });
   }
 
@@ -1369,75 +1362,123 @@ export function AreasView() {
     }
   }
 
+  const toolbar = (
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={() => startDrawing("polygon")}
+        aria-label="Draw polygon"
+        title="Draw polygon"
+        className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+      >
+        <MdiIcon path={mdiShapePolygonPlus} size={18} />
+      </button>
+      <button
+        type="button"
+        onClick={() => startDrawing("linestring")}
+        aria-label="Draw line"
+        title="Draw line"
+        className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+      >
+        <MdiIcon path={mdiVectorPolylinePlus} size={18} />
+      </button>
+      <button
+        type="button"
+        onClick={() => startDrawing("point")}
+        aria-label="Draw point"
+        title="Draw point"
+        className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
+      >
+        <MapPinPlusInside size={18} />
+      </button>
+      <button
+        type="button"
+        onClick={() => setImportModalOpen(true)}
+        aria-label="Import"
+        title="Import"
+        className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+      >
+        <MdiIcon path={mdiFileImportOutline} size={18} />
+      </button>
+      <button
+        type="button"
+        onClick={exportAllAreas}
+        disabled={areas.length === 0}
+        aria-label="Export all"
+        title="Export all"
+        className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+      >
+        <MdiIcon path={mdiExportVariant} size={18} />
+      </button>
+    </div>
+  );
+
+  // The map pane renders exactly once regardless of breakpoint -- MapLibre
+  // is attached to mapContainerRef, so this element can be repositioned via
+  // CSS (sticky mobile header vs. static desktop pane) but never duplicated
+  // or remounted per selection.
+  const mapPane = (
+    <div className="relative h-[400px] overflow-hidden rounded-md border border-slate-200 md:order-2 md:h-auto md:flex-1 dark:border-slate-700">
+      {/*
+        h-full/w-full, not absolute + inset-0: MapLibre attaches its own
+        `maplibregl-map` class directly to this div (it's the `container`
+        passed to `new maplibregl.Map()`), and that class sets
+        `position: relative`. Since maplibregl-map's rule happens to land
+        later in the built CSS than Tailwind's `.absolute`, it wins the
+        cascade (equal specificity, later source order) and silently
+        overrides `position: absolute` -- without which `inset-0` no
+        longer stretches this div to fill its parent, so it collapses to
+        near-zero height instead. height/width: 100% has no such
+        conflict with maplibregl-map's own position: relative.
+      */}
+      <div ref={mapContainerRef} className="h-full w-full" />
+      {/* Alignment guides -- screen-space, so a plain SVG overlay
+          sharing this same relatively-positioned container (matching
+          map.project()'s own pixel coordinate origin exactly) is
+          simpler and more precise than round-tripping through
+          unproject() into a MapLibre GeoJSON layer. pointer-events-none
+          so it never blocks clicks on the map/controls beneath it. */}
+      {guideLines.length > 0 && (
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+          {guideLines.map((g, i) => (
+            <line
+              key={i}
+              x1={g.axis === "x" ? g.pos : g.from}
+              y1={g.axis === "x" ? g.from : g.pos}
+              x2={g.axis === "x" ? g.pos : g.to}
+              y2={g.axis === "x" ? g.to : g.pos}
+              stroke="#ec4899"
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+            />
+          ))}
+        </svg>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
-      <div className="flex flex-col gap-2 md:w-72 md:shrink-0">
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => startDrawing("polygon")}
-            aria-label="Draw polygon"
-            title="Draw polygon"
-            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-          >
-            <MdiIcon path={mdiShapePolygonPlus} size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={() => startDrawing("linestring")}
-            aria-label="Draw line"
-            title="Draw line"
-            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-          >
-            <MdiIcon path={mdiVectorPolylinePlus} size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={() => startDrawing("point")}
-            aria-label="Draw point"
-            title="Draw point"
-            className="flex flex-1 items-center justify-center rounded-md border border-sky-600 px-2 py-2 text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
-          >
-            <MapPinPlusInside size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setImportModalOpen(true)}
-            aria-label="Import"
-            title="Import"
-            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            <MdiIcon path={mdiFileImportOutline} size={18} />
-          </button>
-          <button
-            type="button"
-            onClick={exportAllAreas}
-            disabled={areas.length === 0}
-            aria-label="Export all"
-            title="Export all"
-            className="flex flex-1 items-center justify-center rounded-md border border-slate-300 px-2 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            <MdiIcon path={mdiExportVariant} size={18} />
-          </button>
-        </div>
+      {/* Mobile sticky header: drawing toolbar + map, pinned to the top of
+          the viewport so both stay visible while the area list scrolls
+          underneath, no matter which item is selected or how long the list
+          is. `md:contents` gives this wrapper no box of its own at the
+          desktop breakpoint -- its children fall back to being ordinary
+          flex items of the row below, restoring the original side-by-side
+          desktop layout (toolbar above the list, map in its own pane) via
+          the `order` utilities on the list column and on mapPane above. */}
+      <div className="sticky top-0 z-10 flex flex-col gap-2 bg-slate-50 pb-3 dark:bg-slate-900 md:contents">
+        <div className="md:hidden">{toolbar}</div>
+        {mapPane}
+      </div>
 
-        <button
-          type="button"
-          onClick={() => setMobileListOpen((open) => !open)}
-          aria-expanded={mobileListOpen}
-          className="flex items-center justify-center gap-2 rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:hidden"
-        >
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <span>Areas</span>
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
+      <div className="flex flex-col gap-2 md:order-1 md:w-72 md:shrink-0">
+        <div className="hidden md:block">{toolbar}</div>
 
         {loading ? (
           <p className="text-slate-400">Loading areas...</p>
         ) : (
-          <ul
-            className={`${mobileListOpen ? "flex" : "hidden"} max-h-64 flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
-          >
+          <ul className="flex flex-col gap-1">
             {[...areas]
               .sort((a, b) =>
                 (a.name || a.identifier).localeCompare(b.name || b.identifier),
@@ -1447,14 +1488,14 @@ export function AreasView() {
               return (
                 <li
                   key={area.identifier}
-                  className={`rounded-r-md border-l-4 ${
+                  className={`mb-2 overflow-hidden rounded-md border-l-4 ${
                     isSelected
                       ? "border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800"
-                      : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800"
+                      : "border-transparent bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800"
                   }`}
                 >
                   {isSelected && draft ? (
-                    <div className="flex flex-col gap-2 px-3 py-2">
+                    <div className="flex flex-col gap-3 px-3 py-3">
                       <input
                         type="text"
                         value={draft.name}
@@ -1523,59 +1564,61 @@ export function AreasView() {
                           />
                         </label>
                       )}
-                      <div className="flex flex-wrap gap-2">
+                      {/* Large, clearly-grouped touch targets: Save is the
+                          full-width primary action, Discard/Duplicate and
+                          Lock-or-Unlock/Export are paired secondary rows,
+                          and Delete stands alone at the bottom. */}
+                      <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={!dirty || saving}
+                        className="w-full rounded-md bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                      <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
                           onClick={handleDiscard}
                           disabled={!dirty}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className="rounded-md border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
                           Discard
                         </button>
                         <button
                           type="button"
-                          onClick={handleSave}
-                          disabled={!dirty || saving}
-                          className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-40"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
                           onClick={duplicateArea}
-                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className="rounded-md border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
                           Duplicate
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(area)}
-                          className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
-                        >
-                          Delete
-                        </button>
                       </div>
-                      {/* Separate row -- more shape-level toggles (beyond
-                          lock) will land here alongside it. */}
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
                           onClick={toggleLock}
                           disabled={saving}
-                          className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className="flex items-center justify-center gap-1 rounded-md border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
-                          {draft.locked ? <Unlock size={12} /> : <Lock size={12} />}
+                          {draft.locked ? <Unlock size={16} /> : <Lock size={16} />}
                           {draft.locked ? "Unlock" : "Lock"}
                         </button>
                         <button
                           type="button"
                           onClick={exportSelectedArea}
-                          className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                          className="flex items-center justify-center gap-1 rounded-md border border-slate-300 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
                         >
-                          <MdiIcon path={mdiExportVariant} size={12} />
+                          <MdiIcon path={mdiExportVariant} size={16} />
                           Export
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(area)}
+                        className="w-full rounded-md border border-red-300 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                      >
+                        Delete
+                      </button>
                     </div>
                   ) : (
                     <div className="flex items-center">
@@ -1583,7 +1626,7 @@ export function AreasView() {
                         type="button"
                         onClick={() => selectArea(area)}
                         title={area.identifier}
-                        className="flex-1 truncate px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200"
+                        className="flex-1 truncate px-3 py-3 text-left text-sm text-slate-700 dark:text-slate-200"
                       >
                         {area.name || area.identifier}
                       </button>
@@ -1596,44 +1639,6 @@ export function AreasView() {
               <li className="px-3 py-2 text-sm text-slate-400">No areas yet. Draw one on the map.</li>
             )}
           </ul>
-        )}
-      </div>
-
-      <div className="relative h-[400px] overflow-hidden rounded-md border border-slate-200 md:h-auto md:flex-1 dark:border-slate-700">
-        {/*
-          h-full/w-full, not absolute + inset-0: MapLibre attaches its own
-          `maplibregl-map` class directly to this div (it's the `container`
-          passed to `new maplibregl.Map()`), and that class sets
-          `position: relative`. Since maplibregl-map's rule happens to land
-          later in the built CSS than Tailwind's `.absolute`, it wins the
-          cascade (equal specificity, later source order) and silently
-          overrides `position: absolute` -- without which `inset-0` no
-          longer stretches this div to fill its parent, so it collapses to
-          near-zero height instead. height/width: 100% has no such
-          conflict with maplibregl-map's own position: relative.
-        */}
-        <div ref={mapContainerRef} className="h-full w-full" />
-        {/* Alignment guides -- screen-space, so a plain SVG overlay
-            sharing this same relatively-positioned container (matching
-            map.project()'s own pixel coordinate origin exactly) is
-            simpler and more precise than round-tripping through
-            unproject() into a MapLibre GeoJSON layer. pointer-events-none
-            so it never blocks clicks on the map/controls beneath it. */}
-        {guideLines.length > 0 && (
-          <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-            {guideLines.map((g, i) => (
-              <line
-                key={i}
-                x1={g.axis === "x" ? g.pos : g.from}
-                y1={g.axis === "x" ? g.from : g.pos}
-                x2={g.axis === "x" ? g.pos : g.to}
-                y2={g.axis === "x" ? g.to : g.pos}
-                stroke="#ec4899"
-                strokeWidth={1.5}
-                strokeDasharray="4 4"
-              />
-            ))}
-          </svg>
         )}
       </div>
 
