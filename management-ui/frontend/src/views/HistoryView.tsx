@@ -303,17 +303,17 @@ function SearchResultsPanel({
         </table>
       </div>
 
-      <div className="flex items-center justify-between gap-3 text-sm">
+      <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
         <button
           type="button"
           onClick={onDownloadCsv}
-          className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
         >
           <Download size={14} />
           Download CSV
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
           <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
             Rows per page
             <select
@@ -328,25 +328,31 @@ function SearchResultsPanel({
               ))}
             </select>
           </label>
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => onPageChange(page - 1)}
-            className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            Prev
-          </button>
-          <span className="text-slate-500 dark:text-slate-400">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            type="button"
-            disabled={page >= totalPages}
-            onClick={() => onPageChange(page + 1)}
-            className="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            Next
-          </button>
+
+          {/* Prev/Next as large, equal-width touch targets on mobile with
+              the page label between them; desktop reverts to the original
+              compact inline sizing. */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => onPageChange(page - 1)}
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
+            >
+              Prev
+            </button>
+            <span className="shrink-0 text-slate-500 dark:text-slate-400">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => onPageChange(page + 1)}
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -363,7 +369,6 @@ export function HistoryView() {
   const [resultsPage, setResultsPage] = useState(1);
   const [resultsPageSize, setResultsPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [resultsSort, setResultsSort] = useState<ResultsSortState | null>(null);
-  const [mobileListOpen, setMobileListOpen] = useState(false);
   const [newSearchModalOpen, setNewSearchModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
@@ -584,29 +589,16 @@ export function HistoryView() {
           + New Search
         </button>
 
-        <button
-          type="button"
-          onClick={() => setMobileListOpen((open) => !open)}
-          aria-expanded={mobileListOpen}
-          className="flex items-center justify-center gap-2 rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 md:hidden"
-        >
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          <span>Searches</span>
-          {mobileListOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </button>
-
-        <ul
-          className={`${mobileListOpen ? "flex" : "hidden"} flex-col gap-1 overflow-y-auto md:flex md:max-h-none`}
-        >
+        <ul className="flex flex-col gap-2 overflow-y-auto md:gap-1">
           {searches.map((search) => {
             const isSelected = selectedUuid === search.uuid;
             return (
               <li
                 key={search.uuid}
-                className={`rounded-r-md border-l-4 ${
+                className={`rounded-md border-l-4 md:rounded-l-none md:rounded-r-md ${
                   isSelected
                     ? "border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800"
-                    : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-800"
+                    : "border-transparent bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 md:bg-transparent dark:md:bg-transparent"
                 }`}
               >
                 <div className="flex items-center gap-1 px-3 py-2">
@@ -646,7 +638,7 @@ export function HistoryView() {
                     md:. Desktop shows the same content in the right panel
                     below instead (hidden here via md:hidden). */}
                 {isSelected && (
-                  <div className="border-t border-slate-200 dark:border-slate-700 md:hidden">
+                  <div className="border-t border-slate-200 p-4 dark:border-slate-700 md:hidden">
                     <SearchResultsPanel
                       search={search}
                       results={resultsForSelected}
