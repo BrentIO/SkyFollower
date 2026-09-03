@@ -2141,12 +2141,15 @@ components:
 
     MessageProcessorId:
       description: >
-        Message processor instance identifier: a single flat, fleet-wide
-        sequential number (e.g. "7"), not a per-node prefix plus a local
-        index. Set via the MESSAGE_PROCESSOR_ID environment variable as a
-        literal in that instance's generated compose service block. The
-        same ID names its RabbitMQ queue, Redis heartbeat key, and data
-        directory verbatim: skyfollower-message-processor-{id}.
+        Message processor instance identifier: any unique string, not a
+        contiguous ordinal -- commonly ${MESSAGE_PROCESSOR_PREFIX:-<hostname>}-{n},
+        set per service in docker-compose.message-processor.yaml.
+        MESSAGE_PROCESSOR_PREFIX defaults to the node's own hostname,
+        keeping IDs unique across nodes with no coordination needed;
+        uniqueness itself is enforced via a Redis NX key at startup, not
+        assumed by construction. The same ID names its RabbitMQ queue,
+        Redis heartbeat key, and data directory verbatim:
+        skyfollower-message-processor-{id}.
 
     RuleIdentifier:
       description: >
