@@ -233,6 +233,12 @@ export function RulesView() {
 
   function handleDiscard() {
     if (!original) return;
+    if (isNew) {
+      setDraft(null);
+      setOriginal(null);
+      setIsNew(false);
+      return;
+    }
     setDraft(clone(original));
   }
 
