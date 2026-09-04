@@ -90,7 +90,11 @@ gh workflow run build-container-images.yaml --ref my-branch -f dev_mode=true
 publishes every image tagged `:dev-{branch}` (that branch's most recent
 dev build) and the floating `:dev` (whatever was built most recently,
 any branch) -- never `:latest`, so a dev build can never be pulled by a
-fresh production install by accident.
+fresh production install by accident. A dev build's baked-in `VERSION` is
+stamped `9999.99.99` (the same "not a release" sentinel `specs/*.yaml`
+carry on `main`), so any component running a dev build reports that as its
+Home Assistant `sw_version`; the branch it came from is in the
+`:dev-{branch}` image tag.
 
 Point a host at one by setting `REF` **and** `IMAGE_VERSION` together --
 `REF` picks which branch's compose/config files are fetched, and

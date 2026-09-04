@@ -19,7 +19,10 @@ run-name: "Build container images ${{ github.ref_name }}${{ inputs.dev_mode && '
 # dev_mode images are tagged `:dev-{branch}` and the floating `:dev`, never
 # `:latest` or the raw ref name, so a dev build can never be mistaken for
 # (or overwrite) a real release tag that a fresh production install
-# defaults to. See docs/getting-started/index.md's "Testing a dev build".
+# defaults to. Both dev_mode and test_mode also stamp the image's baked-in
+# VERSION as `9999.99.99` rather than the ref name — the same sentinel
+# specs/*.yaml carry on main. See docs/getting-started/index.md's "Testing
+# a dev build".
 on:
   push:
     tags:
@@ -176,8 +179,15 @@ jobs:
           # as a phantom "unknown/unknown" platform instead of hiding them.
           provenance: false
           sbom: false
+          # A release build stamps the real YYYY.MM.BB tag. A dev_mode or
+          # test_mode build is not a release, so it stamps the same
+          # 9999.99.99 sentinel that specs/*.yaml carry on main — a
+          # version-shaped value that reads unambiguously as "not a
+          # release" wherever VERSION surfaces (e.g. Home Assistant
+          # sw_version via shared/ha_discovery.py). Branch provenance for a
+          # dev build is still in its :dev-{branch} image tag.
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ (inputs.dev_mode || inputs.test_mode) && '9999.99.99' || github.ref_name }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
           # still computed but unused, since push is the gate that matters.
           # dev_mode always pushes (that's the point); validate-version
