@@ -17,13 +17,8 @@
   }
 }
 
-/* The date/datetime-local calendar icon is a WebKit-rendered pseudo-element
-   that doesn't pick up dark:* classes on its own -- it renders as a plain
-   black glyph regardless of the input's own dark background. Inverting it
-   in dark mode turns that black icon white; light mode is left untouched. */
-@media (prefers-color-scheme: dark) {
-  input[type="date"]::-webkit-calendar-picker-indicator,
-  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-    filter: invert(1);
-  }
-}
+/* No invert filter on the date/datetime-local calendar icon: the
+   color-scheme declaration above already makes the browser render that
+   WebKit pseudo-element in a light, dark-mode-appropriate color on its
+   own. An invert filter here would flip that already-light icon back to
+   black. */
