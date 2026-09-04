@@ -1113,13 +1113,16 @@ class RouteLookup(BaseModel):
     same airport at both ends). `operator` is resolved from the ident's
     ICAO airline-designator prefix (same logic as message-processor's
     `_enrich_operator`) and is best-effort -- a route still resolves
-    without one.
+    without one. When the route itself is unknown but the operator
+    resolves (e.g. a part-135 operator with no scheduled-service route
+    data), `origin`/`destination`/`stops` are omitted rather than the
+    endpoint 404ing.
     """
 
     ident: str
-    origin: AirportRecord
-    destination: AirportRecord
-    stops: list[AirportRecord]
+    origin: Optional[AirportRecord] = None
+    destination: Optional[AirportRecord] = None
+    stops: list[AirportRecord] = []
     operator: Optional[OperatorRecord] = None
 
 
@@ -1569,6 +1572,14 @@ def get_airport(code: str):
     return JSONResponse(content=doc)
 
 
+# No-hyphen registration prefixes -- mirrors the frontend's
+# lookupClassifier.ts NO_HYPHEN_REGISTRATION_PREFIX. Combined with "contains
+# a digit" (checked separately, since some of these prefixes are also valid
+# airline-designator leads), this tells get_route() a bare registration like
+# "N659DL" isn't a flight ident worth an operator-prefix lookup.
+_NO_HYPHEN_REGISTRATION_PREFIX = re.compile(r"^(N|HL|JA)", re.IGNORECASE)
+
+
 @app.get(
     "/api/routes/{ident}",
     tags=["reference-data"],
@@ -1578,18 +1589,30 @@ def get_airport(code: str):
 def get_route(ident: str):
     raw = _redis_evalsha(_route_airports_sha, normalize_flight_ident(ident.upper()))
     airports = json.loads(raw) if raw else []
-    if not airports:
-        raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")
 
     # Best-effort operator enrichment -- same ICAO airline-designator
     # extraction message-processor's _enrich_operator uses (letters before
     # the first digit). A too-short/missing prefix or no matching
     # operator:{designator} record just omits `operator`; it never fails
-    # the route lookup itself.
+    # the route lookup itself. Resolved unconditionally (even when the
+    # route itself is unknown) so a part-135 operator's flight numbers --
+    # which never get scheduled-service route data -- still resolve to
+    # their operator instead of a flat 404.
+    #
+    # Skipped for a bare no-hyphen registration shape (e.g. "N659DL",
+    # "HL7404"): those aren't flight idents, and their letters-before-digits
+    # prefix isn't an airline designator. Mirrors the frontend's
+    # lookupClassifier.ts isRegistration() no-hyphen branch.
     operator = None
-    prefix = re.split(r"[^a-zA-Z]", ident)[0]
-    if len(prefix) >= 2:
-        operator = _redis_json_get(operator_key(prefix))
+    if not (_NO_HYPHEN_REGISTRATION_PREFIX.match(ident) and re.search(r"\d", ident)):
+        prefix = re.split(r"[^a-zA-Z]", ident)[0]
+        if len(prefix) >= 2:
+            operator = _redis_json_get(operator_key(prefix))
+
+    if not airports:
+        if operator is None:
+            raise HTTPException(status_code=404, detail=f"No route data found for '{ident}'")
+        return JSONResponse(content={"ident": ident.upper(), "operator": operator})
 
     return JSONResponse(content={
         "ident": ident.upper(),

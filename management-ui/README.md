@@ -50,7 +50,7 @@ splice, validate, write-back, not a partial update in Redis itself.
 | `GET` | `/api/aircraft?icao_hex={hex}` or `?registration={reg}` | Aircraft enrichment lookup by one or the other (not both, not neither). `200`, `400`/`422` if both/neither query param is given, `404` if not found, `503` if the backing RediSearch index isn't ready yet (registration lookup only — see below) |
 | `GET` | `/api/operators/{designator}` | One operator's enrichment. `200`, or `404` if not found |
 | `GET` | `/api/airports/{code}` | Airport metadata, by 4-char ICAO or 3-char IATA code. `200`, `404` if not found, `503` if the backing RediSearch index isn't ready yet (IATA lookup only — see below) |
-| `GET` | `/api/routes/{ident}` | Route lookup by flight ident, with best-effort operator enrichment. `200`, or `404` if not found |
+| `GET` | `/api/routes/{ident}` | Route lookup by flight ident, with best-effort operator enrichment. `200` (route + operator, or operator-only with `origin`/`destination`/`stops` omitted if only the ICAO airline-designator prefix resolves), or `404` if neither resolves |
 
 Both `Rule` and `Area` require `identifier` (routing key, no spaces —
 `message-processor/rules_engine.py` rejects a spaced rule identifier

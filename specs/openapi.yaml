@@ -2312,14 +2312,19 @@ components:
           type: string
           title: Ident
         origin:
-          $ref: '#/components/schemas/AirportRecord'
+          anyOf:
+          - $ref: '#/components/schemas/AirportRecord'
+          - type: 'null'
         destination:
-          $ref: '#/components/schemas/AirportRecord'
+          anyOf:
+          - $ref: '#/components/schemas/AirportRecord'
+          - type: 'null'
         stops:
           items:
             $ref: '#/components/schemas/AirportRecord'
           type: array
           title: Stops
+          default: []
         operator:
           anyOf:
           - $ref: '#/components/schemas/OperatorRecord'
@@ -2327,9 +2332,6 @@ components:
       type: object
       required:
       - ident
-      - origin
-      - destination
-      - stops
       title: RouteLookup
       description: 'Resolved route for a flight ident. `ident` echoes the path parameter
 
@@ -2347,7 +2349,13 @@ components:
 
         `_enrich_operator`) and is best-effort -- a route still resolves
 
-        without one.'
+        without one. When the route itself is unknown but the operator
+
+        resolves (e.g. a part-135 operator with no scheduled-service route
+
+        data), `origin`/`destination`/`stops` are omitted rather than the
+
+        endpoint 404ing.'
     Rule:
       properties:
         name:

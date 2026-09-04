@@ -14,11 +14,15 @@ export type AircraftRecord = Record<string, unknown> & { icao_hex: string };
 export type OperatorRecord = Record<string, unknown> & { airline_designator: string };
 export type AirportRecord = Record<string, unknown> & { icao_code: string; name?: string };
 
+// origin/destination/stops are absent when the ident's route itself is
+// unknown but its operator prefix still resolves (e.g. a part-135
+// operator with no scheduled-service route data) -- see the backend's
+// RouteLookup docstring.
 export interface RouteLookup {
   ident: string;
-  origin: AirportRecord;
-  destination: AirportRecord;
-  stops: AirportRecord[];
+  origin?: AirportRecord;
+  destination?: AirportRecord;
+  stops?: AirportRecord[];
   operator: OperatorRecord | null;
 }
 
