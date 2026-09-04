@@ -2729,13 +2729,13 @@ def get_archive_flight_view(token: str):
     responses={**_VALIDATION_ERROR, **_NOT_FOUND, **_AWS_ERROR},
 )
 def get_archive_flight_path(token: str):
+    s3_key = _decrypt_token(token)
     flight = _fetch_flight_record(token)
     feature = build_flight_path(flight.get("positions", []))
     if feature is None:
         raise HTTPException(status_code=404, detail="Flight has fewer than 2 positions; no path to export")
 
-    icao_hex = (flight.get("aircraft") or {}).get("icao_hex", "flight")
-    filename = f"{icao_hex}_{flight.get('ident') or flight.get('_id', 'path')}.geojson"
+    filename = f"{_uuid_from_s3_key(s3_key)}.geojson"
     return Response(
         content=json.dumps(feature),
         media_type="application/geo+json",
