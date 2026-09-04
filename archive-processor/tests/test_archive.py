@@ -1692,3 +1692,158 @@ class TestHaAutodiscoveryStartedAt:
 
             topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
             assert "SkyFollower/archive/statistic/version" not in topics
+
+
+# ---------------------------------------------------------------------------
+# Live-path worker pool (concurrency + icao_hex partitioning)
+# ---------------------------------------------------------------------------
+
+from archive_processor.main import _ARCHIVE_WORKER_COUNT  # noqa: E402
+
+
+class TestWorkerPartitioning:
+    def test_same_icao_hex_always_routes_to_the_same_worker(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            f1 = _make_flight(_id="a", aircraft={"icao_hex": "ABC123"})
+            f2 = _make_flight(_id="b", aircraft={"icao_hex": "ABC123"})
+            assert processor._worker_index_for(f1) == processor._worker_index_for(f2)
+
+    def test_index_is_in_range_and_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            for hexid in ("A8AE7F", "", "406A3D", "abcdef", "000000"):
+                idx = processor._worker_index_for(_make_flight(aircraft={"icao_hex": hexid}))
+                assert 0 <= idx < _ARCHIVE_WORKER_COUNT
+                # stable across calls
+                assert idx == processor._worker_index_for(
+                    _make_flight(aircraft={"icao_hex": hexid})
+                )
+
+    def test_different_aircraft_spread_across_workers(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            seen = {
+                processor._worker_index_for(
+                    _make_flight(aircraft={"icao_hex": f"{n:06X}"})
+                )
+                for n in range(500)
+            }
+            # crc32 spread should hit most buckets, not pile onto one.
+            assert len(seen) >= _ARCHIVE_WORKER_COUNT - 2
+
+
+class TestOnMessageHandsOffToWorker:
+    def test_on_message_enqueues_and_does_not_ack_synchronously(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            ch = MagicMock()
+            method = MagicMock(delivery_tag=7)
+            body = _make_flight(aircraft={"icao_hex": "ABC123"}).model_dump_json(
+                by_alias=True, exclude_none=True
+            ).encode()
+
+            processor._on_message(ch, method, None, body)
+
+            ch.basic_ack.assert_not_called()
+            idx = processor._worker_index_for(
+                _make_flight(aircraft={"icao_hex": "ABC123"})
+            )
+            queued = processor._worker_queues[idx].get_nowait()
+            assert queued[1] == 7
+            assert queued[0].aircraft["icao_hex"] == "ABC123"
+
+    def test_unparseable_message_is_acked_and_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            ch = MagicMock()
+            method = MagicMock(delivery_tag=9)
+
+            processor._on_message(ch, method, None, b"not json")
+
+            ch.basic_ack.assert_called_once_with(delivery_tag=9)
+            for q in processor._worker_queues:
+                assert q.empty()
+
+
+class TestHandleDelivery:
+    def test_success_acks_via_threadsafe_callback(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connection = MagicMock()
+            processor._rmq_channel = MagicMock()
+            flight = _make_flight()
+
+            with patch.object(processor, "_process_flight") as proc:
+                processor._handle_delivery(flight, 11)
+
+            proc.assert_called_once_with(flight)
+            # ack was scheduled on the connection thread, not called directly
+            processor._rmq_connection.add_callback_threadsafe.assert_called_once()
+            processor._rmq_channel.basic_ack.assert_not_called()
+            # running the scheduled callback performs the ack
+            processor._rmq_connection.add_callback_threadsafe.call_args[0][0]()
+            processor._rmq_channel.basic_ack.assert_called_once_with(delivery_tag=11)
+
+    def test_processing_error_falls_back_then_acks(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connection = MagicMock()
+            flight = _make_flight()
+
+            with patch.object(processor, "_process_flight", side_effect=RuntimeError("s3 down")), \
+                 patch.object(processor._fallback, "put") as fput:
+                processor._handle_delivery(flight, 12)
+
+            fput.assert_called_once()
+            processor._rmq_connection.add_callback_threadsafe.assert_called_once()
+
+    def test_fallback_put_failure_leaves_message_unacked(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connection = MagicMock()
+
+            with patch.object(processor, "_process_flight", side_effect=RuntimeError("s3 down")), \
+                 patch.object(processor._fallback, "put", side_effect=OSError("disk full")):
+                processor._handle_delivery(_make_flight(), 13)
+
+            processor._rmq_connection.add_callback_threadsafe.assert_not_called()
+
+
+class TestWorkerLoopOrdering:
+    def test_segments_for_one_aircraft_processed_in_fifo_order(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connection = MagicMock()
+            order: list[str] = []
+
+            def _record(flight):
+                order.append(flight.id)
+
+            idx = 0
+            with patch.object(processor, "_process_flight", side_effect=_record):
+                for fid in ("seg-1", "seg-2", "seg-3"):
+                    processor._worker_queues[idx].put(
+                        (_make_flight(_id=fid, aircraft={"icao_hex": "AAAAAA"}), fid)
+                    )
+                processor._worker_queues[idx].put(None)  # sentinel to end the loop
+                processor._worker_loop(idx)
+
+            assert order == ["seg-1", "seg-2", "seg-3"]
+
+    def test_shutdown_sentinel_stops_the_loop(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._worker_queues[0].put(None)
+            # returns promptly rather than blocking on the 1s poll
+            processor._worker_loop(0)
+
+
+class TestS3PoolSizing:
+    def test_client_built_with_widened_connection_pool(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            with patch("archive_processor.main.boto3.Session") as MockSession:
+                processor._connect_s3()
+            _, kwargs = MockSession.return_value.client.call_args
+            assert kwargs["config"].max_pool_connections >= _ARCHIVE_WORKER_COUNT

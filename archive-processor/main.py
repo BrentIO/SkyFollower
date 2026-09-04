@@ -18,10 +18,12 @@ import logging
 import logging.handlers
 import os
 import pathlib
+import queue
 import signal
 import sys
 import threading
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -31,6 +33,7 @@ import pika
 import pyarrow as pa
 import pyarrow.parquet as pq
 import redis as redis_lib
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
 # Add /app to sys.path so shared/ is importable whether running from
@@ -79,8 +82,31 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # _RMQ_PREFETCH_COUNT precedent: enough to remove the round-trip stall as
 # the throughput ceiling, without buffering an excessive number of
 # messages client-side that would need reprocessing if the connection
-# drops mid-batch.
+# drops mid-batch. It also bounds total in-flight work across the worker
+# pool below (RabbitMQ delivers at most this many unacked messages, so the
+# per-worker hand-off queues can never grow past it in aggregate).
 _RMQ_PREFETCH_COUNT = 100
+
+# A single pika BlockingConnection runs on_message_callback one message at
+# a time on one thread, and each flight does two or more sequential
+# synchronous S3 round trips (~150-250 ms each from a self-hosted host) --
+# so serial processing caps throughput at ~3-5 flights/sec regardless of
+# prefetch_count. The pika thread instead hands each delivery to a pool of
+# worker threads that do the S3/Redis work concurrently and marshal the
+# ack back via connection.add_callback_threadsafe.
+#
+# Partitioned by icao_hex (same aircraft -> same worker, FIFO): split-flight
+# stitching reads and writes a per-aircraft Redis pointer around the S3
+# write, so two segments for one aircraft must never be processed
+# concurrently or the stitch can split/merge out of order. Routing by
+# icao_hex keeps every segment of an aircraft strictly ordered on one
+# worker without any per-key locking.
+_ARCHIVE_WORKER_COUNT = 12
+
+# boto3's default connection pool is 10; size it to cover every worker
+# doing a concurrent PutObject/GetObject plus headroom for the
+# reconnect-loop and index-fallback-drain threads.
+_S3_MAX_POOL_CONNECTIONS = _ARCHIVE_WORKER_COUNT + 4
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +409,18 @@ class ArchiveProcessor:
         self._rmq_channel = None
         self._rmq_connected = False
 
+        # Worker pool for the live consume path. One unbounded hand-off
+        # queue per worker; _on_message routes each delivery to
+        # worker_queues[crc32(icao_hex) % N] so an aircraft's segments are
+        # always processed FIFO on a single worker (see _ARCHIVE_WORKER_COUNT).
+        # Aggregate depth is bounded by _RMQ_PREFETCH_COUNT. The fallback
+        # drain path does NOT use this pool -- it stays strictly serial and
+        # oldest-first (see _finish_s3_connect / _process_fallback_flight).
+        self._worker_queues: list[queue.Queue] = [
+            queue.Queue() for _ in range(_ARCHIVE_WORKER_COUNT)
+        ]
+        self._worker_threads: list[threading.Thread] = []
+
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
@@ -399,6 +437,14 @@ class ArchiveProcessor:
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._s3_reconnect_loop, daemon=True, name="s3-reconnect").start()
         threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
+
+        # Live-path worker pool (see _ARCHIVE_WORKER_COUNT / _worker_loop).
+        for i in range(_ARCHIVE_WORKER_COUNT):
+            t = threading.Thread(
+                target=self._worker_loop, args=(i,), daemon=True, name=f"archive-worker-{i}"
+            )
+            t.start()
+            self._worker_threads.append(t)
 
         self._consume_loop()
 
@@ -424,7 +470,10 @@ class ArchiveProcessor:
             # AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION from its own
             # default credential chain, which an instance role can also
             # satisfy.
-            client = boto3.Session().client("s3")
+            client = boto3.Session().client(
+                "s3",
+                config=BotoConfig(max_pool_connections=_S3_MAX_POOL_CONNECTIONS),
+            )
             # Quick connectivity check, scoped to just this bucket
             client.head_bucket(Bucket=s3_cfg.get("bucket", ""))
             with self._s3_lock:
@@ -582,7 +631,20 @@ class ArchiveProcessor:
                 )
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
+    def _worker_index_for(self, flight: CompletedFlight) -> int:
+        """Which worker owns this aircraft. Deterministic (crc32, not the
+        hash-randomised built-in hash()) so the mapping is stable for the
+        life of the process. Flights with no icao_hex can't be stitched
+        anyway (_try_stitch returns early), so they all landing on worker 0
+        is harmless."""
+        icao_hex = (flight.aircraft.get("icao_hex", "") or "").encode("utf-8")
+        return zlib.crc32(icao_hex) % _ARCHIVE_WORKER_COUNT
+
     def _on_message(self, ch, method, props, body: bytes) -> None:
+        """Runs on the pika connection thread. Parse here (an unparseable
+        message is acked and dropped immediately, as before), then hand the
+        flight to its owning worker and return -- the worker does the S3/Redis
+        work and schedules the ack back on this thread."""
         try:
             flight = CompletedFlight.model_validate_json(body)
         except Exception as exc:
@@ -590,16 +652,74 @@ class ArchiveProcessor:
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
+        self._worker_queues[self._worker_index_for(flight)].put(
+            (flight, method.delivery_tag)
+        )
+
+    def _worker_loop(self, idx: int) -> None:
+        """One live-path worker. Pulls (flight, delivery_tag) off its own
+        hand-off queue and processes serially via _handle_delivery, so
+        every segment of a given aircraft (all routed here by
+        _worker_index_for) stays strictly ordered without locking."""
+        q = self._worker_queues[idx]
+        while not self._shutdown.is_set():
+            try:
+                item = q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if item is None:  # shutdown sentinel
+                return
+            flight, delivery_tag = item
+            self._handle_delivery(flight, delivery_tag)
+
+    def _handle_delivery(self, flight: CompletedFlight, delivery_tag: int) -> None:
+        """Process one flight and ack it. Same per-message contract as the
+        old serial _on_message: on success ack; on a processing error fall
+        the flight to the local queue and ack; if even the fallback put
+        fails, don't ack so RabbitMQ redelivers."""
         try:
             self._process_flight(flight)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            self._ack(delivery_tag)
         except Exception as exc:
-            # Don't ack — let the message be re-queued
             logger.error("Failed to process flight %s: %s", flight.id, exc)
-            # But to avoid infinite retry loops, fall back locally and ack
-            payload = flight.model_dump_json(by_alias=True, exclude_none=True)
-            self._fallback.put(payload)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            try:
+                self._fallback.put(
+                    flight.model_dump_json(by_alias=True, exclude_none=True)
+                )
+            except Exception as queue_exc:
+                logger.error(
+                    "Failed to queue flight %s to local fallback: %s — "
+                    "leaving unacked for redelivery", flight.id, queue_exc,
+                )
+                return
+            self._ack(delivery_tag)
+
+    def _ack(self, delivery_tag: int) -> None:
+        """Marshal a basic_ack back onto the pika connection thread --
+        self._rmq_channel must only ever be touched there. If the channel
+        has been replaced by a reconnect since delivery, the ack fails
+        harmlessly and RabbitMQ redelivers the message (S3 keys are derived
+        from the flight's stable UUID, so a re-archive overwrites rather
+        than duplicates)."""
+        conn = self._rmq_connection
+        if conn is None:
+            return
+
+        def _ack_on_rmq_thread() -> None:
+            try:
+                self._rmq_channel.basic_ack(delivery_tag=delivery_tag)
+            except Exception as exc:
+                logger.warning(
+                    "Ack for delivery_tag %s failed (likely a reconnect): %s",
+                    delivery_tag, exc,
+                )
+
+        try:
+            conn.add_callback_threadsafe(_ack_on_rmq_thread)
+        except Exception as exc:
+            logger.warning(
+                "Could not schedule ack for delivery_tag %s: %s", delivery_tag, exc
+            )
 
     def _incr_period_counters(self, key_fn, periods: tuple[str, ...]) -> None:
         """Atomically increments one or more hour/today period counters via
@@ -1031,6 +1151,13 @@ class ArchiveProcessor:
     def shutdown(self) -> None:
         logger.info("Shutdown requested.")
         self._shutdown.set()
+        # Wake every idle worker so it sees the shutdown flag now rather
+        # than after its 1s queue poll.
+        for q in self._worker_queues:
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
         if self._rmq_channel:
             try:
                 self._rmq_channel.stop_consuming()

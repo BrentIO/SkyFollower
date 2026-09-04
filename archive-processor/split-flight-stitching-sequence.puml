@@ -4,8 +4,20 @@
 title Archive Processor — Split-Flight Stitching
 
 box "Archive Processor" $OnPrem
-    participant "Archiver" as Archiver
+    participant "Archiver\n(one worker of the icao_hex-keyed pool)" as Archiver
 end box
+
+note over Archiver
+    The live consume path runs a pool of worker threads, but every
+    completed segment for one aircraft is routed to the same worker
+    (crc32(icao_hex) mod worker_count) and processed FIFO. The whole
+    GET pointer -> fetch/merge -> PUT flight -> SET pointer sequence
+    below therefore runs with no other thread touching this aircraft's
+    pointer or objects — the ordering the merge depends on holds without
+    any per-key lock. (The serial fallback-drain path is the same single
+    Archiver actor; it never runs concurrently with the pool for a
+    given aircraft either.)
+end note
 
 box "Redis" $OnPrem
     database "archive:last_segment:\n{icao_hex}" as Pointer

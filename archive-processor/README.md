@@ -73,17 +73,35 @@ pick up a changed value. Defaults to `300` if unset. See
 ## Consuming from RabbitMQ
 
 The archive processor declares and consumes from a single durable queue
-named `skyfollower-archive` (`prefetch_count=100`, manual ack). Each
-completed flight is written to S3 independently with no shared mutable
-state between flights, so unlike the message processor's per-aircraft
-affinity concerns, raising prefetch here has no fair-dispatch or ordering
-downside — it just avoids a full ack round trip before the broker will
-deliver the next message. This is the queue the message processor
-publishes completed flights to — see
+named `skyfollower-archive` (`prefetch_count=100`, manual ack). This is
+the queue the message processor publishes completed flights to — see
 [message-processor/README.md](../message-processor/README.md).
 A message that fails to process is not requeued; instead it is written to
 the local fallback queue and acknowledged, to avoid poison-message retry
-loops.
+loops. If even that local write fails the message is left unacked and the
+broker redelivers it (S3 keys derive from the flight's stable UUID, so a
+re-archive overwrites rather than duplicates).
+
+### Worker pool
+
+A single pika `BlockingConnection` runs its message callback one at a time
+on one thread, and each flight does two or more sequential synchronous S3
+round trips (~150–250 ms each from a self-hosted host) — so serial
+processing caps throughput at a few flights per second no matter how high
+`prefetch_count` is. Instead, the connection thread only parses each
+delivery and hands it to a pool of **12 worker threads** that do the
+S3/Redis work concurrently; each worker marshals its `basic_ack` back onto
+the connection thread with `connection.add_callback_threadsafe`. boto3's
+connection pool (`max_pool_connections`) is widened to cover every worker.
+
+Workers are **partitioned by `icao_hex`** (`crc32(icao_hex) % 12`): every
+segment of one aircraft is processed FIFO on the same worker. Split-flight
+stitching reads and writes a per-aircraft Redis pointer around the S3
+write, so two segments for one aircraft must never run concurrently —
+routing by `icao_hex` guarantees that without any per-key locking. The
+fallback-drain path is unchanged: it stays strictly serial and
+oldest-first, and never runs the pool (see
+[Fault Tolerance](#fault-tolerance)).
 
 ## External-Only Flight Skip
 
@@ -290,13 +308,15 @@ segment it continues might still be sitting undrained in the backlog — and
 archive as an independent flight instead of stitching, silently splitting
 one flight into two S3 objects. Running this specific drain synchronously,
 and only flipping `s3_connected` to `True` once it's fully empty, closes
-that race by construction: any flight arriving on the RabbitMQ consumer
-thread while the drain is still running still sees `s3_connected == False`
-and queues behind the backlog rather than going live — and since the queue
-drains strictly oldest-first, a continuation can never be processed before
-whatever it continues. No per-aircraft locking or queue scanning needed,
-and RabbitMQ consumption itself never stalls (a queued-not-drained flight
-is still just a fast local SQLite insert). If the drain stops early (S3
+that race by construction: any flight a worker picks up while the drain is
+still running still sees `s3_connected == False` and queues behind the
+backlog rather than going live — and since the queue drains strictly
+oldest-first, a continuation can never be processed before whatever it
+continues. No per-aircraft locking or queue scanning needed, and RabbitMQ
+consumption itself never stalls (a queued-not-drained flight is still just
+a fast local SQLite insert). The synchronous reconnect drain runs on its
+own thread and does not use the [worker pool](#worker-pool) — it is the
+one path that must stay strictly serial and oldest-first. If the drain stops early (S3
 goes down again mid-drain), `s3_connected` stays `False` and the whole
 sequence — reconnect, then this drain — retries on the next 10-second tick,
 picking up wherever the queue was left. This same gate also covers a
