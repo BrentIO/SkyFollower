@@ -264,9 +264,15 @@ function SearchResultsPanel({
   }
 
   const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
+  // total_rows is exact when not truncated, and the cache cap when it is
+  // (the true count beyond the cap is never computed -- see the truncation
+  // note below).
+  const resultCountLabel = results.truncated
+    ? `${results.total_rows.toLocaleString()}+ results`
+    : `${results.total_rows.toLocaleString()} result${results.total_rows === 1 ? "" : "s"}`;
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-hidden">
+    <div className="flex h-full flex-col gap-3 overflow-hidden p-4">
       <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
       <ResolvedRangeNote detail={detail} loading={detailLoading} />
       {results.truncated && (
@@ -276,7 +282,7 @@ function SearchResultsPanel({
         </p>
       )}
       <div className="overflow-auto">
-        <table className="w-full text-left text-sm">
+        <table className="w-full min-w-max text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700 dark:text-slate-400">
               {SORTABLE_COLUMNS.map(({ column, label }) => (
@@ -318,14 +324,17 @@ function SearchResultsPanel({
       </div>
 
       <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
-        <button
-          type="button"
-          onClick={onDownloadCsv}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
-        >
-          <Download size={14} />
-          Download CSV
-        </button>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+          <button
+            type="button"
+            onClick={onDownloadCsv}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
+          >
+            <Download size={14} />
+            Download CSV
+          </button>
+          <span className="text-slate-500 dark:text-slate-400">{resultCountLabel}</span>
+        </div>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
           <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
@@ -652,7 +661,11 @@ export function HistoryView() {
                     md:. Desktop shows the same content in the right panel
                     below instead (hidden here via md:hidden). */}
                 {isSelected && (
-                  <div className="border-t border-slate-200 p-4 dark:border-slate-700 md:hidden">
+                  // No padding here -- every SearchResultsPanel branch
+                  // brings its own p-4, so the desktop right panel (whose
+                  // wrapper is border-only) and this mobile accordion stay
+                  // visually identical.
+                  <div className="border-t border-slate-200 dark:border-slate-700 md:hidden">
                     <SearchResultsPanel
                       search={search}
                       results={resultsForSelected}
