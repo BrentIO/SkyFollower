@@ -697,8 +697,12 @@ class ArchiveProcessor:
         called whenever s3_connected is already True). The reconnect-
         triggered drain runs synchronously instead, gating _s3_connected
         itself -- see _finish_s3_connect."""
+        had_backlog = self._fallback.depth() > 0
+
         def _log_done() -> None:
-            logger.info("Fallback drain complete. Remaining depth: %d", self._fallback.depth())
+            depth = self._fallback.depth()
+            log = logger.info if had_backlog else logger.debug
+            log("Fallback drain complete. Remaining depth: %d", depth)
 
         self._fallback.drain_in_background(self._process_fallback_flight, on_done=_log_done)
 
@@ -732,10 +736,12 @@ class ArchiveProcessor:
             self._write_index_to_s3(index_bytes, index_key)
             self._write_local_index_cache(index_key, index_bytes)
 
+        had_backlog = self._index_fallback.depth() > 0
+
         def _log_done() -> None:
-            logger.info(
-                "Index-fallback drain complete. Remaining depth: %d", self._index_fallback.depth()
-            )
+            depth = self._index_fallback.depth()
+            log = logger.info if had_backlog else logger.debug
+            log("Index-fallback drain complete. Remaining depth: %d", depth)
 
         self._index_fallback.drain_in_background(process, on_done=_log_done)
 
