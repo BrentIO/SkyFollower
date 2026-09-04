@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronUp, Download, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Eye, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { FlightViewModal } from "../components/FlightViewModal";
 import { NewSearchModal } from "../components/NewSearchModal";
 import {
   archiveSearchDownloadUrl,
@@ -94,6 +95,7 @@ interface SearchResultsPanelProps {
   sort: ResultsSortState | null;
   onSortChange: (column: ArchiveSearchSortColumn) => void;
   onViewFlight: (token: string) => void;
+  onDownloadFlight: (token: string) => void;
   // Carries where_clause plus the RESOLVED start_date/end_date actually
   // queried -- fetched lazily per search (see HistoryView's detail-fetch
   // effect), regardless of status, since the resolved range may have come
@@ -214,6 +216,7 @@ function SearchResultsPanel({
   sort,
   onSortChange,
   onViewFlight,
+  onDownloadFlight,
   detail,
   detailLoading,
   onResubmit,
@@ -306,16 +309,28 @@ function SearchResultsPanel({
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
                 <td className="px-2 py-1.5">
-                  <button
-                    type="button"
-                    onClick={() => onViewFlight(row.token)}
-                    aria-label="Download flight"
-                    title="Download flight"
-                    className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-                  >
-                    <Download size={12} />
-                    Download
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onViewFlight(row.token)}
+                      aria-label="View flight"
+                      title="View flight"
+                      className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                    >
+                      <Eye size={12} />
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDownloadFlight(row.token)}
+                      aria-label="Download flight"
+                      title="Download flight"
+                      className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                    >
+                      <Download size={12} />
+                      Download
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -393,6 +408,7 @@ export function HistoryView() {
   const [resultsPageSize, setResultsPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [resultsSort, setResultsSort] = useState<ResultsSortState | null>(null);
   const [newSearchModalOpen, setNewSearchModalOpen] = useState(false);
+  const [viewFlightToken, setViewFlightToken] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
   // Per-search where_clause + resolved start_date/end_date, fetched lazily
@@ -582,7 +598,7 @@ export function HistoryView() {
     }
   }
 
-  async function handleViewFlight(token: string) {
+  async function handleDownloadFlight(token: string) {
     try {
       await downloadArchiveFlight(token);
     } catch (err) {
@@ -676,7 +692,8 @@ export function HistoryView() {
                       onPageSizeChange={handlePageSizeChange}
                       sort={resultsSort}
                       onSortChange={handleSortChange}
-                      onViewFlight={handleViewFlight}
+                      onViewFlight={setViewFlightToken}
+                      onDownloadFlight={handleDownloadFlight}
                       detail={searchDetailCache[search.uuid] ?? null}
                       detailLoading={detailLoading}
                       onResubmit={() => handleResubmit(search)}
@@ -705,7 +722,8 @@ export function HistoryView() {
             onPageSizeChange={handlePageSizeChange}
             sort={resultsSort}
             onSortChange={handleSortChange}
-            onViewFlight={handleViewFlight}
+            onViewFlight={setViewFlightToken}
+            onDownloadFlight={handleDownloadFlight}
             detail={searchDetailCache[selectedSearch.uuid] ?? null}
             detailLoading={detailLoading}
             onResubmit={() => handleResubmit(selectedSearch)}
@@ -747,6 +765,8 @@ export function HistoryView() {
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      <FlightViewModal token={viewFlightToken} onClose={() => setViewFlightToken(null)} />
     </div>
   );
 }

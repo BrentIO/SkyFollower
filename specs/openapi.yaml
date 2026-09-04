@@ -120,11 +120,12 @@ paths:
                 value: &id005
                   name: Air Force One overhead, verified via 1090
                   description: ADFDF8 (Air Force One) force-archived only when actually
-                    received via 1090MHz ADS-B, not merely via an EXTERNAL-tagged source
-                    -- an EXTERNAL source's provenance isn't guaranteed the way a direct
-                    receive path's is, so seeing it there alone doesn't confirm it's
-                    actually nearby. If it isn't showing up on 1090, skip the force-archive
-                    and let the normal external-only archive skip apply.
+                    received via 1090MHz ADS-B, not merely via an EXTERNAL-tagged
+                    source -- an EXTERNAL source's provenance isn't guaranteed the
+                    way a direct receive path's is, so seeing it there alone doesn't
+                    confirm it's actually nearby. If it isn't showing up on 1090,
+                    skip the force-archive and let the normal external-only archive
+                    skip apply.
                   identifier: af1_1090_verified
                   enabled: true
                   force_archive: true
@@ -619,6 +620,12 @@ paths:
           description: Successful Response
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '409':
+          description: Area is referenced by one or more rules
           content:
             application/json:
               schema:
@@ -1157,6 +1164,87 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/flights/{token}/view:
+    get:
+      tags:
+      - archive
+      summary: Get Archive Flight View
+      operationId: get_archive_flight_view_api_archive_flights__token__view_get
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlightView'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/archive/flights/{token}/flight-path:
+    get:
+      tags:
+      - archive
+      summary: Get Archive Flight Path
+      operationId: get_archive_flight_path_api_archive_flights__token__flight_path_get
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: AWS (Athena/S3) error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -1446,18 +1534,12 @@ components:
             format: date
           - type: 'null'
           title: Start Date
-          description: >-
-            UTC calendar date, inclusive. Omitted or null defaults to the
-            start of the archive.
         end_date:
           anyOf:
           - type: string
             format: date
           - type: 'null'
           title: End Date
-          description: >-
-            UTC calendar date, inclusive. Omitted or null defaults to
-            tomorrow UTC.
       type: object
       required:
       - name
@@ -1499,18 +1581,12 @@ components:
             format: date
           - type: 'null'
           title: Start Date
-          description: >-
-            The RESOLVED lower bound actually queried (explicit input
-            intersected with what the WHERE clause's own predicates could
-            prove) -- null for a record written before this field existed.
         end_date:
           anyOf:
           - type: string
             format: date
           - type: 'null'
           title: End Date
-          description: >-
-            The RESOLVED upper bound actually queried -- see start_date.
       type: object
       required:
       - uuid
@@ -1823,6 +1899,108 @@ components:
       title: ErrorDetail
       description: Shape of every 4xx/5xx response -- FastAPI's HTTPException(detail=...)
         serializes to this.
+    FlightView:
+      properties:
+        ident:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ident
+        registration:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Registration
+        icao_hex:
+          type: string
+          title: Icao Hex
+        squawk:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Squawk
+        military:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Military
+        type_designator:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type Designator
+        manufacturer_model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manufacturer Model
+        operator:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Operator
+        registrant:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Registrant
+        origin:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Origin
+        destination:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Destination
+        first_message:
+          type: string
+          format: date-time
+          title: First Message
+        last_message:
+          type: string
+          format: date-time
+          title: Last Message
+        total_messages:
+          type: integer
+          title: Total Messages
+        matched_rules:
+          items:
+            type: string
+          type: array
+          title: Matched Rules
+          default: []
+        flight_path:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Flight Path
+      type: object
+      required:
+      - icao_hex
+      - first_message
+      - last_message
+      - total_messages
+      title: FlightView
+      description: 'Response shape for GET /api/archive/flights/{token}/view -- everything
+
+        the History "View" modal needs, parsed and enriched server-side from the
+
+        raw S3 flight object. Every field is optional except icao_hex/timestamps/
+
+        total_messages, which every archived flight always carries; a field with
+
+        nothing to show is simply absent from the JSON rather than null, so the
+
+        frontend''s "omit if absent" rendering rule works the same way it already
+
+        does for the rest of the app''s reference-data lookups.'
     HTTPValidationError:
       properties:
         detail:
@@ -2636,3 +2814,4 @@ components:
       - operator
       - value
       title: WakeTurbulenceCategoryCondition
+
