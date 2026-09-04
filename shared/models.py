@@ -135,11 +135,8 @@ class AircraftRecord(BaseModel):
     seats: Optional[int] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None
-    operator: Optional[str] = None          # operator/owner name from registry
-    airline_code: Optional[str] = None      # ICAO airline code
     serial_number: Optional[str] = None
     manufactured_date: Optional[str] = None
-    is_private_operator: Optional[bool] = None
     registrant: Optional[RegistrantInfo] = None
     special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
     data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order

@@ -1984,20 +1984,11 @@ components:
         military:
           type: boolean
           description: Present and true when the aircraft is military; omitted when false
-        operator:
-          type: string
-          description: Operator or owner name from the registration database
-          example: Delta Air Lines
-        airline_code:
-          type: string
-          example: DAL
         serial_number:
           type: string
         manufactured_date:
           type: string
           example: "2005-01-01"
-        is_private_operator:
-          type: boolean
         registrant:
           type: object
           description: Owner/registrant information from the national civil aircraft registry
