@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Download, Eye, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Download, Eye, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { FlightViewModal } from "../components/FlightViewModal";
@@ -108,6 +108,7 @@ interface SearchResultsPanelProps {
   detail: ArchiveSearchDetail | null;
   detailLoading: boolean;
   onResubmit: () => void;
+  onDuplicate: (detail: ArchiveSearchDetail) => void;
   onDownloadCsv: () => void;
 }
 
@@ -158,12 +159,30 @@ function SortableColumnHeader({
 // design, above a COMPLETE search's results table too, so the text behind
 // any search's results looks the same wherever it's shown. Fetched lazily
 // per search (see HistoryView's detail-fetch effect), regardless of status.
-function WhereClauseBlock({ detail, detailLoading }: { detail: ArchiveSearchDetail | null; detailLoading: boolean }) {
+function WhereClauseBlock({
+  detail,
+  detailLoading,
+  onDuplicate,
+}: {
+  detail: ArchiveSearchDetail | null;
+  detailLoading: boolean;
+  onDuplicate: (detail: ArchiveSearchDetail) => void;
+}) {
   return (
     <div>
-      <p className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-        WHERE clause submitted
-      </p>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">WHERE clause submitted</p>
+        <button
+          type="button"
+          onClick={() => detail && onDuplicate(detail)}
+          disabled={detailLoading || detail === null}
+          aria-label="Duplicate search"
+          title="Duplicate search"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-700"
+        >
+          <Copy size={14} />
+        </button>
+      </div>
       {detailLoading || detail === null ? (
         <p className="text-sm text-slate-400">Loading&hellip;</p>
       ) : (
@@ -184,17 +203,19 @@ function FailedSearchDetail({
   detail,
   detailLoading,
   onResubmit,
+  onDuplicate,
 }: {
   reason: ReactNode;
   detail: ArchiveSearchDetail | null;
   detailLoading: boolean;
   onResubmit: () => void;
+  onDuplicate: (detail: ArchiveSearchDetail) => void;
 }) {
   return (
     <div className="flex flex-col gap-3 p-4">
       <p className="text-sm text-red-600 dark:text-red-400">{reason}</p>
       <div>
-        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
         <RequestedRangeNote detail={detail} loading={detailLoading} />
       </div>
       <button
@@ -226,6 +247,7 @@ function SearchResultsPanel({
   detail,
   detailLoading,
   onResubmit,
+  onDuplicate,
   onDownloadCsv,
 }: SearchResultsPanelProps) {
   if (search.status === "RUNNING") {
@@ -238,6 +260,7 @@ function SearchResultsPanel({
         detail={detail}
         detailLoading={detailLoading}
         onResubmit={onResubmit}
+        onDuplicate={onDuplicate}
       />
     );
   }
@@ -248,6 +271,7 @@ function SearchResultsPanel({
         detail={detail}
         detailLoading={detailLoading}
         onResubmit={onResubmit}
+        onDuplicate={onDuplicate}
       />
     );
   }
@@ -256,7 +280,7 @@ function SearchResultsPanel({
   if (resultsLoading || results === null) {
     return (
       <div className="flex flex-col gap-2 p-4">
-        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
         <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">Loading results&hellip;</p>
       </div>
@@ -265,7 +289,7 @@ function SearchResultsPanel({
   if (results.total_rows === 0) {
     return (
       <div className="flex flex-col gap-2 p-4">
-        <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
         <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">No flights matched this search.</p>
       </div>
@@ -282,7 +306,7 @@ function SearchResultsPanel({
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden p-4">
-      <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
+      <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
       <RequestedRangeNote detail={detail} loading={detailLoading} />
       {results.truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -428,10 +452,13 @@ export function HistoryView() {
   // derivation rather than anything the operator typed.
   const [searchDetailCache, setSearchDetailCache] = useState<Record<string, ArchiveSearchDetail>>({});
   const [detailLoading, setDetailLoading] = useState(false);
-  // Seeds the New Search modal when resubmitting a failed/aborted search;
-  // null for a blank "+ New Search" open.
-  const [resubmitSeed, setResubmitSeed] = useState<
-    { name: string; whereClause: string; startDate: string; endDate: string } | null
+  // Seeds the New Search modal when resubmitting a failed/aborted search or
+  // duplicating any search; null for a blank "+ New Search" open. `title`
+  // is set explicitly by whichever handler populates the seed rather than
+  // inferred from its presence -- both flows populate a non-null seed, so
+  // inferring from presence alone can't tell them apart.
+  const [searchModalSeed, setSearchModalSeed] = useState<
+    { title: string; name: string; whereClause: string; startDate: string; endDate: string } | null
   >(null);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
@@ -560,7 +587,7 @@ export function HistoryView() {
       setSelectedUuid(uuid);
       setResultsPage(1);
       setNewSearchModalOpen(false);
-      setResubmitSeed(null);
+      setSearchModalSeed(null);
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to start search.");
     } finally {
@@ -574,8 +601,25 @@ export function HistoryView() {
     // Carries the persisted, already-RESOLVED dates forward verbatim (not
     // re-derived) -- see main.py's create_archive_search docstring on why
     // dropping these here would silently change what the resubmit matches.
-    setResubmitSeed({
+    setSearchModalSeed({
+      title: "Resubmit Search",
       name: search.name,
+      whereClause: detail.where_clause,
+      startDate: detail.start_date ?? "",
+      endDate: detail.end_date ?? "",
+    });
+    setNewSearchModalOpen(true);
+  }
+
+  // Pre-fills the New Search dialog from an existing search's WHERE clause
+  // and resolved date range, same as handleResubmit, except the Name field
+  // is left blank and this always creates a brand new, independent search
+  // rather than editing in place -- available for every status (COMPLETE
+  // included), not just FAILED/ABORTED.
+  function handleDuplicate(detail: ArchiveSearchDetail) {
+    setSearchModalSeed({
+      title: "New Search",
+      name: "",
       whereClause: detail.where_clause,
       startDate: detail.start_date ?? "",
       endDate: detail.end_date ?? "",
@@ -630,7 +674,7 @@ export function HistoryView() {
         <button
           type="button"
           onClick={() => {
-            setResubmitSeed(null);
+            setSearchModalSeed(null);
             setNewSearchModalOpen(true);
           }}
           className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-400 dark:text-sky-400 dark:hover:bg-sky-950"
@@ -707,6 +751,7 @@ export function HistoryView() {
                       detail={searchDetailCache[search.uuid] ?? null}
                       detailLoading={detailLoading}
                       onResubmit={() => handleResubmit(search)}
+                      onDuplicate={handleDuplicate}
                       onDownloadCsv={() => handleDownloadCsv(search)}
                     />
                   </div>
@@ -737,6 +782,7 @@ export function HistoryView() {
             detail={searchDetailCache[selectedSearch.uuid] ?? null}
             detailLoading={detailLoading}
             onResubmit={() => handleResubmit(selectedSearch)}
+            onDuplicate={handleDuplicate}
             onDownloadCsv={() => handleDownloadCsv(selectedSearch)}
           />
         ) : (
@@ -750,13 +796,13 @@ export function HistoryView() {
         onCancel={() => {
           if (creating) return;
           setNewSearchModalOpen(false);
-          setResubmitSeed(null);
+          setSearchModalSeed(null);
         }}
-        initialName={resubmitSeed?.name}
-        initialWhereClause={resubmitSeed?.whereClause}
-        initialStartDate={resubmitSeed?.startDate}
-        initialEndDate={resubmitSeed?.endDate}
-        title={resubmitSeed ? "Resubmit Search" : "New Search"}
+        initialName={searchModalSeed?.name}
+        initialWhereClause={searchModalSeed?.whereClause}
+        initialStartDate={searchModalSeed?.startDate}
+        initialEndDate={searchModalSeed?.endDate}
+        title={searchModalSeed?.title ?? "New Search"}
       />
 
       <ConfirmModal
