@@ -1514,7 +1514,7 @@ def get_aircraft(
         raw = _redis_evalsha(_merge_aircraft_sha, icao_hex.upper())
         if not raw:
             raise HTTPException(status_code=404, detail=f"No aircraft data found for '{icao_hex}'")
-        return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
+        return JSONResponse(content=json.loads(raw))
 
     # Mictronics first (broader coverage), then the country-registry index --
     # a registration can exist in either, or both.
@@ -1532,7 +1532,7 @@ def get_aircraft(
         raise HTTPException(
             status_code=404, detail=f"No aircraft data found for registration '{registration}'"
         )
-    return JSONResponse(content=_flatten_aircraft_doc(json.loads(raw)))
+    return JSONResponse(content=json.loads(raw))
 
 
 @app.get(
@@ -2726,7 +2726,7 @@ class FlightView(BaseModel):
     seats: Optional[int] = None
     powerplant: Optional[dict] = None     # count/type/manufacturer/model/power_type
     operator: Optional[dict] = None      # OperatorRecord fields (name, callsign, ...)
-    registrant: Optional[dict] = None    # RegistrantInfo fields
+    registrant: Optional[dict] = None    # names/street/city/administrative_area/postal_code/country/type
     origin: Optional[dict] = None        # airport doc (icao_code, name, ...), resolved via Redis
     destination: Optional[dict] = None   # airport doc, resolved via Redis
     first_message: datetime
@@ -2764,7 +2764,7 @@ def get_archive_flight_view(token: str):
         seats=aircraft.get("seats"),
         powerplant=aircraft.get("powerplant"),
         operator=flight.get("operator"),
-        registrant=aircraft.get("registrant"),
+        registrant=flight.get("registrant"),
         origin=_resolve_airport(flight.get("origin")),
         destination=_resolve_airport(flight.get("destination")),
         first_message=flight["first_message"],

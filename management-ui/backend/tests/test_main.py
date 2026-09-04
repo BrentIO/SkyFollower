@@ -215,6 +215,15 @@ class FakeRedis:
             _deep_merge(result, doc)
         if sources:
             result["data_sources"] = sources
+        # Mirrors merge_aircraft.lua's own flattening: type/category/
+        # manufacturer/model/seats/powerplant/serial_number/manufactured_date
+        # are written nested under an `aircraft` sub-object by the
+        # mictronics/country-registry runners; promote them to the top level,
+        # never overwriting a key already present there.
+        nested = result.pop("aircraft", None)
+        if isinstance(nested, dict):
+            for key, value in nested.items():
+                result.setdefault(key, value)
         return json.dumps(result)
 
     def _eval_route_airports(self, ident: str) -> str:
@@ -1225,7 +1234,7 @@ class TestAircraftLookup:
         """Registry-only fields not on Mictronics -- including the top-level
         (not aircraft-nested) registrant sub-object, matching real runner
         output shape (e.g. au-casa-registry's _build_record) -- must survive
-        merge_aircraft.lua's merge and _flatten_aircraft_doc()'s promotion."""
+        merge_aircraft.lua's merge and its own nested-aircraft flattening."""
         fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
             "icao_hex": "A8AE7F", "registration": "N659DL", "military": False, "source": "mictronics",
         })

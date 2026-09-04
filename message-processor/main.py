@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS flights (
     aircraft      TEXT,
     ident         TEXT,
     operator      TEXT,
+    registrant    TEXT,
     squawk        TEXT,
     origin        TEXT,
     destination   TEXT,
@@ -277,6 +278,8 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE flights ADD COLUMN pending_squawk TEXT")
     if "pending_ident" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN pending_ident TEXT")
+    if "registrant" not in existing:
+        db.execute("ALTER TABLE flights ADD COLUMN registrant TEXT")
 
     # positions/velocities had no uniqueness constraint before this
     # migration, so RabbitMQ redelivery -- a normal at-least-once
@@ -459,7 +462,7 @@ class Flight:
 
     __slots__ = (
         "icao_hex", "flight_id", "first_message", "last_message", "total_messages",
-        "aircraft", "ident", "operator", "squawk", "origin", "destination",
+        "aircraft", "ident", "operator", "registrant", "squawk", "origin", "destination",
         "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
         "route_candidate_airports", "pending_squawk", "pending_ident",
         "positions", "velocities", "_db",
@@ -475,6 +478,7 @@ class Flight:
         self.aircraft: dict = {}
         self.ident: str = ""
         self.operator: dict = {}
+        self.registrant: dict = {}
         self.squawk: str = ""
         self.origin: Optional[str] = None
         self.destination: Optional[str] = None
@@ -513,7 +517,7 @@ class Flight:
         cur = self._db.cursor()
         cur.execute(
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
-            "aircraft, ident, operator, squawk, origin, destination, "
+            "aircraft, ident, operator, registrant, squawk, origin, destination, "
             "matched_rules, receiver_sources, force_archive, route_resolution_attempted, "
             "route_candidate_airports, pending_squawk, pending_ident "
             "FROM flights WHERE icao_hex=?",
@@ -530,6 +534,7 @@ class Flight:
         self.aircraft = json.loads(row["aircraft"] or "{}")
         self.ident = row["ident"] or ""
         self.operator = json.loads(row["operator"] or "{}")
+        self.registrant = json.loads(row["registrant"] or "{}")
         self.squawk = row["squawk"] or ""
         self.origin = row["origin"]
         self.destination = row["destination"]
@@ -575,15 +580,15 @@ class Flight:
         cur = self._db.cursor()
         cur.execute(
             "REPLACE INTO flights (icao_hex, flight_id, first_message, last_message, "
-            "total_messages, aircraft, ident, operator, squawk, origin, "
+            "total_messages, aircraft, ident, operator, registrant, squawk, origin, "
             "destination, matched_rules, receiver_sources, force_archive, "
             "route_resolution_attempted, route_candidate_airports, "
             "pending_squawk, pending_ident) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
-                json.dumps(self.operator), self.squawk,
+                json.dumps(self.operator), json.dumps(self.registrant), self.squawk,
                 self.origin, self.destination,
                 json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
                 int(self.force_archive), int(self.route_resolution_attempted),
@@ -654,6 +659,10 @@ class Flight:
                 if k != "source" and v is not None
             }
 
+        registrant: Optional[dict] = None
+        if self.registrant:
+            registrant = {k: v for k, v in self.registrant.items() if v is not None}
+
         return CompletedFlight(**{
             "_id": self.flight_id or generate_flight_id(),
             "first_message": datetime.fromtimestamp(self.first_message, tz=timezone.utc),
@@ -664,6 +673,7 @@ class Flight:
             "aircraft": aircraft,
             "ident": self.ident or None,
             "operator": operator,
+            "registrant": registrant,
             "squawk": self.squawk or None,
             "origin": self.origin,
             "destination": self.destination,
@@ -1276,6 +1286,11 @@ class MessageProcessor:
                 # Registry/Mictronics data must never seed wake_turbulence_category —
                 # it's receiver-decode-only (see _WAKE_TURBULENCE_MAP above).
                 aircraft.pop("wake_turbulence_category", None)
+                # registrant is an entity describing the aircraft's legal
+                # owner, not a property of the airframe -- the same category
+                # of thing as flight.operator, so it lives as its own sibling
+                # field on Flight/CompletedFlight rather than nested here.
+                flight.registrant = aircraft.pop("registrant", None) or {}
                 flight.aircraft = aircraft
             else:
                 self._registration_misses.record()
@@ -1630,6 +1645,8 @@ class MessageProcessor:
         notification.pop("_id", None)
         if not notification.get("operator"):
             notification.pop("operator", None)
+        if not notification.get("registrant"):
+            notification.pop("registrant", None)
         if not notification.get("origin"):
             notification.pop("origin", None)
         if not notification.get("destination"):

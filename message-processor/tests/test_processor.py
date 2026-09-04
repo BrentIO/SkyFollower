@@ -538,6 +538,7 @@ class TestFlight:
         f.total_messages = 42
         f.aircraft = {"icao_hex": "A8AE7F", "registration": "N659DL"}
         f.ident = "DAL659"
+        f.registrant = {"names": ["Delta Air Lines Inc"]}
         f.receiver_sources = ["1090"]
         f.save()
 
@@ -546,6 +547,7 @@ class TestFlight:
         assert f2.ident == "DAL659"
         assert f2.total_messages == 42
         assert f2.aircraft["registration"] == "N659DL"
+        assert f2.registrant == {"names": ["Delta Air Lines Inc"]}
 
     def test_receiver_sources_and_force_archive_round_trip(self):
         db = _make_db()
@@ -639,6 +641,7 @@ class TestFlight:
         f.aircraft = {"icao_hex": "A8AE7F", "registration": "N659DL", "military": False}
         f.ident = "DAL659"
         f.operator = {"airline_designator": "DAL", "source": "mictronics"}
+        f.registrant = {"names": ["Delta Air Lines Inc"], "city": "Atlanta"}
         f.squawk = "1234"
         f.origin = "KATL"
         f.destination = "KLAX"
@@ -658,6 +661,10 @@ class TestFlight:
         # operator source key stripped
         assert "source" not in cf.operator
 
+        # registrant is a sibling of aircraft/operator, not nested inside aircraft
+        assert cf.registrant == {"names": ["Delta Air Lines Inc"], "city": "Atlanta"}
+        assert "registrant" not in cf.aircraft
+
         # timestamps are UTC-aware datetimes
         assert cf.first_message.tzinfo is not None
         assert cf.destination == "KLAX"
@@ -676,6 +683,18 @@ class TestFlight:
         f.save()
         cf = f.to_completed_flight()
         assert cf.aircraft["icao_hex"] == "FFFFFF"
+
+    def test_to_completed_flight_registrant_none_when_empty(self):
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "FFFFFF"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["978"]
+        f.save()
+        cf = f.to_completed_flight()
+        assert cf.registrant is None
 
     def test_to_completed_flight_force_archive_true(self):
         db = _make_db()
@@ -1867,6 +1886,34 @@ class TestProcessorEnrichment:
 
         assert f.aircraft["registration"] == "N659DL"
         assert "wake_turbulence_category" not in f.aircraft
+
+    def test_enrich_aircraft_moves_registrant_to_flight_registrant(self):
+        # registrant is an entity describing the aircraft's legal owner, the
+        # same category of thing as flight.operator -- not a property of the
+        # airframe, so it must not stay nested in the merged aircraft dict.
+        p, mock_redis = self._make_processor()
+        registrant = {"names": ["Delta Air Lines Inc"], "city": "Atlanta"}
+        aircraft_data = {
+            "icao_hex": "A8AE7F", "registration": "N659DL", "registrant": registrant,
+        }
+        mock_redis.evalsha.return_value = json.dumps(aircraft_data)
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._enrich_aircraft(f)
+
+        assert f.registrant == registrant
+        assert "registrant" not in f.aircraft
+
+    def test_enrich_aircraft_no_registrant_leaves_flight_registrant_empty(self):
+        p, mock_redis = self._make_processor()
+        mock_redis.evalsha.return_value = json.dumps({"icao_hex": "A8AE7F", "registration": "N659DL"})
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._enrich_aircraft(f)
+
+        assert f.registrant == {}
 
     def test_enrich_aircraft_no_registration_key_written(self):
         p, mock_redis = self._make_processor()
