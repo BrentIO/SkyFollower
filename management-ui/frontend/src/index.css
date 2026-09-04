@@ -1,16 +1,28 @@
 @import "tailwindcss";
 
+/* Without this, the browser has no way to know the page follows a
+   coordinated light/dark presentation, so native UI chrome it renders
+   itself -- the date-picker popup, scrollbars, etc. -- can end up with
+   mismatched contrast in dark mode (e.g. a dark popup surface with equally
+   dark text). This tells it to pick whichever of the two matches the
+   user's OS preference, same as the prefers-color-scheme media queries
+   below already do for our own Tailwind dark: classes. */
+:root {
+  color-scheme: light dark;
+}
+
 @layer components {
   .input {
     @apply rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100;
   }
 }
 
-/* The datetime-local calendar icon is a WebKit-rendered pseudo-element that
-   doesn't pick up dark:* classes on its own -- it renders as a plain black
-   glyph regardless of the input's own dark background. Inverting it in
-   dark mode turns that black icon white; light mode is left untouched. */
+/* The date/datetime-local calendar icon is a WebKit-rendered pseudo-element
+   that doesn't pick up dark:* classes on its own -- it renders as a plain
+   black glyph regardless of the input's own dark background. Inverting it
+   in dark mode turns that black icon white; light mode is left untouched. */
 @media (prefers-color-scheme: dark) {
+  input[type="date"]::-webkit-calendar-picker-indicator,
   input[type="datetime-local"]::-webkit-calendar-picker-indicator {
     filter: invert(1);
   }
