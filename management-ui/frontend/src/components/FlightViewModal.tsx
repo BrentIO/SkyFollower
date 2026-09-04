@@ -103,8 +103,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
     map.on("load", () => {
       map.addSource("flight-path", { type: "geojson", data: segmentFeatures(coordinates) });
       // A dark, translucent halo underneath lifts the colored line off the
-      // basemap regardless of what's beneath it, same idea as tar1090's own
-      // track rendering.
+      // basemap regardless of what's beneath it.
       map.addLayer({
         id: "flight-path-halo",
         type: "line",

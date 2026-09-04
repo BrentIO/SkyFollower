@@ -9,9 +9,9 @@ export const VFR_SQUAWK = "1200";
 
 export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 
-// tar1090's own altitude-to-color mapping (public/well-known): hue sweeps
-// from 0 (red, ground) to 300 (violet) as altitude rises to ~45,000ft, so a
-// flight's climb/cruise/descent reads the same way it would in that tool.
+// Altitude-to-color mapping: hue sweeps from 0 (red, ground) to 300
+// (violet) as altitude rises to ~45,000ft, so a flight's climb/cruise/
+// descent reads as a smooth color gradient along the path.
 export function altitudeColor(altitudeFt: number | null): string {
   if (altitudeFt === null) return "hsl(0, 0%, 55%)";
   const hue = Math.max(0, Math.min(300, ((altitudeFt + 2000) / 47000) * 300));
