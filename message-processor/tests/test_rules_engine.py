@@ -1224,6 +1224,40 @@ class TestReloadIfChanged:
         assert engine.rules_version == _sha(fixed_rules_json)
         assert engine.last_error is None
 
+    def test_cold_start_area_referencing_rule_loads_on_first_poll(self):
+        """Regression coverage: on a cold start, both config:rules and
+        config:areas are present and valid for the very first poll. Areas
+        must reload before rules within reload_if_changed() so an
+        area-referencing rule is validated against a fully populated
+        self._areas rather than being dropped by a startup ordering race."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+
+        areas_json = json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"name": "zone", "identifier": "ZONE"},
+                "geometry": {"type": "Polygon", "coordinates": [
+                    [[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]
+                ]},
+            }],
+        })
+        rules_json = json.dumps([_rule("in_zone", [_cond("area", "equals", "ZONE")])])
+
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "v1",
+            "config:areas:version": "a1",
+            "config:rules": rules_json,
+            "config:areas": areas_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert [r["identifier"] for r in engine._rules] == ["in_zone"]
+        assert engine.last_error is None
+
 
 class TestLastErrorNotClobberedAcrossSubsystems:
     """Regression coverage for the last_error clobber bug: reload_if_changed()
