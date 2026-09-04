@@ -7,8 +7,9 @@ import {
   VFR_SQUAWK,
   airportLocation,
   boundsOf,
+  flightPathFeature,
   formatDuration,
-  segmentFeatures,
+  lineGradientExpression,
   type Coord,
 } from "../lib/flightView";
 import {
@@ -101,7 +102,13 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
     map.on("load", () => {
-      map.addSource("flight-path", { type: "geojson", data: segmentFeatures(coordinates) });
+      // lineMetrics is required for the line-gradient paint property below
+      // -- it's what lets MapLibre resolve ["line-progress"] per-vertex.
+      map.addSource("flight-path", {
+        type: "geojson",
+        lineMetrics: true,
+        data: flightPathFeature(coordinates),
+      });
       // A dark, translucent halo underneath lifts the colored line off the
       // basemap regardless of what's beneath it.
       map.addLayer({
@@ -116,7 +123,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         type: "line",
         source: "flight-path",
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": ["get", "color"], "line-width": 3.5 },
+        paint: { "line-gradient": lineGradientExpression(coordinates), "line-width": 3.5 },
       });
       new maplibregl.Marker({ color: "#16a34a" })
         .setLngLat(coordinates[0].slice(0, 2) as [number, number])

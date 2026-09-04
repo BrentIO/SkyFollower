@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { airportLocation, altitudeColor, boundsOf, formatDuration, segmentFeatures } from "./flightView";
+import {
+  airportLocation,
+  altitudeColor,
+  boundsOf,
+  flightPathFeature,
+  formatDuration,
+  lineGradientExpression,
+} from "./flightView";
 
 describe("formatDuration", () => {
   it("shows all three units when all are non-zero", () => {
@@ -47,42 +54,97 @@ describe("altitudeColor", () => {
   });
 });
 
-describe("segmentFeatures", () => {
-  it("produces one fewer segment than there are points", () => {
+describe("flightPathFeature", () => {
+  it("produces a single LineString feature containing every coordinate in order", () => {
     const coords = [
       [-84.0, 33.0, 0],
       [-85.0, 34.0, 1000],
       [-86.0, 35.0, 2000],
     ];
-    const fc = segmentFeatures(coords);
-    expect(fc.features).toHaveLength(2);
+    const fc = flightPathFeature(coords);
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].geometry.type).toBe("LineString");
+    expect(fc.features[0].geometry.coordinates).toEqual([
+      [-84.0, 33.0],
+      [-85.0, 34.0],
+      [-86.0, 35.0],
+    ]);
   });
 
-  it("colors each segment by the average altitude of its two endpoints", () => {
+  it("strips altitude, keeping only [lon, lat]", () => {
+    const fc = flightPathFeature([
+      [-84.0, 33.0, 5000],
+      [-85.0, 34.0, 6000],
+    ]);
+    expect(fc.features[0].geometry.coordinates[0]).toHaveLength(2);
+  });
+});
+
+describe("lineGradientExpression", () => {
+  it("starts with the interpolate/linear/line-progress expression head", () => {
+    const expr = lineGradientExpression([
+      [-84.0, 33.0, 0],
+      [-85.0, 34.0, 1000],
+    ]);
+    expect(expr.slice(0, 3)).toEqual(["interpolate", ["linear"], ["line-progress"]]);
+  });
+
+  it("emits one progress/color stop pair per point, colored by that point's own altitude", () => {
     const coords = [
       [-84.0, 33.0, 0],
       [-85.0, 34.0, 2000],
+      [-86.0, 35.0, 4000],
     ];
-    const fc = segmentFeatures(coords);
-    expect(fc.features[0].properties.color).toBe(altitudeColor(1000));
+    const expr = lineGradientExpression(coords);
+    const stops = expr.slice(3);
+    expect(stops).toHaveLength(coords.length * 2);
+    expect(stops[0]).toBe(0); // first point is always at progress 0
+    expect(stops[1]).toBe(altitudeColor(0));
+    expect(stops[stops.length - 2]).toBe(1); // last point is always at progress 1
+    expect(stops[stops.length - 1]).toBe(altitudeColor(4000));
+    // Middle stop colored by its own altitude, not an average of neighbors.
+    expect(stops[3]).toBe(altitudeColor(2000));
   });
 
-  it("falls back to a single known endpoint's altitude when the other is missing", () => {
+  it("produces strictly increasing progress stops", () => {
     const coords = [
-      [-84.0, 33.0, 3000],
-      [-85.0, 34.0],
+      [-84.0, 33.0, 0],
+      [-84.5, 33.2, 500],
+      [-85.0, 34.0, 1000],
+      [-86.0, 35.0, 2000],
     ];
-    const fc = segmentFeatures(coords);
-    expect(fc.features[0].properties.color).toBe(altitudeColor(3000));
+    const expr = lineGradientExpression(coords);
+    const stops = expr.slice(3);
+    const progresses: number[] = [];
+    for (let i = 0; i < stops.length; i += 2) progresses.push(stops[i] as number);
+    for (let i = 1; i < progresses.length; i++) {
+      expect(progresses[i]).toBeGreaterThan(progresses[i - 1]);
+    }
   });
 
-  it("uses the neutral color when neither endpoint has an altitude", () => {
+  it("nudges apart consecutive duplicate/zero-distance points instead of producing equal stops", () => {
     const coords = [
-      [-84.0, 33.0],
-      [-85.0, 34.0],
+      [-84.0, 33.0, 0],
+      [-84.0, 33.0, 100], // duplicate position, would collapse to the same progress
+      [-85.0, 34.0, 2000],
     ];
-    const fc = segmentFeatures(coords);
-    expect(fc.features[0].properties.color).toBe(altitudeColor(null));
+    const expr = lineGradientExpression(coords);
+    const stops = expr.slice(3);
+    const progresses = [stops[0], stops[2], stops[4]] as number[];
+    expect(progresses[1]).toBeGreaterThan(progresses[0]);
+    expect(progresses[2]).toBeGreaterThan(progresses[1]);
+  });
+
+  it("handles a single-point path without throwing", () => {
+    const expr = lineGradientExpression([[-84.0, 33.0, 1000]]);
+    const stops = expr.slice(3);
+    expect(stops[1]).toBe(altitudeColor(1000));
+    expect(stops[3]).toBe(altitudeColor(1000));
+  });
+
+  it("handles an empty path without throwing", () => {
+    const expr = lineGradientExpression([]);
+    expect(expr[0]).toBe("interpolate");
   });
 });
 
