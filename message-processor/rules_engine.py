@@ -172,15 +172,19 @@ class RulesEngine:
         """
         reloaded = False
         try:
-            did, self._rules_version = self._reload_config(
-                "config:rules:version", "config:rules", self._rules_version,
-                bool(self._rules), lambda raw: self._load_rules(raw, strict=False),
-            )
-            reloaded = reloaded or did
-
+            # Areas must load before rules: rule parsing validates every
+            # `area` condition immediately against self._areas, so areas
+            # need to be populated first or area-referencing rules are
+            # dropped on cold start.
             did, self._areas_version = self._reload_config(
                 "config:areas:version", "config:areas", self._areas_version,
                 bool(self._areas), self._load_areas,
+            )
+            reloaded = reloaded or did
+
+            did, self._rules_version = self._reload_config(
+                "config:rules:version", "config:rules", self._rules_version,
+                bool(self._rules), lambda raw: self._load_rules(raw, strict=False),
             )
             reloaded = reloaded or did
         except Exception as exc:
@@ -281,7 +285,12 @@ class RulesEngine:
         if skipped_errors:
             self.last_error = f"{len(skipped_errors)} rule(s) skipped on reload: " + " | ".join(skipped_errors)
             self._last_error_owner = "rules"
-        else:
+        elif self._last_error_owner != "areas":
+            # Only clear last_error on success if it isn't a still-pending
+            # areas-owned error (e.g. an invalid areas payload) set earlier
+            # in the same poll cycle -- a rules success should never
+            # silently erase that. A rules-owned (or absent) last_error is
+            # cleared normally.
             self.last_error = None
             self._last_error_owner = None
         logger.info("Rules loaded: %d active.", len(self._rules))
