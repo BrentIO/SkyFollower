@@ -82,26 +82,26 @@ class TestManufacturerModelFallback:
             {"aircraft": {"manufacturer": "GULFSTREAM AEROSPACE", "model": "GV-SP (G550)"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "GULFSTREAM AEROSPACE GV-SP (G550)"
+        assert result["manufacturer_model"] == "GULFSTREAM AEROSPACE GV-SP (G550)"
 
     def test_manufacturer_only_composes_fallback(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"aircraft": {"manufacturer": "DJI"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "DJI"
+        assert result["manufacturer_model"] == "DJI"
 
     def test_model_only_composes_fallback(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"aircraft": {"model": "AGRAS T30"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "AGRAS T30"
+        assert result["manufacturer_model"] == "AGRAS T30"
 
     def test_neither_present_leaves_manufacturer_model_unset(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(f"aircraft:registry:{icao_hex}", "$", {"military": False})
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert "manufacturer_model" not in result.get("aircraft", {})
+        assert "manufacturer_model" not in result
 
     def test_no_aircraft_object_does_not_crash_or_create_one(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(f"aircraft:registry:{icao_hex}", "$", {"military": False})
@@ -118,7 +118,7 @@ class TestManufacturerModelFallback:
             {"aircraft": {"manufacturer": "BOEING", "model": "757-2Q8"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "BOEING 757-200"
+        assert result["manufacturer_model"] == "BOEING 757-200"
 
     def test_explicit_null_manufacturer_model_triggers_fallback(self, redis_client, merge_sha, icao_hex):
         """cjson.decode turns JSON null into cjson.null, not Lua nil — the
@@ -128,7 +128,7 @@ class TestManufacturerModelFallback:
             {"aircraft": {"manufacturer_model": None, "manufacturer": "PIPER", "model": "J3C-65"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "PIPER J3C-65"
+        assert result["manufacturer_model"] == "PIPER J3C-65"
 
     def test_values_are_trimmed_and_joined_with_single_space(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
@@ -136,7 +136,7 @@ class TestManufacturerModelFallback:
             {"aircraft": {"manufacturer": "  PIPER  ", "model": "  J3C-65  "}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "PIPER J3C-65"
+        assert result["manufacturer_model"] == "PIPER J3C-65"
 
     def test_empty_string_manufacturer_treated_as_absent(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
@@ -144,7 +144,7 @@ class TestManufacturerModelFallback:
             {"aircraft": {"manufacturer": "", "model": "J3C-65"}},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "J3C-65"
+        assert result["manufacturer_model"] == "J3C-65"
 
     def test_both_keys_absent_still_returns_none(self, redis_client, merge_sha, icao_hex):
         assert _merge(redis_client, merge_sha, icao_hex) is None
@@ -190,7 +190,7 @@ class TestLiveryLayer:
             f"aircraft:livery:{icao_hex}", "$", {"special_livery": "America250"},
         )
         result = _merge(redis_client, merge_sha, icao_hex)
-        assert result["aircraft"]["manufacturer_model"] == "AIRBUS A320"
+        assert result["manufacturer_model"] == "AIRBUS A320"
         assert result["registration"] == "N775JB"
         assert result["military"] is False
         assert result["special_livery"] == "America250"
@@ -210,6 +210,72 @@ class TestLiveryLayer:
 
     def test_all_three_keys_absent_still_returns_none(self, redis_client, merge_sha, icao_hex):
         assert _merge(redis_client, merge_sha, icao_hex) is None
+
+
+class TestFlattening:
+    """Covers promoting the nested aircraft.aircraft sub-object to the top
+    level -- the mictronics/country-registry runners write type/category/
+    manufacturer/model/seats/powerplant/serial_number/manufactured_date one
+    level deeper than icao_hex/registration/military/registrant, but
+    AircraftRecord's documented shape is flat. Without this, rule matching
+    (aircraft_type_designator/aircraft_powerplant_count) and the archive
+    search index's type_designator column silently break, since both read
+    flight.aircraft directly."""
+
+    def test_nested_fields_promoted_to_top_level(self, redis_client, merge_sha, icao_hex):
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$",
+            {
+                "icao_hex": icao_hex,
+                "registration": "N659DL",
+                "aircraft": {
+                    "type": "Airplane",
+                    "category": "Land",
+                    "manufacturer": "BOEING",
+                    "model": "757-232",
+                    "seats": 199,
+                    "powerplant": {"type": "Turbo-fan", "count": 2},
+                    "serial_number": "12345",
+                    "manufactured_date": "2005-01-01",
+                },
+            },
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert "aircraft" not in result
+        assert result["type"] == "Airplane"
+        assert result["category"] == "Land"
+        assert result["manufacturer"] == "BOEING"
+        assert result["model"] == "757-232"
+        assert result["seats"] == 199
+        assert result["powerplant"] == {"type": "Turbo-fan", "count": 2}
+        assert result["serial_number"] == "12345"
+        assert result["manufactured_date"] == "2005-01-01"
+        # These were already top-level -- unaffected by the promotion.
+        assert result["icao_hex"] == icao_hex
+        assert result["registration"] == "N659DL"
+
+    def test_no_nested_aircraft_key_is_a_no_op(self, redis_client, merge_sha, icao_hex):
+        """A record with no nested aircraft sub-object at all (e.g. a
+        registry runner that only ever writes flat fields) must merge
+        exactly as before -- no synthetic `aircraft` key created."""
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$", {"icao_hex": icao_hex, "registration": "N659DL"},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert "aircraft" not in result
+        assert result["registration"] == "N659DL"
+
+    def test_existing_top_level_key_not_overwritten_by_nested_copy(self, redis_client, merge_sha, icao_hex):
+        """If a top-level key and the nested aircraft sub-object's key of
+        the same name both exist -- not a real shape today, but a future
+        runner change shouldn't silently reorder precedence -- the
+        top-level value wins."""
+        redis_client.json().set(
+            f"aircraft:registry:{icao_hex}", "$",
+            {"category": "TOP-LEVEL-VALUE", "aircraft": {"category": "NESTED-VALUE"}},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["category"] == "TOP-LEVEL-VALUE"
 
 
 class TestDataSources:

@@ -100,18 +100,6 @@ class PowerplantInfo(BaseModel):
     type: Optional[str] = None
 
 
-class RegistrantInfo(BaseModel):
-    """Owner/registrant information from the national civil aircraft registry."""
-
-    names: Optional[list[str]] = None       # primary name first, additional DBA names follow
-    street: Optional[list[str]] = None      # street address lines
-    city: Optional[str] = None
-    administrative_area: Optional[str] = None  # first-level country subdivision (US state, Canadian province, etc.)
-    postal_code: Optional[str] = None
-    country: Optional[str] = None           # ISO 3166-1 alpha-2 country code
-    type: Optional[str] = None              # registrant category, e.g. "Individual"/"Corporation"/"Government"
-
-
 class AircraftRecord(BaseModel):
     """
     Aircraft registration and type enrichment.
@@ -137,7 +125,6 @@ class AircraftRecord(BaseModel):
     military: Optional[bool] = None
     serial_number: Optional[str] = None
     manufactured_date: Optional[str] = None
-    registrant: Optional[RegistrantInfo] = None
     special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
     data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order
 
@@ -202,6 +189,7 @@ class CompletedFlight(BaseModel):
     aircraft: dict                           # AircraftRecord fields; must include icao_hex
     ident: Optional[str] = None
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped
+    registrant: Optional[dict] = None        # names/street/city/administrative_area/postal_code/country/type -- the aircraft's legal owner, an entity like operator, not a property of the airframe
     squawk: Optional[str] = None
     origin: Optional[str] = None             # ICAO code string, e.g. "KATL"
     destination: Optional[str] = None        # ICAO code string

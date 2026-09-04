@@ -1536,8 +1536,42 @@ class TestFlightView:
         resp = client.get(f"/api/archive/flights/{token}/view")
         assert resp.status_code == 200
         body = resp.json()
-        for field in ("category", "aircraft_type", "model", "serial_number", "seats", "powerplant"):
+        for field in ("category", "aircraft_type", "model", "serial_number", "seats", "powerplant", "registrant"):
             assert body[field] is None
+
+    def test_registrant_is_read_from_flight_not_aircraft(self, client, fake_s3):
+        """registrant is a sibling of aircraft/operator on CompletedFlight
+        (an entity, the aircraft's legal owner -- not a property of the
+        airframe), not nested inside aircraft."""
+        s3_key = "flights/2026/07/31/uuid3.json.gz"
+        registrant = {"names": ["Delta Air Lines Inc"], "city": "Atlanta", "country": "US"}
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "registrant": registrant,
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        assert resp.json()["registrant"] == registrant
+
+    def test_registrant_nested_inside_aircraft_is_not_leaked(self, client, fake_s3):
+        """A stale/legacy-shaped record with registrant still nested inside
+        aircraft (the pre-#1416 shape) must not surface it -- get_archive_flight_view
+        reads registrant off the flight record itself, not the aircraft dict."""
+        s3_key = "flights/2026/07/31/uuid4.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F", "registrant": {"names": ["Stale Nested Corp"]}},
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        assert resp.json()["registrant"] is None
 
 
 # ---------------------------------------------------------------------------

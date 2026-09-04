@@ -124,4 +124,23 @@ end
 
 apply_manufacturer_model_fallback(result)
 
+-- The mictronics/country-registry runners write type/category/manufacturer/
+-- model/seats/powerplant/serial_number/manufactured_date nested one level
+-- deeper, under their own result.aircraft sub-object -- icao_hex/
+-- registration/military/registrant stay top-level. AircraftRecord's shape
+-- is flat (matching the legacy AROI /registration/icao_hex/{hex} response),
+-- so promote the nested keys to the top level here, the single choke point
+-- both real consumers (message-processor, management-ui) go through, rather
+-- than leaving it to each caller. A key already present at the top level
+-- (there aren't any today, but a future runner change shouldn't silently
+-- reorder precedence) is never overwritten by the nested copy.
+if type(result.aircraft) == 'table' then
+    for k, v in pairs(result.aircraft) do
+        if result[k] == nil then
+            result[k] = v
+        end
+    end
+    result.aircraft = nil
+end
+
 return cjson.encode(result)

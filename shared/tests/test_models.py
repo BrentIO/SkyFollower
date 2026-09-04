@@ -183,7 +183,6 @@ class TestAircraftRecord:
         assert rec.category is None
         assert rec.seats is None
         assert rec.manufacturer_model is None
-        assert rec.registrant is None
 
     def test_type_category_seats_manufacturer_model_fields(self):
         rec = AircraftRecord(
@@ -197,24 +196,6 @@ class TestAircraftRecord:
         assert rec.category == "Land"
         assert rec.seats == 189
         assert rec.manufacturer_model == "BOEING 767-332ER"
-
-    def test_registrant_field(self):
-        from shared.models import RegistrantInfo
-        rec = AircraftRecord(
-            icao_hex="A8AE7F",
-            registrant=RegistrantInfo(
-                names=["Delta Air Lines Inc"],
-                street=["1030 Delta Blvd"],
-                city="Atlanta",
-                administrative_area="GA",
-                postal_code="30354",
-                country="US",
-                type="Corporation",
-            ),
-        )
-        assert rec.registrant.names == ["Delta Air Lines Inc"]
-        assert rec.registrant.city == "Atlanta"
-        assert rec.registrant.type == "Corporation"
 
 
 class TestOperatorRecord:
@@ -299,6 +280,27 @@ class TestCompletedFlight:
         assert flight.origin is None
         assert flight.destination is None
 
+    def test_registrant_field(self):
+        """registrant is a sibling of operator on CompletedFlight -- an
+        entity (the aircraft's legal owner), not a property of the airframe,
+        so it does not live on AircraftRecord."""
+        flight = self._make(registrant={
+            "names": ["Delta Air Lines Inc"],
+            "street": ["1030 Delta Blvd"],
+            "city": "Atlanta",
+            "administrative_area": "GA",
+            "postal_code": "30354",
+            "country": "US",
+            "type": "Corporation",
+        })
+        assert flight.registrant["names"] == ["Delta Air Lines Inc"]
+        assert flight.registrant["city"] == "Atlanta"
+        assert flight.registrant["type"] == "Corporation"
+
+    def test_registrant_defaults_to_none(self):
+        flight = self._make()
+        assert flight.registrant is None
+
     def test_json_roundtrip(self):
         flight = self._make(ident="DAL659", origin="KATL", destination="KLAX")
         json_str = flight.model_dump_json(by_alias=True)
@@ -311,7 +313,7 @@ class TestCompletedFlight:
 
         flight = self._make()
         payload = json.loads(flight.model_dump_json(by_alias=True, exclude_none=True))
-        for key in ("ident", "operator", "squawk", "origin", "destination"):
+        for key in ("ident", "operator", "registrant", "squawk", "origin", "destination"):
             assert key not in payload
 
     def test_positions_and_velocities_entries_omit_none_keys(self):

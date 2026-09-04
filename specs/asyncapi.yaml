@@ -1989,36 +1989,6 @@ components:
         manufactured_date:
           type: string
           example: "2005-01-01"
-        registrant:
-          type: object
-          description: Owner/registrant information from the national civil aircraft registry
-          properties:
-            names:
-              type: array
-              items:
-                type: string
-              example: [Delta Air Lines Inc]
-            street:
-              type: array
-              items:
-                type: string
-              example: ["1030 Delta Blvd"]
-            city:
-              type: string
-              example: Atlanta
-            administrative_area:
-              type: string
-              example: GA
-            postal_code:
-              type: string
-              example: "30354"
-            country:
-              type: string
-              example: US
-            type:
-              type: string
-              description: Registrant category
-              example: Corporation
         data_sources:
           type: array
           items:
@@ -2030,8 +2000,8 @@ components:
       type: object
       description: >
         Snapshot of a flight at the moment a rule matched. Excludes _id,
-        positions, and velocities. operator, origin, and destination are
-        omitted when not populated.
+        positions, and velocities. operator, registrant, origin, and
+        destination are omitted when not populated.
       required: [aircraft, first_message, last_message, total_messages, receiver_sources, force_archive, matched_rules, rule]
       properties:
         aircraft:
@@ -2061,6 +2031,36 @@ components:
             flight_number:
               type: string
               example: DL659
+        registrant:
+          type: object
+          description: Owner/registrant information from the national civil aircraft registry -- an entity, like operator, not a property of the airframe. Omitted when empty.
+          properties:
+            names:
+              type: array
+              items:
+                type: string
+              example: [Delta Air Lines Inc]
+            street:
+              type: array
+              items:
+                type: string
+              example: ["1030 Delta Blvd"]
+            city:
+              type: string
+              example: Atlanta
+            administrative_area:
+              type: string
+              example: GA
+            postal_code:
+              type: string
+              example: "30354"
+            country:
+              type: string
+              example: US
+            type:
+              type: string
+              description: Registrant category
+              example: Corporation
         squawk:
           type: string
           example: "1200"
