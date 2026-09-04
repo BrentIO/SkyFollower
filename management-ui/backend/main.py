@@ -19,6 +19,7 @@ nginx serves the built frontend at / and proxies /api/* to this process.
 from __future__ import annotations
 
 import calendar
+import gzip
 import hashlib
 import json
 import logging
@@ -61,6 +62,7 @@ if _REPO_ROOT not in sys.path:
 from shared.config import RECEIVER_SOURCE_TAGS, load_config  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
+from shared.flight_path import build_flight_path  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.glue_projection import YEAR_RANGE as _GLUE_YEAR_RANGE  # noqa: E402
 from shared.redis_keys import (  # noqa: E402
@@ -2635,5 +2637,107 @@ def get_archive_flight(token: str):
     return Response(
         content=body,
         media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _fetch_flight_record(token: str) -> dict:
+    """Decrypt `token` to an S3 key, fetch and gunzip the flight object, and
+    return the parsed JSON dict (the CompletedFlight shape). Raises
+    HTTPException(502) on any S3/decompress/parse failure."""
+    s3_key = _decrypt_token(token)
+    try:
+        obj = _s3_client.get_object(Bucket=_s3_bucket, Key=s3_key)
+        body = obj["Body"].read()
+        return json.loads(gzip.decompress(body))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch flight: {exc}") from exc
+
+
+def _resolve_airport(icao_code: Optional[str]) -> Optional[dict]:
+    """Best-effort ICAO code -> airport doc lookup for display purposes.
+    Returns None (never raises) if the code is absent or Redis has no
+    matching record -- the caller omits the field entirely rather than
+    showing a partially-resolved airport."""
+    if not icao_code:
+        return None
+    return _redis_json_get(airport_key(icao_code.strip().upper()))
+
+
+class FlightView(BaseModel):
+    """
+    Response shape for GET /api/archive/flights/{token}/view -- everything
+    the History "View" modal needs, parsed and enriched server-side from the
+    raw S3 flight object. Every field is optional except icao_hex/timestamps/
+    total_messages, which every archived flight always carries; a field with
+    nothing to show is simply absent from the JSON rather than null, so the
+    frontend's "omit if absent" rendering rule works the same way it already
+    does for the rest of the app's reference-data lookups.
+    """
+
+    ident: Optional[str] = None
+    registration: Optional[str] = None
+    icao_hex: str
+    squawk: Optional[str] = None
+    military: Optional[bool] = None
+    type_designator: Optional[str] = None
+    manufacturer_model: Optional[str] = None
+    operator: Optional[dict] = None      # OperatorRecord fields (name, callsign, ...)
+    registrant: Optional[dict] = None    # RegistrantInfo fields
+    origin: Optional[dict] = None        # airport doc (icao_code, name, ...), resolved via Redis
+    destination: Optional[dict] = None   # airport doc, resolved via Redis
+    first_message: datetime
+    last_message: datetime
+    total_messages: int
+    matched_rules: list[str] = []
+    flight_path: Optional[dict] = None   # GeoJSON LineString Feature, or None for <2 positions
+
+
+@app.get(
+    "/api/archive/flights/{token}/view",
+    tags=["archive"],
+    response_model=FlightView,
+    responses={**_VALIDATION_ERROR, **_AWS_ERROR},
+)
+def get_archive_flight_view(token: str):
+    flight = _fetch_flight_record(token)
+    aircraft = flight.get("aircraft") or {}
+
+    return FlightView(
+        ident=flight.get("ident"),
+        registration=aircraft.get("registration"),
+        icao_hex=aircraft["icao_hex"],
+        squawk=flight.get("squawk"),
+        military=aircraft.get("military"),
+        type_designator=aircraft.get("type_designator"),
+        manufacturer_model=aircraft.get("manufacturer_model"),
+        operator=flight.get("operator"),
+        registrant=aircraft.get("registrant"),
+        origin=_resolve_airport(flight.get("origin")),
+        destination=_resolve_airport(flight.get("destination")),
+        first_message=flight["first_message"],
+        last_message=flight["last_message"],
+        total_messages=flight["total_messages"],
+        matched_rules=flight.get("matched_rules", []),
+        flight_path=build_flight_path(flight.get("positions", [])),
+    )
+
+
+@app.get(
+    "/api/archive/flights/{token}/flight-path",
+    tags=["archive"],
+    responses={**_VALIDATION_ERROR, **_NOT_FOUND, **_AWS_ERROR},
+)
+def get_archive_flight_path(token: str):
+    flight = _fetch_flight_record(token)
+    feature = build_flight_path(flight.get("positions", []))
+    if feature is None:
+        raise HTTPException(status_code=404, detail="Flight has fewer than 2 positions; no path to export")
+
+    icao_hex = (flight.get("aircraft") or {}).get("icao_hex", "flight")
+    filename = f"{icao_hex}_{flight.get('ident') or flight.get('_id', 'path')}.geojson"
+    return Response(
+        content=json.dumps(feature),
+        media_type="application/geo+json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -40,6 +40,52 @@ export interface ArchiveSearchResultRow {
   token: string;
 }
 
+// Mirrors main.py's FlightView response model. Every field beyond
+// icao_hex/first_message/last_message/total_messages/matched_rules is
+// optional and simply absent from the JSON when the underlying flight
+// record has nothing to show for it -- render code should treat a missing
+// field as "omit this", not "show a placeholder".
+export interface FlightView {
+  ident?: string;
+  registration?: string;
+  icao_hex: string;
+  squawk?: string;
+  military?: boolean;
+  type_designator?: string;
+  manufacturer_model?: string;
+  operator?: { name?: string; callsign?: string; airline_designator?: string; country?: string };
+  registrant?: {
+    names?: string[];
+    street?: string[];
+    city?: string;
+    administrative_area?: string;
+    postal_code?: string;
+    country?: string;
+  };
+  origin?: FlightViewAirport;
+  destination?: FlightViewAirport;
+  first_message: string;
+  last_message: string;
+  total_messages: number;
+  matched_rules: string[];
+  // A GeoJSON LineString Feature, or absent when the flight has fewer than
+  // 2 positions.
+  flight_path?: {
+    type: "Feature";
+    geometry: { type: "LineString"; coordinates: (number[])[] };
+    properties: Record<string, never>;
+  };
+}
+
+export interface FlightViewAirport {
+  icao_code: string;
+  iata_code?: string;
+  name?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+}
+
 export interface ArchiveSearchResultsPage {
   rows: ArchiveSearchResultRow[];
   // Exact whenever `truncated` is false; when true, this is the backend's
@@ -132,6 +178,24 @@ export async function downloadArchiveFlight(token: string): Promise<void> {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename ?? "flight.json.gz";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function getFlightView(token: string): Promise<FlightView> {
+  return apiClient.get<FlightView>(`/api/archive/flights/${encodeURIComponent(token)}/view`);
+}
+
+export async function downloadFlightPath(token: string): Promise<void> {
+  const { blob, filename } = await apiClient.download(
+    `/api/archive/flights/${encodeURIComponent(token)}/flight-path`,
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename ?? "flight-path.geojson";
   document.body.appendChild(a);
   a.click();
   a.remove();
