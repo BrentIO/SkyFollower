@@ -37,6 +37,12 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{children}</div>;
 }
 
+// Matches /lookup's field-name styling (LookupView.tsx's own Label) so the
+// Aircraft section below reads the same way in both places.
+function Label({ children }: { children: ReactNode }) {
+  return <span className="text-sm text-slate-500 dark:text-slate-400">{children}</span>;
+}
+
 // Origin/destination ICAO code carries the same green/red pill used for
 // Origin/Destination in /lookup's route view, and matches this modal's own
 // map start (green) / end (red) markers.
@@ -170,6 +176,18 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
   const isVfr = view?.squawk === VFR_SQUAWK;
   const hasRoute = !!(view?.origin || view?.destination);
   const hasRegistrantOrOperator = !!(view?.registrant || view?.operator);
+  const powerplant = view?.powerplant;
+  const hasPowerplant = !!(powerplant?.count || powerplant?.type || powerplant?.manufacturer || powerplant?.model);
+  const hasAircraftSection = !!(
+    view?.category ||
+    view?.aircraft_type ||
+    view?.manufacturer_model ||
+    view?.type_designator ||
+    view?.model ||
+    view?.serial_number ||
+    view?.seats != null ||
+    hasPowerplant
+  );
   const hasMatchedRules = !!view?.matched_rules && view.matched_rules.length > 0;
 
   return (
@@ -249,7 +267,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                     {view.destination && <AirportBlock airport={view.destination} role="destination" />}
                   </div>
                 </div>
-                {(hasRegistrantOrOperator || hasMatchedRules) && (
+                {(hasRegistrantOrOperator || hasAircraftSection || hasMatchedRules) && (
                   <hr className="border-slate-200 dark:border-slate-700" />
                 )}
               </>
@@ -289,6 +307,65 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                       </div>
                     </div>
                   )}
+                </div>
+                {(hasAircraftSection || hasMatchedRules) && (
+                  <hr className="border-slate-200 dark:border-slate-700" />
+                )}
+              </>
+            )}
+
+            {hasAircraftSection && (
+              <>
+                <div>
+                  <SectionLabel>Aircraft</SectionLabel>
+                  <div className="flex flex-col gap-1 pl-4 text-sm text-slate-900 dark:text-slate-100">
+                    {view.category && (
+                      <div>
+                        <Label>Category</Label> {view.category}
+                      </div>
+                    )}
+                    {view.aircraft_type && (
+                      <div>
+                        <Label>Type</Label> {view.aircraft_type}
+                      </div>
+                    )}
+                    {(view.manufacturer_model || view.type_designator) && (
+                      <div>
+                        <Label>Manufacturer/Model</Label>{" "}
+                        {[view.manufacturer_model, view.type_designator ? `(${view.type_designator})` : undefined]
+                          .filter(Boolean)
+                          .join(" ")}
+                      </div>
+                    )}
+                    {view.model && (
+                      <div>
+                        <Label>Model</Label> {view.model}
+                      </div>
+                    )}
+                    {view.serial_number && (
+                      <div>
+                        <Label>Serial Number</Label> {view.serial_number}
+                      </div>
+                    )}
+                    {view.seats != null && (
+                      <div>
+                        <Label>Seats</Label> {view.seats}
+                      </div>
+                    )}
+                    {hasPowerplant && (
+                      <div>
+                        <Label>Powerplant</Label>
+                        <div className="pl-4">
+                          {(powerplant?.count || powerplant?.type) && (
+                            <div>{[powerplant?.count, powerplant?.type].filter(Boolean).join(" x ")}</div>
+                          )}
+                          {(powerplant?.manufacturer || powerplant?.model) && (
+                            <div>{[powerplant?.manufacturer, powerplant?.model].filter(Boolean).join(" ")}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {hasMatchedRules && <hr className="border-slate-200 dark:border-slate-700" />}
               </>
