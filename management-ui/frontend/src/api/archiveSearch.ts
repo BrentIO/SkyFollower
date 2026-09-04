@@ -22,6 +22,11 @@ export interface ArchiveSearchDetail extends ArchiveSearchSummary {
   // field existed.
   start_date: string | null;
   end_date: string | null;
+  // What the operator actually typed, before the epoch/tomorrow
+  // substitution above -- null means the field was left blank. Also null
+  // for a record written before this field existed.
+  requested_start_date: string | null;
+  requested_end_date: string | null;
 }
 
 export interface ArchiveSearchResultRow {

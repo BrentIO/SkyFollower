@@ -113,12 +113,13 @@ interface SearchResultsPanelProps {
 
 // "2022-01-01 to 2026-09-04 (UTC)" -- absent entirely for a legacy record
 // with no persisted range (both fields null).
-function ResolvedRangeNote({ detail, loading }: { detail: ArchiveSearchDetail | null; loading: boolean }) {
+function RequestedRangeNote({ detail, loading }: { detail: ArchiveSearchDetail | null; loading: boolean }) {
   if (loading || detail === null) return null;
-  if (!detail.start_date && !detail.end_date) return null;
+  if (!detail.requested_start_date && !detail.requested_end_date) return null;
   return (
     <p className="text-xs text-slate-400 dark:text-slate-500">
-      Searched {detail.start_date ?? "the start of the archive"} to {detail.end_date ?? "today"} (UTC)
+      Searched {detail.requested_start_date ?? "the start of the archive"} to{" "}
+      {detail.requested_end_date ?? "today"} (UTC)
     </p>
   );
 }
@@ -194,7 +195,7 @@ function FailedSearchDetail({
       <p className="text-sm text-red-600 dark:text-red-400">{reason}</p>
       <div>
         <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
-        <ResolvedRangeNote detail={detail} loading={detailLoading} />
+        <RequestedRangeNote detail={detail} loading={detailLoading} />
       </div>
       <button
         type="button"
@@ -256,7 +257,7 @@ function SearchResultsPanel({
     return (
       <div className="flex flex-col gap-2 p-4">
         <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
-        <ResolvedRangeNote detail={detail} loading={detailLoading} />
+        <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">Loading results&hellip;</p>
       </div>
     );
@@ -265,7 +266,7 @@ function SearchResultsPanel({
     return (
       <div className="flex flex-col gap-2 p-4">
         <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
-        <ResolvedRangeNote detail={detail} loading={detailLoading} />
+        <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">No flights matched this search.</p>
       </div>
     );
@@ -282,7 +283,7 @@ function SearchResultsPanel({
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden p-4">
       <WhereClauseBlock detail={detail} detailLoading={detailLoading} />
-      <ResolvedRangeNote detail={detail} loading={detailLoading} />
+      <RequestedRangeNote detail={detail} loading={detailLoading} />
       {results.truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
           More than {results.total_rows} results -- showing the first {results.total_rows}. Use Download for the

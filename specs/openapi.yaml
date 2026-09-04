@@ -1587,6 +1587,18 @@ components:
             format: date
           - type: 'null'
           title: End Date
+        requested_start_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Requested Start Date
+        requested_end_date:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Requested End Date
       type: object
       required:
       - uuid
