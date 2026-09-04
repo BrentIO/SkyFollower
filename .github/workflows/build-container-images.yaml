@@ -129,6 +129,14 @@ jobs:
       # attaches them to the GitHub Release directly instead of repeating
       # that work in every one of this job's matrix entries.
 
+      - name: Set commit hash
+        # Unlike VERSION, COMMIT has no "not a release" sentinel -- it's
+        # always the real short SHA of the commit being built, release,
+        # dev_mode, and test_mode alike, so two non-release builds (which
+        # otherwise both show the identical 9999.99.99 VERSION) can still be
+        # told apart.
+        run: echo "COMMIT=${GITHUB_SHA:0:8}" >> "$GITHUB_ENV"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
@@ -188,6 +196,7 @@ jobs:
           # dev build is still in its :dev-{branch} image tag.
           build-args: |
             VERSION=${{ (inputs.dev_mode || inputs.test_mode) && '9999.99.99' || github.ref_name }}
+            COMMIT=${{ env.COMMIT }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
           # still computed but unused, since push is the gate that matters.
           # dev_mode always pushes (that's the point); validate-version

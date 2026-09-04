@@ -11,4 +11,9 @@ ENV PYTHONPATH=/app
 ARG VERSION=dev
 ENV VERSION=$VERSION
 
+# Short commit hash the image was built from; combined with VERSION for
+# display (e.g. Home Assistant sw_version) but never part of the image tag.
+ARG COMMIT=unknown
+ENV GIT_COMMIT=$COMMIT
+
 CMD ["python", "lk-caa-registry/main.py"]

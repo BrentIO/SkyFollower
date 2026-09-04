@@ -44,6 +44,9 @@ export function SideNav({ onNavigate }: SideNavProps) {
       </ul>
       <div className="mt-auto pt-4 text-[10px] text-slate-400 dark:text-slate-600">
         {import.meta.env.VITE_VERSION || "dev"}
+        {import.meta.env.VITE_COMMIT && import.meta.env.VITE_COMMIT !== "unknown"
+          ? ` (${import.meta.env.VITE_COMMIT})`
+          : ""}
       </div>
     </nav>
   );

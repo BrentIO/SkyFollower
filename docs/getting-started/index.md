@@ -114,7 +114,9 @@ always lands every component on the current dev build. A loud
 
 A dev build's images report their `VERSION` — and therefore Home Assistant
 `sw_version` — as `9999.99.99` (the same "not a release" sentinel
-`specs/*.yaml` carry on `main`); the branch is recorded in `.env` as
+`specs/*.yaml` carry on `main`), with the actual short commit hash appended in
+parentheses (e.g. `9999.99.99 (abcdef01)`) so two dev builds are still
+distinguishable from each other; the branch is recorded in `.env` as
 `SKYFOLLOWER_VERSION=dev-{branch}`.
 
 Already installed? `branch` works with `--upgrade` on an existing host too
