@@ -1347,16 +1347,6 @@ components:
           - type: boolean
           - type: 'null'
           title: Military
-        operator:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Operator
-        airline_code:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Airline Code
         serial_number:
           anyOf:
           - type: string
@@ -1367,11 +1357,6 @@ components:
           - type: string
           - type: 'null'
           title: Manufactured Date
-        is_private_operator:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Is Private Operator
         registrant:
           anyOf:
           - $ref: '#/components/schemas/RegistrantInfo'
