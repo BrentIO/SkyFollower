@@ -1,0 +1,214 @@
+# Legacy Migration
+
+One-time tool that copies the legacy MongoDB-tracked flight archive
+([SkyFollower-legacy](https://github.com/BrentIO/SkyFollower-legacy)) into
+this repo's S3/Parquet archive format. Not a standing component: it isn't
+started by `scripts/install.sh`, isn't part of any host's normal
+`docker-compose.*.yaml` stack, and isn't published to GHCR. The operator
+builds and runs it by hand, once, wherever Mongo/S3/RabbitMQ reachability
+is most convenient.
+
+**This can only run once legacy MongoDB has stopped taking production
+writes.** Querying it concurrently with live writes risks reading a
+document mid-update, and running migration reads against the same
+instance serving production traffic is a real load concern independent of
+query count. That is an operational precondition, not something this tool
+can detect or wait out on its own.
+
+## What it does
+
+- **Producer** (run once per pass): walks every calendar day in
+  `--start-date`/`--end-date` (both inclusive) and publishes one message
+  per day to the `legacy-migration` queue. Also runs a one-time sweep for
+  any document whose `first_message` falls outside that range -- such a
+  document would never match any day's query and would otherwise be
+  silently skipped forever.
+- **Worker** (long-lived, scale with `--scale worker=N`): consumes one day
+  at a time. For every flight in that day: runs data-quality guards
+  (zero messages, `last_message` before `first_message`, missing
+  `aircraft.icao_hex`) -- a failure sends the flight to the
+  `legacy-migration-dlq` queue and moves on. Otherwise, copies the
+  flight's S3 object from the legacy bucket's flat `{_id}.gz` key to the
+  new bucket's dated `flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz` key (via
+  `shared/archive_index.py`'s `build_s3_key()` -- the exact function the
+  live archive processor uses, so there is only one implementation of the
+  key format). Skips the copy if the destination object already exists
+  (idempotent against redelivery and a deliberately overlapping second
+  pass). Once the day's flights are all processed, uploads one compacted
+  Parquet index file per day to `index/year={YYYY}/month={MM}/day={DD}/legacy-migration.parquet`.
+- **Verify**: run once, right before deleting the legacy bucket by hand.
+  Reconciles per-day Mongo counts against the destination bucket's object
+  counts, and confirms every copied object is byte-identical to its
+  legacy original via an ETag (MD5) comparison. Read-only.
+
+**This tool never deletes anything, in either bucket.** Every copy is a
+cross-bucket `CopyObject`; the legacy bucket is deleted by hand, once, by
+the operator, only after `verify` reports clean.
+
+## Two-pass execution
+
+Legacy Mongo only ever offloads a flight's `positions`/`velocities` to S3
+in the background, on a delay -- some recent flights won't have a
+`migrated` timestamp yet at cutover time. This tool only ever considers
+documents where `migrated` exists; a document without one has no `.gz`
+object to copy and is entirely out of this tool's scope.
+
+1. **Pass 1 -- the bulk history.** `--start-date` defaults to
+   `2022-07-11` (legacy history's earliest flight); `--end-date` is the
+   cutover date.
+2. **Operator step.** Drive the remaining un-`migrated` tail to
+   `migrated` using the legacy system's own offload tool.
+3. **Pass 2 -- the tail.** Re-run with `--start-date` at (or before) the
+   start of that tail. Days already fully processed in pass 1 are cheap
+   no-ops (see Idempotency below), so an overlapping range is safe and is
+   the recommended way to run it.
+
+Both passes are the same binary, just different date bounds -- there is
+no separate "top-up" mode.
+
+## Idempotency
+
+Two layers:
+
+- **Per-flight**: a `HeadObject` on the computed destination key before
+  copying; skipped if it already exists.
+- **Per-day**: the RabbitMQ ack *is* the completion signal, not a separate
+  marker. If a worker dies mid-day, the message is redelivered and
+  reprocessed; the per-flight check above makes that safe. Re-running a
+  day rewrites that day's compacted Parquet file wholesale from Mongo's
+  current contents -- intended, since the index is derived state.
+
+## Configuration
+
+Environment variables (see `shared/config.py`'s `mongo`,
+`legacy_migration_s3`, and `rabbitmq` blocks):
+
+| Variable | Required | Notes |
+|---|---|---|
+| `MONGO_URI` | yes | Read-only credential -- see below |
+| `MONGO_DATABASE` | no | Default `skyfollower` |
+| `MONGO_COLLECTION` | no | Default `flights` |
+| `SOURCE_S3_BUCKET` | yes | Legacy bucket (e.g. `com.skyfollower.datastore`) |
+| `DEST_S3_BUCKET` | yes | New archive bucket, provisioned via the `aws-setup` CloudFormation stack |
+| `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | yes | Temporary migration identity -- see IAM below |
+| `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` | yes | Dedicated `skyfollower-migration` user -- see below, never the shared application user |
+| `LOG_LEVEL` | no | Default `info`. `debug` logs every migrated flight's `_id` and destination key -- ~8.6M lines across the full history, opt in deliberately |
+
+## Mongo credential
+
+A read-only role scoped to the one collection this tool reads. Example
+(adjust database/collection names to match `MONGO_DATABASE`/
+`MONGO_COLLECTION`):
+
+```javascript
+db.createRole({
+  role: "skyfollowerMigrationReadOnly",
+  privileges: [
+    { resource: { db: "skyfollower", collection: "flights" }, actions: ["find"] },
+  ],
+  roles: [],
+})
+db.createUser({
+  user: "skyfollower-migration",
+  pwd: "<generated-password>",
+  roles: [{ role: "skyfollowerMigrationReadOnly", db: "skyfollower" }],
+})
+```
+
+Requires a partial index on `first_message`, scoped to `migrated: {$exists:
+true}` -- every query this tool issues is covered by it directly. Confirm
+it exists before running with any real concurrency:
+
+```javascript
+db.flights.getIndexes()
+// expect: { key: { first_message: 1 }, name: "first_message_migrated_partial",
+//           partialFilterExpression: { migrated: { $exists: true } } }
+```
+
+**Never issue a collection-wide count against this collection.** None of
+`{migrated: {$exists: false}}`, `total_messages`, or `aircraft.icao_hex`
+predicates are covered by the index above -- each is a full scan over
+millions of documents. This tool's own queries never do this; if you need
+to check something ad hoc, scope it by an indexed `first_message` range
+first.
+
+## RabbitMQ setup
+
+A dedicated `skyfollower-migration` user, not the shared `skyfollower`
+application user -- this tool is a separate process with a separate
+lifetime, and `shared/rabbitmq_topology.py`'s
+`SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN` is deliberately left unmodified.
+
+```bash
+rabbitmqctl add_user skyfollower-migration '<generated-password>'
+rabbitmqctl set_permissions -p / skyfollower-migration \
+  '^legacy-migration(-dlq)?$' \
+  '^(legacy-migration(-dlq)?|amq\.default)$' \
+  '^legacy-migration(-dlq)?$'
+```
+
+(configure / write / read, in that order -- `amq.default` must be in the
+**write** pattern since publishing via the default exchange authorizes
+against that exchange resource.)
+
+RabbitMQ's default `consumer_timeout` (30 minutes) is broker-side and
+would forcibly close a worker's channel and redeliver its message if a
+day with several thousand flights plus S3 retry backoff runs long. Scope a
+longer timeout to just this queue, rather than the broker-wide default
+(which would also affect the live message-processor queues sharing the
+broker):
+
+```bash
+rabbitmqctl set_policy consumer-timeout-migration "^legacy-migration$" \
+  '{"consumer-timeout":3600000}' --apply-to queues
+```
+
+Teardown once the migration is complete and `verify` reports clean, and
+the DLQ has been reviewed:
+
+```bash
+rabbitmqctl delete_user skyfollower-migration
+rabbitmqctl clear_policy consumer-timeout-migration
+rabbitmqctl delete_queue legacy-migration
+rabbitmqctl delete_queue legacy-migration-dlq
+```
+
+## IAM
+
+`iam-policy-example.json` -- copy-only, no `s3:DeleteObject` anywhere, on
+either bucket. Substitute `__SOURCE_BUCKET_NAME__`/`__DEST_BUCKET_NAME__`
+before use (matching this repo's other placeholder IAM examples under
+`specs/aws/iam-policies/`). Create a temporary identity for this run only
+and revoke/detach it immediately afterward -- never a standing identity.
+
+## Running it
+
+```bash
+# Pass 1: publish every day from legacy history's start through cutover.
+docker compose -f docker-compose.legacy-migration.yaml run --rm producer \
+  --start-date 2022-07-11 --end-date 2026-09-01
+
+# Scale workers to taste; long-lived, drains the queue and exits nothing
+# on its own -- stop with Ctrl+C / `docker compose down` once idle.
+docker compose -f docker-compose.legacy-migration.yaml up --build --scale worker=8
+
+# ... operator drives the remaining un-migrated tail via the legacy
+# offload tool, then re-run producer for pass 2 with an overlapping range ...
+
+# Before deleting the legacy bucket by hand:
+docker compose -f docker-compose.legacy-migration.yaml run --rm verify \
+  --start-date 2022-07-11 --end-date 2026-09-01
+```
+
+Logs go to stdout and to `./logs/<container-hostname>.log` (bind-mounted,
+one file per worker container since `--scale` produces one hostname each).
+
+## Dead-letter queue
+
+`legacy-migration-dlq` holds one message per flagged flight:
+`{"_id": "<uuid>", "reason": "<plain text>"}`. Publish-and-forget -- no
+retry semantics, since this is a dead end for human review, not a
+transient failure. Expected to hold a small number of documents (measured
+at design time: ~6, out of ~8.75M). Drain and review it manually; treat
+this as a required step before considering the migration complete,
+alongside a clean `verify` run.

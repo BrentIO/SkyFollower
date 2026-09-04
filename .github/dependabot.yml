@@ -241,6 +241,10 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"
+    directory: "/tools/legacy-migration"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
     directory: "/tools/tcp-traffic-replayer"
     schedule:
       interval: "weekly"
@@ -478,6 +482,10 @@ updates:
       interval: "weekly"
   - package-ecosystem: "docker"
     directory: "/runners/vrs-standing-data"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/tools/legacy-migration"
     schedule:
       interval: "weekly"
   - package-ecosystem: "npm"
