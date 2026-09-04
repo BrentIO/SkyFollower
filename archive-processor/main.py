@@ -3,10 +3,9 @@
 SkyFollower Archive Processor
 
 Consumes completed flight records from the RabbitMQ 'skyfollower-archive'
-queue, builds a 3D GeoJSON LineString with altitude interpolation, writes
-gzip-compressed JSON to AWS S3 alongside a per-flight Parquet index row
-(queryable via AWS Athena/Glue), and falls back to SQLite when S3 is
-unavailable.
+queue, writes gzip-compressed JSON to AWS S3 alongside a per-flight Parquet
+index row (queryable via AWS Athena/Glue), and falls back to SQLite when S3
+is unavailable.
 """
 
 from __future__ import annotations
@@ -107,77 +106,6 @@ _ARCHIVE_WORKER_COUNT = 12
 # doing a concurrent PutObject/GetObject plus headroom for the
 # reconnect-loop and index-fallback-drain threads.
 _S3_MAX_POOL_CONNECTIONS = _ARCHIVE_WORKER_COUNT + 4
-
-
-# ---------------------------------------------------------------------------
-# GeoJSON builder
-# ---------------------------------------------------------------------------
-
-def _interpolate_altitudes(positions: list[dict]) -> list[Optional[int]]:
-    """
-    Return a list of altitudes (possibly interpolated) for the given position
-    list.  For each position whose altitude is None, linearly interpolate from
-    the nearest preceding and following positions that do have an altitude.
-    If no surrounding positions have an altitude, leave as None.
-    """
-    alts: list[Optional[int]] = [p.get("altitude") for p in positions]
-    n = len(alts)
-
-    for i in range(n):
-        if alts[i] is not None:
-            continue
-        # Find the previous known altitude
-        prev_idx = None
-        for j in range(i - 1, -1, -1):
-            if alts[j] is not None:
-                prev_idx = j
-                break
-        # Find the next known altitude
-        next_idx = None
-        for j in range(i + 1, n):
-            if alts[j] is not None:
-                next_idx = j
-                break
-
-        if prev_idx is not None and next_idx is not None:
-            # Linear interpolation
-            span = next_idx - prev_idx
-            frac = (i - prev_idx) / span
-            alts[i] = int(round(alts[prev_idx] + frac * (alts[next_idx] - alts[prev_idx])))
-        # If only one side is available, leave as None — the coordinate will
-        # fall back to 2D.
-
-    return alts
-
-
-def build_geojson_feature(flight: CompletedFlight) -> Optional[dict]:
-    """
-    Build a GeoJSON LineString Feature from flight.positions.
-    Returns None when there are fewer than 2 positions.
-    """
-    positions = flight.positions
-    if len(positions) < 2:
-        return None
-
-    alts = _interpolate_altitudes(positions)
-
-    coordinates = []
-    for pos, alt in zip(positions, alts):
-        lon = pos.get("longitude") if isinstance(pos, dict) else pos.longitude
-        lat = pos.get("latitude") if isinstance(pos, dict) else pos.latitude
-        if alt is not None:
-            coordinates.append([lon, lat, alt])
-        else:
-            coordinates.append([lon, lat])
-
-    return {
-        "type": "Feature",
-        "geometry": {
-            "type": "LineString",
-            "coordinates": coordinates,
-        },
-        "properties": {},
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -816,9 +744,9 @@ class ArchiveProcessor:
         Check whether this flight continues a recently-archived segment for
         the same aircraft (a processor-count resize can force an early
         archive mid-flight); if so, merge into that segment instead of
-        writing a second S3 object. Otherwise build GeoJSON and write
-        normally. Assumes S3 is reachable — raises on failure so the caller
-        can decide fallback handling.
+        writing a second S3 object. Otherwise write normally. Assumes S3 is
+        reachable — raises on failure so the caller can decide fallback
+        handling.
         """
         s3_key = build_s3_key(flight)
         stitched = self._try_stitch(flight)
@@ -827,9 +755,6 @@ class ArchiveProcessor:
 
         payload_dict = flight.model_dump(by_alias=True, mode="json", exclude_none=True)
         _drop_default_value_fields(payload_dict)
-        feature = build_geojson_feature(flight)
-        if feature is not None:
-            payload_dict["flight_path"] = feature
         payload_json = json.dumps(payload_dict, default=str)
         payload_gz = gzip.compress(payload_json.encode("utf-8"))
 
