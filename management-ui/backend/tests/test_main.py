@@ -156,6 +156,9 @@ class FakeRedis:
             raise self.set_error
         self.store[key] = value
 
+    def pipeline(self, transaction=True):
+        return _FakePipeline(self)
+
     def delete(self, *keys):
         for key in keys:
             self.store.pop(key, None)
@@ -228,6 +231,27 @@ class FakeRedis:
 
     def ft(self, index: str) -> _FakeFt:
         return _FakeFt(self, index)
+
+
+class _FakePipeline:
+    """Minimal MULTI/EXEC stand-in: buffers SETs, applies them all on
+    execute() (or none if set_error is armed), matching the atomicity
+    _redis_set_config_pair / _reconcile_backup_with_redis rely on."""
+
+    def __init__(self, redis: "FakeRedis"):
+        self._redis = redis
+        self._ops: list[tuple[str, str]] = []
+
+    def set(self, key, value, **kwargs):
+        self._ops.append((key, value))
+        return self
+
+    def execute(self):
+        if self._redis.set_error:
+            raise self._redis.set_error
+        for key, value in self._ops:
+            self._redis.store[key] = value
+        return [True] * len(self._ops)
 
 
 @pytest.fixture
@@ -966,6 +990,82 @@ class TestConfigBackup:
         # The pre-existing file is untouched -- seeding only fires when the
         # file is missing, never as an overwrite.
         assert json.loads((data_dir / "rules-backup.json").read_text()) == stale_backup
+
+    def test_sets_missing_rules_version_key_from_existing_body(self, tmp_path, monkeypatch):
+        """config:rules present but config:rules:version absent (a deployment
+        from before the version key, a partial restore, a manual seed):
+        reconcile computes and sets it, or message processors never reload
+        those rules -- see issue in message-processor/rules_engine.py."""
+        data_dir = tmp_path / "data"
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        existing_rules = [ui_main.Rule(**_rule("already-in-redis")).model_dump()]
+        body = json.dumps(existing_rules)
+        fake_redis.store[ui_main.config_rules_key()] = body
+        # config:rules:version deliberately NOT set
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        assert fake_redis.store[ui_main.config_rules_version_key()] == (
+            ui_main.hashlib.sha256(body.encode()).hexdigest()
+        )
+        # Body itself untouched.
+        assert fake_redis.store[ui_main.config_rules_key()] == body
+
+    def test_sets_missing_areas_version_key_from_existing_body(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        collection = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"identifier": "LI", "name": "Long Island"},
+                "geometry": _area("LI")["geometry"],
+            }],
+        }
+        body = json.dumps(collection)
+        fake_redis.store[ui_main.config_areas_key()] = body
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        assert fake_redis.store[ui_main.config_areas_version_key()] == (
+            ui_main.hashlib.sha256(body.encode()).hexdigest()
+        )
+
+    def test_existing_matching_version_key_left_alone(self, tmp_path, monkeypatch):
+        """When config:rules:version already exists it is never recomputed
+        or overwritten -- even if it doesn't match sha256(body). (An
+        actually-skewed key is healed processor-side on the next save; the
+        reconcile pass only fills a *missing* key.)"""
+        data_dir = tmp_path / "data"
+        _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
+
+        fake_redis = FakeRedis()
+        body = json.dumps([ui_main.Rule(**_rule("r1")).model_dump()])
+        fake_redis.store[ui_main.config_rules_key()] = body
+        fake_redis.store[ui_main.config_rules_version_key()] = "pre-existing-value"
+
+        with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+            with TestClient(ui_main.app):
+                pass
+
+        assert fake_redis.store[ui_main.config_rules_version_key()] == "pre-existing-value"
+
+    def test_rule_save_writes_body_and_version_atomically(self, client, fake_redis):
+        """_save_rules_array must write config:rules + config:rules:version
+        in one transaction -- never one without the other."""
+        client.post("/api/rules", json=_rule("r1"))
+        body = fake_redis.store[ui_main.config_rules_key()]
+        assert fake_redis.store[ui_main.config_rules_version_key()] == (
+            ui_main.hashlib.sha256(body.encode()).hexdigest()
+        )
 
     def test_corrupt_backup_file_does_not_crash_startup(self, tmp_path, monkeypatch):
         data_dir = tmp_path / "data"

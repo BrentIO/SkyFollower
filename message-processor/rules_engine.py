@@ -121,26 +121,68 @@ class RulesEngine:
     # Config reload
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hash(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def _reload_config(
+        self, version_key: str, body_key: str, current_version: Optional[str],
+        loaded: bool, load_fn,
+    ) -> tuple[bool, Optional[str]]:
+        """Reload one config (rules or areas) from Redis if it has changed.
+        Returns (did_reload, version_to_record).
+
+        The `config:*:version` key is used as a fast-path "nothing changed"
+        signal, never as the sole gate. A missing version key (an older
+        deployment from before it existed, a partially-restored volume, a
+        manual seed), a version key written out of step with the body, or a
+        config that loaded as empty while the body actually has content all
+        fall through to hashing the body itself. Without this, a processor
+        started against a Redis that has `config:rules` but no
+        `config:rules:version` would poll forever with `rv == self._rules_version
+        == None` and never load the rules that are sitting right there.
+        """
+        redis_version = self._redis.get(version_key)
+        if redis_version is not None and redis_version == current_version and loaded:
+            return False, current_version
+
+        raw = self._redis.get(body_key)
+        if not raw:
+            return False, current_version
+
+        body_hash = self._hash(raw)
+        if body_hash == current_version:
+            # We already processed exactly this body (the version key was
+            # just missing or stale). Nothing to reload -- but adopt the
+            # real hash so the fast path and the published version sensor
+            # are correct from here on. Not gated on `loaded`: a body that
+            # loads to an empty list still counts as "already handled", so
+            # an empty config doesn't re-run load_fn every poll.
+            return False, body_hash
+
+        if load_fn(raw):
+            return True, body_hash
+        return False, current_version
+
     def reload_if_changed(self) -> bool:
         """
-        Compare cached version hashes against Redis.  Reload whichever
-        config has changed.  Returns True if anything was reloaded.
+        Reload whichever of rules/areas has changed in Redis. Returns True
+        if anything was reloaded. `self._rules_version`/`self._areas_version`
+        track the SHA-256 of the body actually loaded (see `_reload_config`).
         """
         reloaded = False
         try:
-            rv = self._redis.get("config:rules:version")
-            if rv != self._rules_version:
-                raw = self._redis.get("config:rules")
-                if raw and self._load_rules(raw, strict=False):
-                    self._rules_version = rv
-                    reloaded = True
+            did, self._rules_version = self._reload_config(
+                "config:rules:version", "config:rules", self._rules_version,
+                bool(self._rules), lambda raw: self._load_rules(raw, strict=False),
+            )
+            reloaded = reloaded or did
 
-            av = self._redis.get("config:areas:version")
-            if av != self._areas_version:
-                raw = self._redis.get("config:areas")
-                if raw and self._load_areas(raw):
-                    self._areas_version = av
-                    reloaded = True
+            did, self._areas_version = self._reload_config(
+                "config:areas:version", "config:areas", self._areas_version,
+                bool(self._areas), self._load_areas,
+            )
+            reloaded = reloaded or did
         except Exception as exc:
             logger.error("Error polling config from Redis: %s", exc)
         return reloaded

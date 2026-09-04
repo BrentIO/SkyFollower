@@ -167,10 +167,10 @@ band.
 | `EVALSHA` → `shared/lua/merge_aircraft.lua` | Aircraft registration and type enrichment (read once per new flight). Not a direct key read: the message processor calls this script (`SCRIPT LOAD`ed once at startup) with `icao_hex` as its sole argument and has no visibility into what it reads. The script itself performs the underlying `JSON.GET`s against `aircraft:mictronics:{icao_hex}`, `aircraft:registry:{icao_hex}`, and `aircraft:livery:{icao_hex}` server-side and returns the deep-merged result (each later source winning on any field overlap — livery over registry over mictronics) in a single round-trip. |
 | `operator:{DESIGNATOR}` | Airline operator enrichment (read once per flight when ident is first seen) |
 | `EVALSHA` → `shared/lua/route_airports.lua` | Resolves `route:{ident}` into its full ordered array of `airport:{code}` records. Read at most once per flight, the moment ident/position/altitude/heading are all known (not on every message, and not at archive time). See "Route Leg Resolution" below. |
-| `config:rules:version` | SHA-256 hash polled every 5 s; triggers rule reload when changed |
-| `config:rules` | JSON rules array; loaded when version changes |
-| `config:areas:version` | SHA-256 hash polled every 5 s; triggers area reload when changed |
-| `config:areas` | GeoJSON FeatureCollection; loaded when version changes |
+| `config:rules:version` | SHA-256 hash polled every `CONFIG_POLL_INTERVAL_SECONDS` (30 s); a change triggers a rule reload. Used only as a fast-path "unchanged" signal — a missing or body-skewed version key falls through to hashing `config:rules` itself (see below), so it can't leave a processor silently ruleless |
+| `config:rules` | JSON rules array; loaded when the version changes, when its own SHA-256 doesn't match the recorded version, or whenever no rules are currently loaded |
+| `config:areas:version` | SHA-256 hash polled every 30 s; same fast-path / fall-through behaviour as `config:rules:version` |
+| `config:areas` | GeoJSON FeatureCollection; loaded on the same conditions as `config:rules` |
 | `config:flight_ttl_seconds` | Plain scalar, read once at startup and cached (not hot-reloaded — restart to pick up a changed value); defaults to `300` if unset. Shared with the archive processor, which uses the same value to detect flights split by a processor-count resize. |
 
 ### Keys written
@@ -583,8 +583,15 @@ destroyed, if they matter.
 ## Rules Engine
 
 Rules and areas are loaded from Redis (`config:rules` / `config:areas`) and
-hot-reloaded every 30 seconds when the corresponding version hash keys change.
-The rules engine is implemented in `message-processor/rules_engine.py`.
+hot-reloaded every 30 seconds. The `config:*:version` SHA-256 keys are a
+fast-path "nothing changed" signal, not the sole gate: if a version key is
+missing (a deployment from before it existed, a partially-restored volume,
+a manual seed), was written out of step with its body, or the engine is
+holding no rules while `config:rules` has content, the reload falls
+through to hashing the body itself. So a processor started against a Redis
+that has `config:rules` but no `config:rules:version` still loads those
+rules on its next poll — no UI save required. The rules engine is
+implemented in `message-processor/rules_engine.py`.
 
 Each rule must have a unique `identifier`, an `enabled` boolean, and a
 non-empty `conditions` array. All conditions within a rule are ANDed together.

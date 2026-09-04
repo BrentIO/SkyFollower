@@ -527,16 +527,27 @@ backend keeps a second, independent copy:
   `$DATA_DIR/areas-backup.json`.
 - **At startup**, before loading rules/areas into `RulesEngine`, if a
   Redis key is missing but its backup file exists and parses as valid
-  JSON, the file's content is restored into Redis (both the key and its
-  `:version` hash) and the restore is logged. If the key already has data
-  in Redis, the backup file is never consulted — Redis is always the
-  source of truth when it has data. A missing or corrupt backup file at
-  startup is logged and skipped, not a crash (same empty-array behavior as
-  today if nothing can be restored).
-- `message-processor/rules_engine.py` needs no changes for this — once a
-  restore writes the key back into Redis, the existing 30-second
-  `config:*:version` poll picks it up the same way it picks up any other
-  change.
+  JSON, the file's content is restored into Redis — the key and its
+  `:version` hash in one transaction — and the restore is logged. If the
+  key already has data in Redis, the backup file is never consulted —
+  Redis is always the source of truth when it has data. A missing or
+  corrupt backup file at startup is logged and skipped, not a crash (same
+  empty-array behavior as today if nothing can be restored).
+- **Also at startup**, if `config:rules` exists but `config:rules:version`
+  does not (a deployment from before the version key existed, a partially
+  restored volume, a manual seed), the backend computes `sha256(body)` and
+  sets it. Without this a message processor polls forever with
+  `redis.get("config:rules:version") == None` and never loads the rules
+  that are sitting right there. Same for `config:areas`. An existing
+  version key is left untouched even if it doesn't match the body.
+- Every write of a `config:*` body and its `:version` hash — on save and
+  in both reconcile branches above — goes through one `MULTI`/`EXEC`
+  transaction, so a failure between the two can never leave them skewed.
+- `message-processor/rules_engine.py` treats the version key as a
+  fast-path signal only and re-hashes the body when the key is missing,
+  skewed, or the engine is holding no rules — so a restore or a
+  version-key fill-in is picked up on the next 30-second poll like any
+  other change.
 
 `$DATA_DIR` defaults to `/app/data`, matching `docker-compose.management-ui.yaml`'s
 `./data/management-ui:/app/data` bind mount (same convention as the message
