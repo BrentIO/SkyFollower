@@ -192,8 +192,8 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="flex max-h-[80vh] w-[80vw] flex-col overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-slate-800">
-        <div className="flex items-start justify-between gap-4 p-5 pb-3">
+      <div className="flex h-[80dvh] w-[80vw] flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-slate-800">
+        <div className="flex shrink-0 items-start justify-between gap-4 p-5 pb-3">
           <div className="min-w-0">
             {loading ? (
               <div className="h-7 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
@@ -236,7 +236,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
           </button>
         </div>
 
-        <div className="mx-5 h-64 overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+        <div className="mx-5 min-h-[16rem] flex-1 overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
           {loading ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -257,7 +257,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         </div>
 
         {!loading && !error && view && (
-          <div className="flex flex-col gap-4 p-5 pt-4">
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5 pt-4">
             {hasRoute && (
               <>
                 <div>
@@ -390,7 +390,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         )}
 
         {!loading && !error && (
-          <div className="flex justify-end gap-1.5 border-t border-slate-200 bg-slate-50 px-5 py-2.5 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex shrink-0 justify-end gap-1.5 border-t border-slate-200 bg-slate-50 px-5 py-2.5 dark:border-slate-700 dark:bg-slate-900">
             <button
               type="button"
               onClick={handleDownload}
