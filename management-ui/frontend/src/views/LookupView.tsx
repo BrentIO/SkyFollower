@@ -610,22 +610,24 @@ function RouteResultView({ data }: { data: RouteLookup }) {
           )}
         </div>
       )}
-      <div className="flex flex-col gap-2">
-        {data.stops.map((stop, i) => {
-          const role = roleFor(i, data.stops.length);
-          const icaoCode = displayStr(stop.icao_code) ?? "";
-          const iataCode = displayStr(stop.iata_code);
-          const detailLine = joinParts([displayStr(stop.phonic), displayStr(stop.city), displayStr(stop.region)], ", ");
-          return (
-            <div key={i} className="flex flex-wrap items-baseline gap-2 text-sm">
-              <Badge color={ROLE_BADGE_COLOR[role]}>{ROLE_LABEL[role]}</Badge>
-              <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
-              {iataCode && <Mono>{iataCode}</Mono>}
-              {detailLine && <span className="text-slate-900 dark:text-slate-100">{detailLine}</span>}
-            </div>
-          );
-        })}
-      </div>
+      {data.stops && data.stops.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {data.stops.map((stop, i) => {
+            const role = roleFor(i, data.stops!.length);
+            const icaoCode = displayStr(stop.icao_code) ?? "";
+            const iataCode = displayStr(stop.iata_code);
+            const detailLine = joinParts([displayStr(stop.phonic), displayStr(stop.city), displayStr(stop.region)], ", ");
+            return (
+              <div key={i} className="flex flex-wrap items-baseline gap-2 text-sm">
+                <Badge color={ROLE_BADGE_COLOR[role]}>{ROLE_LABEL[role]}</Badge>
+                <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">{icaoCode}</span>
+                {iataCode && <Mono>{iataCode}</Mono>}
+                {detailLine && <span className="text-slate-900 dark:text-slate-100">{detailLine}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -749,7 +751,9 @@ export function LookupView() {
                   <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
                   <ResultPanelBody result={result} />
                 </div>
-                {result.tab === "route" && <RouteMap stops={result.data.stops} />}
+                {result.tab === "route" && result.data.stops && result.data.stops.length > 0 && (
+                  <RouteMap stops={result.data.stops} />
+                )}
               </div>
             </Fragment>
           ))}

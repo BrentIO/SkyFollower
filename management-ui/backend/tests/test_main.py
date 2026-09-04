@@ -1417,6 +1417,49 @@ class TestRouteLookup:
         assert resp.status_code == 200
         assert resp.json()["operator"] is None
 
+    def test_unknown_route_falls_back_to_operator(self, client, fake_redis):
+        fake_redis.store["operator:LXJ"] = json.dumps(
+            {"airline_designator": "LXJ", "name": "FlexJet", "callsign": "FLEXJET", "country": "US"}
+        )
+        resp = client.get("/api/routes/LXJ551")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ident"] == "LXJ551"
+        assert body["operator"]["name"] == "FlexJet"
+        assert "origin" not in body or body["origin"] is None
+        assert "destination" not in body or body["destination"] is None
+        assert body.get("stops") in (None, [])
+
+    def test_unknown_route_and_unresolvable_operator_still_404s(self, client, fake_redis):
+        resp = client.get("/api/routes/LXJ551A")
+        assert resp.status_code == 404
+
+    def test_known_route_unaffected_by_operator_fallback(self, client, fake_redis):
+        fake_redis.store["route:AAL15"] = "KMIA-KJFK"
+        fake_redis.store["airport:KMIA"] = json.dumps({"icao_code": "KMIA", "name": "Miami Intl"})
+        fake_redis.store["airport:KJFK"] = json.dumps({"icao_code": "KJFK", "name": "JFK Intl"})
+        fake_redis.store["operator:AAL"] = json.dumps({"airline_designator": "AAL", "name": "American Airlines"})
+        resp = client.get("/api/routes/AAL15")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["origin"]["icao_code"] == "KMIA"
+        assert body["destination"]["icao_code"] == "KJFK"
+        assert len(body["stops"]) == 2
+        assert body["operator"]["name"] == "American Airlines"
+
+    def test_no_hyphen_registration_shape_never_triggers_operator_fallback(self, client, fake_redis):
+        # "N" is a valid short-prefix operator-shape start, but N659DL is a
+        # bare no-hyphen registration, not a flight ident -- must 404 exactly
+        # like today, never fall back to an operator lookup.
+        fake_redis.store["operator:N"] = json.dumps({"airline_designator": "N", "name": "Not A Real Operator"})
+        resp = client.get("/api/routes/N659DL")
+        assert resp.status_code == 404
+
+    def test_no_hyphen_registration_shape_hl_prefix_never_triggers_operator_fallback(self, client, fake_redis):
+        fake_redis.store["operator:HL"] = json.dumps({"airline_designator": "HL", "name": "Not A Real Operator"})
+        resp = client.get("/api/routes/HL7404")
+        assert resp.status_code == 404
+
 
 class TestSearchIndexBootstrap:
     """Covers #934: management-ui must proactively create all three
