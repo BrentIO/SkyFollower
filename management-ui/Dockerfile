@@ -11,6 +11,11 @@ COPY management-ui/frontend/ ./
 # import.meta.env.VITE_* values into the bundle at build time, not runtime.
 ARG VERSION=dev
 ENV VITE_VERSION=$VERSION
+
+# Short commit hash the image was built from; combined with VITE_VERSION for
+# display in the footer but never part of the image tag.
+ARG COMMIT=unknown
+ENV VITE_COMMIT=$COMMIT
 RUN npm run build
 
 FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5 AS base
@@ -43,5 +48,8 @@ EXPOSE 80
 # cheap final layer, not the pip-install layer above.
 ARG VERSION=dev
 ENV VERSION=$VERSION
+
+ARG COMMIT=unknown
+ENV GIT_COMMIT=$COMMIT
 
 CMD ["/entrypoint.sh"]

@@ -43,3 +43,17 @@ class TestBuildHaDevice:
             second = build_ha_device(identifier="x", name="x", model="x")
         assert first["sw_version"] == "2026.08.01"
         assert second["sw_version"] == "2026.08.02"
+
+    def test_sw_version_appends_commit_when_set(self):
+        with patch.dict(
+            os.environ, {"VERSION": "2026.08.03", "GIT_COMMIT": "abcdef01"}, clear=True
+        ):
+            device = build_ha_device(identifier="x", name="x", model="x")
+            assert device["sw_version"] == "2026.08.03 (abcdef01)"
+
+    def test_sw_version_omits_parens_when_commit_unknown(self):
+        with patch.dict(
+            os.environ, {"VERSION": "2026.08.03", "GIT_COMMIT": "unknown"}, clear=True
+        ):
+            device = build_ha_device(identifier="x", name="x", model="x")
+            assert device["sw_version"] == "2026.08.03"
