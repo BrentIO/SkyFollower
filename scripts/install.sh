@@ -32,22 +32,30 @@
 # `docker images | xargs -L1 docker pull`, which pulled every image on the
 # host (unrelated ones included) and could not be rolled back.
 #
-# Files are fetched from the latest GitHub *release tag* by default (REF
-# env var overrides, e.g. REF=main for bleeding-edge). Every image is only
-# ever built and published on a release tag, so a docker-compose.*.yaml's
-# image: :latest always corresponds to the most recent release commit, not
-# tip of main -- fetching config from main by default would risk
-# downloading a newer config/compose shape than the :latest image
-# understands. Any individual file missing at the resolved tag (a release
-# cut before a given role existed) falls back to main for that one file,
-# with a printed warning.
+# Files are fetched from the latest GitHub *release tag* by default. Every
+# image is only ever built and published on a release tag, so a
+# docker-compose.*.yaml's image: :latest always corresponds to the most
+# recent release commit, not tip of main -- fetching config from main by
+# default would risk downloading a newer config/compose shape than the
+# :latest image understands. Any individual file missing at the resolved
+# tag (a release cut before a given role existed) falls back to main for
+# that one file, with a printed warning.
 #
-# Testing a dev build (a real, pullable image from main or a branch,
-# published without cutting a release -- see
-# build-container-images.yaml's dev_mode): set IMAGE_VERSION alongside
-# REF so the resolved dev tag is written instead of :latest, e.g.
-#   REF=my-branch IMAGE_VERSION=dev-my-branch ./install.sh
-# See docs/getting-started/index.md's "Testing a dev build" section.
+# Testing a dev build: set ONE variable, `branch`, to a branch name (or
+# `main`). Its presence is what makes the run a dev install. It selects
+# BOTH the branch whose compose/config files are fetched AND the matching
+# ghcr.io/brentio/skyfollower-*:dev-<branch> images -- they cannot desync.
+# The images must already be published by build-container-images.yaml's
+# dev_mode (`gh workflow run build-container-images.yaml --ref <branch> -f
+# dev_mode=true`); the installer verifies they exist in GHCR before doing
+# anything and stops with the exact command if not. Every run (fresh or
+# repeat) pulls before bringing the stack up, and a loud DEVELOPMENT BUILD
+# banner prints at the start and end.
+#   curl -fsSL .../install.sh | branch=my-branch bash
+#   curl -fsSL .../install.sh | branch=my-branch bash -s -- --upgrade
+# `branch` given a real release tag (YYYY.MM.BB) is a hard error -- omit it
+# for a release install. See docs/getting-started/index.md's "Testing a
+# dev build" section.
 
 set -euo pipefail
 
@@ -63,6 +71,13 @@ UPGRADE=0
 INSTALL_ROOT="$PWD"
 ROOT_EXPLICIT=0
 SELECTED_ROLES=()
+
+# Set by resolve_ref(). DEV_BUILD=1 when the `branch` env var is present:
+# REF is that branch (for file fetches), IMAGE_VERSION is
+# dev-<sanitized-branch> (the image tag and the .env SKYFOLLOWER_VERSION),
+# BRANCH is the raw branch name (for messages and the gh command hint).
+DEV_BUILD=0
+BRANCH=""
 
 ALL_ROLES="core management-ui archive message-processor receiver"
 
@@ -80,6 +95,9 @@ usage() {
   cat >&2 <<USAGE
 Usage: $SCRIPT_NAME [--root <path>] [--role <role> ...] [--non-interactive] [--upgrade]
   role: receiver | core | management-ui | message-processor | archive
+  env: branch=<name>  install/upgrade a dev build from that branch instead
+                      of the latest release (images must be published first
+                      via build-container-images.yaml's dev_mode)
 USAGE
   exit "$code"
 }
@@ -125,17 +143,68 @@ else
   exit 1
 fi
 
+# Anonymous existence check for a public GHCR image tag, via the registry
+# v2 API with an anonymous pull token -- no `docker pull`, no buildx, no
+# manifest-experimental flag. Returns 0 if the tag exists, 1 if it does
+# not, 2 if GHCR could not be reached at all (so the caller can warn and
+# continue rather than hard-fail on a transient network problem).
+ghcr_tag_exists() {
+  local repo="$1" tag="$2" token
+  local accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+  if command -v curl >/dev/null 2>&1; then
+    token="$(curl -fsSL "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
+      | grep -o '"token":"[^"]*"' | head -1 | cut -d '"' -f 4 || true)"
+    [ -n "$token" ] || return 2
+    curl -fsS -o /dev/null -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+      "https://ghcr.io/v2/${repo}/manifests/${tag}" 2>/dev/null && return 0 || return 1
+  else
+    token="$(wget -qO- "https://ghcr.io/token?scope=repository:${repo}:pull" 2>/dev/null \
+      | grep -o '"token":"[^"]*"' | head -1 | cut -d '"' -f 4 || true)"
+    [ -n "$token" ] || return 2
+    wget -q -O /dev/null --header="Authorization: Bearer ${token}" --header="Accept: ${accept}" \
+      "https://ghcr.io/v2/${repo}/manifests/${tag}" 2>/dev/null && return 0 || return 1
+  fi
+}
+
 resolve_ref() {
-  # The tag written into .env as SKYFOLLOWER_VERSION. Only a release tag is
-  # also an image tag by default (every image publishes as both :{tag} and
-  # :latest on release), so an explicitly-overridden REF -- REF=main, a
-  # branch, a commit -- can't be assumed to name an image and falls back
-  # to :latest, UNLESS the caller also sets IMAGE_VERSION explicitly --
-  # e.g. REF=my-branch IMAGE_VERSION=dev-my-branch to point at a dev build
-  # published by build-container-images.yaml's dev_mode (see "Testing a
-  # dev build" below). Omitting IMAGE_VERSION keeps today's behavior.
-  if [ -n "${REF:-}" ]; then
-    IMAGE_VERSION="${IMAGE_VERSION:-latest}"
+  # `branch` env var present -> dev install. One variable picks BOTH the
+  # git ref for file fetches (REF) and the image tag (IMAGE_VERSION,
+  # dev-<sanitized-branch>), so config files and images can't come from
+  # different code. A value shaped like a real release tag is rejected --
+  # omit `branch` entirely for a release.
+  if [ -n "${branch:-}" ]; then
+    BRANCH="$branch"
+    if printf '%s' "$BRANCH" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'; then
+      echo "branch='${BRANCH}' looks like a release tag. Omit 'branch' entirely for a release install/upgrade (it resolves the latest release automatically); set 'branch' only to a branch name for a dev build." >&2
+      exit 1
+    fi
+    DEV_BUILD=1
+    REF="$BRANCH"
+    # Docker tags can't contain '/'; build-container-images.yaml sanitizes
+    # the same way when it publishes :dev-<branch>.
+    local sanitized
+    sanitized="$(printf '%s' "$BRANCH" | tr '/' '-')"
+    IMAGE_VERSION="dev-${sanitized}"
+    # Verify the dev image set is actually published before prompting for
+    # anything -- no silent fallback to :latest or a stale local image.
+    # One canary image is enough: dev_mode builds the whole matrix in one
+    # workflow run.
+    local canary="brentio/skyfollower-message-processor"
+    local rc=0
+    ghcr_tag_exists "$canary" "$IMAGE_VERSION" || rc=$?
+    if [ "$rc" -eq 1 ]; then
+      cat >&2 <<EOF
+No dev build published for '${BRANCH}' (looked for ghcr.io/${canary}:${IMAGE_VERSION}). Run it first:
+
+  gh workflow run build-container-images.yaml --ref ${BRANCH} -f dev_mode=true
+
+then re-run this installer.
+EOF
+      exit 1
+    elif [ "$rc" -eq 2 ]; then
+      echo "Warning: could not reach GHCR to verify the '${IMAGE_VERSION}' dev build exists -- continuing; 'docker compose pull' will fail later if it is missing." >&2
+    fi
+    echo "Dev build: branch '${BRANCH}', images ${IMAGE_VERSION}"
     return
   fi
   # No jq assumption (Raspberry Pi OS Lite doesn't ship it) -- the
@@ -153,7 +222,7 @@ resolve_ref() {
   REF="$(http_get "https://api.github.com/repos/BrentIO/SkyFollower/releases/latest" \
     | grep '"tag_name"' | head -1 | cut -d '"' -f 4 || true)"
   if [ -z "$REF" ]; then
-    echo "Could not determine the latest release tag -- pass REF=main or REF=<tag> explicitly." >&2
+    echo "Could not determine the latest release tag from the GitHub API -- retry, or for a dev build set 'branch=<name>'." >&2
     exit 1
   fi
   IMAGE_VERSION="$REF"
@@ -622,7 +691,7 @@ fetch_role() {
       echo "    Not found." >&2
       exit 1
     fi
-    echo "    Not in release ${REF} yet -- falling back to main for this file." >&2
+    echo "    Not in ${REF} yet -- falling back to main for this file." >&2
     http_get "${main_base}/${rel_path}" > "$dest_path"
   done
 
@@ -1359,8 +1428,9 @@ write_env_header() {
 # change any of them.
 
 # Tag every ghcr.io/brentio/skyfollower-* image resolves to. install.sh
-# --upgrade rewrites this to the latest release and pulls it; set it to an
-# older release tag and re-run \`docker compose up -d\` to roll back.
+# --upgrade rewrites this to the latest release (or to dev-<branch> when
+# run with branch=<name>) and pulls it; set it to an older release tag and
+# re-run \`docker compose up -d\` to roll back.
 SKYFOLLOWER_VERSION=${IMAGE_VERSION}
 
 # Compose project name -- the namespace every container and network on
@@ -1438,16 +1508,33 @@ select_roles_interactively() {
 # Finishing the job
 # ---------------------------------------------------------------------------
 
+# Bring one role's stack up. For a dev build the image tag (dev-<branch>)
+# is floating -- a newer build can sit behind the same tag -- so pull
+# first, on every run, or a re-run silently keeps whatever is already
+# local. --profile runners so the core host's runner-* images refresh too
+# (a no-op everywhere else); NOT passed to `up -d` (would launch every
+# one-shot runner). A release pin is immutable, so a plain release
+# install still skips the pull (only --upgrade pulls, as before).
+compose_bring_up() {
+  local role_dir="$1"
+  if [ "$DEV_BUILD" -eq 1 ]; then
+    (cd "$role_dir" && docker compose --profile runners pull && docker compose up -d)
+  else
+    (cd "$role_dir" && docker compose up -d)
+  fi
+}
+
 offer_up() {
   local role="$1" role_dir="$2"
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    (cd "$role_dir" && docker compose up -d)
+    compose_bring_up "$role_dir"
     return
   fi
-  local answer
-  read -r -p "Bring ${role} up now (docker compose up -d in ${role_dir})? [Y/n]: " answer </dev/tty
+  local answer prompt="docker compose up -d in ${role_dir}"
+  [ "$DEV_BUILD" -eq 1 ] && prompt="docker compose pull && up -d in ${role_dir}"
+  read -r -p "Bring ${role} up now (${prompt})? [Y/n]: " answer </dev/tty
   if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then
-    (cd "$role_dir" && docker compose up -d)
+    compose_bring_up "$role_dir"
   fi
 }
 
@@ -1677,6 +1764,12 @@ offer_aws_provisioning() {
   AWS_PROV_DONE=1
 
   local image="ghcr.io/brentio/skyfollower-aws-setup:${IMAGE_VERSION}"
+  # dev-<branch> is a floating tag; `docker run` alone won't refresh an
+  # image already present locally. Pull so a re-run provisions with the
+  # current dev build. (A release pin is immutable -- nothing to do.)
+  if [ "$DEV_BUILD" -eq 1 ]; then
+    docker pull "$image" >/dev/null 2>&1 || true
+  fi
   local prov_key_id prov_secret prov_token prov_region prov_prefix=""
   local prov_bucket="" prov_create="" bootstrap_user="" cred_choice
 
@@ -1942,9 +2035,10 @@ offer_ofelia_and_bulk_load() {
 
 do_upgrade() {
   # REF/IMAGE_VERSION are already resolved by main() before dispatching
-  # here -- resolving again would mean two GitHub API calls per --upgrade
-  # run for the same answer.
-  echo "Upgrading every role directory under ${INSTALL_ROOT} to ${REF}..."
+  # here (release tag, or dev-<branch> when `branch` was set) -- resolving
+  # again would mean two GitHub API calls per --upgrade run for the same
+  # answer.
+  echo "Upgrading every role directory under ${INSTALL_ROOT} to ${IMAGE_VERSION}..."
   echo "(runner-* images are pulled too -- they sit behind the \"runners\" compose profile)"
   local found=0
   for env_file in "${INSTALL_ROOT}"/*/.env; do
@@ -1982,6 +2076,10 @@ do_upgrade() {
   fi
   echo
   echo "Upgrade complete."
+  if [ "$DEV_BUILD" -eq 1 ]; then
+    echo
+    echo "⚠️  DEVELOPMENT BUILD (${IMAGE_VERSION}, branch '${BRANCH}') -- not a released version."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1998,6 +2096,23 @@ print_banner() {
 ███████ ██   ██    ██    ██       ██████  ███████ ███████  ██████   ███ ███  ███████ ██   ██
 BANNER_EOF
   echo
+}
+
+# Loud, unmistakable marker that this run is a dev build and not a
+# release. Printed right after resolve_ref() (so it covers --upgrade too)
+# and echoed once more in the end-of-run summary.
+print_dev_banner() {
+  cat >&2 <<EOF
+
+============================================================
+        ⚠️   DEVELOPMENT BUILD   ⚠️   -- NOT A RELEASE
+============================================================
+  Branch (config + compose files) : ${BRANCH}
+  Image tag (skyfollower-* images) : ${IMAGE_VERSION}
+  SKYFOLLOWER_VERSION (.env)        : ${IMAGE_VERSION}
+  Image VERSION / HA sw_version     : 9999.99.99
+============================================================
+EOF
 }
 
 # Only asked when --root was not explicitly passed and the run is
@@ -2027,6 +2142,7 @@ confirm_install_root() {
 main() {
   print_banner
   resolve_ref
+  [ "$DEV_BUILD" -eq 1 ] && print_dev_banner
 
   if [ "$NON_INTERACTIVE" -eq 0 ] && [ "$ROOT_EXPLICIT" -eq 0 ]; then
     confirm_install_root
@@ -2146,6 +2262,10 @@ main() {
     echo "  ${installed_roles[$i]}: ${role_dir}"
     i=$((i+1))
   done
+  if [ "$DEV_BUILD" -eq 1 ]; then
+    echo
+    echo "⚠️  DEVELOPMENT BUILD (${IMAGE_VERSION}, branch '${BRANCH}') -- not a released version."
+  fi
 }
 
 main

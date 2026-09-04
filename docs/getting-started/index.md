@@ -49,13 +49,9 @@ needs nothing from AWS.
 | `--non-interactive` | Reads every value from already-exported environment variables instead of prompting (same names written to `.env` — e.g. `RECEIVER_NAME`, `RABBITMQ_HOST`). Requires `--role` at least once. |
 
 Files come from the **latest GitHub release**, matching the `:latest`
-container images. To fetch something else instead, set `REF` on the
-`bash` side of the pipe, not the `curl` side — `curl`'s environment
-never reaches the `bash` process that actually runs the fetched script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | REF=main bash
-```
+container images. To install a **development build** instead — a branch's
+code and its matching dev images, together — see [Testing a dev
+build](#testing-a-dev-build).
 
 Once `core` is up, the script offers a first-time bulk data load — see
 [Loading All Data](#loading-all-data) below.
@@ -86,34 +82,50 @@ access to the repo):
 gh workflow run build-container-images.yaml --ref my-branch -f dev_mode=true
 ```
 
-(`--ref main` to build the latest merged code instead of a branch.) This
-publishes every image tagged `:dev-{branch}` (that branch's most recent
-dev build) and the floating `:dev` (whatever was built most recently,
-any branch) -- never `:latest`, so a dev build can never be pulled by a
-fresh production install by accident. A dev build's baked-in `VERSION` is
-stamped `9999.99.99` (the same "not a release" sentinel `specs/*.yaml`
-carry on `main`), so any component running a dev build reports that as its
-Home Assistant `sw_version`; the branch it came from is in the
-`:dev-{branch}` image tag.
+(`--ref main` builds the latest merged code.) This publishes every image
+tagged `:dev-{branch}` and the floating `:dev` (the most recent dev build
+on any branch) — never `:latest`, so a dev build can never be pulled by a
+fresh production install by accident. The installer only ever selects
+`:dev-{branch}`; the floating `:dev` stays available for a manual
+`docker pull`.
 
-Point a host at one by setting `REF` **and** `IMAGE_VERSION` together --
-`REF` picks which branch's compose/config files are fetched, and
-`IMAGE_VERSION` overrides the image tag that would otherwise default to
-`:latest`. Both go on the `bash` side of the pipe, on a single line --
-`curl`'s environment is a separate process from `bash`'s, so anything set
-before `curl` never reaches the script that actually runs:
+Point a host at one with a **single** variable, `branch`. Its presence is
+what makes the run a dev install; its value selects **both** the branch
+whose compose/config files are fetched and the matching `:dev-{branch}`
+images — they cannot desync. Put it on the `bash` side of the pipe, on a
+single line — `curl`'s environment is a separate process from `bash`'s, so
+anything set before `curl` never reaches the script that actually runs:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | REF=my-branch IMAGE_VERSION=dev-my-branch bash
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | branch=my-branch bash
 ```
 
-Already installed? The same two variables work with `--upgrade` on an
-existing host (placed the same way, after the pipe), or edit
-`SKYFOLLOWER_VERSION` in `.env` by hand and `docker compose pull && up -d`.
+`branch=main` is the common "just give me the latest dev build" case.
+Branch names containing `/` are sanitized to `-` to match the image tag —
+pass the real branch name and the installer handles it.
 
-**Going back to a real release:** run `--upgrade` with neither `REF` nor
-`IMAGE_VERSION` set -- it re-resolves the latest release tag exactly as
-normal.
+Before it does anything, the installer checks that the `dev-{branch}`
+images are actually published in GHCR; if they are not it prints the exact
+`gh workflow run` command above and stops — no silent fallback to
+`:latest` or a stale local image. Every run (fresh install **or** re-run)
+pulls before bringing the stack up, so re-running with the same `branch`
+always lands every component on the current dev build. A loud
+`⚠️ DEVELOPMENT BUILD ⚠️` banner prints at the start and end of the run.
+
+A dev build's images report their `VERSION` — and therefore Home Assistant
+`sw_version` — as `9999.99.99` (the same "not a release" sentinel
+`specs/*.yaml` carry on `main`); the branch is recorded in `.env` as
+`SKYFOLLOWER_VERSION=dev-{branch}`.
+
+Already installed? `branch` works with `--upgrade` on an existing host too
+(placed the same way, after the pipe):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | branch=my-branch bash -s -- --upgrade
+```
+
+**Going back to a real release:** run `--upgrade` with no `branch` set — it
+re-resolves the latest release tag exactly as normal.
 
 ## Loading All Data
 
