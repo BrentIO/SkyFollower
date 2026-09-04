@@ -24,10 +24,11 @@ import { nextSortState, type ResultsSortState } from "../lib/resultsSort";
 // the backend (which itself only polls Athena on the same kind of cadence).
 const POLL_INTERVAL_MS = 3000;
 
-type BadgeColor = "yellow" | "red" | "slate";
+type BadgeColor = "yellow" | "green" | "red" | "slate";
 
 const BADGE_CLASSES: Record<BadgeColor, string> = {
   yellow: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+  green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
   red: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
   slate: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200",
 };
@@ -302,7 +303,7 @@ function SearchResultsPanel({
                 <td className="px-2 py-1.5">{row.ident}</td>
                 <td className="px-2 py-1.5">{row.operator_designator}</td>
                 <td className="px-2 py-1.5">{row.type_designator}</td>
-                <td className="px-2 py-1.5">{row.military && <Badge color="yellow">Military</Badge>}</td>
+                <td className="px-2 py-1.5">{row.military && <Badge color="green">Military</Badge>}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
                 <td className="px-2 py-1.5">
