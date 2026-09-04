@@ -1,0 +1,73 @@
+name: skyfollower-legacy-migration
+
+# One-time tool -- not part of any host's standing stack, not built by
+# scripts/install.sh, and not published to GHCR (see
+# tools/legacy-migration/README.md). The operator builds and runs this by
+# hand, from its own .env, wherever Mongo/S3/RabbitMQ reachability is most
+# convenient.
+#
+# Typical use:
+#
+#   docker compose -f docker-compose.legacy-migration.yaml run --rm producer \
+#     --start-date 2022-07-11 --end-date 2026-09-01
+#   docker compose -f docker-compose.legacy-migration.yaml up --build --scale worker=8
+#   docker compose -f docker-compose.legacy-migration.yaml run --rm verify \
+#     --start-date 2022-07-11 --end-date 2026-09-01
+x-legacy-migration-environment: &legacy-migration-environment
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  MONGO_URI: ${MONGO_URI}
+  MONGO_DATABASE: ${MONGO_DATABASE:-skyfollower}
+  MONGO_COLLECTION: ${MONGO_COLLECTION:-flights}
+  SOURCE_S3_BUCKET: ${SOURCE_S3_BUCKET}
+  DEST_S3_BUCKET: ${DEST_S3_BUCKET}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  # Dedicated skyfollower-migration broker user (see README.md) -- never
+  # the shared application user, and never these variable names pointed
+  # at that user's credentials.
+  RABBITMQ_HOST: ${RABBITMQ_HOST}
+  RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+  RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+
+services:
+
+  # Long-lived; scale with --scale worker=N. No profile, so a bare `up`
+  # starts it -- this is the role meant to run unattended for hours.
+  worker:
+    build:
+      context: .
+      dockerfile: tools/legacy-migration/Dockerfile
+    environment:
+      <<: *legacy-migration-environment
+    volumes:
+      - ./logs:/app/logs
+
+  # One-shot; never started by a bare `up` (see the "producer"/"work"
+  # profile split, matching docker-compose.archive.yaml's archive-compaction
+  # convention). Entrypoint bakes in "produce" so `run --rm producer
+  # --start-date ... --end-date ...` needs no subcommand of its own.
+  producer:
+    build:
+      context: .
+      dockerfile: tools/legacy-migration/Dockerfile
+    profiles: ["producer"]
+    entrypoint: ["python", "main.py", "produce"]
+    environment:
+      <<: *legacy-migration-environment
+    volumes:
+      - ./logs:/app/logs
+
+  # One-shot; run by the operator before deleting the legacy bucket by
+  # hand. See tools/legacy-migration/README.md's Verification section.
+  verify:
+    build:
+      context: .
+      dockerfile: tools/legacy-migration/Dockerfile
+    profiles: ["verify"]
+    entrypoint: ["python", "main.py", "verify"]
+    environment:
+      <<: *legacy-migration-environment
+    volumes:
+      - ./logs:/app/logs

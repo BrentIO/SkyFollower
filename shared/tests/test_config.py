@@ -12,8 +12,10 @@ from shared.config import (
     ConfigError,
     ConfigLoader,
     athena_config,
+    legacy_migration_s3_config,
     load_config,
     message_processor_config,
+    mongo_config,
     mqtt_config,
     parse_receiver_sources,
     rabbitmq_config,
@@ -53,6 +55,14 @@ _MESSAGE_PROCESSOR = {
     "MESSAGE_PROCESSOR_ID": "turing-node-3-1",
     "LATITUDE": "40.7",
     "LONGITUDE": "-73.9",
+}
+_MONGO = {"MONGO_URI": "mongodb://legacy.example.com/skyfollower"}
+_LEGACY_MIGRATION_S3 = {
+    "SOURCE_S3_BUCKET": "com.skyfollower.datastore",
+    "DEST_S3_BUCKET": "skyfollower-archive",
+    "AWS_DEFAULT_REGION": "us-east-1",
+    "AWS_ACCESS_KEY_ID": "AKIA",
+    "AWS_SECRET_ACCESS_KEY": "shh",
 }
 
 
@@ -423,6 +433,24 @@ class TestShape:
             "password": "secret",
         }
 
+    def test_legacy_migration_shape(self):
+        cfg = load_config(
+            "rabbitmq", "mongo", "legacy_migration_s3",
+            environ=_env(_RABBITMQ, _MONGO, _LEGACY_MIGRATION_S3),
+        )
+        assert set(cfg) == {
+            "log_level", "rabbitmq", "mongo", "legacy_migration_s3",
+        }
+        assert cfg["mongo"] == {
+            "uri": "mongodb://legacy.example.com/skyfollower",
+            "database": "skyfollower",
+            "collection": "flights",
+        }
+        assert cfg["legacy_migration_s3"] == {
+            "source_bucket": "com.skyfollower.datastore",
+            "dest_bucket": "skyfollower-archive",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Standalone block helpers
@@ -488,4 +516,28 @@ class TestBlockHelpers:
             "host": "redis.example.com",
             "port": 6380,
             "password": "secret",
+        }
+
+    def test_mongo_config_defaults_database_and_collection(self):
+        assert mongo_config(ConfigLoader(_MONGO)) == {
+            "uri": "mongodb://legacy.example.com/skyfollower",
+            "database": "skyfollower",
+            "collection": "flights",
+        }
+
+    def test_mongo_config_requires_uri(self, monkeypatch):
+        monkeypatch.delenv("MONGO_URI", raising=False)
+        with pytest.raises(ConfigError):
+            mongo_config()
+
+    def test_legacy_migration_s3_config_requires_both_buckets(self, monkeypatch):
+        monkeypatch.delenv("SOURCE_S3_BUCKET", raising=False)
+        monkeypatch.delenv("DEST_S3_BUCKET", raising=False)
+        with pytest.raises(ConfigError):
+            legacy_migration_s3_config()
+
+    def test_legacy_migration_s3_config_reads_both_buckets(self):
+        assert legacy_migration_s3_config(ConfigLoader(_LEGACY_MIGRATION_S3)) == {
+            "source_bucket": "com.skyfollower.datastore",
+            "dest_bucket": "skyfollower-archive",
         }
