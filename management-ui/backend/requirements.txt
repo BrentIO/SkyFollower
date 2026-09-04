@@ -1,6 +1,6 @@
 fastapi==0.141.1
 uvicorn==0.52.4
-boto3==1.43.85
+boto3==1.43.86
 cryptography==50.0.1
 shapely==2.1.2
 redis==8.1.0
