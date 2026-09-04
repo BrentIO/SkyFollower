@@ -14,6 +14,7 @@ uses) rather than via a normal package import, since the hyphen in
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 import os
@@ -1464,6 +1465,79 @@ class TestFlightFetch:
         fake_s3.objects[s3_key] = b"x"
         token = ui_main._encrypt_s3_key(s3_key)
         assert "flights/2026" not in token
+
+
+# ---------------------------------------------------------------------------
+# Flight detail view (History's "View" modal)
+# ---------------------------------------------------------------------------
+
+def _put_flight_record(fake_s3, s3_key: str, record: dict) -> str:
+    fake_s3.objects[s3_key] = gzip.compress(json.dumps(record).encode("utf-8"))
+    return ui_main._encrypt_s3_key(s3_key)
+
+
+# A real archived flight's `aircraft` field is merge_aircraft.lua's
+# unflattened output: type/category/manufacturer/powerplant/etc. live one
+# level deeper, under aircraft.aircraft, alongside the flat
+# registration/registrant/icao_hex at the top.
+_NESTED_AIRCRAFT = {
+    "icao_hex": "A471E0",
+    "registration": "N386DA",
+    "type_designator": "B738",
+    "manufacturer_model": "BOEING 737-800",
+    "aircraft": {
+        "type": "Airplane",
+        "category": "Land",
+        "model": "737-832",
+        "serial_number": "30373",
+        "seats": 189,
+        "powerplant": {"type": "Turbo-fan", "count": 2, "manufacturer": "CFM INTL.", "model": "CFM56 SERIES"},
+    },
+}
+
+
+class TestFlightView:
+    def test_aircraft_fields_are_flattened_from_the_nested_shape(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": _NESTED_AIRCRAFT,
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 42,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        body = resp.json()
+
+        # Regression: get_archive_flight_view previously read these two
+        # straight off the unflattened envelope and always got None.
+        assert body["type_designator"] == "B738"
+        assert body["manufacturer_model"] == "BOEING 737-800"
+
+        assert body["category"] == "Land"
+        assert body["aircraft_type"] == "Airplane"
+        assert body["model"] == "737-832"
+        assert body["serial_number"] == "30373"
+        assert body["seats"] == 189
+        assert body["powerplant"] == {
+            "type": "Turbo-fan", "count": 2, "manufacturer": "CFM INTL.", "model": "CFM56 SERIES",
+        }
+
+    def test_aircraft_detail_fields_absent_when_not_enriched(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid2.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        body = resp.json()
+        for field in ("category", "aircraft_type", "model", "serial_number", "seats", "powerplant"):
+            assert body[field] is None
 
 
 # ---------------------------------------------------------------------------

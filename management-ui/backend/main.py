@@ -2696,6 +2696,12 @@ class FlightView(BaseModel):
     military: Optional[bool] = None
     type_designator: Optional[str] = None
     manufacturer_model: Optional[str] = None
+    category: Optional[str] = None
+    aircraft_type: Optional[str] = None   # merge_aircraft.lua's "type" (e.g. "Airplane")
+    model: Optional[str] = None           # national-registry-specific designation, distinct from manufacturer_model
+    serial_number: Optional[str] = None
+    seats: Optional[int] = None
+    powerplant: Optional[dict] = None     # count/type/manufacturer/model/power_type
     operator: Optional[dict] = None      # OperatorRecord fields (name, callsign, ...)
     registrant: Optional[dict] = None    # RegistrantInfo fields
     origin: Optional[dict] = None        # airport doc (icao_code, name, ...), resolved via Redis
@@ -2715,7 +2721,10 @@ class FlightView(BaseModel):
 )
 def get_archive_flight_view(token: str):
     flight = _fetch_flight_record(token)
-    aircraft = flight.get("aircraft") or {}
+    # merge_aircraft.lua's output nests type/category/manufacturer/powerplant
+    # under aircraft.aircraft (see _flatten_aircraft_doc) -- a copy so this
+    # doesn't mutate the parsed flight record in place.
+    aircraft = _flatten_aircraft_doc(dict(flight.get("aircraft") or {}))
 
     return FlightView(
         ident=flight.get("ident"),
@@ -2725,6 +2734,12 @@ def get_archive_flight_view(token: str):
         military=aircraft.get("military"),
         type_designator=aircraft.get("type_designator"),
         manufacturer_model=aircraft.get("manufacturer_model"),
+        category=aircraft.get("category"),
+        aircraft_type=aircraft.get("type"),
+        model=aircraft.get("model"),
+        serial_number=aircraft.get("serial_number"),
+        seats=aircraft.get("seats"),
+        powerplant=aircraft.get("powerplant"),
         operator=flight.get("operator"),
         registrant=aircraft.get("registrant"),
         origin=_resolve_airport(flight.get("origin")),
