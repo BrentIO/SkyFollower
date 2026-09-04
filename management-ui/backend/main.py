@@ -1724,6 +1724,12 @@ class ArchiveSearchDetail(ArchiveSearchSummary):
     # deserializes (see get_archive_search's .get() reads).
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    # What the operator actually typed, captured before the
+    # _ARCHIVE_EPOCH/tomorrow substitution -- None means the field was left
+    # blank. Optional here for the same backward-compatibility reason as
+    # start_date/end_date above.
+    requested_start_date: Optional[date] = None
+    requested_end_date: Optional[date] = None
 
 
 class ArchiveSearchResultsPage(BaseModel):
@@ -2319,6 +2325,8 @@ def create_archive_search(body: ArchiveSearchCreate):
             "query_execution_id": None,
             "start_date": explicit_start.isoformat(),
             "end_date": explicit_end.isoformat(),
+            "requested_start_date": body.start_date.isoformat() if body.start_date else None,
+            "requested_end_date": body.end_date.isoformat() if body.end_date else None,
         }
         _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=ARCHIVE_SEARCH_TTL_SECONDS)
         try:
@@ -2351,6 +2359,10 @@ def create_archive_search(body: ArchiveSearchCreate):
         # "tomorrow" against a later clock.
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
+        # What the operator actually typed, before the _ARCHIVE_EPOCH/tomorrow
+        # substitution above -- None means the field was left blank.
+        "requested_start_date": body.start_date.isoformat() if body.start_date else None,
+        "requested_end_date": body.end_date.isoformat() if body.end_date else None,
     }
     _redis_set(archive_search_key(search_uuid), json.dumps(record), ex=ARCHIVE_SEARCH_TTL_SECONDS)
     try:
@@ -2399,6 +2411,8 @@ def get_archive_search(uuid: str):
         # this field existed still deserializes, just with no range shown.
         "start_date": record.get("start_date"),
         "end_date": record.get("end_date"),
+        "requested_start_date": record.get("requested_start_date"),
+        "requested_end_date": record.get("requested_end_date"),
     })
 
 
