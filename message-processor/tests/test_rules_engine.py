@@ -7,6 +7,7 @@ module has no dependency on the message processor's main.py or SQLite.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -77,6 +78,13 @@ class FlightStub:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _sha(text: str) -> str:
+    """SHA-256 of a config body -- what reload_if_changed() now records as
+    the loaded rules_version/areas_version (see RulesEngine._reload_config)."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
 
 def _engine_with_rules(rules: list, areas: dict | None = None) -> RulesEngine:
     engine = _bare_engine()
@@ -996,7 +1004,7 @@ class TestReloadIfChanged:
 
         engine.reload_if_changed()
         assert len(engine._rules) == 1
-        assert engine._rules_version == "v1"
+        assert engine._rules_version == _sha(rules_json)
 
     def test_public_version_properties_expose_loaded_hash(self):
         redis = MagicMock()
@@ -1014,8 +1022,8 @@ class TestReloadIfChanged:
         }.get(key)
 
         engine.reload_if_changed()
-        assert engine.rules_version == "ruleshash"
-        assert engine.areas_version == "areashash"
+        assert engine.rules_version == _sha(rules_json)
+        assert engine.areas_version == _sha(areas_json)
 
     def test_no_reload_when_version_unchanged(self):
         redis = MagicMock()
@@ -1036,6 +1044,115 @@ class TestReloadIfChanged:
         redis.get.side_effect = ConnectionError("Redis down")
         engine = RulesEngine(redis)
         engine.reload_if_changed()  # should not raise
+
+    # --- self-heal: missing / skewed config:*:version key -------------------
+
+    def test_loads_rules_when_version_key_is_absent(self):
+        """The reported bug: Redis has config:rules but no
+        config:rules:version (older deployment, partial restore, manual
+        seed). A processor must still load those rules on its next poll,
+        with no UI save."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        rules_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        redis.get.side_effect = lambda key: {
+            "config:rules": rules_json,
+            # config:rules:version deliberately absent
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert [r["identifier"] for r in engine._rules] == ["r1"]
+        assert engine.rules_version == _sha(rules_json)
+
+    def test_loads_areas_when_version_key_is_absent(self):
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        areas_json = json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "properties": {"name": "zone", "identifier": "ZONE"},
+                "geometry": {"type": "Polygon", "coordinates": [
+                    [[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]
+                ]},
+            }],
+        })
+        redis.get.side_effect = lambda key: {"config:areas": areas_json}.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert len(engine._areas) == 1
+        assert engine.areas_version == _sha(areas_json)
+
+    def test_no_repeated_reload_once_version_key_absent_rules_loaded(self):
+        """A missing version key means one body fetch per poll, but the
+        body is only *reloaded* the first time -- a subsequent identical
+        poll is a no-op."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        rules_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        redis.get.side_effect = lambda key: {"config:rules": rules_json}.get(key)
+
+        assert engine.reload_if_changed() is True
+        assert engine.reload_if_changed() is False
+        assert engine.reload_if_changed() is False
+
+    def test_empty_ruleset_does_not_reload_every_poll(self):
+        """config:rules == "[]" (a deployment with no rules configured):
+        loads once, then every later poll is a no-op -- not a fresh
+        _load_rules() call each time that would churn last_error."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        redis.get.side_effect = lambda key: {
+            "config:rules": "[]",
+            "config:rules:version": _sha("[]"),
+        }.get(key)
+
+        assert engine.reload_if_changed() is True   # first load
+        assert engine.reload_if_changed() is False
+        assert engine.reload_if_changed() is False
+
+    def test_skewed_version_key_unchanged_body_adopts_real_hash(self):
+        """config:rules:version exists but doesn't match sha256(body) (a
+        failure between the two non-atomic SETs). If the body is what we
+        already loaded, don't reload -- but adopt the true hash so the
+        published version sensor stops matching the skewed key."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        rules_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        engine._rules = [{"identifier": "r1"}]
+        engine._rules_version = _sha(rules_json)
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "skewed-does-not-match-body",
+            "config:rules": rules_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is False
+        assert engine.rules_version == _sha(rules_json)
+
+    def test_skewed_version_key_changed_body_reloads(self):
+        """A skewed version key must not mask an actually-changed body."""
+        redis = MagicMock()
+        engine = RulesEngine(redis)
+        old_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        new_json = json.dumps([_rule("r2", [_cond("altitude", "minimum", "1000")])])
+        engine._rules = [{"identifier": "r1"}]
+        engine._rules_version = _sha(old_json)
+        redis.get.side_effect = lambda key: {
+            "config:rules:version": "still-the-old-skewed-value",
+            "config:rules": new_json,
+        }.get(key)
+
+        reloaded = engine.reload_if_changed()
+
+        assert reloaded is True
+        assert [r["identifier"] for r in engine._rules] == ["r2"]
+        assert engine.rules_version == _sha(new_json)
 
     def test_reload_is_lenient_and_loads_valid_subset(self):
         """A ruleset with one invalid rule (dangling area reference) pushed
@@ -1066,7 +1183,7 @@ class TestReloadIfChanged:
         reloaded = engine.reload_if_changed()
         assert reloaded is True
         assert [r["identifier"] for r in engine._rules] == ["good"]
-        assert engine.rules_version == "v1"
+        assert engine.rules_version == _sha(rules_json)
         assert "bad" in engine.last_error
 
     def test_reload_picks_up_fix_on_next_poll(self):
@@ -1104,7 +1221,7 @@ class TestReloadIfChanged:
         reloaded = engine.reload_if_changed()
         assert reloaded is True
         assert {r["identifier"] for r in engine._rules} == {"good", "bad"}
-        assert engine.rules_version == "v2"
+        assert engine.rules_version == _sha(fixed_rules_json)
         assert engine.last_error is None
 
 
@@ -1137,8 +1254,8 @@ class TestLastErrorNotClobberedAcrossSubsystems:
 
         assert reloaded is True
         # Both subsystems actually reloaded in this cycle.
-        assert engine.rules_version == "v1"
-        assert engine.areas_version == "a1"
+        assert engine.rules_version == _sha(rules_json)
+        assert engine.areas_version == _sha(areas_json)
         assert [r["identifier"] for r in engine._rules] == ["good"]
         # The rules-skip summary must still be visible after the areas
         # reload ran (and succeeded) in the same cycle.
@@ -1152,9 +1269,13 @@ class TestLastErrorNotClobberedAcrossSubsystems:
 
         redis = MagicMock()
         engine = RulesEngine(redis)
-        engine._rules_version = "v1"  # rules unchanged this cycle
+        # Rules unchanged this cycle: a non-empty loaded set whose hash
+        # matches the version key, so the rules fast-path skips entirely.
+        rules_json = json.dumps([_rule("r1", [_cond("altitude", "maximum", "5000")])])
+        engine._rules = [{"identifier": "r1"}]
+        engine._rules_version = _sha(rules_json)
         redis.get.side_effect = lambda key: {
-            "config:rules:version": "v1",
+            "config:rules:version": _sha(rules_json),
             "config:areas:version": "a1",
             "config:areas": areas_json,
         }.get(key)
@@ -1162,7 +1283,7 @@ class TestLastErrorNotClobberedAcrossSubsystems:
         reloaded = engine.reload_if_changed()
 
         assert reloaded is True
-        assert engine.areas_version == "a1"
+        assert engine.areas_version == _sha(areas_json)
         assert engine.last_error is None
 
     def test_rules_only_lenient_reload_still_sets_summary(self):

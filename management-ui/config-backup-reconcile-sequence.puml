@@ -35,6 +35,21 @@ alt Redis has the key
         Backend -> Backend : **Log the seed**\n""logger.info: seeded rules backup file""
     end
 
+    Backend -> Redis++ : **Check the version key exists**\n""GET config:rules:version""
+    Redis --> Backend-- : value, or none
+    alt version key missing (pre-dates the key / partial restore / manual seed)
+        Backend -> Backend : **Compute it from the body**\n""version = sha256(body).hexdigest()""
+        Backend -> Redis++ : **Set the missing version key**\n""SET config:rules:version {version}""
+        Redis --> Backend-- : OK
+        note right of Backend
+            Without this a message processor polls forever with
+            ""GET config:rules:version == None"" and never loads
+            the rules already sitting in config:rules.
+        end note
+    else version key present
+        Backend -> Backend : **Leave it alone**\neven if it doesn't match sha256(body) — a skew is healed on the next save
+    end
+
 else Redis is missing the key
     Backend -> File++ : **Check for a backup file**\n""os.path.exists(rules-backup.json)""
     File --> Backend-- : exists or not
@@ -46,7 +61,7 @@ else Redis is missing the key
         alt parses cleanly
             File --> Backend-- : body
             Backend -> Backend : **Compute the version hash**\n""version = sha256(body).hexdigest()""
-            Backend -> Redis++ : **Restore both keys**\n""SET config:rules {body}""\n""SET config:rules:version {version}""
+            Backend -> Redis++ : **Restore both keys in one transaction**\n""MULTI; SET config:rules {body}; SET config:rules:version {version}; EXEC""
             Redis --> Backend-- : OK
             Backend -> Backend : **Log the restore**\n""logger.info: restored rules from backup file""
         else corrupt or truncated

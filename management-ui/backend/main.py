@@ -708,23 +708,39 @@ def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, l
     backup file at startup, in whichever single direction fills a gap.
     Redis is always authoritative when it has data:
 
-    - Redis has `key`, backup file exists: nothing to do.
+    - Redis has `key`, backup file exists: nothing to do -- except ensure
+      `version_key` exists (see below).
     - Redis has `key`, backup file is missing -- an existing deployment
       upgrading to this feature has real data in Redis but has never
       written a backup file (only _save_rules_array/_save_areas_array do
       that, on save): seed the file from Redis's current value so it
       doesn't stay empty until the next edit. Never overwrites a backup
       file that already exists.
+    - Redis has `key` but not `version_key` -- a deployment from before the
+      version key existed, a partially-restored volume, or a manual seed:
+      compute sha256(body) and set it. Without this a message processor
+      polls forever with `redis.get(version_key) == self._rules_version ==
+      None` and never loads the rules that are sitting in `key`.
     - Redis is missing `key`, backup file exists: restore Redis from the
       file (and its `:version` hash, so RulesEngine's poll-based reload
       picks it up) -- a lost/corrupted Redis volume, or a fresh one.
     - Both missing: nothing to do -- same empty-array behavior as today.
+
+    The body and its version hash are always written together in one
+    transaction (see _redis_set_config_pair for why).
     """
     existing = _redis.get(key)
     if existing is not None:
         if not os.path.exists(backup_path):
             _write_backup_file(backup_path, existing)
             logger.info("Seeded %s backup file %s from existing Redis data.", label, backup_path)
+        if _redis.get(version_key) is None:
+            version = hashlib.sha256(existing.encode()).hexdigest()
+            _redis.set(version_key, version)
+            logger.info(
+                "Set missing %s -- message processors would not have reloaded %s without it.",
+                version_key, label,
+            )
         return
 
     if not os.path.exists(backup_path):
@@ -739,8 +755,10 @@ def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, l
         return
 
     version = hashlib.sha256(body.encode()).hexdigest()
-    _redis.set(key, body)
-    _redis.set(version_key, version)
+    pipe = _redis.pipeline(transaction=True)
+    pipe.set(key, body)
+    pipe.set(version_key, version)
+    pipe.execute()
     logger.info("Restored %s from backup file %s (Redis key was missing).", label, backup_path)
 
 
@@ -967,6 +985,22 @@ def _redis_set(key: str, value: str, **kwargs) -> None:
         raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
 
 
+def _redis_set_config_pair(body_key: str, body: str, version_key: str, version: str) -> None:
+    """Write a config body (config:rules / config:areas) and its
+    `:version` hash in one MULTI/EXEC transaction, so a failure can never
+    leave the two permanently skewed -- a message processor trusts the
+    version key as a fast-path change signal and would not notice a stale
+    body under a matching hash (see message-processor/rules_engine.py's
+    _reload_config)."""
+    try:
+        pipe = _redis.pipeline(transaction=True)
+        pipe.set(body_key, body)
+        pipe.set(version_key, version)
+        pipe.execute()
+    except redis_lib.RedisError as exc:
+        raise HTTPException(status_code=500, detail=f"Redis error: {exc}") from exc
+
+
 def _redis_json_get(key: str) -> Optional[dict]:
     """operator:{designator}/airport:{code} are real RedisJSON documents
     (written via shared/redis_json.py's set_json(), same as every
@@ -1163,8 +1197,7 @@ def _save_rules_array(rules: list[dict]) -> None:
         raise HTTPException(status_code=400, detail=_engine.last_error or "Invalid rules")
 
     version = hashlib.sha256(body.encode()).hexdigest()
-    _redis_set(config_rules_key(), body)
-    _redis_set(config_rules_version_key(), version)
+    _redis_set_config_pair(config_rules_key(), body, config_rules_version_key(), version)
     _write_backup_file(_rules_backup_path(), body)
 
 
@@ -1350,8 +1383,7 @@ def _save_areas_array(areas: list[dict], expect_identifier: Optional[str] = None
             )
 
     version = hashlib.sha256(body.encode()).hexdigest()
-    _redis_set(config_areas_key(), body)
-    _redis_set(config_areas_version_key(), version)
+    _redis_set_config_pair(config_areas_key(), body, config_areas_version_key(), version)
     _write_backup_file(_areas_backup_path(), body)
 
 
