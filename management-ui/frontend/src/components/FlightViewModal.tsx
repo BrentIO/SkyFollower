@@ -167,7 +167,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-slate-800">
+      <div className="flex max-h-[80vh] w-[80vw] flex-col overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-slate-800">
         <div className="flex items-start justify-between gap-4 p-5 pb-3">
           <div className="min-w-0">
             {loading ? (
