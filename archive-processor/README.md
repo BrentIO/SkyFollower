@@ -1,12 +1,17 @@
 # Archive Processor
 
 The archive processor consumes completed flight records from the RabbitMQ
-`skyfollower-archive` queue, builds a 3D GeoJSON `LineString` of the flight path
-(interpolating missing altitude from adjacent position reports), writes each
-flight as gzip-compressed JSON to AWS S3, and writes a small per-flight
-Parquet index row alongside it in the same bucket, queryable via AWS
-Athena/Glue without needing to scan S3. When S3 is unavailable, completed
-flights are queued locally and drained automatically once S3 reconnects.
+`skyfollower-archive` queue, writes each flight as gzip-compressed JSON to
+AWS S3, and writes a small per-flight Parquet index row alongside it in the
+same bucket, queryable via AWS Athena/Glue without needing to scan S3. When
+S3 is unavailable, completed flights are queued locally and drained
+automatically once S3 reconnects.
+
+A flight's GeoJSON flight path (3D `LineString`, altitude interpolated from
+adjacent position reports where missing) is not stored — it's derivable from
+`positions[]` at any time, so `shared/flight_path.py` builds it on demand for
+any component that needs it (e.g. management-ui's flight-view feature)
+instead of archive-processor persisting a duplicate copy.
 
 ![Archive processor architecture](./archive-processor.svg)
 
@@ -136,14 +141,10 @@ The key carries no `icao_hex`/`ident` segment — the Parquet index row already
 stores those as their own indexed columns, and no query path recovers them
 by parsing the key.
 
-The object body is the completed flight record (see
-[shared/README.md](../shared/README.md)
-for `CompletedFlight`) with one addition: a `flight_path` GeoJSON `Feature`
-built from `positions`. Each
-coordinate is `[lon, lat, alt_ft]` when altitude is known (interpolated
-linearly from the nearest preceding/following position with an altitude) or
-`[lon, lat]` when no altitude is known anywhere nearby. Flights with fewer
-than two positions have no `flight_path`. The payload is gzip-compressed
+The object body is the completed flight record as-is (see
+[shared/README.md](../shared/README.md) for `CompletedFlight`) — no derived
+`flight_path` is added; a consumer builds it on demand from `positions[]`
+via `shared/flight_path.py` when it needs one. The payload is gzip-compressed
 before upload, with `ContentType: application/json` and
 `ContentEncoding: gzip`.
 
@@ -164,8 +165,8 @@ to. The archive processor detects and merges this after the fact:
   `flight_ttl_seconds` of the pointer's `last_message`, this is treated as
   a continuation rather than a new flight: the archive processor fetches
   the previous S3 object, merges the two segments — concatenated and
-  re-sorted `positions`/`velocities`, a recomputed `flight_path`, a deduped
-  union of `matched_rules`, and summed `total_messages` — and overwrites
+  re-sorted `positions`/`velocities`, a deduped union of `matched_rules`,
+  and summed `total_messages` — and overwrites
   the *original* S3 object under its original `_id`. The new segment's own
   S3 object is never created.
 - A gap beyond `flight_ttl_seconds`, a *negative* gap, or no pointer at

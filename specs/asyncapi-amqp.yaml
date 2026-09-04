@@ -283,10 +283,8 @@ components:
       name: ArchiveQueueMessage
       title: Completed flight record
       summary: >
-        Full completed-flight record queued for archival — positions and
-        velocities included, flight_path not yet added (the archive
-        processor adds that after reading this off the queue, immediately
-        before the S3 write)
+        Full completed-flight record queued for archival, with positions and
+        velocities included
       contentType: application/json
       payload:
         $ref: '#/components/schemas/CompletedFlightPayload'
@@ -336,9 +334,9 @@ components:
         as the legacy MongoDB document, plus _id/receiver_sources/
         force_archive. See specs/data-dictionary.yaml's `flight` record for
         the exhaustive field-by-field reference of the same document once
-        the archive processor has finished with it (adds flight_path,
-        writes it gzipped to S3); everything below is present at the
-        moment it's queued.
+        the archive processor has written it gzipped to S3; everything
+        below is present at the moment it's queued and unchanged by the S3
+        write.
       required: [_id, first_message, last_message, total_messages, receiver_sources, force_archive, aircraft, matched_rules]
       properties:
         _id:

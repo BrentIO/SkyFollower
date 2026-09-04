@@ -17,6 +17,14 @@ time via a relative path reference in their `requirements.txt`.
   (`CompletedFlight`). Also exports `generate_flight_id()` which returns
   a UUID-v7 string used as the `_id` of each archived flight.
 
+- **`flight_path.py`** — `build_flight_path()`, which interpolates a flight's
+  missing altitude values across its `positions[]` and builds the resulting
+  3D GeoJSON `LineString` `Feature` (returns `None` for fewer than 2
+  positions). Nothing persists this — it's always rebuilt on demand from
+  `positions[]`, so archive-processor, management-ui's flight-view feature,
+  and any future moving-map feature all call this instead of each keeping
+  their own copy of the interpolation logic.
+
 - **`config.py`** — `load_config()`, which builds a component's configuration
   from environment variables and returns the nested dictionary shape every
   component already consumed. A component names the blocks it reads
