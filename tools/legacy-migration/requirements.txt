@@ -1,4 +1,4 @@
-pymongo==4.10.1
+pymongo==4.17.0
 pika==1.4.4
 boto3==1.43.81
 pyarrow==25.0.1
