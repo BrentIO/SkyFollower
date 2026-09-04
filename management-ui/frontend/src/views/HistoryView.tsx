@@ -65,14 +65,18 @@ const DEFAULT_PAGE_SIZE = 100;
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 
 // Every column header in the results table that's sortable, in display
-// order -- mirrors main.py's _SORTABLE_COLUMNS.
+// order -- mirrors main.py's _SORTABLE_COLUMNS. `military` is deliberately
+// not listed here -- it no longer has its own column (the badge now lives
+// inline in Operator), and it was never a commonly-used sort relative to
+// registration/ident/operator, so no replacement sort affordance is
+// offered. It remains a valid ArchiveSearchSortColumn/backend sort option
+// even though no UI control reaches it.
 const SORTABLE_COLUMNS: { column: ArchiveSearchSortColumn; label: string }[] = [
   { column: "registration", label: "Registration" },
   { column: "icao_hex", label: "ICAO Hex" },
   { column: "ident", label: "Ident" },
   { column: "operator_designator", label: "Operator" },
   { column: "type_designator", label: "Type" },
-  { column: "military", label: "Military" },
   { column: "first_message", label: "First Message" },
   { column: "last_message", label: "Last Message" },
 ];
@@ -304,9 +308,13 @@ function SearchResultsPanel({
                 <td className="px-2 py-1.5">{row.registration}</td>
                 <td className="px-2 py-1.5 font-mono">{row.icao_hex}</td>
                 <td className="px-2 py-1.5">{row.ident}</td>
-                <td className="px-2 py-1.5">{row.operator_designator}</td>
+                <td className="px-2 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span>{row.operator_designator}</span>
+                    {row.military && <Badge color="green">Military</Badge>}
+                  </div>
+                </td>
                 <td className="px-2 py-1.5">{row.type_designator}</td>
-                <td className="px-2 py-1.5">{row.military && <Badge color="green">Military</Badge>}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
                 <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
                 <td className="px-2 py-1.5">
