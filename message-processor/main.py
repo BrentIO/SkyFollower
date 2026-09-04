@@ -800,6 +800,11 @@ class MessageProcessor:
 
     def _setup_logging(self) -> None:
         configure_logging(self._cfg.get("log_level"))
+        # pika's own loggers re-emit several ERROR-level lines plus a
+        # traceback on every reconnect attempt; message-processor's own
+        # WARNING line in _consume_loop already carries the real cause
+        # (see the %r repr there), so silence pika's duplicate noise.
+        logging.getLogger("pika").setLevel(logging.CRITICAL)
 
     def _claim_message_processor_id(self) -> None:
         """Prevent two message processors with the same ID running simultaneously."""
@@ -891,7 +896,7 @@ class MessageProcessor:
                 self._rmq_connected = False
                 self._close_rmq_connection()
                 logger.warning(
-                    "RabbitMQ unavailable: %s. Retrying in %ss…",
+                    "RabbitMQ unavailable: %r. Retrying in %ss…",
                     exc, RECONNECT_BACKOFF_SECONDS,
                 )
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
@@ -899,7 +904,7 @@ class MessageProcessor:
                 self._rmq_connected = False
                 self._close_rmq_connection()
                 logger.error(
-                    "RabbitMQ error: %s. Retrying in %ss…",
+                    "RabbitMQ error: %r. Retrying in %ss…",
                     exc, RECONNECT_BACKOFF_SECONDS,
                 )
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
