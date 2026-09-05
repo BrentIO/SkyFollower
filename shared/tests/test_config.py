@@ -443,7 +443,7 @@ class TestShape:
         }
         assert cfg["mongo"] == {
             "uri": "mongodb://legacy.example.com/skyfollower",
-            "database": "skyfollower",
+            "database": "SkyFollower",
             "collection": "flights",
         }
         assert cfg["legacy_migration_s3"] == {
@@ -521,7 +521,7 @@ class TestBlockHelpers:
     def test_mongo_config_defaults_database_and_collection(self):
         assert mongo_config(ConfigLoader(_MONGO)) == {
             "uri": "mongodb://legacy.example.com/skyfollower",
-            "database": "skyfollower",
+            "database": "SkyFollower",
             "collection": "flights",
         }
 

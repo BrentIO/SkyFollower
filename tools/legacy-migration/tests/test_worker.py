@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import pyarrow.parquet as pq
 from botocore.exceptions import ClientError
 
+import common
 import worker
 from shared.archive_index import PARQUET_INDEX_SCHEMA
 
@@ -38,10 +39,27 @@ class _FakeCollection:
 class _FakeChannel:
     def __init__(self):
         self.dlq = []
+        self.acked = []
+        self.nacked = []
+        self.stop_consuming_called = False
 
     def basic_publish(self, exchange, routing_key, body, properties=None):
         payload = json.loads(body)
         self.dlq.append((routing_key, payload["_id"], payload["reason"]))
+
+    def basic_ack(self, delivery_tag):
+        self.acked.append(delivery_tag)
+
+    def basic_nack(self, delivery_tag, requeue=False):
+        self.nacked.append((delivery_tag, requeue))
+
+    def stop_consuming(self):
+        self.stop_consuming_called = True
+
+
+class _FakeMethod:
+    def __init__(self, delivery_tag=1):
+        self.delivery_tag = delivery_tag
 
 
 def _doc_id_from_key(key: str) -> str:
@@ -53,11 +71,12 @@ class _FakeS3:
     been "copied" (tracked in self._copied); copy_object records the move.
     """
 
-    def __init__(self, missing_source_for=(), etag_mismatch_for=()):
+    def __init__(self, missing_source_for=(), etag_mismatch_for=(), throttle_put_object_times=0):
         self._missing_source_for = set(missing_source_for)
         self._etag_mismatch_for = set(etag_mismatch_for)
         self._copied: set[str] = set()
         self.put_calls = []
+        self._throttle_put_object_times = throttle_put_object_times
 
     def head_object(self, Bucket, Key):
         doc_id = _doc_id_from_key(Key)
@@ -75,6 +94,9 @@ class _FakeS3:
         self._copied.add(_doc_id_from_key(Key))
 
     def put_object(self, Bucket, Key, Body):
+        if self._throttle_put_object_times > 0:
+            self._throttle_put_object_times -= 1
+            raise ClientError({"Error": {"Code": "SlowDown"}}, "PutObject")
         self.put_calls.append((Bucket, Key, Body))
 
 
@@ -151,3 +173,80 @@ class TestProcessDay:
 
         assert channel.dlq == []
         assert len(s3.put_calls) == 1
+
+    def test_throttled_index_put_object_is_retried_not_raised(self, monkeypatch):
+        monkeypatch.setattr(common.time, "sleep", lambda *_: None)
+        docs = [_doc("id1")]
+        collection = _FakeCollection(docs)
+        s3 = _FakeS3(throttle_put_object_times=2)
+        channel = _FakeChannel()
+
+        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+
+        assert channel.dlq == []
+        assert len(s3.put_calls) == 1
+
+
+class TestOnMessage:
+    def test_valid_message_processes_day_and_acks(self):
+        docs = [_doc("id1")]
+        collection = _FakeCollection(docs)
+        s3 = _FakeS3()
+        channel = _FakeChannel()
+        on_message = worker.build_on_message(collection, s3, "src", "dst")
+
+        on_message(channel, _FakeMethod(delivery_tag=7), None, json.dumps({"date": "2024-05-31"}).encode())
+
+        assert channel.acked == [7]
+        assert channel.nacked == []
+        assert len(s3.put_calls) == 1
+
+    def test_unparseable_json_is_dropped_not_requeued(self):
+        channel = _FakeChannel()
+        on_message = worker.build_on_message(_FakeCollection([]), _FakeS3(), "src", "dst")
+
+        on_message(channel, _FakeMethod(delivery_tag=3), None, b"not json")
+
+        assert channel.acked == [3]
+        assert channel.nacked == []
+
+    def test_missing_date_key_is_dropped_not_requeued(self):
+        channel = _FakeChannel()
+        on_message = worker.build_on_message(_FakeCollection([]), _FakeS3(), "src", "dst")
+
+        on_message(channel, _FakeMethod(delivery_tag=9), None, b"{}")
+
+        assert channel.acked == [9]
+        assert channel.nacked == []
+
+    def test_process_day_exception_nacks_with_requeue(self):
+        class _ExplodingCollection:
+            def find(self, query):
+                raise RuntimeError("Mongo unavailable")
+
+        channel = _FakeChannel()
+        on_message = worker.build_on_message(_ExplodingCollection(), _FakeS3(), "src", "dst")
+
+        on_message(channel, _FakeMethod(delivery_tag=5), None, json.dumps({"date": "2024-05-31"}).encode())
+
+        assert channel.acked == []
+        assert channel.nacked == [(5, True)]
+
+
+class TestShutdownHandler:
+    def test_stops_consuming(self):
+        channel = _FakeChannel()
+        handler = worker.build_shutdown_handler(channel)
+
+        handler(None, None)
+
+        assert channel.stop_consuming_called is True
+
+    def test_swallows_exception_from_stop_consuming(self):
+        class _ExplodingChannel(_FakeChannel):
+            def stop_consuming(self):
+                raise RuntimeError("already stopped")
+
+        handler = worker.build_shutdown_handler(_ExplodingChannel())
+
+        handler(None, None)  # must not raise

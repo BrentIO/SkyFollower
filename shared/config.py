@@ -211,7 +211,7 @@ def mongo_config(loader: Optional[ConfigLoader] = None) -> dict:
     loader, own = _own_loader(loader)
     block = {
         "uri": loader.string("MONGO_URI"),
-        "database": loader.string("MONGO_DATABASE", "skyfollower"),
+        "database": loader.string("MONGO_DATABASE", "SkyFollower"),
         "collection": loader.string("MONGO_COLLECTION", "flights"),
     }
     if own:

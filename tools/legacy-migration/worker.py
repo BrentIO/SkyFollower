@@ -17,6 +17,7 @@ import argparse
 import io
 import json
 import logging
+import signal
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -28,6 +29,7 @@ from common import (
     WORK_QUEUE_NAME,
     build_completed_flight,
     build_s3_client,
+    compacted_index_key,
     connect_mongo,
     connect_rabbitmq,
     day_bounds_utc,
@@ -36,6 +38,7 @@ from common import (
     copy_and_verify,
     guard_reason,
     publish_dlq,
+    s3_retry,
     source_key,
 )
 
@@ -44,23 +47,9 @@ from shared.config import load_config
 
 logger = logging.getLogger("legacy-migration.worker")
 
-# Deliberately a fixed name, not a per-run UUID: this tool never deletes
-# (see the issue's IAM policy -- no s3:DeleteObject anywhere), so a re-run
-# of a day must overwrite this same object via PutObject rather than leave
-# an orphaned duplicate behind under the same partition. archive-processor's
-# own per-flight index files (build_index_s3_key) DO need a UUID name
-# since many are written per day; this tool writes exactly one file per
-# day, so a name derived from the date alone is sufficient.
-_COMPACTED_INDEX_FILENAME = "legacy-migration.parquet"
-
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     pass  # no CLI flags -- the worker is a long-lived consumer, fully config-driven
-
-
-def _compacted_index_key(date_str: str) -> str:
-    yyyy, mm, dd = date_str.split("-")
-    return f"index/year={yyyy}/month={mm}/day={dd}/{_COMPACTED_INDEX_FILENAME}"
 
 
 def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, channel, date_str: str) -> None:
@@ -108,9 +97,62 @@ def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, cha
     sink = io.BytesIO()
     pq.write_table(table, sink)
 
-    index_key = _compacted_index_key(date_str)
-    s3_client.put_object(Bucket=dest_bucket, Key=index_key, Body=sink.getvalue())
+    index_key = compacted_index_key(date_str)
+    s3_retry(s3_client.put_object, Bucket=dest_bucket, Key=index_key, Body=sink.getvalue())
     logger.info("Day %s: migrated/verified %d flight(s), wrote %s", date_str, len(rows), index_key)
+
+
+def build_on_message(collection, s3_client, source_bucket: str, dest_bucket: str):
+    """Factory rather than a closure inlined in run() so the callback is
+    unit-testable without a real Mongo/S3/RabbitMQ connection."""
+
+    def on_message(ch, method, _properties, body):
+        try:
+            payload = json.loads(body)
+            date_str = payload["date"]
+        except (json.JSONDecodeError, KeyError) as exc:
+            # Can never succeed on redelivery -- acking (dropping) it,
+            # rather than nacking, is what prevents this from becoming an
+            # infinite redelivery loop that also wedges the queue behind
+            # it (prefetch_count=1).
+            logger.error("Malformed queue message, dropping: %s (body=%r)", exc, body)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
+        try:
+            process_day(collection, s3_client, source_bucket, dest_bucket, ch, date_str)
+        except Exception:
+            # Systemic (Mongo/S3/RabbitMQ) failure, not a per-flight data
+            # problem -- those are handled inside process_day and never
+            # reach here. Give up on this day and let RabbitMQ redeliver
+            # it, rather than waiting on a timeout.
+            logger.exception("Unrecoverable error processing day %s; requeueing", date_str)
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    return on_message
+
+
+def build_shutdown_handler(channel):
+    """Factory rather than a closure inlined in run() so the handler is
+    unit-testable in isolation from signal.signal()/a real connection."""
+
+    def _handle_signal(sig, frame):
+        # Signal handlers run on the main thread even when delivered while
+        # it's blocked inside start_consuming()'s C call, so calling
+        # stop_consuming() directly here is safe -- same as
+        # archive-processor's shutdown(). Without a handler, SIGTERM (from
+        # docker compose down/stop or a scale-down) exits immediately with
+        # no clean stop_consuming()/connection.close(), sitting out the
+        # full stop-grace period before SIGKILL.
+        logger.info("Shutdown requested, stopping consumer...")
+        try:
+            channel.stop_consuming()
+        except Exception:
+            pass
+
+    return _handle_signal
 
 
 def run(args: argparse.Namespace) -> None:
@@ -126,26 +168,14 @@ def run(args: argparse.Namespace) -> None:
     # A day in flight at a time -- see module docstring.
     channel.basic_qos(prefetch_count=1)
 
-    def on_message(ch, method, _properties, body):
-        payload = json.loads(body)
-        date_str = payload["date"]
-        try:
-            process_day(collection, s3_client, source_bucket, dest_bucket, ch, date_str)
-        except Exception:
-            # Systemic (Mongo/S3/RabbitMQ) failure, not a per-flight data
-            # problem -- those are handled inside process_day and never
-            # reach here. Give up on this day and let RabbitMQ redeliver
-            # it, rather than waiting on a timeout.
-            logger.exception("Unrecoverable error processing day %s; requeueing", date_str)
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-            return
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-
+    on_message = build_on_message(collection, s3_client, source_bucket, dest_bucket)
     channel.basic_consume(queue=WORK_QUEUE_NAME, on_message_callback=on_message)
     logger.info("Worker ready, consuming from %s (DLQ: %s)", WORK_QUEUE_NAME, DLQ_NAME)
+
+    signal.signal(signal.SIGTERM, build_shutdown_handler(channel))
+    signal.signal(signal.SIGINT, build_shutdown_handler(channel))
+
     try:
         channel.start_consuming()
-    except KeyboardInterrupt:
-        channel.stop_consuming()
     finally:
         connection.close()

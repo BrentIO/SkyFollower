@@ -14,6 +14,13 @@ beyond what the migration already has):
    object under SSE-S3, true for both buckets here -- see the issue's
    "Verification" section) compared source vs. destination. A mismatch is
    an anomaly to investigate, not something this tool fixes automatically.
+
+3. Compacted index presence: for any day with mongo_count > 0, the worker's
+   one compacted Parquet index file for that day (common.compacted_index_key)
+   must exist. This is the last gate before an operator deletes the legacy
+   bucket by hand, so a day that migrated flight objects but never got its
+   index file (e.g. the index put_object failed after every copy succeeded,
+   pre-#1466) must not read as CLEAN.
 """
 
 from __future__ import annotations
@@ -21,7 +28,15 @@ from __future__ import annotations
 import argparse
 import logging
 
-from common import build_s3_client, connect_mongo, iter_dates, source_key, MIGRATED_EXISTS_FILTER, day_bounds_utc
+from common import (
+    MIGRATED_EXISTS_FILTER,
+    build_s3_client,
+    compacted_index_key,
+    connect_mongo,
+    day_bounds_utc,
+    iter_dates,
+    source_key,
+)
 
 from shared.config import load_config
 
@@ -61,6 +76,7 @@ def run(args: argparse.Namespace) -> None:
     dest_bucket = cfg["legacy_migration_s3"]["dest_bucket"]
 
     attention_days = 0
+    missing_index_days = 0
     mismatch_count = 0
     objects_checked = 0
 
@@ -81,6 +97,14 @@ def run(args: argparse.Namespace) -> None:
         else:
             logger.info("%s: OK mongo=%d s3=%d", date_str, mongo_count, s3_count)
 
+        if mongo_count > 0:
+            index_key = compacted_index_key(date_str)
+            try:
+                s3_client.head_object(Bucket=dest_bucket, Key=index_key)
+            except Exception:
+                missing_index_days += 1
+                logger.warning("%s: ATTENTION missing compacted index file %s", date_str, index_key)
+
         for obj in dest_objects:
             doc_id = _doc_id_from_dest_key(obj["Key"])
             try:
@@ -97,10 +121,12 @@ def run(args: argparse.Namespace) -> None:
                     date_str, doc_id, source_head["ETag"], obj["ETag"], obj["Key"],
                 )
 
-    clean = attention_days == 0 and mismatch_count == 0
+    clean = attention_days == 0 and missing_index_days == 0 and mismatch_count == 0
     logger.info(
-        "Verify complete: %d day(s) needing attention, %d object(s) checked, %d ETag mismatch(es) -- %s",
-        attention_days, objects_checked, mismatch_count, "CLEAN" if clean else "NOT CLEAN",
+        "Verify complete: %d day(s) needing attention, %d day(s) missing a compacted index file, "
+        "%d object(s) checked, %d ETag mismatch(es) -- %s",
+        attention_days, missing_index_days, objects_checked, mismatch_count,
+        "CLEAN" if clean else "NOT CLEAN",
     )
     if not clean:
         raise SystemExit(1)

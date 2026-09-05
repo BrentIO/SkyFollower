@@ -65,21 +65,39 @@ class TestCatchAllSweep:
         assert query["$or"][1]["first_message"]["$gte"] == datetime(2024, 6, 1, tzinfo=timezone.utc)
 
 
-class TestRun:
-    def test_publishes_one_day_per_date_and_runs_sweep_first(self, monkeypatch):
-        collection = _FakeCollection([])
-        channel = _FakeChannel()
-        connection = _FakeConnection(channel)
+class TestShouldSweep:
+    def test_true_for_full_history_range(self, monkeypatch):
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+        assert producer._should_sweep(producer.EARLIEST_FLIGHT_DATE, "2026-09-05") is True
+        # Wider than strictly necessary is still a full-history range.
+        assert producer._should_sweep("2020-01-01", "2027-01-01") is True
 
+    def test_false_for_a_later_start_date(self, monkeypatch):
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+        assert producer._should_sweep("2026-08-01", "2026-09-05") is False
+
+    def test_false_for_an_earlier_end_date(self, monkeypatch):
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+        assert producer._should_sweep(producer.EARLIEST_FLIGHT_DATE, "2022-07-13") is False
+
+
+class TestRun:
+    def _run(self, monkeypatch, collection, channel, connection, **args_kwargs):
         monkeypatch.setattr(producer, "connect_mongo", lambda cfg: collection)
         monkeypatch.setattr(producer, "connect_rabbitmq", lambda cfg: connection)
         monkeypatch.setattr(
             producer, "load_config",
             lambda *blocks: {"rabbitmq": {}, "mongo": {}},
         )
+        args_kwargs.setdefault("sweep", None)
+        producer.run(argparse.Namespace(**args_kwargs))
 
-        args = argparse.Namespace(start_date="2024-05-30", end_date="2024-06-01")
-        producer.run(args)
+    def test_publishes_one_day_per_date(self, monkeypatch):
+        collection = _FakeCollection([])
+        channel = _FakeChannel()
+        connection = _FakeConnection(channel)
+
+        self._run(monkeypatch, collection, channel, connection, start_date="2024-05-30", end_date="2024-06-01")
 
         assert channel.published_dates == ["2024-05-30", "2024-05-31", "2024-06-01"]
         assert connection.closed is True
@@ -88,13 +106,62 @@ class TestRun:
         collection = _FakeCollection([])
         channel = _FakeChannel()
         connection = _FakeConnection(channel)
-
-        monkeypatch.setattr(producer, "connect_mongo", lambda cfg: collection)
-        monkeypatch.setattr(producer, "connect_rabbitmq", lambda cfg: connection)
-        monkeypatch.setattr(producer, "load_config", lambda *blocks: {"rabbitmq": {}, "mongo": {}})
         monkeypatch.setattr(producer, "today_utc_date", lambda: "2024-05-31")
 
-        args = argparse.Namespace(start_date="2024-05-31", end_date=None)
-        producer.run(args)
+        self._run(monkeypatch, collection, channel, connection, start_date="2024-05-31", end_date=None)
 
         assert channel.published_dates == ["2024-05-31"]
+
+    def test_windowed_run_publishes_zero_sweep_dlq_messages(self, monkeypatch):
+        # A pass-2-shaped tail run: start_date well after EARLIEST_FLIGHT_DATE.
+        # Every already-migrated document in bulk history would match the
+        # sweep's own first_message < start_date branch if the sweep ran.
+        collection = _FakeCollection([{"_id": "bulk-history-doc"}])
+        channel = _FakeChannel()
+        connection = _FakeConnection(channel)
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+
+        self._run(monkeypatch, collection, channel, connection, start_date="2026-08-01", end_date="2026-09-05")
+
+        assert channel.dlq == []
+        assert collection.last_query is None
+
+    def test_full_range_run_still_sweeps(self, monkeypatch):
+        collection = _FakeCollection([{"_id": "genuinely-out-of-range"}])
+        channel = _FakeChannel()
+        connection = _FakeConnection(channel)
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+
+        self._run(
+            monkeypatch, collection, channel, connection,
+            start_date=producer.EARLIEST_FLIGHT_DATE, end_date="2026-09-05",
+        )
+
+        assert channel.dlq == ["genuinely-out-of-range"]
+
+    def test_sweep_flag_forces_it_on_for_a_windowed_range(self, monkeypatch):
+        collection = _FakeCollection([{"_id": "forced-sweep-doc"}])
+        channel = _FakeChannel()
+        connection = _FakeConnection(channel)
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+
+        self._run(
+            monkeypatch, collection, channel, connection,
+            start_date="2026-08-01", end_date="2026-09-05", sweep=True,
+        )
+
+        assert channel.dlq == ["forced-sweep-doc"]
+
+    def test_no_sweep_flag_forces_it_off_for_a_full_range(self, monkeypatch):
+        collection = _FakeCollection([{"_id": "would-have-swept"}])
+        channel = _FakeChannel()
+        connection = _FakeConnection(channel)
+        monkeypatch.setattr(producer, "today_utc_date", lambda: "2026-09-05")
+
+        self._run(
+            monkeypatch, collection, channel, connection,
+            start_date=producer.EARLIEST_FLIGHT_DATE, end_date="2026-09-05", sweep=False,
+        )
+
+        assert channel.dlq == []
+        assert collection.last_query is None
