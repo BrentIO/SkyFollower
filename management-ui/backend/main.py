@@ -2894,6 +2894,7 @@ class FlightView(BaseModel):
     last_message: datetime
     total_messages: int
     matched_rules: list[str] = []
+    receiver_sources: list[str] = []     # "1090"/"978"/"EXTERNAL" -- every distinct ADS-B receive source seen; empty for legacy-migrated flights
     flight_path: Optional[dict] = None   # GeoJSON LineString Feature, or None for <2 positions
 
 
@@ -2932,6 +2933,7 @@ def get_archive_flight_view(token: str):
         last_message=flight["last_message"],
         total_messages=flight["total_messages"],
         matched_rules=flight.get("matched_rules", []),
+        receiver_sources=flight.get("receiver_sources", []),
         flight_path=build_flight_path(flight.get("positions", [])),
     )
 

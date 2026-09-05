@@ -79,6 +79,7 @@ export interface FlightView {
   last_message: string;
   total_messages: number;
   matched_rules: string[];
+  receiver_sources: string[];
   // A GeoJSON LineString Feature, or absent when the flight has fewer than
   // 2 positions.
   flight_path?: {
