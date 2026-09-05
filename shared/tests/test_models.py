@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from shared.models import (
     AircraftRecord,
+    AirportRecord,
     CompletedFlight,
     InboundMessage,
     OperatorRecord,
@@ -212,6 +213,38 @@ class TestOperatorRecord:
             country="US",
         )
         assert rec.name == "Delta Air Lines"
+
+
+class TestAirportRecord:
+    def test_minimal(self):
+        rec = AirportRecord(icao_code="KATL")
+        assert rec.icao_code == "KATL"
+        assert rec.name is None
+        assert rec.iata_code is None
+        assert rec.region is None
+        assert rec.region_code is None
+        assert rec.country is None
+        assert rec.country_code is None
+        assert rec.phonic is None
+
+    def test_full(self):
+        rec = AirportRecord(
+            icao_code="YBCS",
+            iata_code="CNS",
+            name="Cairns Airport",
+            city="Cairns",
+            region="Queensland",
+            region_code="AU-QLD",
+            country="Australia",
+            country_code="AU",
+            latitude=-16.885803,
+            longitude=145.755005,
+            phonic="Cairns",
+        )
+        assert rec.region == "Queensland"
+        assert rec.region_code == "AU-QLD"
+        assert rec.country == "Australia"
+        assert rec.country_code == "AU"
 
 
 class TestCompletedFlight:

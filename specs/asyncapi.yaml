@@ -1922,6 +1922,10 @@ components:
         icao_code:
           type: string
           example: KATL
+        iata_code:
+          type: string
+          description: IATA 3-character airport code; omitted if blank
+          example: ATL
         name:
           type: string
           example: Hartsfield-Jackson Atlanta International Airport
@@ -1930,10 +1934,19 @@ components:
           example: Atlanta
         region:
           type: string
-          description: ISO 3166-2 region code
+          description: Resolved subdivision display name
+          example: Georgia
+        region_code:
+          type: string
+          description: Raw ISO 3166-2 subdivision code, unresolved
           example: US-GA
         country:
           type: string
+          description: Resolved country display name
+          example: United States
+        country_code:
+          type: string
+          description: Raw ISO 3166-1 alpha-2 country code, unresolved
           example: US
         phonic:
           type: string

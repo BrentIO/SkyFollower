@@ -965,7 +965,7 @@ sources:
     url: "https://davidmegginson.github.io/ourairports-data/airports.csv"
     format: csv
     cadence: weekly_monday
-    notes: "Filtered to 4-character ICAO codes only (3-char and other-length idents dropped); stored as Redis JSON via JSON.SET in airport:{icao_code} keys; RediSearch index idx:airport on icao_code and iata_code TagFields; phonic name computed algorithmically from name + municipality fields with optional host-provided phonic_overrides.json override file; iata_code omitted if blank; latitude/longitude stored as floats"
+    notes: "Filtered to 4-character ICAO codes only (3-char and other-length idents dropped); stored as Redis JSON via JSON.SET in airport:{icao_code} keys; RediSearch index idx:airport on icao_code and iata_code TagFields; phonic name computed algorithmically from name + municipality fields with optional host-provided phonic_overrides.json override file; iata_code omitted if blank; latitude/longitude stored as floats; iso_region/iso_country are resolved to display names via a {code: name} join against regions.csv/countries.csv (falling back to the raw code on no match, e.g. unassigned placeholders like US-U-A), with the raw codes retained separately as region_code/country_code"
     files:
       - name: airports.csv
         format: csv
@@ -974,10 +974,20 @@ sources:
           iata_code:      IATA 3-character airport code (omitted from record if blank)
           name:           official airport name
           municipality:   city/municipality name (stored as city)
-          iso_region:     ISO 3166-2 subdivision code (e.g. US-FL; stored as region)
-          iso_country:    ISO 3166-1 alpha-2 country code
+          iso_region:     ISO 3166-2 subdivision code (e.g. AU-QLD; stored verbatim as region_code, and joined against regions.csv to produce region)
+          iso_country:    ISO 3166-1 alpha-2 country code (stored verbatim as country_code, and joined against countries.csv to produce country)
           latitude_deg:   decimal latitude (stored as latitude float)
           longitude_deg:  decimal longitude (stored as longitude float)
+      - name: regions.csv
+        format: csv
+        columns:
+          code:  ISO 3166-2 subdivision code (e.g. AU-QLD); join key against airports.csv's iso_region
+          name:  subdivision display name (e.g. Queensland); stored as region
+      - name: countries.csv
+        format: csv
+        columns:
+          code:  ISO 3166-1 alpha-2 country code (e.g. AU); join key against airports.csv's iso_country
+          name:  country display name (e.g. Australia); stored as country
 
   airportwebcams:
     description: "Airport Webcams Special Liveries database — aircraft in retro/special/sponsor liveries; special_livery is spoken by Home Assistant TTS on a matched-flight notification, so it is derived/cleaned, not stored verbatim"
@@ -3828,7 +3838,19 @@ records:
             field: municipality
       region:
         type: string
-        description: "ISO 3166-2 subdivision code (e.g. US-FL)"
+        description: "Resolved subdivision display name (e.g. Queensland)"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: iso_region
+            transform:
+              type: code_to_name_join
+              join_file: regions.csv
+              description: "Looked up by regions.csv's code column (e.g. AU-QLD), reading its name column; falls back to the raw iso_region code (stored separately as region_code) when regions.csv has no matching row, e.g. unassigned placeholders like US-U-A"
+      region_code:
+        type: string
+        description: "Raw ISO 3166-2 subdivision code (e.g. AU-QLD), unresolved"
         persisted: true
         sources:
           - source: ourairports
@@ -3836,7 +3858,19 @@ records:
             field: iso_region
       country:
         type: string
-        description: "ISO 3166-1 alpha-2 country code"
+        description: "Resolved country display name (e.g. Australia)"
+        persisted: true
+        sources:
+          - source: ourairports
+            file: airports.csv
+            field: iso_country
+            transform:
+              type: code_to_name_join
+              join_file: countries.csv
+              description: "Looked up by countries.csv's code column (e.g. AU), reading its name column; falls back to the raw iso_country code (stored separately as country_code) when countries.csv has no matching row"
+      country_code:
+        type: string
+        description: "Raw ISO 3166-1 alpha-2 country code (e.g. AU), unresolved"
         persisted: true
         sources:
           - source: ourairports

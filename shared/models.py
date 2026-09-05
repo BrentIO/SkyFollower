@@ -148,13 +148,16 @@ class AirportRecord(BaseModel):
     """Airport metadata. Stored in Redis at airport:{icao_code}."""
 
     icao_code: str = Field(title="ICAO Code")
+    iata_code: Optional[str] = None         # IATA 3-character code; absent if blank
     name: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None            # resolved subdivision name, e.g. "Queensland" -- see region_code for the raw ISO 3166-2 code
+    region_code: Optional[str] = None       # ISO 3166-2 subdivision code, e.g. "AU-QLD"
+    country: Optional[str] = None           # resolved country name, e.g. "Australia" -- see country_code for the raw ISO 3166-1 alpha-2 code
+    country_code: Optional[str] = None      # ISO 3166-1 alpha-2 country code, e.g. "AU"
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    altitude_feet: Optional[int] = None
-    country: Optional[str] = None
-    municipality: Optional[str] = None
-    type: Optional[str] = None
+    phonic: Optional[str] = None            # voice-friendly spoken name for TTS announcements
 
 
 # ── Completed flight record ─────────────────────────────────────────────────

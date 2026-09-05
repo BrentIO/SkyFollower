@@ -1435,11 +1435,41 @@ components:
         icao_code:
           type: string
           title: ICAO Code
+        iata_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Iata Code
         name:
           anyOf:
           - type: string
           - type: 'null'
           title: Name
+        city:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: City
+        region:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Region
+        region_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Region Code
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        country_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country Code
         latitude:
           anyOf:
           - type: number
@@ -1450,26 +1480,11 @@ components:
           - type: number
           - type: 'null'
           title: Longitude
-        altitude_feet:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Altitude Feet
-        country:
+        phonic:
           anyOf:
           - type: string
           - type: 'null'
-          title: Country
-        municipality:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Municipality
-        type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Type
+          title: Phonic
       type: object
       required:
       - icao_code
