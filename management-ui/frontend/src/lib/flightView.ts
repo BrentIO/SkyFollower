@@ -10,12 +10,11 @@ export const VFR_SQUAWK = "1200";
 
 export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 
-// Altitude-to-color lookup table, ported verbatim from tar1090's
-// `ColorByAlt.air` (html/defaults.js, wiedehopf/tar1090 @ master) -- gives
-// this map the same climb/cruise/descent color ramp tar1090 users already
-// recognize. Only the `air` sub-table is kept: `unknown`/`ground` are
-// unused here since null altitude is handled separately as pure black
-// (see altitudeColor below), not tar1090's light gray.
+// Altitude-to-color lookup table (hue and lightness each interpolated from
+// their own set of breakpoints below), giving a smooth climb/cruise/descent
+// color ramp. Only an "air" table is needed here: null altitude is handled
+// separately as pure black (see altitudeColor below) rather than through a
+// ground/unknown table entry.
 const COLOR_BY_ALT_AIR = {
   s: 88,
   h: [
@@ -61,19 +60,19 @@ const COLOR_BY_ALT_AIR = {
   ],
 };
 
-// Ported from tar1090's `altitudeColor` (html/planeObject.js), trimmed to
-// what a static archived path needs -- no stale/selected/mlat/squawk
-// modifiers, no ground/unknown branches, no `darkerColors`/webgl handling.
+// Interpolates hue then lightness from COLOR_BY_ALT_AIR's breakpoints,
+// trimmed to what a static archived path needs -- no stale/selected/mlat/
+// squawk modifiers, no ground/unknown branches, no darkened/webgl variants.
 //
-// Two deliberate deviations from tar1090 (both user-confirmed, see #1458):
-//   - Null/unknown altitude renders pure black, not tar1090's light gray --
+// Two deliberate design choices here (both user-confirmed):
+//   - Null/unknown altitude renders pure black rather than a light gray --
 //     the line/points are thick enough that solid black reads clearly on
 //     the light basemap.
-//   - tar1090 quantizes altitude (rounds to 50ft/500ft bands) before
-//     interpolating, to keep its live-updating markers from jittering
-//     color on every message. A static archived path never updates, so
-//     that quantization would only add banding for no benefit -- this
-//     interpolates the raw altitude value directly.
+//   - Altitude is interpolated at its raw value rather than quantized to
+//     fixed bands first. Quantizing exists elsewhere to keep live-updating
+//     markers from jittering color on every message; a static archived path
+//     never updates, so that quantization would only add banding for no
+//     benefit here.
 export function altitudeColor(altitudeFt: number | null): string {
   if (altitudeFt === null) return "hsl(0, 0%, 0%)";
 
@@ -231,7 +230,7 @@ export function formatDuration(startIso: string, endIso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Trace points (tar1090-style per-position dots + labels, #1441)
+// Trace points (per-position dots + labels)
 // ---------------------------------------------------------------------------
 
 // A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept

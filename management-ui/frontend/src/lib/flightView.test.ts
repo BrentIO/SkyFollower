@@ -43,10 +43,7 @@ describe("altitudeColor", () => {
     expect(altitudeColor(null)).toBe("hsl(0, 0%, 0%)");
   });
 
-  it("matches tar1090's ported table at 16000ft (verified reference value)", () => {
-    // https://github.com/wiedehopf/tar1090 ColorByAlt.air, interpolated at
-    // the raw (unquantized) altitude -- this is the value the issue calls
-    // out as matching tar1090's own #0bc09c sample at 16000ft.
+  it("produces a teal hue at 16000ft (verified reference value)", () => {
     expect(altitudeColor(16000)).toBe("hsl(167.6, 88.0%, 40.0%)");
   });
 
