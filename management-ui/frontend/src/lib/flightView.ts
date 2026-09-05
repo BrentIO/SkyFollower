@@ -126,8 +126,12 @@ export function formatDuration(startIso: string, endIso: string): string {
 }
 
 export function airportLocation(airport: FlightViewAirport): string | null {
-  const parts = [airport.city, airport.region, airport.country].filter(
+  const filtered = [airport.city, airport.region, airport.country].filter(
     (p): p is string => !!p && p.trim() !== "",
   );
+  // Drop a part equal to the one immediately before it -- e.g. region
+  // "Singapore" in country "Singapore" would otherwise render
+  // "Singapore, Singapore".
+  const parts = filtered.filter((p, i) => i === 0 || p !== filtered[i - 1]);
   return parts.length > 0 ? parts.join(", ") : null;
 }
