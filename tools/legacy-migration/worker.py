@@ -79,6 +79,8 @@ def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, dat
     eventual ack/nack, is the connection thread's job, so this function
     never touches the RabbitMQ channel itself.
     """
+    logger.info("Day %s: starting", date_str)
+
     start, end = day_bounds_utc(date_str)
     query = {**MIGRATED_EXISTS_FILTER, "first_message": {"$gte": start, "$lt": end}}
 
