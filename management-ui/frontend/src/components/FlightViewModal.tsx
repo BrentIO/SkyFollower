@@ -118,7 +118,7 @@ function AirportBlock({ airport, role }: { airport: FlightViewAirport; role: "or
   return (
     <div>
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className={`${PILL} px-2.5 py-1 text-sm ${role === "origin" ? PILL_GREEN : PILL_RED}`}>
+        <span className={`${PILL} px-3 py-1 text-base ${role === "origin" ? PILL_GREEN : PILL_RED}`}>
           {airport.icao_code}
         </span>
         {airport.iata_code && (
