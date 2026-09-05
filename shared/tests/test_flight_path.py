@@ -144,7 +144,7 @@ class TestBuildFlightPath:
 
 
 # ---------------------------------------------------------------------------
-# coordTimes / coordSpeeds (tar1090-style trace points, #1441)
+# coordTimes / coordSpeeds (per-position trace points)
 # ---------------------------------------------------------------------------
 
 class TestParseEpochSeconds:

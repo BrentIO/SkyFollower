@@ -126,7 +126,7 @@ export function formatDuration(startIso: string, endIso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Trace points (tar1090-style per-position dots + labels, #1441)
+// Trace points (per-position dots + labels)
 // ---------------------------------------------------------------------------
 
 // A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept
