@@ -38,14 +38,26 @@ const TRACE_POINTS_SOURCE = "trace-points";
 const TRACE_POINTS_CIRCLE_LAYER = "trace-points-circle";
 const TRACE_POINTS_LABEL_LAYER = "trace-points-label";
 
-// A row of three dots -- reads as "individual sample points" at a glance,
-// distinct from NavigationControl's zoom/compass glyphs above it.
+// Lucide's `Waypoints` glyph -- reads as "individual sample points along a
+// path" at a glance, distinct from NavigationControl's zoom/compass glyphs
+// above it. This control isn't a React component (MapLibre controls render
+// outside React's tree), so the icon is inlined as raw markup rather than
+// mounted via lucide-react; path data copied from lucide-react's Waypoints
+// icon node (stroke icon, default stroke-width 2) so geometry matches the
+// rest of the app. `display:block; margin:auto` keeps it optically centered
+// in the button regardless of the button's own text-align/line-height.
 const TRACE_POINTS_ICON_SVG = `
-<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="3" cy="9" r="2" fill="currentColor" />
-  <circle cx="9" cy="9" r="2" fill="currentColor" />
-  <circle cx="15" cy="9" r="2" fill="currentColor" />
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
+  <path d="m10.586 5.414-5.172 5.172" />
+  <path d="m18.586 13.414-5.172 5.172" />
+  <path d="M6 12h12" />
+  <circle cx="12" cy="20" r="2" />
+  <circle cx="12" cy="4" r="2" />
+  <circle cx="20" cy="12" r="2" />
+  <circle cx="4" cy="12" r="2" />
 </svg>`;
+
+const TRACE_POINTS_COLOR = "#0ea5e9"; // Tailwind sky-500
 
 // The app's first custom maplibregl.IControl -- every map elsewhere uses
 // only the stock NavigationControl. Plain DOM (not React) since MapLibre
@@ -66,6 +78,13 @@ class TracePointsControl implements maplibregl.IControl {
     this._button.type = "button";
     this._button.title = "Toggle trace points";
     this._button.setAttribute("aria-label", "Toggle trace points");
+    // Flex-center the glyph in the button's content box (matches the
+    // stacked zoom +/- buttons above it) rather than relying on the SVG's
+    // own margin:auto against the button's default inline-block layout.
+    this._button.style.display = "flex";
+    this._button.style.alignItems = "center";
+    this._button.style.justifyContent = "center";
+    this._button.style.color = TRACE_POINTS_COLOR;
     this._button.innerHTML = TRACE_POINTS_ICON_SVG;
     this._button.addEventListener("click", this._onClick);
     container.appendChild(this._button);
@@ -86,8 +105,12 @@ class TracePointsControl implements maplibregl.IControl {
     this._active = !this._active;
     // Inline style rather than a new CSS class/file -- this is the only
     // custom control in the app, so a stylesheet just for its active state
-    // isn't worth it. Mirrors maplibre-gl.css's own active/pressed button tone.
-    button.style.color = this._active ? "#0ea5e9" : "";
+    // isn't worth it. Inactive = blue glyph on the stock maplibre white;
+    // active inverts to a solid blue button with a white glyph, so the
+    // on/off state reads at a glance. maplibre-gl.css's own :hover tint
+    // (a semi-transparent overlay) still applies on top of either background.
+    button.style.color = this._active ? "#fff" : TRACE_POINTS_COLOR;
+    button.style.background = this._active ? TRACE_POINTS_COLOR : "";
     const visibility = this._active ? "visible" : "none";
     map.setLayoutProperty(TRACE_POINTS_CIRCLE_LAYER, "visibility", visibility);
     map.setLayoutProperty(TRACE_POINTS_LABEL_LAYER, "visibility", visibility);
