@@ -280,25 +280,62 @@ aws iam delete-user --user-name skyfollower-legacy-migration
 
 ## Running it
 
+The producer and the worker are **separate steps**. The producer queues one
+message per calendar day and exits; the workers then drain that queue and do
+the actual copy. Nothing happens until the producer has run -- starting a
+worker against an empty queue just idles.
+
+Every command runs from the repo root. Adjust `--end-date` to your cutover
+date and `--scale worker=N` to taste.
+
+**Step 1 -- Pass 1: queue every day from the start of legacy history to cutover.**
+
 ```bash
-COMPOSE="docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env"
-
-# Pass 1: publish every day from legacy history's start through cutover.
-$COMPOSE run --rm producer --start-date 2022-07-11 --end-date 2026-09-01
-
-# Scale workers to taste; long-lived, drains the queue and exits nothing
-# on its own -- stop with Ctrl+C / `docker compose down` once idle.
-$COMPOSE up --build --scale worker=8
-
-# ... operator drives the remaining un-migrated tail via the legacy
-# offload tool, then re-run producer for pass 2 with an overlapping range ...
-
-# Before deleting the legacy bucket by hand:
-$COMPOSE run --rm verify --start-date 2022-07-11 --end-date 2026-09-01
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm producer --start-date 2022-07-11 --end-date 2026-09-01
 ```
+
+**Step 2 -- drain the queue.** Long-lived; does not exit on its own. Stop with
+Ctrl+C (or `docker compose -f docker-compose.legacy-migration.yaml down`) once
+the queue is empty.
+
+```bash
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env up --build --scale worker=8
+```
+
+**Step 3 -- operator step (no command here).** Drive the remaining
+un-`migrated` tail to `migrated` with the legacy system's own offload tool
+(see "Two-pass execution" above).
+
+**Step 4 -- Pass 2: re-queue the tail.** An overlapping range is safe -- days
+finished in Pass 1 are cheap no-ops.
+
+```bash
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm producer --start-date 2026-08-01 --end-date 2026-09-01
+```
+
+**Step 5 -- drain again.** Same command as Step 2.
+
+```bash
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env up --build --scale worker=8
+```
+
+**Step 6 -- verify, before deleting the legacy bucket by hand.**
+
+```bash
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm verify --start-date 2022-07-11 --end-date 2026-09-01
+```
+
+Then drain and review the DLQ (see below) and tear down the RabbitMQ user,
+policy, queues, and IAM identity (see "RabbitMQ setup" and "IAM" above).
 
 Logs go to stdout and to `./logs/<container-hostname>.log` (bind-mounted,
 one file per worker container since `--scale` produces one hostname each).
+
+> **Not safe for a real run yet:** the worker drops its broker connection on
+> any day that takes longer than ~1 minute and cannot ack it -- see
+> [#1473](https://github.com/BrentIO/SkyFollower/issues/1473). Steps 2 and 5
+> above are correct as written but will not complete a real migration until
+> that is fixed.
 
 ## Dead-letter queue
 
