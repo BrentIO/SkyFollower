@@ -140,7 +140,7 @@ function SortableColumnHeader({
 }) {
   const active = sort?.column === column;
   return (
-    <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
+    <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-3 dark:border-slate-700 dark:bg-slate-800">
       <button
         type="button"
         onClick={() => onSortChange(column)}
@@ -310,8 +310,8 @@ function SearchResultsPanel({
       <RequestedRangeNote detail={detail} loading={detailLoading} />
       {results.truncated && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
-          More than {results.total_rows} results -- showing the first {results.total_rows}. Use Download for the
-          full set.
+          More than {results.total_rows} results -- showing the first {results.total_rows}.
+          <span className="hidden md:inline"> Use Download for the full set.</span>
         </p>
       )}
       <div className="max-h-[60vh] overflow-auto md:max-h-none md:min-h-0 md:flex-1">
@@ -321,7 +321,7 @@ function SearchResultsPanel({
               {SORTABLE_COLUMNS.map(({ column, label }) => (
                 <SortableColumnHeader key={column} label={label} column={column} sort={sort} onSortChange={onSortChange} />
               ))}
-              <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800" />
+              <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-3 dark:border-slate-700 dark:bg-slate-800" />
             </tr>
           </thead>
           <tbody>
@@ -330,19 +330,19 @@ function SearchResultsPanel({
                 key={row.uuid}
                 className="border-b border-slate-100 odd:bg-slate-50 dark:border-slate-800 dark:odd:bg-slate-900"
               >
-                <td className="px-2 py-1.5">{row.registration}</td>
-                <td className="px-2 py-1.5 font-mono">{row.icao_hex}</td>
-                <td className="px-2 py-1.5">{row.ident}</td>
-                <td className="px-2 py-1.5">
+                <td className="px-2 py-3">{row.registration}</td>
+                <td className="px-2 py-3 font-mono">{row.icao_hex}</td>
+                <td className="px-2 py-3">{row.ident}</td>
+                <td className="px-2 py-3">
                   <div className="flex items-center gap-1.5">
                     <span>{row.operator_designator}</span>
                     {row.military && <Badge color="green">Military</Badge>}
                   </div>
                 </td>
-                <td className="px-2 py-1.5">{row.type_designator}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
-                <td className="px-2 py-1.5">
+                <td className="px-2 py-3">{row.type_designator}</td>
+                <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
+                <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
+                <td className="px-2 py-3">
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -359,7 +359,7 @@ function SearchResultsPanel({
                       onClick={() => onDownloadFlight(row.token)}
                       aria-label="Download flight"
                       title="Download flight"
-                      className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                      className="hidden items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex"
                     >
                       <Download size={12} />
                       Download
@@ -377,7 +377,7 @@ function SearchResultsPanel({
           <button
             type="button"
             onClick={onDownloadCsv}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:w-auto md:justify-start md:py-1"
+            className="hidden w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex md:w-auto md:justify-start md:py-1"
           >
             <Download size={14} />
             Download CSV

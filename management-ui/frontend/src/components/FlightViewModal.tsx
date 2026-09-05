@@ -344,19 +344,10 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                   <span className="text-xl font-semibold text-slate-900 dark:text-slate-100">
                     {view!.ident ?? view!.icao_hex}
                   </span>
-                  {view!.registration && (
-                    <span className="text-sm text-slate-600 dark:text-slate-300">{view!.registration}</span>
-                  )}
-                  <span className="font-mono text-sm text-slate-700 dark:text-slate-300">{view!.icao_hex}</span>
                   {hasSquawkAlert && <span className={`${PILL} ${PILL_RED}`}>{view!.squawk}</span>}
                   {isVfr && <span className={`${PILL} ${PILL_GREEN}`}>VFR</span>}
                   {view!.military && <span className={`${PILL} ${PILL_GREEN}`}>Military</span>}
                 </div>
-                {(view!.manufacturer_model || view!.type_designator) && (
-                  <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                    {[view!.manufacturer_model, view!.type_designator].filter(Boolean).join(" · ")}
-                  </div>
-                )}
                 <div className="text-sm text-slate-500 dark:text-slate-400">
                   {new Date(view!.first_message).toLocaleString()} ·{" "}
                   {formatDuration(view!.first_message, view!.last_message)} ·{" "}
@@ -453,57 +444,67 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
               </>
             )}
 
-            {hasAircraftSection && (
+            {(hasAircraftSection || view.registration) && (
               <>
                 <div>
                   <SectionLabel>Aircraft</SectionLabel>
-                  <div className="flex flex-col gap-1 pl-4 text-sm text-slate-900 dark:text-slate-100">
-                    {view.category && (
-                      <div>
-                        <Label>Category</Label> {view.category}
-                      </div>
-                    )}
-                    {view.aircraft_type && (
-                      <div>
-                        <Label>Type</Label> {view.aircraft_type}
-                      </div>
-                    )}
-                    {(view.manufacturer_model || view.type_designator) && (
-                      <div>
-                        <Label>Manufacturer/Model</Label>{" "}
-                        {[view.manufacturer_model, view.type_designator ? `(${view.type_designator})` : undefined]
-                          .filter(Boolean)
-                          .join(" ")}
-                      </div>
-                    )}
-                    {view.model && (
-                      <div>
-                        <Label>Model</Label> {view.model}
-                      </div>
-                    )}
-                    {view.serial_number && (
-                      <div>
-                        <Label>Serial Number</Label> {view.serial_number}
-                      </div>
-                    )}
-                    {view.seats != null && (
-                      <div>
-                        <Label>Seats</Label> {view.seats}
-                      </div>
-                    )}
-                    {hasPowerplant && (
-                      <div>
-                        <Label>Powerplant</Label>
-                        <div className="pl-4">
-                          {(powerplant?.count || powerplant?.type) && (
-                            <div>{[powerplant?.count, powerplant?.type].filter(Boolean).join(" × ")}</div>
-                          )}
-                          {(powerplant?.manufacturer || powerplant?.model) && (
-                            <div>{[powerplant?.manufacturer, powerplant?.model].filter(Boolean).join(" ")}</div>
-                          )}
+                  <div className="pl-4">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      {view.registration && (
+                        <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+                          {view.registration}
+                        </span>
+                      )}
+                      <span className="font-mono text-sm text-slate-700 dark:text-slate-300">{view.icao_hex}</span>
+                    </div>
+                    <div className="mt-1 flex flex-col gap-1 text-sm text-slate-900 dark:text-slate-100">
+                      {view.category && (
+                        <div>
+                          <Label>Category</Label> {view.category}
                         </div>
-                      </div>
-                    )}
+                      )}
+                      {view.aircraft_type && (
+                        <div>
+                          <Label>Type</Label> {view.aircraft_type}
+                        </div>
+                      )}
+                      {(view.manufacturer_model || view.type_designator) && (
+                        <div>
+                          <Label>Manufacturer/Model</Label>{" "}
+                          {[view.manufacturer_model, view.type_designator ? `(${view.type_designator})` : undefined]
+                            .filter(Boolean)
+                            .join(" ")}
+                        </div>
+                      )}
+                      {view.model && (
+                        <div>
+                          <Label>Model</Label> {view.model}
+                        </div>
+                      )}
+                      {view.serial_number && (
+                        <div>
+                          <Label>Serial Number</Label> {view.serial_number}
+                        </div>
+                      )}
+                      {view.seats != null && (
+                        <div>
+                          <Label>Seats</Label> {view.seats}
+                        </div>
+                      )}
+                      {hasPowerplant && (
+                        <div>
+                          <Label>Powerplant</Label>
+                          <div className="pl-4">
+                            {(powerplant?.count || powerplant?.type) && (
+                              <div>{[powerplant?.count, powerplant?.type].filter(Boolean).join(" × ")}</div>
+                            )}
+                            {(powerplant?.manufacturer || powerplant?.model) && (
+                              <div>{[powerplant?.manufacturer, powerplant?.model].filter(Boolean).join(" ")}</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {(hasMatchedRules || hasReceiverSources) && <hr className="border-slate-200 dark:border-slate-700" />}
@@ -548,7 +549,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         )}
 
         {!loading && !error && (
-          <div className="flex shrink-0 justify-end gap-1.5 border-t border-slate-200 bg-slate-50 px-5 py-2.5 dark:border-slate-700 dark:bg-slate-900">
+          <div className="hidden shrink-0 justify-end gap-1.5 border-t border-slate-200 bg-slate-50 px-5 py-2.5 dark:border-slate-700 dark:bg-slate-900 md:flex">
             <button
               type="button"
               onClick={handleDownload}
