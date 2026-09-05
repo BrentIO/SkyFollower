@@ -105,6 +105,44 @@ sweep (above) -- the two are independent. The sweep is a one-time scan for
 data outside every range this tool will ever day-walk; the day-walk itself
 has no memory of prior runs at all.
 
+## Configure
+
+`docker-compose.legacy-migration.yaml` is pure `${VAR}` interpolation --
+it needs an env file to read those variables from. Use a **dedicated
+`tools/legacy-migration/.env`**, not the repo-root `.env` a deployment
+host already has from `scripts/install.sh`: that file carries the shared
+`skyfollower` application user's broker credentials and no Mongo/S3
+variables at all, and merging this tool's dedicated
+`skyfollower-migration` credentials into it is error-prone -- easy to
+end up running this tool as the application user by mistake.
+
+```bash
+cp tools/legacy-migration/.env.example tools/legacy-migration/.env
+# edit tools/legacy-migration/.env, filling in every value -- see the
+# table below and the Mongo credential/RabbitMQ setup/IAM sections
+```
+
+Every `docker compose` command in this README then needs
+`--env-file tools/legacy-migration/.env` alongside `-f
+docker-compose.legacy-migration.yaml`, run from the repo root (the build
+context stays repo-root `.`; only the interpolation source moves):
+
+```bash
+docker compose -f docker-compose.legacy-migration.yaml \
+  --env-file tools/legacy-migration/.env \
+  run --rm producer --start-date 2022-07-11 --end-date 2026-09-01
+```
+
+`.env.example` is tracked in git (the repo-root `.gitignore`'s blanket
+`.env` rule already excludes the real `tools/legacy-migration/.env` from
+being committed by accident); `tools/legacy-migration/.env` itself never is.
+
+**Split-host note:** the migration containers can run anywhere with
+reachability to Mongo/S3/the broker -- they don't need to run on any
+particular host in the topology. `RABBITMQ_HOST` must point at the core
+host running `docker-compose.core.yaml`, and that host must allow inbound
+5672 from wherever this tool runs, if that's a different host.
+
 ## Configuration
 
 Environment variables (see `shared/config.py`'s `mongo`,
@@ -122,6 +160,10 @@ Environment variables (see `shared/config.py`'s `mongo`,
 | `LOG_LEVEL` | no | Default `info`. `debug` logs every migrated flight's `_id` and destination key -- ~8.6M lines across the full history, opt in deliberately |
 
 ## Mongo credential
+
+These run against the external legacy MongoDB directly (via `mongosh` or
+equivalent) -- it isn't a container anywhere in this repo, so unlike
+RabbitMQ setup above, there's no `docker compose exec` involved here.
 
 A read-only role scoped to the one collection this tool reads. Example
 (adjust database/collection names to match `MONGO_DATABASE`/
@@ -166,12 +208,20 @@ application user -- this tool is a separate process with a separate
 lifetime, and `shared/rabbitmq_topology.py`'s
 `SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN` is deliberately left unmodified.
 
+The broker runs as the `rabbitmq` service in `docker-compose.core.yaml` --
+there is no host `rabbitmqctl` binary. Every command below runs as
+`docker compose exec` into that container, **on the core host, from its
+deployment directory** (matching `scripts/install.sh`'s own convention for
+provisioning RabbitMQ users):
+
 ```bash
-rabbitmqctl add_user skyfollower-migration '<generated-password>'
-rabbitmqctl set_permissions -p / skyfollower-migration \
-  '^legacy-migration(-dlq)?$' \
-  '^(legacy-migration(-dlq)?|amq\.default)$' \
-  '^legacy-migration(-dlq)?$'
+docker compose -f docker-compose.core.yaml exec -T rabbitmq \
+  rabbitmqctl add_user skyfollower-migration '<generated-password>'
+docker compose -f docker-compose.core.yaml exec -T rabbitmq \
+  rabbitmqctl set_permissions -p / skyfollower-migration \
+    '^legacy-migration(-dlq)?$' \
+    '^(legacy-migration(-dlq)?|amq\.default)$' \
+    '^legacy-migration(-dlq)?$'
 ```
 
 (configure / write / read, in that order -- `amq.default` must be in the
@@ -186,45 +236,65 @@ longer timeout to just this queue, rather than the broker-wide default
 broker):
 
 ```bash
-rabbitmqctl set_policy consumer-timeout-migration "^legacy-migration$" \
-  '{"consumer-timeout":3600000}' --apply-to queues
+docker compose -f docker-compose.core.yaml exec -T rabbitmq \
+  rabbitmqctl set_policy consumer-timeout-migration '^legacy-migration$' \
+    '{"consumer-timeout":3600000}' --apply-to queues
 ```
 
 Teardown once the migration is complete and `verify` reports clean, and
 the DLQ has been reviewed:
 
 ```bash
-rabbitmqctl delete_user skyfollower-migration
-rabbitmqctl clear_policy consumer-timeout-migration
-rabbitmqctl delete_queue legacy-migration
-rabbitmqctl delete_queue legacy-migration-dlq
+docker compose -f docker-compose.core.yaml exec -T rabbitmq rabbitmqctl delete_user skyfollower-migration
+docker compose -f docker-compose.core.yaml exec -T rabbitmq rabbitmqctl clear_policy consumer-timeout-migration
+docker compose -f docker-compose.core.yaml exec -T rabbitmq rabbitmqctl delete_queue legacy-migration
+docker compose -f docker-compose.core.yaml exec -T rabbitmq rabbitmqctl delete_queue legacy-migration-dlq
 ```
 
 ## IAM
 
 `iam-policy-example.json` -- copy-only, no `s3:DeleteObject` anywhere, on
-either bucket. Substitute `__SOURCE_BUCKET_NAME__`/`__DEST_BUCKET_NAME__`
-before use (matching this repo's other placeholder IAM examples under
-`specs/aws/iam-policies/`). Create a temporary identity for this run only
-and revoke/detach it immediately afterward -- never a standing identity.
+either bucket. Create a temporary identity for this run only and
+revoke/detach it immediately afterward -- never a standing identity.
+
+```bash
+sed -e 's|__SOURCE_BUCKET_NAME__|com.skyfollower.datastore|g' \
+    -e 's|__DEST_BUCKET_NAME__|NEW_ARCHIVE_BUCKET|g' \
+    tools/legacy-migration/iam-policy-example.json > /tmp/legacy-migration-policy.json
+
+aws iam create-user --user-name skyfollower-legacy-migration
+aws iam put-user-policy --user-name skyfollower-legacy-migration \
+  --policy-name legacy-migration --policy-document file:///tmp/legacy-migration-policy.json
+aws iam create-access-key --user-name skyfollower-legacy-migration
+#   -> put the AccessKeyId/SecretAccessKey into tools/legacy-migration/.env
+#      as AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+```
+
+Teardown, after `verify` reports clean and the legacy bucket is deleted by hand:
+
+```bash
+aws iam delete-access-key --user-name skyfollower-legacy-migration --access-key-id KEY_ID
+aws iam delete-user-policy --user-name skyfollower-legacy-migration --policy-name legacy-migration
+aws iam delete-user --user-name skyfollower-legacy-migration
+```
 
 ## Running it
 
 ```bash
+COMPOSE="docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env"
+
 # Pass 1: publish every day from legacy history's start through cutover.
-docker compose -f docker-compose.legacy-migration.yaml run --rm producer \
-  --start-date 2022-07-11 --end-date 2026-09-01
+$COMPOSE run --rm producer --start-date 2022-07-11 --end-date 2026-09-01
 
 # Scale workers to taste; long-lived, drains the queue and exits nothing
 # on its own -- stop with Ctrl+C / `docker compose down` once idle.
-docker compose -f docker-compose.legacy-migration.yaml up --build --scale worker=8
+$COMPOSE up --build --scale worker=8
 
 # ... operator drives the remaining un-migrated tail via the legacy
 # offload tool, then re-run producer for pass 2 with an overlapping range ...
 
 # Before deleting the legacy bucket by hand:
-docker compose -f docker-compose.legacy-migration.yaml run --rm verify \
-  --start-date 2022-07-11 --end-date 2026-09-01
+$COMPOSE run --rm verify --start-date 2022-07-11 --end-date 2026-09-01
 ```
 
 Logs go to stdout and to `./logs/<container-hostname>.log` (bind-mounted,
