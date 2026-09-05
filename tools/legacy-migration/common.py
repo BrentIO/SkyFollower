@@ -140,6 +140,7 @@ def connect_rabbitmq(rabbitmq_cfg: dict) -> "pika.BlockingConnection":
         host=rabbitmq_cfg["host"],
         port=rabbitmq_cfg["port"],
         credentials=credentials,
+        heartbeat=60,
         blocked_connection_timeout=RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
     )
     return pika.BlockingConnection(params)
