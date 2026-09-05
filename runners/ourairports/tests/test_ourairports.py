@@ -50,6 +50,7 @@ _mod = _load_main()
 is_valid_icao = _mod.is_valid_icao
 compute_phonic = _mod.compute_phonic
 build_airport_record = _mod.build_airport_record
+build_code_name_map = _mod.build_code_name_map
 stage_data = _mod.stage_data
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
@@ -112,6 +113,25 @@ SAMPLE_CSV = _make_csv(
     {"id": "5", "ident": "K", "name": "Way Too Short",
      "latitude_deg": "40.6413", "longitude_deg": "-73.7781", "elevation_ft": "13",
      "iso_country": "US", "municipality": "New York", "type": "large_airport"},
+)
+
+
+# Minimal regions.csv / countries.csv fixtures -- real column set per the
+# issue: regions has id,code,local_code,name,continent,iso_country,
+# wikipedia_link,keywords; countries has id,code,name,continent,
+# wikipedia_link,keywords. Only code/name matter to build_code_name_map.
+SAMPLE_REGIONS_CSV = (
+    "id,code,local_code,name,continent,iso_country,wikipedia_link,keywords\n"
+    '1,US-NY,NY,"New York",NA,US,,\n'
+    '2,AU-QLD,QLD,"Queensland",OC,AU,,\n'
+    '3,PA-8,8,"Panamá",NA,PA,,\n'
+)
+
+SAMPLE_COUNTRIES_CSV = (
+    "id,code,name,continent,wikipedia_link,keywords\n"
+    '1,US,"United States",NA,,\n'
+    '2,AU,"Australia",OC,,\n'
+    '3,PA,"Panama",NA,,\n'
 )
 
 
@@ -309,6 +329,106 @@ class TestStageData:
             assert row["city"] is None
             conn.close()
 
+    def test_no_maps_leaves_raw_iso_codes(self):
+        """Without regions_map/countries_map (the default), region/country
+        stay the raw ISO codes -- same as before this feature existed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(SAMPLE_CSV, os.path.join(tmpdir, "staging.db"))
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT region, country FROM airports WHERE icao_code = 'KJFK'")
+            row = cur.fetchone()
+            assert row["region"] == "US-NY"
+            assert row["country"] == "US"
+            conn.close()
+
+    def test_regions_and_countries_resolved_to_names(self):
+        """MPTO/YBCS-style resolution -- the issue's own acceptance-criteria
+        examples, using AU-QLD/AU (Queensland/Australia) since SAMPLE_CSV
+        already carries a US/GB pair; this test supplies its own row."""
+        csv_text = _make_csv({
+            "id": "1", "ident": "YBCS", "name": "Cairns Airport",
+            "iso_country": "AU", "iso_region": "AU-QLD", "municipality": "Cairns",
+        })
+        regions_map = build_code_name_map(SAMPLE_REGIONS_CSV)
+        countries_map = build_code_name_map(SAMPLE_COUNTRIES_CSV)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"), regions_map, countries_map)
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT region, region_code, country, country_code FROM airports WHERE icao_code = 'YBCS'"
+            )
+            row = cur.fetchone()
+            assert row["region"] == "Queensland"
+            assert row["region_code"] == "AU-QLD"
+            assert row["country"] == "Australia"
+            assert row["country_code"] == "AU"
+            conn.close()
+
+    def test_unmatched_region_code_falls_back_to_raw_code(self):
+        """An iso_region with no regions.csv entry (e.g. an unassigned
+        placeholder like 'US-U-A') keeps the raw code, not blank/error."""
+        csv_text = _make_csv({
+            "id": "1", "ident": "KTST", "name": "Test",
+            "iso_country": "ZZ", "iso_region": "US-U-A", "municipality": "Nowhere",
+        })
+        regions_map = build_code_name_map(SAMPLE_REGIONS_CSV)
+        countries_map = build_code_name_map(SAMPLE_COUNTRIES_CSV)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"), regions_map, countries_map)
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT region, country FROM airports WHERE icao_code = 'KTST'")
+            row = cur.fetchone()
+            assert row["region"] == "US-U-A"
+            assert row["country"] == "ZZ"
+            conn.close()
+
+    def test_empty_iso_region_stays_none_not_raw_code_lookup(self):
+        csv_text = _make_csv({
+            "id": "1", "ident": "KTST", "name": "Test",
+            "iso_country": "US", "iso_region": "", "municipality": "Nowhere",
+        })
+        regions_map = build_code_name_map(SAMPLE_REGIONS_CSV)
+        countries_map = build_code_name_map(SAMPLE_COUNTRIES_CSV)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(csv_text, os.path.join(tmpdir, "staging.db"), regions_map, countries_map)
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute("SELECT region, region_code FROM airports WHERE icao_code = 'KTST'")
+            row = cur.fetchone()
+            assert row["region"] is None
+            assert row["region_code"] is None
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Tests: build_code_name_map
+# ---------------------------------------------------------------------------
+
+class TestBuildCodeNameMap:
+    def test_regions_csv_parsed(self):
+        result = build_code_name_map(SAMPLE_REGIONS_CSV)
+        assert result["AU-QLD"] == "Queensland"
+        assert result["PA-8"] == "Panamá"
+        assert result["US-NY"] == "New York"
+
+    def test_countries_csv_parsed(self):
+        result = build_code_name_map(SAMPLE_COUNTRIES_CSV)
+        assert result["AU"] == "Australia"
+        assert result["PA"] == "Panama"
+        assert result["US"] == "United States"
+
+    def test_unknown_code_absent_from_map(self):
+        result = build_code_name_map(SAMPLE_COUNTRIES_CSV)
+        assert "ZZ" not in result
+
+    def test_row_missing_code_or_name_skipped(self):
+        csv_text = "id,code,name,continent,wikipedia_link,keywords\n1,,\"No Code\",NA,,\n2,ZZ,,NA,,\n"
+        result = build_code_name_map(csv_text)
+        assert result == {}
+
 
 # ---------------------------------------------------------------------------
 # Tests: build_airport_record
@@ -316,15 +436,17 @@ class TestStageData:
 
 class TestBuildAirportRecord:
     def _row(self, icao_code="KJFK", name="JFK", city="New York",
-             region="US-NY", country="US", phonic="Kennedy",
-             iata_code=None, latitude=None, longitude=None):
+             region="New York", region_code="US-NY", country="United States", country_code="US",
+             phonic="Kennedy", iata_code=None, latitude=None, longitude=None):
         # Returns a dict that behaves like sqlite3.Row for field access
         return {
             "icao_code": icao_code,
             "name": name,
             "city": city,
             "region": region,
+            "region_code": region_code,
             "country": country,
+            "country_code": country_code,
             "phonic": phonic,
             "iata_code": iata_code,
             "latitude": latitude,
@@ -334,7 +456,9 @@ class TestBuildAirportRecord:
     def test_all_fields_present(self):
         row = self._row()
         record = build_airport_record(row)
-        assert set(record.keys()) == {"icao_code", "name", "city", "region", "country", "phonic"}
+        assert set(record.keys()) == {
+            "icao_code", "name", "city", "region", "region_code", "country", "country_code", "phonic",
+        }
 
     def test_field_values(self):
         row = self._row()
@@ -342,8 +466,10 @@ class TestBuildAirportRecord:
         assert record["icao_code"] == "KJFK"
         assert record["name"] == "JFK"
         assert record["city"] == "New York"
-        assert record["region"] == "US-NY"
-        assert record["country"] == "US"
+        assert record["region"] == "New York"
+        assert record["region_code"] == "US-NY"
+        assert record["country"] == "United States"
+        assert record["country_code"] == "US"
         assert record["phonic"] == "Kennedy"
 
     def test_iata_code_included_when_present(self):

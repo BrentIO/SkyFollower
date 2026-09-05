@@ -4,7 +4,7 @@
 |---|---|
 | **Name** | `ourairports` |
 | **Coverage** | Global — airport metadata, not aircraft (different domain from every other data runner) |
-| **Data source** | https://davidmegginson.github.io/ourairports-data/airports.csv |
+| **Data source** | https://davidmegginson.github.io/ourairports-data/airports.csv (+ companion `regions.csv`/`countries.csv` for name resolution, see below) |
 | **Format** | CSV (fixed URL) |
 | **Run frequency** | Weekly (Monday, 05:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | N/A — this runner writes `airport:{icao_code}` records, not aircraft enrichment, and has no relationship to the Mictronics-provided `icao_hex` lookup used by the country aircraft-register runners. |
@@ -12,6 +12,8 @@
 ## How it works
 
 The OurAirports CSV is downloaded whole from a fixed URL (no index page or scraping involved) and parsed with `csv.DictReader`. Rows are filtered to those whose `ident` is exactly 4 characters (a valid ICAO airport code — 3-character IATA-only idents and other lengths are dropped) and staged into a fresh local SQLite database (the file is deleted and recreated on every run) before being bulk-written to Redis in batches of 10,000. Each staged row also gets a computed `phonic` field — a voice-friendly spoken name — via `compute_phonic()`, which supports a host-provided JSON override file for exact per-airport overrides (see below).
+
+Two small companion CSVs — `regions.csv` and `countries.csv`, same host — are also downloaded on every run and turned into `{code: name}` maps (`build_code_name_map()`). `airports.csv`'s `iso_region`/`iso_country` are raw ISO codes with no name column of their own (e.g. `AU-QLD`, `AU`); these maps resolve them to display names (`Queensland`, `Australia`) at stage time. A code with no matching entry in either map (some `iso_region` values are unassigned placeholders, e.g. `US-U-A`) falls back to the raw code rather than going blank.
 
 ## Columns
 
@@ -21,8 +23,8 @@ The OurAirports CSV is downloaded whole from a fixed URL (no index page or scrap
 | `iata_code` | ✅ | → `iata_code`; omitted from the record if blank |
 | `name` | ✅ | → `name`; also used as input to phonic computation |
 | `municipality` | ✅ | → `city`; also used as input to phonic computation |
-| `iso_region` | ✅ | → `region` |
-| `iso_country` | ✅ | → `country` |
+| `iso_region` | ✅ | → `region` (resolved to a name via `regions.csv`, falling back to the raw code if unmatched) and → `region_code` (the raw code, always) |
+| `iso_country` | ✅ | → `country` (resolved to a name via `countries.csv`, falling back to the raw code if unmatched) and → `country_code` (the raw code, always) |
 | `latitude_deg` | ✅ | → `latitude` (float) |
 | `longitude_deg` | ✅ | → `longitude` (float) |
 | `id` | ❌ | Present in source; not read by this runner |
@@ -52,8 +54,10 @@ docker run --rm --network host redis:latest redis-cli JSON.GET airport:KATL | py
     "icao_code": "KATL",
     "name": "Hartsfield-Jackson Atlanta International Airport",
     "city": "Atlanta",
-    "region": "US-GA",
-    "country": "US",
+    "region": "Georgia",
+    "region_code": "US-GA",
+    "country": "United States",
+    "country_code": "US",
     "phonic": "Atlanta Hartsfield-Jackson"
 }
 ```

@@ -44,6 +44,8 @@ from shared.sqlite_staging import open_staging_db
 logger = logging.getLogger("ourairports")
 
 DOWNLOAD_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
+REGIONS_DOWNLOAD_URL = "https://davidmegginson.github.io/ourairports-data/regions.csv"
+COUNTRIES_DOWNLOAD_URL = "https://davidmegginson.github.io/ourairports-data/countries.csv"
 MQTT_ROOT = "SkyFollower/runner/ourairports"
 
 # ---------------------------------------------------------------------------
@@ -51,15 +53,17 @@ MQTT_ROOT = "SkyFollower/runner/ourairports"
 # ---------------------------------------------------------------------------
 _SCHEMA = """
 CREATE TABLE airports (
-    icao_code  TEXT PRIMARY KEY,
-    iata_code  TEXT,
-    name       TEXT,
-    city       TEXT,
-    region     TEXT,
-    country    TEXT,
-    latitude   REAL,
-    longitude  REAL,
-    phonic     TEXT
+    icao_code    TEXT PRIMARY KEY,
+    iata_code    TEXT,
+    name         TEXT,
+    city         TEXT,
+    region       TEXT,
+    region_code  TEXT,
+    country      TEXT,
+    country_code TEXT,
+    latitude     REAL,
+    longitude    REAL,
+    phonic       TEXT
 );
 """
 
@@ -175,13 +179,30 @@ def is_valid_icao(ident: str) -> bool:
     return len(ident.strip()) == 4
 
 
+def build_code_name_map(csv_text: str) -> dict:
+    """Build a {code: name} map from OurAirports' regions.csv or
+    countries.csv -- both share a `code`/`name` column pair, so one
+    function covers both."""
+    result: dict = {}
+    reader = csv.DictReader(io.StringIO(csv_text))
+    for row in reader:
+        code = row.get("code", "").strip()
+        name = row.get("name", "").strip()
+        if code and name:
+            result[code] = name
+    return result
+
 
 # ---------------------------------------------------------------------------
 # SQLite staging
 # ---------------------------------------------------------------------------
 
-def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
+def stage_data(
+    csv_text: str, db_path: str, regions_map: dict | None = None, countries_map: dict | None = None,
+) -> sqlite3.Connection:
     """Parse the CSV and stage qualifying rows into a SQLite database."""
+    regions_map = regions_map or {}
+    countries_map = countries_map or {}
     logger.info("Opening staging database at %s", db_path)
     conn = open_staging_db(db_path, _SCHEMA)
 
@@ -201,8 +222,13 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
         iata_code = row.get("iata_code", "").strip() or None
         name = row.get("name", "").strip() or None
         city = row.get("municipality", "").strip() or None
-        region = row.get("iso_region", "").strip() or None
-        country = row.get("iso_country", "").strip() or None
+        region_code = row.get("iso_region", "").strip() or None
+        country_code = row.get("iso_country", "").strip() or None
+        # Fall back to the raw code on no match -- some iso_region values
+        # are unassigned placeholders (e.g. "US-U-A") with no regions.csv
+        # entry; the raw code is still more useful than blank.
+        region = regions_map.get(region_code, region_code) if region_code else None
+        country = countries_map.get(country_code, country_code) if country_code else None
         phonic = compute_phonic(icao, name or "", city or "") or None
 
         try:
@@ -216,9 +242,9 @@ def stage_data(csv_text: str, db_path: str) -> sqlite3.Connection:
 
         cur.execute(
             "INSERT OR REPLACE INTO airports "
-            "(icao_code, iata_code, name, city, region, country, latitude, longitude, phonic) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (icao, iata_code, name, city, region, country, latitude, longitude, phonic),
+            "(icao_code, iata_code, name, city, region, region_code, country, country_code, latitude, longitude, phonic) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (icao, iata_code, name, city, region, region_code, country, country_code, latitude, longitude, phonic),
         )
         count += 1
 
@@ -241,7 +267,9 @@ def build_airport_record(row: sqlite3.Row) -> dict:
     record["name"] = row["name"]
     record["city"] = row["city"]
     record["region"] = row["region"]
+    record["region_code"] = row["region_code"]
     record["country"] = row["country"]
+    record["country_code"] = row["country_code"]
     if row["latitude"] is not None:
         record["latitude"] = row["latitude"]
     if row["longitude"] is not None:
@@ -273,7 +301,8 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     """Write all staged airport records to Redis. Returns count of records written."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT icao_code, iata_code, name, city, region, country, latitude, longitude, phonic FROM airports"
+        "SELECT icao_code, iata_code, name, city, region, region_code, country, country_code, "
+        "latitude, longitude, phonic FROM airports"
     )
     rows = cur.fetchall()
     logger.info("Writing %d airport records to Redis.", len(rows))
@@ -416,9 +445,11 @@ def main() -> None:
     try:
         # 1. Download
         csv_text = download_csv(DOWNLOAD_URL)
+        regions_map = build_code_name_map(download_csv(REGIONS_DOWNLOAD_URL))
+        countries_map = build_code_name_map(download_csv(COUNTRIES_DOWNLOAD_URL))
 
         # 2. Stage in SQLite
-        conn = stage_data(csv_text, db_path)
+        conn = stage_data(csv_text, db_path, regions_map, countries_map)
 
         # 3. Write to Redis
         _ensure_search_index(r)

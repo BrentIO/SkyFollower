@@ -178,4 +178,19 @@ describe("airportLocation", () => {
   it("returns null when none of the location parts are present", () => {
     expect(airportLocation({ icao_code: "KDOV" })).toBeNull();
   });
+
+  it("drops a part equal to the one immediately before it", () => {
+    // Real-world case: ELLX (Luxembourg-Findel) has city/region/country
+    // all literally "Luxembourg" once region is resolved from a name
+    // rather than left as a raw ISO code.
+    expect(
+      airportLocation({ icao_code: "ELLX", city: "Luxembourg", region: "Luxembourg", country: "Luxembourg" }),
+    ).toBe("Luxembourg");
+  });
+
+  it("keeps non-adjacent repeats (only adjacent duplicates are dropped)", () => {
+    expect(airportLocation({ icao_code: "KDFW", city: "Dallas", region: "TX", country: "Dallas" })).toBe(
+      "Dallas, TX, Dallas",
+    );
+  });
 });

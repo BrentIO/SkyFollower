@@ -82,9 +82,17 @@ function displayObj(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 }
 
-function joinParts(parts: (string | undefined)[], sep = " "): string | undefined {
+// dedupeAdjacent drops a part equal to the one immediately before it --
+// e.g. region "Singapore" in country "Singapore" would otherwise render
+// "Singapore, Singapore". Only meaningful for location-style joins
+// (city/region/country); left off by default so unrelated joins (e.g.
+// powerplant manufacturer/model) are unaffected.
+function joinParts(parts: (string | undefined)[], sep = " ", dedupeAdjacent = false): string | undefined {
   const filtered = parts.filter((p): p is string => !!p);
-  return filtered.length > 0 ? filtered.join(sep) : undefined;
+  const deduped = dedupeAdjacent
+    ? filtered.filter((p, i) => i === 0 || p !== filtered[i - 1])
+    : filtered;
+  return deduped.length > 0 ? deduped.join(sep) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +333,11 @@ function AirportResultView({ data }: { data: AirportRecord }) {
   const icaoCode = displayStr(data.icao_code) ?? "";
   const iataCode = displayStr(data.iata_code);
   const name = displayStr(data.name);
-  const locLine = joinParts([displayStr(data.city), displayStr(data.region), displayStr(data.country)]);
+  const locLine = joinParts(
+    [displayStr(data.city), displayStr(data.region), displayStr(data.country)],
+    " ",
+    true,
+  );
   const phonic = displayStr(data.phonic);
   const latitude = typeof data.latitude === "number" ? data.latitude : undefined;
   const longitude = typeof data.longitude === "number" ? data.longitude : undefined;
@@ -616,7 +628,11 @@ function RouteResultView({ data }: { data: RouteLookup }) {
             const role = roleFor(i, data.stops!.length);
             const icaoCode = displayStr(stop.icao_code) ?? "";
             const iataCode = displayStr(stop.iata_code);
-            const detailLine = joinParts([displayStr(stop.phonic), displayStr(stop.city), displayStr(stop.region)], ", ");
+            const detailLine = joinParts(
+              [displayStr(stop.phonic), displayStr(stop.city), displayStr(stop.region)],
+              ", ",
+              true,
+            );
             return (
               <div key={i} className="flex flex-wrap items-baseline gap-2 text-sm">
                 <Badge color={ROLE_BADGE_COLOR[role]}>{ROLE_LABEL[role]}</Badge>
