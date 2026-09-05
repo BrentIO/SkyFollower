@@ -55,16 +55,38 @@ object to copy and is entirely out of this tool's scope.
 
 1. **Pass 1 -- the bulk history.** `--start-date` defaults to
    `2022-07-11` (legacy history's earliest flight); `--end-date` is the
-   cutover date.
+   cutover date. This is the only pass that should ever run the producer's
+   catch-all sweep (see "Catch-all sweep" below) -- it's the only run
+   whose range is the full recorded history.
 2. **Operator step.** Drive the remaining un-`migrated` tail to
    `migrated` using the legacy system's own offload tool.
 3. **Pass 2 -- the tail.** Re-run with `--start-date` at (or before) the
-   start of that tail. Days already fully processed in pass 1 are cheap
-   no-ops (see Idempotency below), so an overlapping range is safe and is
-   the recommended way to run it.
+   start of that tail (and `--end-date` left at today). Days already fully
+   processed in pass 1 are cheap no-ops (see Idempotency below), so an
+   overlapping range is safe and is the recommended way to run it. The
+   producer auto-detects that this narrower range isn't the full history
+   and skips the sweep -- see below.
 
 Both passes are the same binary, just different date bounds -- there is
 no separate "top-up" mode.
+
+## Catch-all sweep
+
+Before the day-walk, the producer can additionally sweep for `migrated`
+documents whose `first_message` falls entirely outside
+`[--start-date, --end-date]` -- genuinely anomalous data (clock skew,
+corruption) that no day-walk range would ever reach, and send them to the
+DLQ for manual review.
+
+This sweep is **only meaningful across the full recorded history**. For
+any narrower range -- including pass 2's recommended overlapping tail
+range above -- its "outside the range" predicate instead matches the
+entire bulk of already-migrated history, flooding the DLQ with millions of
+harmless entries. The producer auto-detects this: it only runs the sweep
+when `--start-date` is at or before the earliest recorded flight and
+`--end-date` is today or later, and otherwise logs that it's skipping the
+sweep. An operator can still force it either way with `--sweep`/
+`--no-sweep`.
 
 ## Idempotency
 
@@ -78,6 +100,11 @@ Two layers:
   day rewrites that day's compacted Parquet file wholesale from Mongo's
   current contents -- intended, since the index is derived state.
 
+Re-running an overlapping day-walk range is always safe regardless of the
+sweep (above) -- the two are independent. The sweep is a one-time scan for
+data outside every range this tool will ever day-walk; the day-walk itself
+has no memory of prior runs at all.
+
 ## Configuration
 
 Environment variables (see `shared/config.py`'s `mongo`,
@@ -86,7 +113,7 @@ Environment variables (see `shared/config.py`'s `mongo`,
 | Variable | Required | Notes |
 |---|---|---|
 | `MONGO_URI` | yes | Read-only credential -- see below |
-| `MONGO_DATABASE` | no | Default `skyfollower` |
+| `MONGO_DATABASE` | no | Default `SkyFollower` |
 | `MONGO_COLLECTION` | no | Default `flights` |
 | `SOURCE_S3_BUCKET` | yes | Legacy bucket (e.g. `com.skyfollower.datastore`) |
 | `DEST_S3_BUCKET` | yes | New archive bucket, provisioned via the `aws-setup` CloudFormation stack |
@@ -104,14 +131,14 @@ A read-only role scoped to the one collection this tool reads. Example
 db.createRole({
   role: "skyfollowerMigrationReadOnly",
   privileges: [
-    { resource: { db: "skyfollower", collection: "flights" }, actions: ["find"] },
+    { resource: { db: "SkyFollower", collection: "flights" }, actions: ["find"] },
   ],
   roles: [],
 })
 db.createUser({
   user: "skyfollower-migration",
   pwd: "<generated-password>",
-  roles: [{ role: "skyfollowerMigrationReadOnly", db: "skyfollower" }],
+  roles: [{ role: "skyfollowerMigrationReadOnly", db: "SkyFollower" }],
 })
 ```
 

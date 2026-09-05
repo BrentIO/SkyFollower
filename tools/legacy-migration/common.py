@@ -89,6 +89,22 @@ def source_key(doc_id: str) -> str:
     return f"{doc_id}{SOURCE_KEY_SUFFIX}"
 
 
+# Deliberately a fixed name, not a per-run UUID: this tool never deletes
+# (see the issue's IAM policy -- no s3:DeleteObject anywhere), so a re-run
+# of a day must overwrite this same object via PutObject rather than leave
+# an orphaned duplicate behind under the same partition. archive-processor's
+# own per-flight index files (build_index_s3_key) DO need a UUID name since
+# many are written per day; this tool writes exactly one file per day, so a
+# name derived from the date alone is sufficient. Shared by worker.py
+# (which writes it) and verify.py (which HeadObjects it).
+COMPACTED_INDEX_FILENAME = "legacy-migration.parquet"
+
+
+def compacted_index_key(date_str: str) -> str:
+    yyyy, mm, dd = date_str.split("-")
+    return f"index/year={yyyy}/month={mm}/day={dd}/{COMPACTED_INDEX_FILENAME}"
+
+
 # ---------------------------------------------------------------------------
 # Mongo
 # ---------------------------------------------------------------------------

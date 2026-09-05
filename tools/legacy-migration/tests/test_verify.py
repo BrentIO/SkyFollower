@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import re
 
 import pytest
+from botocore.exceptions import ClientError
 
 import verify
+
+
+def _date_from_index_key(key: str) -> str:
+    # index/year={YYYY}/month={MM}/day={DD}/legacy-migration.parquet -> YYYY-MM-DD
+    match = re.match(r"index/year=(\d{4})/month=(\d{2})/day=(\d{2})/", key)
+    return "-".join(match.groups())
 
 
 class _FakeCollection:
@@ -27,14 +35,27 @@ class _FakePaginator:
 
 
 class _FakeS3:
-    def __init__(self, pages_by_prefix: dict, source_etags: dict):
+    def __init__(self, pages_by_prefix: dict, source_etags: dict, index_exists=True):
         self._paginator = _FakePaginator(pages_by_prefix)
         self._source_etags = source_etags
+        # True (default): every compacted-index HeadObject succeeds, so
+        # tests that don't care about the index-presence check are
+        # unaffected by it. A set of "YYYY-MM-DD" strings: only those days'
+        # index files exist. False: no index file exists for any day.
+        self._index_exists = index_exists
 
     def get_paginator(self, name):
         return self._paginator
 
     def head_object(self, Bucket, Key):
+        if Key.startswith("index/"):
+            exists = (
+                self._index_exists is True
+                or (self._index_exists and _date_from_index_key(Key) in self._index_exists)
+            )
+            if not exists:
+                raise ClientError({"Error": {"Code": "NoSuchKey"}}, "HeadObject")
+            return {}
         doc_id = Key[: -len(".gz")]
         return {"ETag": self._source_etags[doc_id]}
 
@@ -87,3 +108,34 @@ class TestRun:
         _wire(monkeypatch, _FakeCollection({"2024-05-31": 1}), _FakeS3(pages, {"id1": '"source"'}))
         with pytest.raises(SystemExit):
             verify.run(argparse.Namespace(start_date="2024-05-31", end_date="2024-05-31"))
+
+    def test_missing_compacted_index_raises_systemexit(self, monkeypatch):
+        prefix = "flights/2024/05/31/"
+        pages = {prefix: [{"Contents": [{"Key": prefix + "id1.json.gz", "ETag": '"same"'}]}]}
+        _wire(
+            monkeypatch,
+            _FakeCollection({"2024-05-31": 1}),
+            _FakeS3(pages, {"id1": '"same"'}, index_exists=set()),
+        )
+        with pytest.raises(SystemExit):
+            verify.run(argparse.Namespace(start_date="2024-05-31", end_date="2024-05-31"))
+
+    def test_present_compacted_index_is_clean(self, monkeypatch):
+        prefix = "flights/2024/05/31/"
+        pages = {prefix: [{"Contents": [{"Key": prefix + "id1.json.gz", "ETag": '"same"'}]}]}
+        _wire(
+            monkeypatch,
+            _FakeCollection({"2024-05-31": 1}),
+            _FakeS3(pages, {"id1": '"same"'}, index_exists={"2024-05-31"}),
+        )
+        verify.run(argparse.Namespace(start_date="2024-05-31", end_date="2024-05-31"))  # no raise
+
+    def test_zero_mongo_count_day_does_not_require_an_index_file(self, monkeypatch):
+        """An empty day is a no-op for the worker too (see worker.process_day) --
+        it never writes an index file, so verify must not flag it."""
+        _wire(
+            monkeypatch,
+            _FakeCollection({"2024-05-31": 0}),
+            _FakeS3({}, {}, index_exists=set()),
+        )
+        verify.run(argparse.Namespace(start_date="2024-05-31", end_date="2024-05-31"))  # no raise
