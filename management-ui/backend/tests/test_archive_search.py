@@ -1250,7 +1250,54 @@ class TestDeleteSearch:
         uuid = resp.json()["uuid"]
 
         client.delete(f"/api/archive/search/{uuid}")
-        assert len(fake_s3.deleted) == 1
+        # The result object itself, plus its .metadata sidecar.
+        assert len(fake_s3.deleted) == 2
+        assert fake_s3.deleted[1] == f"{fake_s3.deleted[0]}.metadata"
+
+    def test_delete_removes_download_query_result_and_metadata_sidecars(
+        self, client, fake_athena, fake_s3
+    ):
+        """A search that's had "Download CSV" clicked at least once has a
+        second, separate Athena query execution (download_query_execution_id)
+        with its own result file -- delete must clean that up too, not just
+        the paged-view query's result."""
+        uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
+        download_resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        assert download_resp.status_code == 307
+
+        client.delete(f"/api/archive/search/{uuid}")
+
+        # Two Athena executions (paged-view + download), two objects each
+        # (result + .metadata) = four deletes total.
+        assert len(fake_s3.deleted) == 4
+        result_keys = [k for k in fake_s3.deleted if not k.endswith(".metadata")]
+        metadata_keys = [k for k in fake_s3.deleted if k.endswith(".metadata")]
+        assert len(result_keys) == 2
+        assert len(set(result_keys)) == 2  # the two underlying result keys are distinct
+        assert sorted(metadata_keys) == sorted(f"{k}.metadata" for k in result_keys)
+
+    def test_delete_without_download_never_queried_only_cleans_main_result(
+        self, client, fake_athena, fake_s3
+    ):
+        """No "Download CSV" click ever happened -- download_query_execution_id
+        is unset, so delete must not attempt to clean up a download result
+        that never existed."""
+        uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
+        client.delete(f"/api/archive/search/{uuid}")
+        assert len(fake_s3.deleted) == 2  # main result + its .metadata only
+
+    def test_failed_s3_cleanup_still_deletes_redis_record(self, client, fake_athena, fake_s3):
+        """A failed S3/Athena cleanup is best-effort -- it must not block
+        removing the Redis record, for either the main result or the
+        download result."""
+        uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
+        client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
+        fake_athena.raise_on_get_query_execution = RuntimeError("boom")
+
+        delete_resp = client.delete(f"/api/archive/search/{uuid}")
+        assert delete_resp.status_code == 204
+        assert fake_s3.deleted == []  # every cleanup attempt failed before any delete_object call
+        assert client.get(f"/api/archive/search/{uuid}").status_code == 404
 
     def test_thread_resurrection_guard_xx_prevents_late_write_after_delete(self, client, fake_redis):
         """A background poll write landing after DELETE already removed

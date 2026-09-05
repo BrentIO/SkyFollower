@@ -2238,6 +2238,17 @@ def _result_output_location(query_execution_id: str) -> str:
     return resp["QueryExecution"]["ResultConfiguration"]["OutputLocation"]
 
 
+def _delete_athena_result_and_metadata(query_execution_id: str) -> None:
+    """Delete an Athena query's result object and the .metadata sidecar
+    Athena writes alongside it. Best-effort, same reasoning as the caller:
+    the results bucket's lifecycle rule sweeps both eventually regardless,
+    so a failure here is a warning, not an error."""
+    output_location = _result_output_location(query_execution_id)
+    bucket, key = _parse_s3_uri(output_location)
+    _s3_client.delete_object(Bucket=bucket, Key=key)
+    _s3_client.delete_object(Bucket=bucket, Key=f"{key}.metadata")
+
+
 _UUID_FROM_S3_KEY_RE = re.compile(_UUID_FROM_S3_KEY_PATTERN)
 
 
@@ -2641,11 +2652,19 @@ def delete_archive_search(uuid: str):
         # matching archive-compaction's own write-then-delete ordering
         # principle.
         try:
-            output_location = _result_output_location(record["query_execution_id"])
-            bucket, key = _parse_s3_uri(output_location)
-            _s3_client.delete_object(Bucket=bucket, Key=key)
+            _delete_athena_result_and_metadata(record["query_execution_id"])
         except Exception as exc:
             logger.warning("Failed to delete Athena result file for search %s: %s", uuid, exc)
+
+    # download_query_execution_id is a second, separate Athena query --
+    # only set once someone has clicked "Download CSV" for this search (see
+    # _run_or_get_download_query_execution) -- with its own result file and
+    # .metadata sidecar to clean up alongside the paged-view query's.
+    if record.get("download_query_execution_id") is not None:
+        try:
+            _delete_athena_result_and_metadata(record["download_query_execution_id"])
+        except Exception as exc:
+            logger.warning("Failed to delete Athena download result file for search %s: %s", uuid, exc)
 
     try:
         _redis.delete(archive_search_key(uuid))
