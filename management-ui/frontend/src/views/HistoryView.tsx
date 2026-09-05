@@ -140,7 +140,7 @@ function SortableColumnHeader({
 }) {
   const active = sort?.column === column;
   return (
-    <th className="px-2 py-1.5">
+    <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800">
       <button
         type="button"
         onClick={() => onSortChange(column)}
@@ -314,14 +314,14 @@ function SearchResultsPanel({
           full set.
         </p>
       )}
-      <div className="overflow-auto">
+      <div className="max-h-[60vh] overflow-auto md:max-h-none md:min-h-0 md:flex-1">
         <table className="w-full min-w-max text-left text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-xs uppercase text-slate-500 dark:border-slate-700 dark:text-slate-400">
+            <tr className="text-xs uppercase text-slate-500 dark:text-slate-400">
               {SORTABLE_COLUMNS.map(({ column, label }) => (
                 <SortableColumnHeader key={column} label={label} column={column} sort={sort} onSortChange={onSortChange} />
               ))}
-              <th className="px-2 py-1.5" />
+              <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-1.5 dark:border-slate-700 dark:bg-slate-800" />
             </tr>
           </thead>
           <tbody>
