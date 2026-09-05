@@ -445,6 +445,7 @@ export function HistoryView() {
   const [viewFlightToken, setViewFlightToken] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
+  const [deletingSearch, setDeletingSearch] = useState(false);
   // Per-search where_clause + resolved start_date/end_date, fetched lazily
   // (see the detail-fetch effect below) regardless of status -- needed for
   // FAILED/ABORTED's "Edit & Resubmit" and to show the resolved range next
@@ -640,6 +641,7 @@ export function HistoryView() {
 
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return;
+    setDeletingSearch(true);
     try {
       await deleteArchiveSearch(deleteTarget.uuid);
       setSearches((current) => current.filter((s) => s.uuid !== deleteTarget.uuid));
@@ -648,6 +650,7 @@ export function HistoryView() {
     } catch (err) {
       showToast("error", err instanceof ApiError ? err.message : "Failed to delete search.");
     } finally {
+      setDeletingSearch(false);
       setDeleteTarget(null);
     }
   }
@@ -818,6 +821,7 @@ export function HistoryView() {
           )
         }
         confirmLabel="Delete"
+        confirmLoading={deletingSearch}
         onConfirm={handleDeleteConfirmed}
         onCancel={() => setDeleteTarget(null)}
       />
