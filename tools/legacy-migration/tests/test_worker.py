@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import logging
 import queue
 import threading
 import time
@@ -186,6 +187,39 @@ class TestProcessDay:
 
         assert dlq_entries == []
         assert len(s3.put_calls) == 1
+
+    def test_start_line_is_logged_before_any_s3_call(self, caplog):
+        caplog.set_level(logging.INFO, logger=worker.logger.name)
+
+        class _OrderCheckingS3(_FakeS3):
+            """Fails the first time any S3 method is invoked without the
+            start line already on the record -- a stronger proof than just
+            checking presence somewhere in caplog after the fact."""
+
+            def _assert_started(self):
+                assert any(
+                    r.getMessage() == "Day 2024-05-31: starting" for r in caplog.records
+                ), "S3 call happened before the day-start line was logged"
+
+            def head_object(self, Bucket, Key):
+                self._assert_started()
+                return super().head_object(Bucket, Key)
+
+            def copy_object(self, Bucket, Key, CopySource):
+                self._assert_started()
+                return super().copy_object(Bucket, Key, CopySource)
+
+            def put_object(self, Bucket, Key, Body):
+                self._assert_started()
+                return super().put_object(Bucket, Key, Body)
+
+        docs = [_doc("id1")]
+        collection = _FakeCollection(docs)
+        s3 = _OrderCheckingS3()
+
+        worker.process_day(collection, s3, "src", "dst", "2024-05-31")
+
+        assert caplog.records[0].getMessage() == "Day 2024-05-31: starting"
 
     def test_throttled_index_put_object_is_retried_not_raised(self, monkeypatch):
         monkeypatch.setattr(common.time, "sleep", lambda *_: None)
