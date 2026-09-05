@@ -157,7 +157,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const seats = displayStr(data.seats);
 
   const powerplant = displayObj(data.powerplant);
-  const ppCountType = joinParts([displayStr(powerplant?.count), displayStr(powerplant?.type)], " x ");
+  const ppCountType = joinParts([displayStr(powerplant?.count), displayStr(powerplant?.type)], " × ");
   const ppManufacturerModel = joinParts([displayStr(powerplant?.manufacturer), displayStr(powerplant?.model)]);
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 

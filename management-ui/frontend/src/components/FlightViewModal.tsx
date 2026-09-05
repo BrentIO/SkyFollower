@@ -357,7 +357,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                         <Label>Powerplant</Label>
                         <div className="pl-4">
                           {(powerplant?.count || powerplant?.type) && (
-                            <div>{[powerplant?.count, powerplant?.type].filter(Boolean).join(" x ")}</div>
+                            <div>{[powerplant?.count, powerplant?.type].filter(Boolean).join(" × ")}</div>
                           )}
                           {(powerplant?.manufacturer || powerplant?.model) && (
                             <div>{[powerplant?.manufacturer, powerplant?.model].filter(Boolean).join(" ")}</div>
