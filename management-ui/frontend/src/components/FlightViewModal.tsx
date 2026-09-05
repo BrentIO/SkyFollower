@@ -257,25 +257,6 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
           "text-halo-width": 1.5,
         },
       });
-
-      // Optional per the issue: a precise read on click/tap, since hovering
-      // a label isn't possible on touch and dense labels can still be hard
-      // to read exactly even on desktop.
-      map.on("click", TRACE_POINTS_CIRCLE_LAYER, (e) => {
-        const feature = e.features?.[0];
-        if (!feature || feature.geometry.type !== "Point") return;
-        const label = String(feature.properties?.label ?? "");
-        new maplibregl.Popup({ closeButton: false, offset: 8 })
-          .setLngLat(feature.geometry.coordinates as [number, number])
-          .setHTML(label.split("\n").map((line) => `<div>${line}</div>`).join(""))
-          .addTo(map);
-      });
-      map.on("mouseenter", TRACE_POINTS_CIRCLE_LAYER, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", TRACE_POINTS_CIRCLE_LAYER, () => {
-        map.getCanvas().style.cursor = "";
-      });
     });
 
     return () => {
