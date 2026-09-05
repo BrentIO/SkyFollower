@@ -208,15 +208,6 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         lineMetrics: true,
         data: flightPathFeature(coordinates),
       });
-      // A dark, translucent halo underneath lifts the colored line off the
-      // basemap regardless of what's beneath it.
-      map.addLayer({
-        id: "flight-path-halo",
-        type: "line",
-        source: "flight-path",
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#0f172a", "line-width": 6, "line-opacity": 0.25 },
-      });
       map.addLayer({
         id: "flight-path-line",
         type: "line",
@@ -253,7 +244,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
           "circle-color": ["get", "color"],
           "circle-radius": 4,
           "circle-stroke-width": 1,
-          "circle-stroke-color": "#0f172a",
+          "circle-stroke-color": ["get", "strokeColor"],
         },
       });
       map.addLayer({

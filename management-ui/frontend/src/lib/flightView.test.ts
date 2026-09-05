@@ -3,6 +3,7 @@ import {
   airportLocation,
   altitudeColor,
   boundsOf,
+  darkenColor,
   flightPathFeature,
   formatDuration,
   formatTraceLabel,
@@ -38,22 +39,48 @@ describe("formatDuration", () => {
 });
 
 describe("altitudeColor", () => {
-  it("returns a neutral gray for unknown altitude", () => {
-    expect(altitudeColor(null)).toBe("hsl(0, 0%, 55%)");
+  it("returns pure black for unknown/null altitude", () => {
+    expect(altitudeColor(null)).toBe("hsl(0, 0%, 0%)");
   });
 
-  it("returns red (hue 0) at or below the ground floor", () => {
-    expect(altitudeColor(-2000)).toBe("hsl(0, 85%, 50%)");
+  it("produces a teal hue at 16000ft (verified reference value)", () => {
+    expect(altitudeColor(16000)).toBe("hsl(167.6, 88.0%, 40.0%)");
   });
 
-  it("clamps to violet (hue 300) at or above the ceiling", () => {
-    expect(altitudeColor(45000)).toBe("hsl(300, 85%, 50%)");
-    expect(altitudeColor(100000)).toBe("hsl(300, 85%, 50%)");
+  it("is at or below ground level (0ft) with a low, orange-brown hue", () => {
+    expect(altitudeColor(0)).toBe("hsl(20.0, 88.0%, 50.0%)");
+    // Altitudes at or below the table's floor don't extrapolate past it.
+    expect(altitudeColor(-2000)).toBe("hsl(20.0, 88.0%, 50.0%)");
   });
 
-  it("interpolates hue linearly between the floor and ceiling", () => {
-    // Midpoint: (-2000 + 45000) / 2 = 21500 -> hue 150
-    expect(altitudeColor(21500)).toBe("hsl(150, 85%, 50%)");
+  it("interpolates smoothly between table breakpoints rather than banding", () => {
+    // 1125ft falls between the 0ft/2000ft h-breakpoints and the 20/32
+    // l-breakpoints -- neither an exact table value.
+    expect(altitudeColor(1125)).toBe("hsl(27.0, 88.0%, 52.3%)");
+  });
+
+  it("reaches a teal/cyan hue at cruise-adjacent mid altitudes", () => {
+    expect(altitudeColor(21500)).toBe("hsl(197.9, 88.0%, 49.9%)");
+  });
+
+  it("extrapolates flat beyond the table's highest breakpoint (51000ft)", () => {
+    // Both altitudes fall on/after the last h-breakpoint (51000ft, val
+    // 360 -> wraps to hue 0), so the color no longer changes past there.
+    expect(altitudeColor(51000)).toBe(altitudeColor(100000));
+  });
+});
+
+describe("darkenColor", () => {
+  it("reduces lightness by 10 percentage points, keeping hue/saturation", () => {
+    expect(darkenColor("hsl(167.6, 88.0%, 40.0%)")).toBe("hsl(167.6, 88.0%, 30.0%)");
+  });
+
+  it("clamps lightness at 0 rather than going negative", () => {
+    expect(darkenColor("hsl(0, 0%, 5.0%)")).toBe("hsl(0, 0%, 0.0%)");
+  });
+
+  it("returns the input unchanged if it isn't a recognizable hsl() string", () => {
+    expect(darkenColor("not-a-color")).toBe("not-a-color");
   });
 });
 
@@ -285,6 +312,18 @@ describe("tracePointsFeatureCollection", () => {
     expect(fc.features[0].properties.color).not.toBe(fc.features[1].properties.color);
     expect(fc.features[0].properties.color).toBe(altitudeColor(0));
     expect(fc.features[1].properties.color).toBe(altitudeColor(40000));
+  });
+
+  it("gives each point a strokeColor that is a darker shade of its own color", () => {
+    const coords = [
+      [-84.0, 33.0, 0],
+      [-85.0, 34.0, 40000],
+    ];
+    const fc = tracePointsFeatureCollection(coords, [null, null], [null, null]);
+    expect(fc.features[0].properties.strokeColor).toBe(darkenColor(altitudeColor(0)));
+    expect(fc.features[1].properties.strokeColor).toBe(darkenColor(altitudeColor(40000)));
+    // Not a flat near-black outline shared across every point.
+    expect(fc.features[0].properties.strokeColor).not.toBe(fc.features[1].properties.strokeColor);
   });
 
   it("handles a 2D-only coordinate (no altitude) without crashing", () => {

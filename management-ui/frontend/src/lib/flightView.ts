@@ -10,13 +10,117 @@ export const VFR_SQUAWK = "1200";
 
 export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 
-// Altitude-to-color mapping: hue sweeps from 0 (red, ground) to 300
-// (violet) as altitude rises to ~45,000ft, so a flight's climb/cruise/
-// descent reads as a smooth color gradient along the path.
+// Altitude-to-color lookup table (hue and lightness each interpolated from
+// their own set of breakpoints below), giving a smooth climb/cruise/descent
+// color ramp. Only an "air" table is needed here: null altitude is handled
+// separately as pure black (see altitudeColor below) rather than through a
+// ground/unknown table entry.
+const COLOR_BY_ALT_AIR = {
+  s: 88,
+  h: [
+    { alt: 0, val: 20 },
+    { alt: 2000, val: 32.5 },
+    { alt: 4000, val: 43 },
+    { alt: 6000, val: 54 },
+    { alt: 8000, val: 72 },
+    { alt: 9000, val: 85 },
+    { alt: 11000, val: 140 },
+    { alt: 40000, val: 300 },
+    { alt: 51000, val: 360 },
+  ],
+  l: [
+    { h: 0, val: 53 },
+    { h: 20, val: 50 },
+    { h: 32, val: 54 },
+    { h: 40, val: 52 },
+    { h: 46, val: 51 },
+    { h: 50, val: 46 },
+    { h: 60, val: 43 },
+    { h: 80, val: 41 },
+    { h: 100, val: 41 },
+    { h: 120, val: 41 },
+    { h: 140, val: 41 },
+    { h: 160, val: 40 },
+    { h: 180, val: 40 },
+    { h: 190, val: 44 },
+    { h: 198, val: 50 },
+    { h: 200, val: 58 },
+    { h: 220, val: 58 },
+    { h: 240, val: 58 },
+    { h: 255, val: 55 },
+    { h: 266, val: 55 },
+    { h: 270, val: 58 },
+    { h: 280, val: 58 },
+    { h: 290, val: 47 },
+    { h: 300, val: 43 },
+    { h: 310, val: 48 },
+    { h: 320, val: 48 },
+    { h: 340, val: 52 },
+    { h: 360, val: 53 },
+  ],
+};
+
+// Interpolates hue then lightness from COLOR_BY_ALT_AIR's breakpoints,
+// trimmed to what a static archived path needs -- no stale/selected/mlat/
+// squawk modifiers, no ground/unknown branches, no darkened/webgl variants.
+//
+// Two deliberate design choices here (both user-confirmed):
+//   - Null/unknown altitude renders pure black rather than a light gray --
+//     the line/points are thick enough that solid black reads clearly on
+//     the light basemap.
+//   - Altitude is interpolated at its raw value rather than quantized to
+//     fixed bands first. Quantizing exists elsewhere to keep live-updating
+//     markers from jittering color on every message; a static archived path
+//     never updates, so that quantization would only add banding for no
+//     benefit here.
 export function altitudeColor(altitudeFt: number | null): string {
-  if (altitudeFt === null) return "hsl(0, 0%, 55%)";
-  const hue = Math.max(0, Math.min(300, ((altitudeFt + 2000) / 47000) * 300));
-  return `hsl(${hue.toFixed(0)}, 85%, 50%)`;
+  if (altitudeFt === null) return "hsl(0, 0%, 0%)";
+
+  const s = COLOR_BY_ALT_AIR.s;
+
+  const hpoints = COLOR_BY_ALT_AIR.h;
+  let h = hpoints[0].val;
+  for (let i = hpoints.length - 1; i >= 0; --i) {
+    if (altitudeFt > hpoints[i].alt) {
+      h =
+        i === hpoints.length - 1
+          ? hpoints[i].val
+          : hpoints[i].val +
+            ((hpoints[i + 1].val - hpoints[i].val) * (altitudeFt - hpoints[i].alt)) /
+              (hpoints[i + 1].alt - hpoints[i].alt);
+      break;
+    }
+  }
+
+  const lpoints = COLOR_BY_ALT_AIR.l;
+  let l = lpoints[0].val;
+  for (let i = lpoints.length - 1; i >= 0; --i) {
+    if (h > lpoints[i].h) {
+      l =
+        i === lpoints.length - 1
+          ? lpoints[i].val
+          : lpoints[i].val + ((lpoints[i + 1].val - lpoints[i].val) * (h - lpoints[i].h)) / (lpoints[i + 1].h - lpoints[i].h);
+      break;
+    }
+  }
+
+  if (h < 0) h = (h % 360) + 360;
+  else if (h >= 360) h = h % 360;
+  const clampedS = Math.max(0, Math.min(95, s));
+  const clampedL = Math.max(0, Math.min(95, l));
+  return `hsl(${h.toFixed(1)}, ${clampedS.toFixed(1)}%, ${clampedL.toFixed(1)}%)`;
+}
+
+// Darkens an `altitudeColor()` output by ~10 lightness percentage points
+// (clamped at 0), same hue/saturation -- used for trace-point circle
+// strokes so overlapping points at low zoom read as a darker shade of the
+// same altitude color instead of merging into a flat near-black outline.
+export function darkenColor(color: string): string {
+  const match = color.match(/^hsl\(([\d.]+), ([\d.]+)%, ([\d.]+)%\)$/);
+  if (!match) return color;
+  const [, h, s, l] = match;
+  const darkenedL = Math.max(0, Number(l) - 10);
+  return `hsl(${h}, ${s}%, ${darkenedL.toFixed(1)}%)`;
 }
 
 // A single LineString carrying every coordinate, for use with MapLibre's
@@ -126,7 +230,7 @@ export function formatDuration(startIso: string, endIso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Trace points (tar1090-style per-position dots + labels, #1441)
+// Trace points (per-position dots + labels)
 // ---------------------------------------------------------------------------
 
 // A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept
@@ -173,6 +277,7 @@ export function formatTraceLabel(
 
 export interface TracePointProperties {
   color: string;
+  strokeColor: string;
   label: string;
   sortKey: number;
 }
@@ -193,11 +298,13 @@ export function tracePointsFeatureCollection(
       const altitude = coord.length > 2 ? coord[2] : null;
       const speed = coordSpeeds[i] ?? null;
       const time = coordTimes[i] ?? null;
+      const color = altitudeColor(altitude);
       return {
         type: "Feature" as const,
         geometry: { type: "Point" as const, coordinates: coord.slice(0, 2) },
         properties: {
-          color: altitudeColor(altitude),
+          color,
+          strokeColor: darkenColor(color),
           label: formatTraceLabel(speed, altitude, time),
           sortKey: traceLabelSortKey(i, coordinates.length),
         } satisfies TracePointProperties,
