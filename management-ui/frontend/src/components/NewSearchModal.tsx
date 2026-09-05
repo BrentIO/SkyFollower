@@ -129,17 +129,19 @@ export function NewSearchModal({
 
         <div className="mt-2 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
           <p className="mb-2 font-semibold text-slate-600 dark:text-slate-300">Available Fields</p>
-          <div className="grid grid-cols-[auto_auto_auto] gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
-            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Field</span>
-            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Type</span>
-            <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Example</span>
-            {COLUMN_REFERENCE.map(([column, type, example]) => (
-              <div key={column} className="contents">
-                <span className="whitespace-nowrap">{column}</span>
-                <span className="whitespace-nowrap">{type}</span>
-                <span className="whitespace-nowrap">{example}</span>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <div className="grid grid-cols-[auto_auto_auto] gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
+              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Field</span>
+              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Type</span>
+              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Example</span>
+              {COLUMN_REFERENCE.map(([column, type, example]) => (
+                <div key={column} className="contents">
+                  <span className="whitespace-nowrap">{column}</span>
+                  <span className="whitespace-nowrap">{type}</span>
+                  <span className="whitespace-nowrap">{example}</span>
+                </div>
+              ))}
+            </div>
           </div>
           <p className="mt-2 text-slate-500 dark:text-slate-400">
             Timestamp literal: <code className="font-mono">first_message &gt;= TIMESTAMP &apos;2024-01-01 00:00:00&apos;</code>
