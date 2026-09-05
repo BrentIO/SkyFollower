@@ -28,8 +28,8 @@ const COLUMN_REFERENCE: [string, string, string][] = [
   ["military", "boolean", "false"],
   ["operator_designator", "string", "DAL"],
   ["ident", "string", "DAL2"],
-  ["first_message", "timestamp", "2026-07-31 12:00:00"],
-  ["last_message", "timestamp", "2026-07-31 13:45:00"],
+  ["first_message", "timestamp", "TIMESTAMP '2026-07-31 12:00:00'"],
+  ["last_message", "timestamp", "TIMESTAMP '2026-07-31 13:45:00'"],
 ];
 
 // Shown once, when the user clicks "+ New Search" -- collects the fields
@@ -142,7 +142,14 @@ export function NewSearchModal({
             ))}
           </div>
           <p className="mt-2 text-slate-500 dark:text-slate-400">
-            Timestamp literal: <code className="font-mono">first_message &gt;= TIMESTAMP &apos;2024-01-01 00:00:00&apos;</code>
+            Timestamp range:{" "}
+            <code className="font-mono">
+              last_message BETWEEN TIMESTAMP &apos;2026-07-31 12:00:00&apos; AND TIMESTAMP &apos;2026-07-31 13:00:00&apos;
+            </code>
+          </p>
+          <p className="mt-1 text-slate-500 dark:text-slate-400">
+            Timestamp values also accepted as <code className="font-mono">&apos;2026-07-31T12:00:00Z&apos;</code> or a
+            bare <code className="font-mono">&apos;2026-07-31&apos;</code> -- all normalized to UTC.
           </p>
         </div>
 

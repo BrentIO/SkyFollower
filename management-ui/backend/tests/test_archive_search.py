@@ -545,6 +545,124 @@ class TestDeriveBounds:
 
 
 # ---------------------------------------------------------------------------
+# Timestamp literal coercion (#1439) -- a bare string literal compared
+# against first_message/last_message is rewritten into a proper
+# TIMESTAMP '...' literal so Athena doesn't reject it with TYPE_MISMATCH.
+# ---------------------------------------------------------------------------
+
+class TestCoerceTimestampLiterals:
+    def test_iso_with_z_suffix_between(self):
+        result = ui_main._coerce_timestamp_literals(
+            "last_message between '2026-09-05T13:55:00Z' and '2026-09-05T14:20:00Z'"
+        )
+        assert result == (
+            "last_message between TIMESTAMP '2026-09-05 13:55:00' "
+            "and TIMESTAMP '2026-09-05 14:20:00'"
+        )
+
+    def test_bare_date_gets_midnight(self):
+        result = ui_main._coerce_timestamp_literals("first_message > '2026-09-05'")
+        assert result == "first_message > TIMESTAMP '2026-09-05 00:00:00'"
+
+    def test_date_time_without_seconds_gets_seconds(self):
+        result = ui_main._coerce_timestamp_literals("last_message <= '2026-09-05 14:20'")
+        assert result == "last_message <= TIMESTAMP '2026-09-05 14:20:00'"
+
+    def test_fractional_seconds_truncated_to_millis(self):
+        result = ui_main._coerce_timestamp_literals(
+            "first_message = '2026-09-05T13:55:00.123456Z'"
+        )
+        assert result == "first_message = TIMESTAMP '2026-09-05 13:55:00.123'"
+
+    def test_offset_other_than_z_converted_to_utc(self):
+        result = ui_main._coerce_timestamp_literals("first_message = '2026-09-05T13:55:00+02:00'")
+        assert result == "first_message = TIMESTAMP '2026-09-05 11:55:00'"
+
+    def test_already_timestamp_typed_is_byte_for_byte_untouched(self):
+        clause = "last_message between TIMESTAMP '2026-09-05 13:55:00' and TIMESTAMP '2026-09-05 14:20:00'"
+        assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_unrelated_column_untouched(self):
+        for clause in ["ident = 'DAL2'", "registration = 'N145AN'", "operator_designator = 'DAL'"]:
+            assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_unparseable_literal_left_alone_for_part_b(self):
+        clause = "first_message > 'not-a-date'"
+        assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_timestamp_shaped_text_inside_unrelated_literal_untouched(self):
+        """A regex-only approach would match this inside the string literal
+        -- sqlglot must see 'icao_hex' as the only real column here, same
+        risk _derive_bounds already guards against."""
+        clause = "icao_hex = 'first_message > 2026-01-01'"
+        assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_in_list_coerces_every_element(self):
+        result = ui_main._coerce_timestamp_literals(
+            "first_message in ('2026-09-05T13:55:00Z', '2026-09-06')"
+        )
+        assert result == (
+            "first_message in (TIMESTAMP '2026-09-05 13:55:00', TIMESTAMP '2026-09-06 00:00:00')"
+        )
+
+    def test_flipped_comparison_literal_on_left(self):
+        result = ui_main._coerce_timestamp_literals("'2026-09-05T13:55:00Z' <= last_message")
+        assert result == "TIMESTAMP '2026-09-05 13:55:00' <= last_message"
+
+    def test_mixed_clause_only_touches_the_qualifying_literal(self):
+        """A literal that happens to share its exact text with an unrelated
+        column's literal must not be touched just because the text
+        matches -- coercion is scoped by AST position, not by value."""
+        result = ui_main._coerce_timestamp_literals(
+            "first_message > '2026-09-05' and ident = '2026-09-05'"
+        )
+        assert result == "first_message > TIMESTAMP '2026-09-05 00:00:00' and ident = '2026-09-05'"
+
+    def test_parse_failure_returns_original_unchanged(self):
+        clause = "this is not valid sql at all (("
+        assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_no_timestamp_predicate_returns_original_unchanged(self):
+        clause = "operator_designator = 'DAL'"
+        assert ui_main._coerce_timestamp_literals(clause) == clause
+
+    def test_formatting_of_untouched_parts_is_preserved(self):
+        """Coercion splices into the original text at the literal's own
+        offsets rather than re-serializing the whole tree, so casing/
+        spacing anywhere else in the clause survives exactly."""
+        result = ui_main._coerce_timestamp_literals(
+            "icao_hex='A8AE7F' AND first_message > '2026-09-05'"
+        )
+        assert result == "icao_hex='A8AE7F' AND first_message > TIMESTAMP '2026-09-05 00:00:00'"
+
+
+# ---------------------------------------------------------------------------
+# Friendlier Athena TYPE_MISMATCH error (#1439 Part B)
+# ---------------------------------------------------------------------------
+
+class TestFriendlyAthenaError:
+    def test_timestamp_varchar_mismatch_gets_hint_and_drops_line_offset(self):
+        raw = (
+            "TYPE_MISMATCH: line 1:241: Cannot check if timestamp(3) is "
+            "BETWEEN varchar(20) and varchar(20)"
+        )
+        result = ui_main._friendly_athena_error(raw)
+        assert "line 1:241" not in result
+        assert "TIMESTAMP '2026-09-05 13:55:00'" in result
+        assert "Cannot check if timestamp(3) is BETWEEN varchar(20) and varchar(20)" in result
+
+    def test_unrelated_reason_unchanged(self):
+        assert ui_main._friendly_athena_error("TABLE_NOT_FOUND") == "TABLE_NOT_FOUND"
+
+    def test_type_mismatch_not_involving_timestamp_unchanged(self):
+        raw = "TYPE_MISMATCH: line 1:10: Cannot check if integer is BETWEEN varchar(5) and varchar(5)"
+        assert ui_main._friendly_athena_error(raw) == raw
+
+    def test_empty_reason_unchanged(self):
+        assert ui_main._friendly_athena_error("") == ""
+
+
+# ---------------------------------------------------------------------------
 # Range resolution -- intersecting the archive epoch/tomorrow defaults, the
 # WHERE clause's own derived bounds (widened +/-1 day), and any explicit
 # UI-supplied range.
@@ -803,6 +921,20 @@ class TestCreateAndListSearches:
         assert resp.status_code == 200
         assert resp.json()["where_clause"] == "ident = 'DAL123'"
 
+    def test_get_one_persists_the_coerced_timestamp_clause(self, client, fake_athena):
+        """#1439: the normalized clause -- not the raw operator input -- is
+        what's persisted/displayed, so History's "WHERE clause submitted"
+        block, Duplicate, and Edit & Resubmit all show what actually ran."""
+        create_resp = _create_search(client, where_clause="first_message > '2026-09-05'")
+        uuid = create_resp.json()["uuid"]
+
+        resp = client.get(f"/api/archive/search/{uuid}")
+        assert resp.status_code == 200
+        assert resp.json()["where_clause"] == "first_message > TIMESTAMP '2026-09-05 00:00:00'"
+
+        query = fake_athena.started_queries[0]["QueryString"]
+        assert "TIMESTAMP '2026-09-05 00:00:00'" in query
+
     def test_get_nonexistent_search_404s(self, client):
         resp = client.get("/api/archive/search/does-not-exist")
         assert resp.status_code == 404
@@ -890,6 +1022,31 @@ class TestBackgroundPolling:
         detail = client.get(f"/api/archive/search/{uuid}").json()
         assert detail["status"] == "FAILED"
         assert detail["error"] == "TABLE_NOT_FOUND"
+
+    def test_timestamp_type_mismatch_gets_the_friendly_hint(self, client, fake_athena):
+        """#1439 Part B: a raw TYPE_MISMATCH between a timestamp column and
+        a string literal is rewritten into an actionable hint before it
+        reaches the operator, with the misleading line 1:NNN offset (which
+        points into the generated query, not their input) stripped."""
+        real_start = fake_athena.start_query_execution
+
+        def start_and_fail(*a, **k):
+            result = real_start(*a, **k)
+            fake_athena.executions[result["QueryExecutionId"]]["State"] = "FAILED"
+            fake_athena.executions[result["QueryExecutionId"]]["Reason"] = (
+                "TYPE_MISMATCH: line 1:241: Cannot check if timestamp(3) is "
+                "BETWEEN varchar(20) and varchar(20)"
+            )
+            return result
+
+        fake_athena.start_query_execution = start_and_fail
+        resp = _create_search(client)
+        uuid = resp.json()["uuid"]
+
+        detail = client.get(f"/api/archive/search/{uuid}").json()
+        assert detail["status"] == "FAILED"
+        assert "line 1:241" not in detail["error"]
+        assert "TIMESTAMP '2026-09-05 13:55:00'" in detail["error"]
 
     def test_deadline_exceeded_aborts_and_calls_stop_query_execution(self, client, fake_athena):
         # Never reaches a terminal state; force the deadline to have

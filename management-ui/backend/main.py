@@ -1714,6 +1714,12 @@ _FORBIDDEN_WHERE_CLAUSE_RE = re.compile(
 # column reference.
 _DOUBLE_QUOTED_RE = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
 
+# Strips Athena's "line 1:241:" offset out of a StateChangeReason -- it
+# points into the generated query (partition predicate + where_clause), not
+# anything the operator actually typed, so echoing it back is not
+# actionable (see _friendly_athena_error).
+_ATHENA_LINE_COL_RE = re.compile(r"\bline\s+\d+:\d+:\s*", re.IGNORECASE)
+
 _AWS_ERROR = {502: {"description": "AWS (Athena/S3) error", "model": ErrorDetail}}
 
 
@@ -1921,6 +1927,122 @@ def _comparison_sides(node: exp.Binary) -> tuple[Optional[str], Optional[date], 
     if isinstance(right, exp.Column):
         return right.name, _literal_date(left), True
     return None, None, False
+
+
+# first_message/last_message are the only timestamp-typed columns a WHERE
+# clause here can compare against (see specs/data-dictionary.yaml's
+# archive_parquet_index record) -- every other column is a string, so
+# there's never a reason to coerce a literal compared against them.
+_TIMESTAMP_COMPARISON_COLUMNS = ("first_message", "last_message")
+
+
+def _normalize_timestamp_literal(raw: str) -> Optional[str]:
+    """A bare string literal's value, read as a Trino TIMESTAMP(3) literal
+    body ('YYYY-MM-DD HH:MM:SS[.mmm]'), or None if it doesn't parse as any
+    recognizable date/timestamp -- the caller leaves those untouched rather
+    than guessing (see _friendly_athena_error for what happens next)."""
+    s = raw.strip()
+    if s.endswith(("Z", "z")):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    # Everything in the archive is UTC -- an offset-aware input converts to
+    # UTC before being written as a bare (offset-less) literal.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    if dt.microsecond:
+        return dt.strftime("%Y-%m-%d %H:%M:%S") + f".{dt.microsecond // 1000:03d}"
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _is_already_timestamp_typed(literal: exp.Expression) -> bool:
+    """True for the string literal inside a `TIMESTAMP '...'` typed literal
+    -- sqlglot parses that ANSI syntax as CAST(literal AS TIMESTAMP). Already
+    correct; must not be touched."""
+    parent = literal.parent
+    return (
+        isinstance(parent, exp.Cast)
+        and parent.this is literal
+        and parent.to is not None
+        and parent.to.this == exp.DataType.Type.TIMESTAMP
+    )
+
+
+def _collect_timestamp_literal_replacements(tree: exp.Expression) -> list[tuple[int, int, str]]:
+    """(start, end, replacement) triples for every bare string literal
+    compared against first_message/last_message that parses as a
+    date/timestamp -- start/end are the literal's own character offsets
+    (from sqlglot's node .meta) into the original where_clause text, end
+    inclusive of the closing quote."""
+    replacements: list[tuple[int, int, str]] = []
+
+    def _maybe_replace(literal: Optional[exp.Expression]) -> None:
+        if not isinstance(literal, exp.Literal) or not literal.is_string:
+            return
+        if _is_already_timestamp_typed(literal):
+            return
+        meta = literal.meta
+        if "start" not in meta or "end" not in meta:
+            return
+        normalized = _normalize_timestamp_literal(literal.this)
+        if normalized is None:
+            return
+        replacements.append((meta["start"], meta["end"], f"TIMESTAMP '{normalized}'"))
+
+    for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE):
+        left, right = node.this, node.expression
+        if isinstance(left, exp.Column) and left.name in _TIMESTAMP_COMPARISON_COLUMNS:
+            _maybe_replace(right)
+        elif isinstance(right, exp.Column) and right.name in _TIMESTAMP_COMPARISON_COLUMNS:
+            _maybe_replace(left)
+
+    for node in tree.find_all(exp.Between):
+        if isinstance(node.this, exp.Column) and node.this.name in _TIMESTAMP_COMPARISON_COLUMNS:
+            _maybe_replace(node.args.get("low"))
+            _maybe_replace(node.args.get("high"))
+
+    for node in tree.find_all(exp.In):
+        if isinstance(node.this, exp.Column) and node.this.name in _TIMESTAMP_COMPARISON_COLUMNS:
+            for expression in node.expressions:
+                _maybe_replace(expression)
+
+    return replacements
+
+
+def _coerce_timestamp_literals(where_clause: str) -> str:
+    """Rewrites every first_message/last_message comparison's bare string
+    literal into a proper `TIMESTAMP '...'` literal, so a pasted ISO
+    timestamp (with 'T'/'Z'), a bare date, or a space-separated
+    date-time-sans-seconds all work instead of raising Athena's opaque
+    TYPE_MISMATCH (see #1439). Applied via direct character-offset splicing
+    into the original text rather than a full sqlglot re-serialization, so
+    anything not touched -- an already-correct `TIMESTAMP '...'` literal, a
+    literal on an unrelated column, the clause's own formatting/casing --
+    comes back byte-for-byte untouched.
+
+    where_clause is returned unchanged if it fails to parse (a genuinely
+    invalid clause is _validate_where_clause's problem, not this
+    function's) or has nothing to coerce.
+    """
+    try:
+        tree = sqlglot.parse_one(where_clause, dialect="trino")
+    except Exception:
+        return where_clause
+    if tree is None:
+        return where_clause
+
+    replacements = _collect_timestamp_literal_replacements(tree)
+    if not replacements:
+        return where_clause
+
+    # Apply back-to-front so an earlier replacement's length change never
+    # invalidates a later replacement's offsets into the original string.
+    result = where_clause
+    for start, end, replacement in sorted(replacements, key=lambda r: r[0], reverse=True):
+        result = result[:start] + replacement + result[end + 1:]
+    return result
 
 
 def _derive_bounds(where_clause: str) -> tuple[Optional[date], Optional[date]]:
@@ -2153,6 +2275,25 @@ def _reconcile_stuck_archive_searches() -> None:
             logger.info("Marked stuck archive search %s ABORTED on startup.", uuid)
 
 
+def _friendly_athena_error(reason: str) -> str:
+    """Prepend a plain-language hint to a TYPE_MISMATCH between a timestamp
+    column and a bare string literal -- the single most common mistake
+    this UI's WHERE clause box invites (#1439) -- and strip the misleading
+    line 1:NNN offset. Any other StateChangeReason is returned unchanged."""
+    if "TYPE_MISMATCH" not in reason:
+        return reason
+    lowered = reason.lower()
+    if "timestamp" not in lowered or "varchar" not in lowered:
+        return reason
+    cleaned = _ATHENA_LINE_COL_RE.sub("", reason, count=1)
+    hint = (
+        "A timestamp column was compared to a plain string. Write timestamp "
+        "values as TIMESTAMP '2026-09-05 13:55:00' (a space, not 'T'; no "
+        "'Z'). Values are UTC."
+    )
+    return f"{hint}\n\n{cleaned}"
+
+
 def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
     """One thread per in-flight search. Exponential backoff (1s, 2s, 4s,
     8s, 16s, then capped at 30s) for up to 2 minutes wall-clock total --
@@ -2182,7 +2323,7 @@ def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
             return
         if state in ("FAILED", "CANCELLED"):
             reason = resp["QueryExecution"]["Status"].get("StateChangeReason", "")
-            _update_search_record(uuid, status="FAILED", error=reason)
+            _update_search_record(uuid, status="FAILED", error=_friendly_athena_error(reason))
             return
         # QUEUED / RUNNING -- keep polling
 
@@ -2321,6 +2462,7 @@ def create_archive_search(body: ArchiveSearchCreate):
     if not where_clause:
         raise HTTPException(status_code=400, detail="where_clause must not be empty")
     _validate_where_clause(where_clause)
+    where_clause = _coerce_timestamp_literals(where_clause)
 
     today = datetime.now(timezone.utc).date()
     explicit_start = body.start_date or _ARCHIVE_EPOCH
