@@ -321,14 +321,23 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
     };
   }, [latitude, longitude]);
 
+  // flex-1 + a min-height floor -- matches RouteMap's sizing so an airport
+  // result's map is the same size as a route result's. The caller
+  // (LookupView) places this in a full-width flex column below the
+  // airport's text so it fills whatever vertical space is left in the
+  // viewport, but never collapses below the floor for a short/compact
+  // result or when several results are stacked and space is tight.
   return (
     <div
       ref={containerRef}
-      className="h-80 w-full rounded-md border border-slate-200 dark:border-slate-700"
+      className="min-h-[24rem] w-full flex-1 rounded-md border border-slate-200 dark:border-slate-700"
     />
   );
 }
 
+// Map is rendered by the caller (LookupView), below this text and outside
+// the max-w-3xl text column -- see the "airport" branch in LookupView's
+// results loop, mirroring RouteResultView below.
 function AirportResultView({ data }: { data: AirportRecord }) {
   const icaoCode = displayStr(data.icao_code) ?? "";
   const iataCode = displayStr(data.iata_code);
@@ -339,8 +348,6 @@ function AirportResultView({ data }: { data: AirportRecord }) {
     true,
   );
   const phonic = displayStr(data.phonic);
-  const latitude = typeof data.latitude === "number" ? data.latitude : undefined;
-  const longitude = typeof data.longitude === "number" ? data.longitude : undefined;
 
   return (
     <div className="flex flex-col gap-1">
@@ -354,11 +361,6 @@ function AirportResultView({ data }: { data: AirportRecord }) {
         </div>
       )}
       {locLine && <div className="text-sm text-slate-500 dark:text-slate-400">{locLine}</div>}
-      {latitude !== undefined && longitude !== undefined && (
-        <div className="mt-2">
-          <AirportMap latitude={latitude} longitude={longitude} />
-        </div>
-      )}
     </div>
   );
 }
@@ -761,7 +763,9 @@ export function LookupView() {
             <Fragment key={`${result.tab}-${i}`}>
               {i > 0 && <hr className="max-w-3xl border-slate-200 dark:border-slate-700" />}
               <div
-                className={`flex min-h-0 flex-col gap-3 ${result.tab === "route" ? "flex-1" : ""}`}
+                className={`flex min-h-0 flex-col gap-3 ${
+                  result.tab === "route" || result.tab === "airport" ? "flex-1" : ""
+                }`}
               >
                 <div className="max-w-3xl shrink-0">
                   <SectionLabel>{RESULT_LABEL[result.tab]}</SectionLabel>
@@ -770,6 +774,11 @@ export function LookupView() {
                 {result.tab === "route" && result.data.stops && result.data.stops.length > 0 && (
                   <RouteMap stops={result.data.stops} />
                 )}
+                {result.tab === "airport" &&
+                  typeof result.data.latitude === "number" &&
+                  typeof result.data.longitude === "number" && (
+                    <AirportMap latitude={result.data.latitude} longitude={result.data.longitude} />
+                  )}
               </div>
             </Fragment>
           ))}
