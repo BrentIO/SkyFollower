@@ -1,11 +1,18 @@
-"""Tests for worker.py's process_day -- guard/copy/DLQ/index-row wiring."""
+"""Tests for worker.py -- process_day's guard/copy/DLQ/index-row wiring,
+on_message's connection-thread hand-off, the background worker loop's
+ack/nack marshalling, and the reconnect loop."""
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
+import queue
+import threading
+import time
 from datetime import datetime, timezone
 
+import pika
 import pyarrow.parquet as pq
 from botocore.exceptions import ClientError
 
@@ -57,6 +64,18 @@ class _FakeChannel:
         self.stop_consuming_called = True
 
 
+class _FakeConnection:
+    """add_callback_threadsafe runs the callback inline, standing in for
+    pika's ioloop marshalling the call onto "the connection thread" --
+    there's only one thread in these tests."""
+
+    def __init__(self, closed: bool = False):
+        self.is_closed = closed
+
+    def add_callback_threadsafe(self, callback):
+        callback()
+
+
 class _FakeMethod:
     def __init__(self, delivery_tag=1):
         self.delivery_tag = delivery_tag
@@ -105,11 +124,10 @@ class TestProcessDay:
         docs = [_doc("id1"), _doc("id2", ident="DAL2")]
         collection = _FakeCollection(docs)
         s3 = _FakeS3()
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == []
+        assert dlq_entries == []
         assert len(s3.put_calls) == 1
         bucket, key, body = s3.put_calls[0]
         assert bucket == "dst"
@@ -121,22 +139,20 @@ class TestProcessDay:
     def test_empty_day_is_a_no_op(self):
         collection = _FakeCollection([])
         s3 = _FakeS3()
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
         assert s3.put_calls == []
-        assert channel.dlq == []
+        assert dlq_entries == []
 
     def test_guard_failure_sends_to_dlq_and_is_excluded_from_index(self):
         docs = [_doc("id1", total_messages=0), _doc("id2")]
         collection = _FakeCollection(docs)
         s3 = _FakeS3()
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == [("legacy-migration-dlq", "id1", "zero messages recorded")]
+        assert dlq_entries == [("id1", "zero messages recorded")]
         table = pq.read_table(io.BytesIO(s3.put_calls[0][2]))
         assert table.num_rows == 1
 
@@ -144,22 +160,20 @@ class TestProcessDay:
         docs = [_doc("id1")]
         collection = _FakeCollection(docs)
         s3 = _FakeS3(missing_source_for={"id1"})
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == [("legacy-migration-dlq", "id1", "source object missing")]
+        assert dlq_entries == [("id1", "source object missing")]
         assert s3.put_calls == []
 
     def test_copy_verification_failure_sends_to_dlq(self):
         docs = [_doc("id1")]
         collection = _FakeCollection(docs)
         s3 = _FakeS3(etag_mismatch_for={"id1"})
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == [("legacy-migration-dlq", "id1", "copy verification failed")]
+        assert dlq_entries == [("id1", "copy verification failed")]
         assert s3.put_calls == []
 
     def test_already_copied_flight_skips_copy_but_still_indexed(self):
@@ -167,11 +181,10 @@ class TestProcessDay:
         collection = _FakeCollection(docs)
         s3 = _FakeS3()
         s3._copied.add("id1")  # pre-existing from an earlier/redelivered run
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == []
+        assert dlq_entries == []
         assert len(s3.put_calls) == 1
 
     def test_throttled_index_put_object_is_retried_not_raised(self, monkeypatch):
@@ -179,44 +192,88 @@ class TestProcessDay:
         docs = [_doc("id1")]
         collection = _FakeCollection(docs)
         s3 = _FakeS3(throttle_put_object_times=2)
-        channel = _FakeChannel()
 
-        worker.process_day(collection, s3, "src", "dst", channel, "2024-05-31")
+        dlq_entries = worker.process_day(collection, s3, "src", "dst", "2024-05-31")
 
-        assert channel.dlq == []
+        assert dlq_entries == []
         assert len(s3.put_calls) == 1
 
 
 class TestOnMessage:
-    def test_valid_message_processes_day_and_acks(self):
-        docs = [_doc("id1")]
-        collection = _FakeCollection(docs)
-        s3 = _FakeS3()
+    """on_message now only parses and hands off -- it must never touch
+    Mongo/S3 itself, so build_on_message doesn't even need them."""
+
+    def test_valid_message_hands_off_without_doing_s3_work(self):
+        handoff: queue.Queue = queue.Queue()
         channel = _FakeChannel()
-        on_message = worker.build_on_message(collection, s3, "src", "dst")
+        on_message = worker.build_on_message(handoff)
 
         on_message(channel, _FakeMethod(delivery_tag=7), None, json.dumps({"date": "2024-05-31"}).encode())
 
-        assert channel.acked == [7]
+        assert channel.acked == []
         assert channel.nacked == []
-        assert len(s3.put_calls) == 1
+        assert handoff.get_nowait() == ("2024-05-31", 7)
 
     def test_unparseable_json_is_dropped_not_requeued(self):
+        handoff: queue.Queue = queue.Queue()
         channel = _FakeChannel()
-        on_message = worker.build_on_message(_FakeCollection([]), _FakeS3(), "src", "dst")
+        on_message = worker.build_on_message(handoff)
 
         on_message(channel, _FakeMethod(delivery_tag=3), None, b"not json")
 
         assert channel.acked == [3]
         assert channel.nacked == []
+        assert handoff.empty()
 
     def test_missing_date_key_is_dropped_not_requeued(self):
+        handoff: queue.Queue = queue.Queue()
         channel = _FakeChannel()
-        on_message = worker.build_on_message(_FakeCollection([]), _FakeS3(), "src", "dst")
+        on_message = worker.build_on_message(handoff)
 
         on_message(channel, _FakeMethod(delivery_tag=9), None, b"{}")
 
         assert channel.acked == [9]
+        assert channel.nacked == []
+        assert handoff.empty()
+
+
+class TestWorkerLoop:
+    """build_worker_loop is the background thread body: pulls one item off
+    the hand-off queue, runs process_day, and marshals the ack/nack (plus
+    any DLQ publishes) back through connection.add_callback_threadsafe --
+    _FakeConnection runs those inline, standing in for "the connection
+    thread"."""
+
+    @staticmethod
+    def _wait_until(predicate, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.01)
+        raise AssertionError("condition never became true")
+
+    def test_success_acks_and_publishes_collected_dlq_entries(self):
+        docs = [_doc("id1", total_messages=0), _doc("id2")]
+        collection = _FakeCollection(docs)
+        s3 = _FakeS3()
+        channel = _FakeChannel()
+        connection = _FakeConnection()
+        handoff: queue.Queue = queue.Queue()
+        shutdown_event = threading.Event()
+        handoff.put(("2024-05-31", 11))
+
+        loop = worker.build_worker_loop(handoff, connection, channel, collection, s3, "src", "dst", shutdown_event)
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        try:
+            self._wait_until(lambda: channel.acked)
+        finally:
+            shutdown_event.set()
+            thread.join(timeout=2)
+
+        assert channel.dlq == [("legacy-migration-dlq", "id1", "zero messages recorded")]
+        assert channel.acked == [11]
         assert channel.nacked == []
 
     def test_process_day_exception_nacks_with_requeue(self):
@@ -225,28 +282,121 @@ class TestOnMessage:
                 raise RuntimeError("Mongo unavailable")
 
         channel = _FakeChannel()
-        on_message = worker.build_on_message(_ExplodingCollection(), _FakeS3(), "src", "dst")
+        connection = _FakeConnection()
+        handoff: queue.Queue = queue.Queue()
+        shutdown_event = threading.Event()
+        handoff.put(("2024-05-31", 5))
 
-        on_message(channel, _FakeMethod(delivery_tag=5), None, json.dumps({"date": "2024-05-31"}).encode())
+        loop = worker.build_worker_loop(
+            handoff, connection, channel, _ExplodingCollection(), _FakeS3(), "src", "dst", shutdown_event
+        )
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        try:
+            self._wait_until(lambda: channel.nacked)
+        finally:
+            shutdown_event.set()
+            thread.join(timeout=2)
 
         assert channel.acked == []
         assert channel.nacked == [(5, True)]
 
+    def test_stale_connection_after_reconnect_exits_without_touching_channel(self):
+        """A worker thread left over from a dropped connection (run()'s
+        loop has already moved on to a new connection/channel) must not
+        keep polling forever -- see worker_loop's is_closed check."""
+        channel = _FakeChannel()
+        connection = _FakeConnection(closed=True)
+        handoff: queue.Queue = queue.Queue()
+        shutdown_event = threading.Event()
+
+        loop = worker.build_worker_loop(handoff, connection, channel, _FakeCollection([]), _FakeS3(), "src", "dst", shutdown_event)
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        thread.join(timeout=2)
+
+        assert not thread.is_alive()
+        assert channel.acked == []
+        assert channel.nacked == []
+
 
 class TestShutdownHandler:
-    def test_stops_consuming(self):
+    def test_stops_consuming_and_sets_shutdown_event(self):
         channel = _FakeChannel()
-        handler = worker.build_shutdown_handler(channel)
+        shutdown_event = threading.Event()
+        handler = worker.build_shutdown_handler(channel, shutdown_event)
 
         handler(None, None)
 
         assert channel.stop_consuming_called is True
+        assert shutdown_event.is_set()
 
     def test_swallows_exception_from_stop_consuming(self):
         class _ExplodingChannel(_FakeChannel):
             def stop_consuming(self):
                 raise RuntimeError("already stopped")
 
-        handler = worker.build_shutdown_handler(_ExplodingChannel())
+        handler = worker.build_shutdown_handler(_ExplodingChannel(), threading.Event())
 
         handler(None, None)  # must not raise
+
+
+class TestRun:
+    """run()'s connect/consume/reconnect loop, with Mongo/S3/RabbitMQ and
+    the background worker thread all faked out -- this only exercises the
+    reconnect-on-AMQPConnectionError-then-exit-on-shutdown control flow."""
+
+    def test_reconnects_after_amqp_error_then_exits_on_shutdown(self, monkeypatch):
+        attempts = {"count": 0}
+        captured = {}
+
+        class _RunFakeChannel:
+            def queue_declare(self, **kwargs):
+                pass
+
+            def basic_qos(self, **kwargs):
+                pass
+
+            def basic_consume(self, **kwargs):
+                pass
+
+            def stop_consuming(self):
+                pass
+
+            def start_consuming(self):
+                # Second connection: simulate stop_consuming() having been
+                # called already (shutdown requested), so start_consuming()
+                # returns normally instead of blocking.
+                captured["shutdown_event"].set()
+
+        class _RunFakeConnection:
+            def channel(self):
+                return _RunFakeChannel()
+
+            def close(self):
+                pass
+
+        def fake_connect_rabbitmq(rabbitmq_cfg):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise pika.exceptions.AMQPConnectionError("no route to host")
+            return _RunFakeConnection()
+
+        def fake_build_worker_loop(handoff, connection, channel, collection, s3_client, source_bucket, dest_bucket, shutdown_event):
+            captured["shutdown_event"] = shutdown_event
+            return lambda: None  # no real background work needed for this test
+
+        monkeypatch.setattr(worker, "load_config", lambda *a, **k: {
+            "rabbitmq": {}, "mongo": {}, "legacy_migration_s3": {"source_bucket": "src", "dest_bucket": "dst"},
+        })
+        monkeypatch.setattr(worker, "connect_mongo", lambda cfg: None)
+        monkeypatch.setattr(worker, "build_s3_client", lambda: None)
+        monkeypatch.setattr(worker, "declare_queues", lambda channel: None)
+        monkeypatch.setattr(worker, "connect_rabbitmq", fake_connect_rabbitmq)
+        monkeypatch.setattr(worker, "build_worker_loop", fake_build_worker_loop)
+        monkeypatch.setattr(worker.signal, "signal", lambda *a, **k: None)
+        monkeypatch.setattr(worker.time, "sleep", lambda *_: None)
+
+        worker.run(argparse.Namespace())
+
+        assert attempts["count"] == 2

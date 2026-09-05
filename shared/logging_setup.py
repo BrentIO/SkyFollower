@@ -27,3 +27,10 @@ def configure_logging(log_level: str | None = None, stream: TextIO = sys.stdout)
         stream=stream,
         force=True,
     )
+    # pika's own loggers re-emit connection/channel/transport workflow at
+    # INFO on every connect, reconnect, and shutdown -- noise that buries a
+    # caller's own sparser INFO lines. A caller that wants pika even
+    # quieter (e.g. message-processor's CRITICAL, to also drop its
+    # per-reconnect traceback) can still lower it further after calling
+    # this.
+    logging.getLogger("pika").setLevel(logging.WARNING)
