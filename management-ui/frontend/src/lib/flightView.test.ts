@@ -5,7 +5,10 @@ import {
   boundsOf,
   flightPathFeature,
   formatDuration,
+  formatTraceLabel,
   lineGradientExpression,
+  traceLabelSortKey,
+  tracePointsFeatureCollection,
 } from "./flightView";
 
 describe("formatDuration", () => {
@@ -192,5 +195,120 @@ describe("airportLocation", () => {
     expect(airportLocation({ icao_code: "KDFW", city: "Dallas", region: "TX", country: "Dallas" })).toBe(
       "Dallas, TX, Dallas",
     );
+  });
+});
+
+describe("traceLabelSortKey", () => {
+  it("gives the first and last point the top priority (0)", () => {
+    expect(traceLabelSortKey(0, 10)).toBe(0);
+    expect(traceLabelSortKey(9, 10)).toBe(0);
+  });
+
+  it("gives the midpoint the next priority tier", () => {
+    // 9 points, indices 0-8: midpoint is index 4.
+    expect(traceLabelSortKey(4, 9)).toBe(1);
+  });
+
+  it("gives quarter-points a lower priority than the midpoint", () => {
+    const mid = traceLabelSortKey(4, 9);
+    const quarter = traceLabelSortKey(2, 9);
+    expect(quarter).toBeGreaterThan(mid);
+  });
+
+  it("is symmetric around the midpoint", () => {
+    // 9 points: index 2 and index 6 are equidistant from the midpoint (4).
+    expect(traceLabelSortKey(2, 9)).toBe(traceLabelSortKey(6, 9));
+  });
+
+  it("handles a single point without dividing by zero", () => {
+    expect(traceLabelSortKey(0, 1)).toBe(0);
+  });
+
+  it("every index gets a finite, non-negative key (never loops forever)", () => {
+    const total = 37; // odd, deliberately awkward for bisection
+    for (let i = 0; i < total; i++) {
+      const key = traceLabelSortKey(i, total);
+      expect(Number.isFinite(key)).toBe(true);
+      expect(key).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe("formatTraceLabel", () => {
+  it("renders both measurements and the time on two lines", () => {
+    // 1785499200 = 2026-07-31T12:00:00Z; formatting is locale/zone-dependent
+    // (matches the rest of the modal's toLocaleTimeString() usage), so only
+    // the first line -- which doesn't depend on the viewer's zone -- is
+    // asserted verbatim.
+    const label = formatTraceLabel(416, 16050, 1785499200);
+    const lines = label.split("\n");
+    expect(lines[0]).toBe("416 kt  16050 ft");
+    expect(lines).toHaveLength(2);
+  });
+
+  it("omits the speed segment when speed is unavailable", () => {
+    expect(formatTraceLabel(null, 16050, null)).toBe("16050 ft");
+  });
+
+  it("omits the altitude segment when altitude is unavailable", () => {
+    expect(formatTraceLabel(416, null, null)).toBe("416 kt");
+  });
+
+  it("omits the time line entirely when there is no timestamp", () => {
+    const label = formatTraceLabel(416, 16050, null);
+    expect(label.includes("\n")).toBe(false);
+  });
+
+  it("renders just an empty first line when both measurements are unavailable", () => {
+    expect(formatTraceLabel(null, null, null)).toBe("");
+  });
+});
+
+describe("tracePointsFeatureCollection", () => {
+  it("builds one Point feature per coordinate, 2D (color/label live in properties, not geometry)", () => {
+    const coords = [
+      [-84.0, 33.0, 1000],
+      [-85.0, 34.0, 2000],
+    ];
+    const fc = tracePointsFeatureCollection(coords, [1785499200, 1785499210], [400, 420]);
+    expect(fc.type).toBe("FeatureCollection");
+    expect(fc.features).toHaveLength(2);
+    expect(fc.features[0].geometry).toEqual({ type: "Point", coordinates: [-84.0, 33.0] });
+  });
+
+  it("colors each point from its own altitude, not a shared color", () => {
+    const coords = [
+      [-84.0, 33.0, 0],
+      [-85.0, 34.0, 40000],
+    ];
+    const fc = tracePointsFeatureCollection(coords, [null, null], [null, null]);
+    expect(fc.features[0].properties.color).not.toBe(fc.features[1].properties.color);
+    expect(fc.features[0].properties.color).toBe(altitudeColor(0));
+    expect(fc.features[1].properties.color).toBe(altitudeColor(40000));
+  });
+
+  it("handles a 2D-only coordinate (no altitude) without crashing", () => {
+    const fc = tracePointsFeatureCollection([[-84.0, 33.0]], [null], [400]);
+    expect(fc.features[0].properties.label).toBe("400 kt");
+    expect(fc.features[0].properties.color).toBe(altitudeColor(null));
+  });
+
+  it("assigns sortKey consistent with traceLabelSortKey", () => {
+    const coords = [
+      [-84.0, 33.0, 1000],
+      [-85.0, 34.0, 2000],
+      [-86.0, 35.0, 3000],
+    ];
+    const fc = tracePointsFeatureCollection(coords, [1, 2, 3], [100, 200, 300]);
+    expect(fc.features.map((f) => f.properties.sortKey)).toEqual([
+      traceLabelSortKey(0, 3),
+      traceLabelSortKey(1, 3),
+      traceLabelSortKey(2, 3),
+    ]);
+  });
+
+  it("treats a missing coordTimes/coordSpeeds entry the same as null (index out of range)", () => {
+    const fc = tracePointsFeatureCollection([[-84.0, 33.0, 1000]], [], []);
+    expect(fc.features[0].properties.label).toBe("1000 ft");
   });
 });

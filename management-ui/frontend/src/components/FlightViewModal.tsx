@@ -10,6 +10,7 @@ import {
   flightPathFeature,
   formatDuration,
   lineGradientExpression,
+  tracePointsFeatureCollection,
   type Coord,
 } from "../lib/flightView";
 import {
@@ -32,6 +33,66 @@ interface FlightViewModalProps {
 const PILL = "rounded px-2 py-0.5 text-xs font-semibold";
 const PILL_GREEN = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
 const PILL_RED = "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+
+const TRACE_POINTS_SOURCE = "trace-points";
+const TRACE_POINTS_CIRCLE_LAYER = "trace-points-circle";
+const TRACE_POINTS_LABEL_LAYER = "trace-points-label";
+
+// A row of three dots -- reads as "individual sample points" at a glance,
+// distinct from NavigationControl's zoom/compass glyphs above it.
+const TRACE_POINTS_ICON_SVG = `
+<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="3" cy="9" r="2" fill="currentColor" />
+  <circle cx="9" cy="9" r="2" fill="currentColor" />
+  <circle cx="15" cy="9" r="2" fill="currentColor" />
+</svg>`;
+
+// The app's first custom maplibregl.IControl -- every map elsewhere uses
+// only the stock NavigationControl. Plain DOM (not React) since MapLibre
+// controls render outside React's tree; toggle state lives entirely inside
+// this instance rather than component state, so it resets for free every
+// time the modal reopens and rebuilds the map (see the map-creation effect
+// below) instead of needing an explicit reset.
+class TracePointsControl implements maplibregl.IControl {
+  private _map: maplibregl.Map | undefined;
+  private _button: HTMLButtonElement | undefined;
+  private _active = false;
+
+  onAdd(map: maplibregl.Map): HTMLElement {
+    this._map = map;
+    const container = document.createElement("div");
+    container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    this._button = document.createElement("button");
+    this._button.type = "button";
+    this._button.title = "Toggle trace points";
+    this._button.setAttribute("aria-label", "Toggle trace points");
+    this._button.innerHTML = TRACE_POINTS_ICON_SVG;
+    this._button.addEventListener("click", this._onClick);
+    container.appendChild(this._button);
+    return container;
+  }
+
+  onRemove(): void {
+    this._button?.removeEventListener("click", this._onClick);
+    this._button?.parentElement?.remove();
+    this._map = undefined;
+    this._button = undefined;
+  }
+
+  private _onClick = () => {
+    const map = this._map;
+    const button = this._button;
+    if (!map || !button) return;
+    this._active = !this._active;
+    // Inline style rather than a new CSS class/file -- this is the only
+    // custom control in the app, so a stylesheet just for its active state
+    // isn't worth it. Mirrors maplibre-gl.css's own active/pressed button tone.
+    button.style.color = this._active ? "#0ea5e9" : "";
+    const visibility = this._active ? "visible" : "none";
+    map.setLayoutProperty(TRACE_POINTS_CIRCLE_LAYER, "visibility", visibility);
+    map.setLayoutProperty(TRACE_POINTS_LABEL_LAYER, "visibility", visibility);
+  };
+}
 
 // Short display form for receiver_sources -- distinct from ConditionForm.tsx's
 // verbose rule-builder labels ("1090MHz ADS-B", "978 UAT"); 1090/978 render as-is.
@@ -112,6 +173,9 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    // Added after NavigationControl so MapLibre stacks it directly below
+    // the zoom control at the same corner, per the toggle's placement spec.
+    map.addControl(new TracePointsControl(), "top-right");
 
     map.on("load", () => {
       // lineMetrics is required for the line-gradient paint property below
@@ -144,6 +208,74 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
         .setLngLat(coordinates[coordinates.length - 1].slice(0, 2) as [number, number])
         .addTo(map);
       map.fitBounds(boundsOf(coordinates), { padding: 32, animate: false });
+
+      // Trace points -- off by default (TracePointsControl flips
+      // visibility on click); the source/layers exist from the start
+      // rather than being added/removed per toggle, since MapLibre layers
+      // are cheap to hide and this avoids re-adding on every click.
+      const traceProps = (view.flight_path?.properties ?? {}) as {
+        coordTimes?: (number | null)[];
+        coordSpeeds?: (number | null)[];
+      };
+      map.addSource(TRACE_POINTS_SOURCE, {
+        type: "geojson",
+        data: tracePointsFeatureCollection(coordinates, traceProps.coordTimes ?? [], traceProps.coordSpeeds ?? []),
+      });
+      map.addLayer({
+        id: TRACE_POINTS_CIRCLE_LAYER,
+        type: "circle",
+        source: TRACE_POINTS_SOURCE,
+        layout: { visibility: "none" },
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": 4,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#0f172a",
+        },
+      });
+      map.addLayer({
+        id: TRACE_POINTS_LABEL_LAYER,
+        type: "symbol",
+        source: TRACE_POINTS_SOURCE,
+        layout: {
+          visibility: "none",
+          "text-field": ["get", "label"],
+          "text-size": 11,
+          "text-anchor": "bottom-left",
+          "text-offset": [0.6, -0.6],
+          "text-justify": "left",
+          // false is MapLibre's own default -- explicit here since this
+          // collision behavior *is* the decluttering mechanism (see
+          // symbol-sort-key below), not an incidental setting.
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "symbol-sort-key": ["get", "sortKey"],
+        },
+        paint: {
+          "text-color": "#0f172a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
+      });
+
+      // Optional per the issue: a precise read on click/tap, since hovering
+      // a label isn't possible on touch and dense labels can still be hard
+      // to read exactly even on desktop.
+      map.on("click", TRACE_POINTS_CIRCLE_LAYER, (e) => {
+        const feature = e.features?.[0];
+        if (!feature || feature.geometry.type !== "Point") return;
+        const label = String(feature.properties?.label ?? "");
+        new maplibregl.Popup({ closeButton: false, offset: 8 })
+          .setLngLat(feature.geometry.coordinates as [number, number])
+          .setHTML(label.split("\n").map((line) => `<div>${line}</div>`).join(""))
+          .addTo(map);
+      });
+      map.on("mouseenter", TRACE_POINTS_CIRCLE_LAYER, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", TRACE_POINTS_CIRCLE_LAYER, () => {
+        map.getCanvas().style.cursor = "";
+      });
     });
 
     return () => {

@@ -1806,6 +1806,84 @@ class TestFlightView:
         assert resp.status_code == 200
         assert resp.json()["receiver_sources"] == []
 
+    def test_flight_path_carries_coord_times_and_speeds(self, client, fake_s3):
+        """#1441: get_archive_flight_view must pass velocities into
+        build_flight_path, not just positions -- coordSpeeds only appears
+        when velocities is explicitly passed."""
+        s3_key = "flights/2026/07/31/uuid7.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "positions": [
+                {"latitude": 33.0, "longitude": -84.0, "altitude": 1000, "timestamp": "2026-07-31T12:00:00+00:00"},
+                {"latitude": 34.0, "longitude": -85.0, "altitude": 2000, "timestamp": "2026-07-31T12:00:10+00:00"},
+            ],
+            "velocities": [
+                {"timestamp": "2026-07-31T12:00:00+00:00", "velocity": 400.0},
+            ],
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:00:10Z",
+            "total_messages": 2,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        flight_path = resp.json()["flight_path"]
+        assert flight_path["properties"]["coordTimes"] == [1785499200, 1785499210]
+        # Nearest-match extrapolation: only one velocity sample, before both positions.
+        assert flight_path["properties"]["coordSpeeds"] == [400, 400]
+
+    def test_flight_path_absent_when_fewer_than_two_positions(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid8.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "positions": [{"latitude": 33.0, "longitude": -84.0, "timestamp": "2026-07-31T12:00:00+00:00"}],
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:00:00Z",
+            "total_messages": 1,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        assert resp.json()["flight_path"] is None
+
+
+class TestFlightPathDownload:
+    def test_geojson_export_carries_coord_times_and_speeds(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid9.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "positions": [
+                {"latitude": 33.0, "longitude": -84.0, "altitude": 1000, "timestamp": "2026-07-31T12:00:00+00:00"},
+                {"latitude": 34.0, "longitude": -85.0, "altitude": 2000, "timestamp": "2026-07-31T12:00:10+00:00"},
+            ],
+            "velocities": [
+                {"timestamp": "2026-07-31T12:00:00+00:00", "velocity": 400.0},
+                {"timestamp": "2026-07-31T12:00:10+00:00", "velocity": 420.0},
+            ],
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:00:10Z",
+            "total_messages": 2,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/flight-path")
+        assert resp.status_code == 200
+        feature = json.loads(resp.content)
+        assert feature["properties"]["coordTimes"] == [1785499200, 1785499210]
+        assert feature["properties"]["coordSpeeds"] == [400, 420]
+
+    def test_404_when_fewer_than_two_positions(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid10.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "positions": [{"latitude": 33.0, "longitude": -84.0, "timestamp": "2026-07-31T12:00:00+00:00"}],
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:00:00Z",
+            "total_messages": 1,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/flight-path")
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Startup reconciliation

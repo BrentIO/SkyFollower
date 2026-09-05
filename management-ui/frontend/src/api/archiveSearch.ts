@@ -85,7 +85,12 @@ export interface FlightView {
   flight_path?: {
     type: "Feature";
     geometry: { type: "LineString"; coordinates: (number[])[] };
-    properties: Record<string, never>;
+    // coordTimes: Unix epoch seconds per coordinate, parallel to
+    // geometry.coordinates. coordSpeeds: knots, nearest-matched/
+    // interpolated from the flight's velocities -- absent on very old
+    // archives predating #1441, present (possibly all-null entries) on
+    // every flight archived since.
+    properties: { coordTimes?: (number | null)[]; coordSpeeds?: (number | null)[] };
   };
 }
 
