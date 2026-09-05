@@ -2895,7 +2895,7 @@ class FlightView(BaseModel):
     total_messages: int
     matched_rules: list[str] = []
     receiver_sources: list[str] = []     # "1090"/"978"/"EXTERNAL" -- every distinct ADS-B receive source seen; empty for legacy-migrated flights
-    flight_path: Optional[dict] = None   # GeoJSON LineString Feature, or None for <2 positions
+    flight_path: Optional[dict] = None   # GeoJSON LineString Feature (None for <2 positions); properties.coordTimes/coordSpeeds are parallel per-coordinate arrays -- see build_flight_path
 
 
 @app.get(
@@ -2934,7 +2934,7 @@ def get_archive_flight_view(token: str):
         total_messages=flight["total_messages"],
         matched_rules=flight.get("matched_rules", []),
         receiver_sources=flight.get("receiver_sources", []),
-        flight_path=build_flight_path(flight.get("positions", [])),
+        flight_path=build_flight_path(flight.get("positions", []), flight.get("velocities", [])),
     )
 
 
@@ -2946,7 +2946,7 @@ def get_archive_flight_view(token: str):
 def get_archive_flight_path(token: str):
     s3_key = _decrypt_token(token)
     flight = _fetch_flight_record(token)
-    feature = build_flight_path(flight.get("positions", []))
+    feature = build_flight_path(flight.get("positions", []), flight.get("velocities", []))
     if feature is None:
         raise HTTPException(status_code=404, detail="Flight has fewer than 2 positions; no path to export")
 

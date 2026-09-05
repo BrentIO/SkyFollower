@@ -125,6 +125,87 @@ export function formatDuration(startIso: string, endIso: string): string {
   return parts.join(" ");
 }
 
+// ---------------------------------------------------------------------------
+// Trace points (tar1090-style per-position dots + labels, #1441)
+// ---------------------------------------------------------------------------
+
+// A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept
+// preferentially when labels collide). Plain index order would mean "first
+// N points visible" always wins, clumping surviving labels at the start of
+// the track regardless of zoom. Recursive bisection instead ranks the very
+// first/last point highest, then the midpoint, then each remaining
+// quarter-point, etc. -- so whichever subset MapLibre's collision detection
+// keeps at a given zoom is always roughly evenly spread across the whole
+// track, not bunched at one end.
+export function traceLabelSortKey(index: number, total: number): number {
+  if (total <= 1 || index === 0 || index === total - 1) return 0;
+  let level = 0;
+  let lo = 0;
+  let hi = total - 1;
+  while (true) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (index === mid) return level + 1;
+    level++;
+    if (index < mid) hi = mid;
+    else lo = mid;
+  }
+}
+
+// "416 kt  16050 ft\n10:52:31" -- either measurement half may be absent
+// (no surrounding velocity sample, or a 2D-only coordinate with no
+// altitude) without collapsing to a double space or a stray leading unit;
+// the time line is dropped entirely when the sample has no timestamp.
+export function formatTraceLabel(
+  speedKt: number | null,
+  altitudeFt: number | null,
+  epochSeconds: number | null,
+): string {
+  const measurements = [
+    speedKt != null ? `${speedKt} kt` : null,
+    altitudeFt != null ? `${altitudeFt} ft` : null,
+  ].filter((p): p is string => p !== null);
+  const lines = [measurements.join("  ")];
+  if (epochSeconds != null) {
+    lines.push(new Date(epochSeconds * 1000).toLocaleTimeString());
+  }
+  return lines.join("\n");
+}
+
+export interface TracePointProperties {
+  color: string;
+  label: string;
+  sortKey: number;
+}
+
+// Builds the Point FeatureCollection the trace-points toggle's circle/symbol
+// layers read from -- color and label text are precomputed per point here
+// (rather than as MapLibre expressions) since altitudeColor/formatTraceLabel
+// are plain JS already used elsewhere; a `["get", ...]` paint/layout
+// property is cheaper than re-deriving either in an expression.
+export function tracePointsFeatureCollection(
+  coordinates: Coord[],
+  coordTimes: (number | null)[],
+  coordSpeeds: (number | null)[],
+) {
+  return {
+    type: "FeatureCollection" as const,
+    features: coordinates.map((coord, i) => {
+      const altitude = coord.length > 2 ? coord[2] : null;
+      const speed = coordSpeeds[i] ?? null;
+      const time = coordTimes[i] ?? null;
+      return {
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: coord.slice(0, 2) },
+        properties: {
+          color: altitudeColor(altitude),
+          label: formatTraceLabel(speed, altitude, time),
+          sortKey: traceLabelSortKey(i, coordinates.length),
+        } satisfies TracePointProperties,
+      };
+    }),
+  };
+}
+
 export function airportLocation(airport: FlightViewAirport): string | null {
   const filtered = [airport.city, airport.region, airport.country].filter(
     (p): p is string => !!p && p.trim() !== "",
