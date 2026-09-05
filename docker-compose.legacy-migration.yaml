@@ -16,7 +16,7 @@ name: skyfollower-legacy-migration
 x-legacy-migration-environment: &legacy-migration-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   MONGO_URI: ${MONGO_URI}
-  MONGO_DATABASE: ${MONGO_DATABASE:-skyfollower}
+  MONGO_DATABASE: ${MONGO_DATABASE:-SkyFollower}
   MONGO_COLLECTION: ${MONGO_COLLECTION:-flights}
   SOURCE_S3_BUCKET: ${SOURCE_S3_BUCKET}
   DEST_S3_BUCKET: ${DEST_S3_BUCKET}
