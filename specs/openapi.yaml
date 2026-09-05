@@ -2014,6 +2014,12 @@ components:
           type: array
           title: Matched Rules
           default: []
+        receiver_sources:
+          items:
+            type: string
+          type: array
+          title: Receiver Sources
+          default: []
         flight_path:
           anyOf:
           - additionalProperties: true

@@ -1777,6 +1777,35 @@ class TestFlightView:
         assert resp.status_code == 200
         assert resp.json()["registrant"] is None
 
+    def test_receiver_sources_present_on_the_flight_record(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid5.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "receiver_sources": ["1090", "EXTERNAL"],
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        assert resp.json()["receiver_sources"] == ["1090", "EXTERNAL"]
+
+    def test_receiver_sources_defaults_to_empty_for_legacy_flights(self, client, fake_s3):
+        """Legacy-migrated flights never had receiver_sources -- must default
+        to an empty list, not error, and the frontend treats [] as absent."""
+        s3_key = "flights/2026/07/31/uuid6.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        assert resp.json()["receiver_sources"] == []
+
 
 # ---------------------------------------------------------------------------
 # Startup reconciliation

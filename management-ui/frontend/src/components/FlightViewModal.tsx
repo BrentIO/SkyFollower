@@ -33,6 +33,12 @@ const PILL = "rounded px-2 py-0.5 text-xs font-semibold";
 const PILL_GREEN = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
 const PILL_RED = "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
 
+// Short display form for receiver_sources -- distinct from ConditionForm.tsx's
+// verbose rule-builder labels ("1090MHz ADS-B", "978 UAT"); 1090/978 render as-is.
+function receiverSourceLabel(source: string): string {
+  return source === "EXTERNAL" ? "External" : source;
+}
+
 function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{children}</div>;
 }
@@ -189,6 +195,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
     hasPowerplant
   );
   const hasMatchedRules = !!view?.matched_rules && view.matched_rules.length > 0;
+  const hasReceiverSources = !!view?.receiver_sources && view.receiver_sources.length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -267,7 +274,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                     {view.destination && <AirportBlock airport={view.destination} role="destination" />}
                   </div>
                 </div>
-                {(hasRegistrantOrOperator || hasAircraftSection || hasMatchedRules) && (
+                {(hasRegistrantOrOperator || hasAircraftSection || hasMatchedRules || hasReceiverSources) && (
                   <hr className="border-slate-200 dark:border-slate-700" />
                 )}
               </>
@@ -308,7 +315,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                     </div>
                   )}
                 </div>
-                {(hasAircraftSection || hasMatchedRules) && (
+                {(hasAircraftSection || hasMatchedRules || hasReceiverSources) && (
                   <hr className="border-slate-200 dark:border-slate-700" />
                 )}
               </>
@@ -367,23 +374,42 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                     )}
                   </div>
                 </div>
-                {hasMatchedRules && <hr className="border-slate-200 dark:border-slate-700" />}
+                {(hasMatchedRules || hasReceiverSources) && <hr className="border-slate-200 dark:border-slate-700" />}
               </>
             )}
 
-            {hasMatchedRules && (
-              <div>
-                <SectionLabel>Matched rules</SectionLabel>
-                <div className="flex flex-wrap gap-1.5 pl-4">
-                  {view.matched_rules.map((rule) => (
-                    <span
-                      key={rule}
-                      className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300"
-                    >
-                      {rule}
-                    </span>
-                  ))}
-                </div>
+            {(hasMatchedRules || hasReceiverSources) && (
+              <div className={`grid gap-4 ${hasMatchedRules && hasReceiverSources ? "sm:grid-cols-2" : ""}`}>
+                {hasMatchedRules && (
+                  <div>
+                    <SectionLabel>Matched Rules</SectionLabel>
+                    <div className="flex flex-wrap gap-1.5 pl-4">
+                      {view.matched_rules.map((rule) => (
+                        <span
+                          key={rule}
+                          className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        >
+                          {rule}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hasReceiverSources && (
+                  <div>
+                    <SectionLabel>Receiver Sources</SectionLabel>
+                    <div className="flex flex-wrap gap-1.5 pl-4">
+                      {view.receiver_sources.map((source) => (
+                        <span
+                          key={source}
+                          className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        >
+                          {receiverSourceLabel(source)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
