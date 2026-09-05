@@ -35,7 +35,11 @@ const BADGE_CLASSES: Record<BadgeColor, string> = {
 };
 
 function Badge({ color, children }: { color: BadgeColor; children: ReactNode }) {
-  return <span className={`rounded px-2 py-0.5 text-xs font-semibold ${BADGE_CLASSES[color]}`}>{children}</span>;
+  return (
+    <span className={`shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold ${BADGE_CLASSES[color]}`}>
+      {children}
+    </span>
+  );
 }
 
 function StatusBadge({ status }: { status: ArchiveSearchSummary["status"] }) {
@@ -691,7 +695,7 @@ export function HistoryView() {
             return (
               <li
                 key={search.uuid}
-                className={`rounded-md border-l-4 md:rounded-l-none md:rounded-r-md ${
+                className={`overflow-hidden rounded-md border-l-4 md:rounded-l-none md:rounded-r-md ${
                   isSelected
                     ? "border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800"
                     : "border-transparent bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 md:bg-transparent dark:md:bg-transparent"
@@ -701,9 +705,9 @@ export function HistoryView() {
                   <button
                     type="button"
                     onClick={() => selectSearch(search)}
-                    className="flex flex-1 flex-col items-start gap-0.5 text-left"
+                    className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left"
                   >
-                    <span className="flex w-full items-center justify-between gap-2">
+                    <span className="flex w-full min-w-0 items-center justify-between gap-2">
                       <span
                         className={`truncate text-sm ${
                           isSelected ? "font-semibold text-sky-700 dark:text-sky-400" : "text-slate-700 dark:text-slate-200"
