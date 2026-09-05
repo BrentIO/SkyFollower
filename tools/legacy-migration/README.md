@@ -331,11 +331,13 @@ policy, queues, and IAM identity (see "RabbitMQ setup" and "IAM" above).
 Logs go to stdout and to `./logs/<container-hostname>.log` (bind-mounted,
 one file per worker container since `--scale` produces one hostname each).
 
-> **Not safe for a real run yet:** the worker drops its broker connection on
-> any day that takes longer than ~1 minute and cannot ack it -- see
-> [#1473](https://github.com/BrentIO/SkyFollower/issues/1473). Steps 2 and 5
-> above are correct as written but will not complete a real migration until
-> that is fixed.
+Each worker container holds exactly one day in flight at a time (its Mongo
+cursor and per-flight S3 copies are all sequential within that container),
+so `--scale worker=N` is how this tool gets concurrency: N containers are N
+independent competing consumers on the `legacy-migration` queue, each
+pulling its own day as soon as it's free. There is no in-process
+concurrency to tune -- add containers, not threads, to process more days
+at once.
 
 ## Dead-letter queue
 
