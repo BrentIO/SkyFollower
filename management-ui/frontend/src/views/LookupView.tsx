@@ -335,7 +335,7 @@ function AirportResultView({ data }: { data: AirportRecord }) {
   const name = displayStr(data.name);
   const locLine = joinParts(
     [displayStr(data.city), displayStr(data.region), displayStr(data.country)],
-    " ",
+    ", ",
     true,
   );
   const phonic = displayStr(data.phonic);
