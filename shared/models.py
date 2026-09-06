@@ -176,6 +176,12 @@ class CompletedFlight(BaseModel):
     the legacy-to-S3 migration plan deliberately leaves those files
     untouched rather than backfilling a synthetic value.
 
+    origin/destination carry the full resolved airport object on this
+    RabbitMQ/archive-queue record (matching the legacy in-memory shape);
+    the archive processor reduces each to its bare ICAO code string before
+    writing the S3 object, so only the persisted document differs from
+    this one.
+
     Serialise with .model_dump(by_alias=True, mode="json") for RabbitMQ
     transport and S3 storage to produce the {"_id": ...} key expected by
     downstream consumers.
@@ -194,8 +200,8 @@ class CompletedFlight(BaseModel):
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped
     registrant: Optional[dict] = None        # names/street/city/administrative_area/postal_code/country/type -- the aircraft's legal owner, an entity like operator, not a property of the airframe
     squawk: Optional[str] = None
-    origin: Optional[str] = None             # ICAO code string, e.g. "KATL"
-    destination: Optional[str] = None        # ICAO code string
+    origin: Optional[dict] = None            # full AirportRecord fields, e.g. {"icao_code": "KATL", ...} -- resolved at route-resolution time; reduced to an ICAO code string only when persisted to S3 (see archive-processor)
+    destination: Optional[dict] = None       # full AirportRecord fields; see origin
     matched_rules: list[str] = []
     positions: list[dict] = []               # Position.to_dict() output
     velocities: list[dict] = []              # Velocity.to_dict() output

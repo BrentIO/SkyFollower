@@ -335,11 +335,15 @@ class TestCompletedFlight:
         assert flight.registrant is None
 
     def test_json_roundtrip(self):
-        flight = self._make(ident="DAL659", origin="KATL", destination="KLAX")
+        flight = self._make(
+            ident="DAL659",
+            origin={"icao_code": "KATL"},
+            destination={"icao_code": "KLAX"},
+        )
         json_str = flight.model_dump_json(by_alias=True)
         restored = CompletedFlight.model_validate_json(json_str)
         assert restored.ident == "DAL659"
-        assert restored.origin == "KATL"
+        assert restored.origin == {"icao_code": "KATL"}
 
     def test_fully_none_optionals_absent_from_exclude_none_json(self):
         import json

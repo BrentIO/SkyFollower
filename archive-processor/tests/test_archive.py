@@ -913,6 +913,55 @@ class TestDefaultValueFieldOmission:
 
 
 # ---------------------------------------------------------------------------
+# Origin/destination down-conversion: full airport object (in-memory, MQTT,
+# RabbitMQ) -> bare ICAO code string on the S3 payload only
+# ---------------------------------------------------------------------------
+
+class TestOriginDestinationReducedToIcaoCode:
+    def _upload(self, flight: CompletedFlight) -> dict:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(flight)
+            key = next(iter(processor._s3_client.objects))
+            return processor._s3_client.read_json(key)
+
+    def test_origin_destination_reduced_to_icao_code_strings(self):
+        flight = _make_flight(
+            origin={"icao_code": "KJFK", "name": "John F Kennedy Intl", "latitude": 40.6398},
+            destination={"icao_code": "KATL", "name": "Hartsfield-Jackson", "latitude": 33.6367},
+        )
+        doc = self._upload(flight)
+        assert doc["origin"] == "KJFK"
+        assert doc["destination"] == "KATL"
+
+    def test_origin_destination_absent_when_route_unresolved(self):
+        flight = _make_flight()  # no origin/destination set
+        doc = self._upload(flight)
+        assert "origin" not in doc
+        assert "destination" not in doc
+
+    def test_in_memory_completed_flight_keeps_dict_form(self):
+        """Only the S3 upload payload is reduced -- the in-memory
+        CompletedFlight object handed to stitching/the Parquet index still
+        carries the full airport dict."""
+        flight = _make_flight(
+            origin={"icao_code": "KJFK", "name": "John F Kennedy Intl"},
+            destination={"icao_code": "KATL", "name": "Hartsfield-Jackson"},
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._s3_client = _FakeS3()
+            mock_redis.get.return_value = None
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._archive_flight_to_s3(flight)
+        assert flight.origin == {"icao_code": "KJFK", "name": "John F Kennedy Intl"}
+        assert flight.destination == {"icao_code": "KATL", "name": "Hartsfield-Jackson"}
+
+
+# ---------------------------------------------------------------------------
 # Parquet index write, alongside the flight object, and its retry queue
 # ---------------------------------------------------------------------------
 
