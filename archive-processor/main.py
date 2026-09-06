@@ -173,7 +173,27 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
         "matched_rules": merged_rules,
         "positions": merged_positions,
         "velocities": merged_velocities,
+        "origin": _merge_airport_field(prev.get("origin"), new_flight.origin),
+        "destination": _merge_airport_field(prev.get("destination"), new_flight.destination),
     })
+
+
+def _merge_airport_field(prev_value: Optional[str], new_value: Optional[dict]) -> Optional[dict]:
+    """
+    Merge one origin/destination field across two stitched segments.
+    Segment 1 (`prev`, a plain dict read back from S3 -- its origin/
+    destination are already-reduced ICAO code strings) wins whenever it has
+    data, since it saw the departure phase and its resolution is at least
+    as trustworthy as segment 2's; segment 2 (`new_flight`, still a full
+    airport object/dict -- not yet reduced for S3) is used only when
+    segment 1 has none. `prev_value` is wrapped back into an
+    object/dict so the merged CompletedFlight stays type-consistent
+    (Optional[dict]) -- it's reduced to a bare string again by
+    _reduce_airports_to_icao_codes at S3-write time either way.
+    """
+    if prev_value:
+        return {"icao_code": prev_value}
+    return new_value
 
 
 # ---------------------------------------------------------------------------

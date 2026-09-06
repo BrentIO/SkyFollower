@@ -630,6 +630,50 @@ class TestMergeSegments:
             datetime(2024, 5, 31, 12, 0, 0, tzinfo=timezone.utc),
         ]
 
+    # origin/destination merge precedence (see _merge_airport_field): prev
+    # (segment 1, a plain S3 dict whose origin/destination are already-
+    # reduced ICAO code strings) wins whenever it has data; new_flight
+    # (segment 2, a full airport object/dict, not yet reduced) is used only
+    # when segment 1 has none. Each field is decided independently.
+
+    def test_origin_destination_segment1_only_keeps_segment1(self):
+        new = _make_flight(origin=None, destination=None)
+        merged = _merge_segments(
+            new, self._prev_dict(origin="KATL", destination="KLAX")
+        )
+        assert merged.origin == {"icao_code": "KATL"}
+        assert merged.destination == {"icao_code": "KLAX"}
+
+    def test_origin_destination_segment2_only_keeps_segment2(self):
+        new = _make_flight(
+            origin={"icao_code": "KATL", "name": "Hartsfield-Jackson"},
+            destination={"icao_code": "KLAX", "name": "Los Angeles Intl"},
+        )
+        merged = _merge_segments(
+            new, self._prev_dict(origin=None, destination=None)
+        )
+        assert merged.origin == {"icao_code": "KATL", "name": "Hartsfield-Jackson"}
+        assert merged.destination == {"icao_code": "KLAX", "name": "Los Angeles Intl"}
+
+    def test_origin_destination_both_resolved_segment1_wins(self):
+        new = _make_flight(
+            origin={"icao_code": "KJFK", "name": "JFK"},
+            destination={"icao_code": "KORD", "name": "O'Hare"},
+        )
+        merged = _merge_segments(
+            new, self._prev_dict(origin="KATL", destination="KLAX")
+        )
+        assert merged.origin == {"icao_code": "KATL"}
+        assert merged.destination == {"icao_code": "KLAX"}
+
+    def test_origin_destination_neither_resolved_omits_both(self):
+        new = _make_flight(origin=None, destination=None)
+        merged = _merge_segments(
+            new, self._prev_dict(origin=None, destination=None)
+        )
+        assert merged.origin is None
+        assert merged.destination is None
+
 
 class TestStitching:
     def test_no_pointer_writes_normally(self):
