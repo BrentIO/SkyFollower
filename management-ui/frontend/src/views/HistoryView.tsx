@@ -254,11 +254,12 @@ function SearchResultsPanel({
   onDuplicate,
   onDownloadCsv,
 }: SearchResultsPanelProps) {
+  let body: ReactNode;
+
   if (search.status === "RUNNING") {
-    return <p className="p-4 text-sm text-slate-400">Search is running&hellip;</p>;
-  }
-  if (search.status === "FAILED") {
-    return (
+    body = <p className="p-4 text-sm text-slate-400">Search is running&hellip;</p>;
+  } else if (search.status === "FAILED") {
+    body = (
       <FailedSearchDetail
         reason={search.error ?? "The search failed."}
         detail={detail}
@@ -267,9 +268,8 @@ function SearchResultsPanel({
         onDuplicate={onDuplicate}
       />
     );
-  }
-  if (search.status === "ABORTED") {
-    return (
+  } else if (search.status === "ABORTED") {
+    body = (
       <FailedSearchDetail
         reason="Search took too long -- try narrowing your filters."
         detail={detail}
@@ -278,159 +278,178 @@ function SearchResultsPanel({
         onDuplicate={onDuplicate}
       />
     );
-  }
-
-  // COMPLETE from here on.
-  if (resultsLoading || results === null) {
-    return (
+  } else if (resultsLoading || results === null) {
+    // COMPLETE, results not loaded yet.
+    body = (
       <div className="flex flex-col gap-2 p-4">
         <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
         <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">Loading results&hellip;</p>
       </div>
     );
-  }
-  if (results.total_rows === 0) {
-    return (
+  } else if (results.total_rows === 0) {
+    body = (
       <div className="flex flex-col gap-2 p-4">
         <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
         <RequestedRangeNote detail={detail} loading={detailLoading} />
         <p className="text-sm text-slate-400">No flights matched this search.</p>
       </div>
     );
-  }
+  } else {
+    const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
+    // total_rows is exact when not truncated, and the cache cap when it is
+    // (the true count beyond the cap is never computed -- see the truncation
+    // note below).
+    const resultCountLabel = results.truncated
+      ? `${results.total_rows.toLocaleString()}+ results`
+      : `${results.total_rows.toLocaleString()} result${results.total_rows === 1 ? "" : "s"}`;
 
-  const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
-  // total_rows is exact when not truncated, and the cache cap when it is
-  // (the true count beyond the cap is never computed -- see the truncation
-  // note below).
-  const resultCountLabel = results.truncated
-    ? `${results.total_rows.toLocaleString()}+ results`
-    : `${results.total_rows.toLocaleString()} result${results.total_rows === 1 ? "" : "s"}`;
-
-  return (
-    <div className="flex h-full flex-col gap-3 overflow-hidden p-4">
-      <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
-      <RequestedRangeNote detail={detail} loading={detailLoading} />
-      {results.truncated && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
-          More than {results.total_rows} results -- showing the first {results.total_rows}.
-          <span className="hidden md:inline"> Use Download for the full set.</span>
-        </p>
-      )}
-      <div className="max-h-[60vh] overflow-auto md:max-h-none md:min-h-0 md:flex-1">
-        <table className="w-full min-w-max text-left text-sm">
-          <thead>
-            <tr className="text-xs uppercase text-slate-500 dark:text-slate-400">
-              {SORTABLE_COLUMNS.map(({ column, label }) => (
-                <SortableColumnHeader key={column} label={label} column={column} sort={sort} onSortChange={onSortChange} />
-              ))}
-              <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-3 dark:border-slate-700 dark:bg-slate-800" />
-            </tr>
-          </thead>
-          <tbody>
-            {results.rows.map((row) => (
-              <tr
-                key={row.uuid}
-                className="border-b border-slate-100 odd:bg-slate-50 dark:border-slate-800 dark:odd:bg-slate-900"
-              >
-                <td className="px-2 py-3">{row.registration}</td>
-                <td className="px-2 py-3 font-mono">{row.icao_hex}</td>
-                <td className="px-2 py-3">{row.ident}</td>
-                <td className="px-2 py-3">
-                  <div className="flex items-center gap-1.5">
-                    <span>{row.operator_designator}</span>
-                    {row.military && <Badge color="green">Military</Badge>}
-                  </div>
-                </td>
-                <td className="px-2 py-3">{row.type_designator}</td>
-                <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
-                <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
-                <td className="px-2 py-3">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onViewFlight(row.token)}
-                      aria-label="View flight"
-                      title="View flight"
-                      className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
-                    >
-                      <Eye size={12} />
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDownloadFlight(row.token)}
-                      aria-label="Download flight"
-                      title="Download flight"
-                      className="hidden items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex"
-                    >
-                      <Download size={12} />
-                      Download
-                    </button>
-                  </div>
-                </td>
+    body = (
+      <div className="flex h-full flex-col gap-3 overflow-hidden p-4">
+        <WhereClauseBlock detail={detail} detailLoading={detailLoading} onDuplicate={onDuplicate} />
+        <RequestedRangeNote detail={detail} loading={detailLoading} />
+        {results.truncated && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            More than {results.total_rows} results -- showing the first {results.total_rows}.
+            <span className="hidden md:inline"> Use Download for the full set.</span>
+          </p>
+        )}
+        <div className="max-h-[60vh] overflow-auto md:max-h-none md:min-h-0 md:flex-1">
+          <table className="w-full min-w-max text-left text-sm">
+            <thead>
+              <tr className="text-xs uppercase text-slate-500 dark:text-slate-400">
+                {SORTABLE_COLUMNS.map(({ column, label }) => (
+                  <SortableColumnHeader
+                    key={column}
+                    label={label}
+                    column={column}
+                    sort={sort}
+                    onSortChange={onSortChange}
+                  />
+                ))}
+                <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-2 py-3 dark:border-slate-700 dark:bg-slate-800" />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
-          <button
-            type="button"
-            onClick={onDownloadCsv}
-            className="hidden w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex md:w-auto md:justify-start md:py-1"
-          >
-            <Download size={14} />
-            Download CSV
-          </button>
-          <span className="text-slate-500 dark:text-slate-400">{resultCountLabel}</span>
+            </thead>
+            <tbody>
+              {results.rows.map((row) => (
+                <tr
+                  key={row.uuid}
+                  className="border-b border-slate-100 odd:bg-slate-50 dark:border-slate-800 dark:odd:bg-slate-900"
+                >
+                  <td className="px-2 py-3">{row.registration}</td>
+                  <td className="px-2 py-3 font-mono">{row.icao_hex}</td>
+                  <td className="px-2 py-3">{row.ident}</td>
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-1.5">
+                      <span>{row.operator_designator}</span>
+                      {row.military && <Badge color="green">Military</Badge>}
+                    </div>
+                  </td>
+                  <td className="px-2 py-3">{row.type_designator}</td>
+                  <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.first_message)}</td>
+                  <td className="px-2 py-3 whitespace-nowrap">{formatAthenaTimestamp(row.last_message)}</td>
+                  <td className="px-2 py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onViewFlight(row.token)}
+                        aria-label="View flight"
+                        title="View flight"
+                        className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700"
+                      >
+                        <Eye size={12} />
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDownloadFlight(row.token)}
+                        aria-label="Download flight"
+                        title="Download flight"
+                        className="hidden items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex"
+                      >
+                        <Download size={12} />
+                        Download
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
-          <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
-            Rows per page
-            <select
-              value={pageSize}
-              onChange={(event) => onPageSizeChange(Number(event.target.value))}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+        <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+            <button
+              type="button"
+              onClick={onDownloadCsv}
+              className="hidden w-full items-center justify-center gap-1.5 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex md:w-auto md:justify-start md:py-1"
             >
-              {PAGE_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
+              <Download size={14} />
+              Download CSV
+            </button>
+            <span className="text-slate-500 dark:text-slate-400">{resultCountLabel}</span>
+          </div>
 
-          {/* Prev/Next as large, equal-width touch targets on mobile with
-              the page label between them; desktop reverts to the original
-              compact inline sizing. */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => onPageChange(page - 1)}
-              className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
-            >
-              Prev
-            </button>
-            <span className="shrink-0 text-slate-500 dark:text-slate-400">
-              Page {page} of {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => onPageChange(page + 1)}
-              className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
-            >
-              Next
-            </button>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
+            <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+              Rows per page
+              <select
+                value={pageSize}
+                onChange={(event) => onPageSizeChange(Number(event.target.value))}
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              >
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {/* Prev/Next as large, equal-width touch targets on mobile with
+                the page label between them; desktop reverts to the original
+                compact inline sizing. */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={page <= 1}
+                onClick={() => onPageChange(page - 1)}
+                className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
+              >
+                Prev
+              </button>
+              <span className="shrink-0 text-slate-500 dark:text-slate-400">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= totalPages}
+                onClick={() => onPageChange(page + 1)}
+                className="flex-1 rounded-md border border-slate-300 px-3 py-2.5 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700 md:flex-none md:py-1"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Shared across every status (including the empty-results state) so
+          whichever search is selected is always named at the top of the
+          panel -- reuses the same truncate + min-w-0 flex idiom as the
+          sidebar list's own name/badge row. */}
+      <div className="flex w-full min-w-0 shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+        <h2 className="truncate text-base font-semibold text-slate-700 dark:text-slate-200" title={search.name}>
+          {search.name}
+        </h2>
+        <StatusBadge status={search.status} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
     </div>
   );
 }
