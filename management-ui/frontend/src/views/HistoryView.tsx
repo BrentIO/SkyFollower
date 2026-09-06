@@ -441,13 +441,12 @@ function SearchResultsPanel({
     <div className="flex h-full flex-col overflow-hidden">
       {/* Shared across every status (including the empty-results state) so
           whichever search is selected is always named at the top of the
-          panel -- reuses the same truncate + min-w-0 flex idiom as the
-          sidebar list's own name/badge row. */}
-      <div className="flex w-full min-w-0 shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+          panel -- the status badge intentionally does not appear here; it
+          belongs only on the saved-search list's own name/badge row. */}
+      <div className="w-full min-w-0 shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
         <h2 className="truncate text-base font-semibold text-slate-700 dark:text-slate-200" title={search.name}>
           {search.name}
         </h2>
-        <StatusBadge status={search.status} />
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
     </div>
