@@ -72,90 +72,92 @@ export function NewSearchModal({
   const canSubmit = trimmedName !== "" && trimmedWhereClause !== "" && !rangeInvalid;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 p-4">
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col rounded-lg bg-white p-6 shadow-xl dark:bg-slate-800">
+        <h2 className="shrink-0 text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
 
-        <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">
-          Name
-          <input
-            type="text"
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Display name for this search"
-            className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
-          />
-        </label>
-
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-            Start date (UTC)
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">
+            Name
             <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              type="text"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Display name for this search"
               className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
             />
           </label>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
-            End date (UTC)
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
-            />
-          </label>
-        </div>
-        <p className="mt-1 text-xs text-slate-400">
-          Leave either blank to search the full archive on that side. Both dates are UTC, and
-          inclusive.
-        </p>
-        {rangeInvalid && (
-          <p className="mt-1 text-xs text-red-600 dark:text-red-400">Start date must not be after end date.</p>
-        )}
 
-        <label className="mt-3 block text-sm font-medium text-slate-700 dark:text-slate-200">
-          WHERE clause
-          <textarea
-            value={whereClause}
-            onChange={(e) => setWhereClause(e.target.value)}
-            placeholder="icao_hex = 'A8AE7F'"
-            rows={4}
-            className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-sm dark:border-slate-600 dark:bg-slate-900"
-          />
-        </label>
-
-        <div className="mt-2 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
-          <p className="mb-2 font-semibold text-slate-600 dark:text-slate-300">Available Fields</p>
-          <div className="overflow-x-auto">
-            <div className="grid grid-cols-[auto_auto_auto] gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
-              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Field</span>
-              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Type</span>
-              <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Example</span>
-              {COLUMN_REFERENCE.map(([column, type, example]) => (
-                <div key={column} className="contents">
-                  <span className="whitespace-nowrap">{column}</span>
-                  <span className="whitespace-nowrap">{type}</span>
-                  <span className="whitespace-nowrap">{example}</span>
-                </div>
-              ))}
-            </div>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              Start date (UTC)
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
+              />
+            </label>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
+              End date (UTC)
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900"
+              />
+            </label>
           </div>
-          <p className="mt-2 text-slate-500 dark:text-slate-400">
-            Timestamp range:{" "}
-            <code className="font-mono">
-              last_message BETWEEN TIMESTAMP &apos;2026-07-31 12:00:00&apos; AND TIMESTAMP &apos;2026-07-31 13:00:00&apos;
-            </code>
+          <p className="mt-1 text-xs text-slate-400">
+            Leave either blank to search the full archive on that side. Both dates are UTC, and
+            inclusive.
           </p>
-          <p className="mt-1 text-slate-500 dark:text-slate-400">
-            Timestamp values also accepted as <code className="font-mono">&apos;2026-07-31T12:00:00Z&apos;</code> or a
-            bare <code className="font-mono">&apos;2026-07-31&apos;</code> -- all normalized to UTC.
-          </p>
+          {rangeInvalid && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">Start date must not be after end date.</p>
+          )}
+
+          <label className="mt-3 block text-sm font-medium text-slate-700 dark:text-slate-200">
+            WHERE clause
+            <textarea
+              value={whereClause}
+              onChange={(e) => setWhereClause(e.target.value)}
+              placeholder="icao_hex = 'A8AE7F'"
+              rows={4}
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-1.5 font-mono text-sm dark:border-slate-600 dark:bg-slate-900"
+            />
+          </label>
+
+          <div className="mt-2 rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-900">
+            <p className="mb-2 font-semibold text-slate-600 dark:text-slate-300">Available Fields</p>
+            <div className="overflow-x-auto">
+              <div className="grid grid-cols-[auto_auto_auto] gap-x-4 gap-y-0.5 font-mono text-slate-500 dark:text-slate-400">
+                <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Field</span>
+                <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Type</span>
+                <span className="whitespace-nowrap font-sans font-semibold text-slate-600 dark:text-slate-300">Example</span>
+                {COLUMN_REFERENCE.map(([column, type, example]) => (
+                  <div key={column} className="contents">
+                    <span className="whitespace-nowrap">{column}</span>
+                    <span className="whitespace-nowrap">{type}</span>
+                    <span className="whitespace-nowrap">{example}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="mt-2 text-slate-500 dark:text-slate-400">
+              Timestamp range:{" "}
+              <code className="font-mono">
+                last_message BETWEEN TIMESTAMP &apos;2026-07-31 12:00:00&apos; AND TIMESTAMP &apos;2026-07-31 13:00:00&apos;
+              </code>
+            </p>
+            <p className="mt-1 text-slate-500 dark:text-slate-400">
+              Timestamp values also accepted as <code className="font-mono">&apos;2026-07-31T12:00:00Z&apos;</code> or a
+              bare <code className="font-mono">&apos;2026-07-31&apos;</code> -- all normalized to UTC.
+            </p>
+          </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-3">
+        <div className="mt-6 flex shrink-0 justify-end gap-3">
           <button
             type="button"
             onClick={onCancel}
