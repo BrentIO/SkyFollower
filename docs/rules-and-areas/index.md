@@ -57,7 +57,7 @@ Two conditions gate the publish:
   internally (it counts toward `matched_rules` and the rule-trigger
   metrics), but no notification is sent.
 - The triggering message must be recent. If the message that caused the
-  match is older than `RULE_NOTIFICATION_MAX_LAG_SECONDS` (30 seconds,
+  match is older than `MAX_MESSAGE_LAG_SECONDS` (30 seconds,
   `shared/timing.py`) — which happens when a RabbitMQ backlog is replayed
   after downtime — the notification is suppressed as no longer
   actionable.

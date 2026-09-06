@@ -79,11 +79,11 @@ from shared.timing import (
     HEALTHCHECK_INTERVAL_SECONDS,
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
+    MAX_MESSAGE_LAG_SECONDS,
     MQTT_PUBLISH_INTERVAL_SECONDS,
     PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     RATE_WINDOW_SECONDS,
     RECONNECT_BACKOFF_SECONDS,
-    RULE_NOTIFICATION_MAX_LAG_SECONDS,
     RULE_TRIGGER_DAY_TTL_SECONDS,
 )
 
@@ -1639,7 +1639,7 @@ class MessageProcessor:
 
     def _publish_rule_notification(self, flight: Flight, rule: dict, received_at: float) -> None:
         lag = time.time() - received_at
-        if lag > RULE_NOTIFICATION_MAX_LAG_SECONDS:
+        if lag > MAX_MESSAGE_LAG_SECONDS:
             logger.debug(
                 "Suppressing MQTT rule notification for %s (rule=%s): "
                 "message is %.1fs old (backlog replay)",

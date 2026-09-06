@@ -516,7 +516,7 @@ flat — for a reason that is correct, not a stuck or broken pipeline:
   identical to a stuck archive path from the outside; it isn't one.
 
 MQTT rule notifications for messages older than
-`rule_notification_max_lag_seconds` are suppressed during backlog replay
+`max_message_lag_seconds` are suppressed during backlog replay
 (logged at debug) to avoid flooding MQTT the instant a message processor
 reconnects after downtime; the rule still fires and is still recorded in
 `matched_rules`/the eventual archived flight.
