@@ -123,7 +123,7 @@ class TestNoResidualEnvVars:
     def test_deleted_env_var_names_are_not_constants(self, gone):
         assert not hasattr(timing, gone)
 
-    def test_rule_notification_max_lag_is_a_fixed_constant_not_a_knob(self):
+    def test_max_message_lag_is_a_fixed_constant_not_a_knob(self):
         # It keeps its name (it is a real timing value) but is now fixed.
-        assert timing.RULE_NOTIFICATION_MAX_LAG_SECONDS == 30
-        assert re.fullmatch(r"[A-Z_]+", "RULE_NOTIFICATION_MAX_LAG_SECONDS")
+        assert timing.MAX_MESSAGE_LAG_SECONDS == 30
+        assert re.fullmatch(r"[A-Z_]+", "MAX_MESSAGE_LAG_SECONDS")

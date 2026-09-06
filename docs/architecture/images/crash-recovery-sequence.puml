@@ -30,9 +30,9 @@ Proc -> ActiveDB : **Save flight** (commit)\nflight_id assigned on first message
 Proc -> Proc : message_clock = max(message_clock, received_at)
 
 opt Rule matched
-    alt lag = now - received_at <= rule_notification_max_lag_seconds
+    alt lag = now - received_at <= max_message_lag_seconds
         Proc -> MQTT-- : **Publish**\n""SkyFollower/rule/{identifier}""
-    else lag > rule_notification_max_lag_seconds
+    else lag > max_message_lag_seconds
         Proc -> Proc : **Suppress** — log debug\n(icao_hex, rule identifier, lag)
     end
 end
@@ -76,9 +76,9 @@ loop for each backlog message
     end
 
     opt Rule matched
-        alt lag <= rule_notification_max_lag_seconds
+        alt lag <= max_message_lag_seconds
             Proc -> MQTT : **Publish** rule notification
-        else lag > rule_notification_max_lag_seconds
+        else lag > max_message_lag_seconds
             Proc -> Proc : **Suppress** — log debug
         end
     end

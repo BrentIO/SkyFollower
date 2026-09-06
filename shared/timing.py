@@ -118,12 +118,12 @@ RATE_WINDOW_SECONDS = 30
 # message it could not CRC-verify.
 PARITY_ERROR_CONFIRM_WINDOW_SECONDS = 30
 
-# --- Rule notifications ----------------------------------------------------
+# --- Message-age gating -----------------------------------------------------
 
-# Maximum age of the triggering message for a rule match to still be
-# published to MQTT -- an older match is recorded but not announced, since
-# the notification would no longer be actionable.
-RULE_NOTIFICATION_MAX_LAG_SECONDS = 30
+# Maximum age of a source message before a downstream emission based on it
+# is suppressed -- an older match is still recorded, just not emitted, since
+# it would no longer be actionable.
+MAX_MESSAGE_LAG_SECONDS = 30
 
 # --- core-health polling --------------------------------------------------
 
