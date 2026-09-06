@@ -2884,6 +2884,7 @@ class FlightView(BaseModel):
     aircraft_type: Optional[str] = None   # merge_aircraft.lua's "type" (e.g. "Airplane")
     model: Optional[str] = None           # national-registry-specific designation, distinct from manufacturer_model
     serial_number: Optional[str] = None
+    manufactured_date: Optional[str] = None
     seats: Optional[int] = None
     powerplant: Optional[dict] = None     # count/type/manufacturer/model/power_type
     operator: Optional[dict] = None      # OperatorRecord fields (name, callsign, ...)
@@ -2923,6 +2924,7 @@ def get_archive_flight_view(token: str):
         aircraft_type=aircraft.get("type"),
         model=aircraft.get("model"),
         serial_number=aircraft.get("serial_number"),
+        manufactured_date=aircraft.get("manufactured_date"),
         seats=aircraft.get("seats"),
         powerplant=aircraft.get("powerplant"),
         operator=flight.get("operator"),

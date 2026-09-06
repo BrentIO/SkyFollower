@@ -1694,6 +1694,7 @@ _NESTED_AIRCRAFT = {
         "category": "Land",
         "model": "737-832",
         "serial_number": "30373",
+        "manufactured_date": "2005-06-14T00:00:00Z",
         "seats": 189,
         "powerplant": {"type": "Turbo-fan", "count": 2, "manufacturer": "CFM INTL.", "model": "CFM56 SERIES"},
     },
@@ -1723,6 +1724,7 @@ class TestFlightView:
         assert body["aircraft_type"] == "Airplane"
         assert body["model"] == "737-832"
         assert body["serial_number"] == "30373"
+        assert body["manufactured_date"] == "2005-06-14T00:00:00Z"
         assert body["seats"] == 189
         assert body["powerplant"] == {
             "type": "Turbo-fan", "count": 2, "manufacturer": "CFM INTL.", "model": "CFM56 SERIES",
@@ -1740,7 +1742,10 @@ class TestFlightView:
         resp = client.get(f"/api/archive/flights/{token}/view")
         assert resp.status_code == 200
         body = resp.json()
-        for field in ("category", "aircraft_type", "model", "serial_number", "seats", "powerplant", "registrant"):
+        for field in (
+            "category", "aircraft_type", "model", "serial_number", "manufactured_date", "seats", "powerplant",
+            "registrant",
+        ):
             assert body[field] is None
 
     def test_registrant_is_read_from_flight_not_aircraft(self, client, fake_s3):

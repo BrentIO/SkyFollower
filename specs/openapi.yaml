@@ -1962,6 +1962,11 @@ components:
           - type: string
           - type: 'null'
           title: Serial Number
+        manufactured_date:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manufactured Date
         seats:
           anyOf:
           - type: integer
