@@ -643,8 +643,8 @@ class TestFlight:
         f.operator = {"airline_designator": "DAL", "source": "mictronics"}
         f.registrant = {"names": ["Delta Air Lines Inc"], "city": "Atlanta"}
         f.squawk = "1234"
-        f.origin = "KATL"
-        f.destination = "KLAX"
+        f.origin = {"icao_code": "KATL", "name": "Hartsfield-Jackson", "iata_code": None}
+        f.destination = {"icao_code": "KLAX", "name": "Los Angeles Intl"}
         f.matched_rules = ["rule_1"]
         f.receiver_sources = ["1090"]
         f.save()
@@ -667,7 +667,10 @@ class TestFlight:
 
         # timestamps are UTC-aware datetimes
         assert cf.first_message.tzinfo is not None
-        assert cf.destination == "KLAX"
+        # origin/destination carry the full airport object; None-valued
+        # keys are stripped (same as aircraft/operator/registrant)
+        assert cf.origin == {"icao_code": "KATL", "name": "Hartsfield-Jackson"}
+        assert cf.destination == {"icao_code": "KLAX", "name": "Los Angeles Intl"}
         assert cf.matched_rules == ["rule_1"]
         assert cf.receiver_sources == ["1090"]
         assert cf.force_archive is False
@@ -2103,8 +2106,8 @@ class TestMaybeResolveRoute:
         p._maybe_resolve_route(f)
 
         mock_redis.evalsha.assert_called_once_with(p._route_sha, 0, "DAL659")
-        assert f.origin == "KJFK"
-        assert f.destination == "KATL"
+        assert f.origin == airports[0]
+        assert f.destination == airports[1]
         assert f.route_resolution_attempted is True
 
     def test_zero_padded_ident_normalized_before_lookup(self):
@@ -2426,8 +2429,8 @@ class TestUpdateFlightTriggersRouteResolution:
         f = Flight(p._db)
         f.load(icao_hex)
         assert f.route_resolution_attempted is True
-        assert f.origin == "KJFK"
-        assert f.destination == "KATL"
+        assert f.origin == airports[0]
+        assert f.destination == airports[1]
 
     def test_never_triggers_for_tail_number_ident(self):
         p, mock_redis = _make_processor()
@@ -3637,6 +3640,48 @@ class TestMqttLagGuard:
         recent_received_at = time.time() - 1
         p._publish_rule_notification(f, {"identifier": "rule_a"}, recent_received_at)
         mock_mqtt.publish.assert_called_once()
+
+    def test_notification_carries_origin_destination_as_airport_objects(self):
+        """A rule match on a flight with a resolved route publishes
+        origin/destination as full airport objects (AirportInfo shape),
+        not bare ICAO code strings."""
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p)
+        f.origin = {"icao_code": "KJFK", "name": "John F Kennedy Intl"}
+        f.destination = {"icao_code": "KATL", "name": "Hartsfield-Jackson"}
+        f.save()
+
+        recent_received_at = time.time() - 1
+        p._publish_rule_notification(f, {"identifier": "rule_a"}, recent_received_at)
+
+        mock_mqtt.publish.assert_called_once()
+        topic, payload = mock_mqtt.publish.call_args.args[:2]
+        notification = json.loads(payload)
+        assert notification["origin"] == {"icao_code": "KJFK", "name": "John F Kennedy Intl"}
+        assert notification["destination"] == {"icao_code": "KATL", "name": "Hartsfield-Jackson"}
+
+    def test_notification_omits_origin_destination_when_route_unresolved(self):
+        """A flight with no resolved route omits both fields entirely,
+        rather than publishing them as null."""
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p)
+        assert f.origin is None
+        assert f.destination is None
+
+        recent_received_at = time.time() - 1
+        p._publish_rule_notification(f, {"identifier": "rule_a"}, recent_received_at)
+
+        mock_mqtt.publish.assert_called_once()
+        topic, payload = mock_mqtt.publish.call_args.args[:2]
+        notification = json.loads(payload)
+        assert "origin" not in notification
+        assert "destination" not in notification
 
 
 # ---------------------------------------------------------------------------

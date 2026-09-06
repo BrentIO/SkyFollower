@@ -480,8 +480,8 @@ class Flight:
         self.operator: dict = {}
         self.registrant: dict = {}
         self.squawk: str = ""
-        self.origin: Optional[str] = None
-        self.destination: Optional[str] = None
+        self.origin: Optional[dict] = None
+        self.destination: Optional[dict] = None
         self.matched_rules: list[str] = []
         self.receiver_sources: list[str] = []
         self.force_archive: bool = False
@@ -536,8 +536,8 @@ class Flight:
         self.operator = json.loads(row["operator"] or "{}")
         self.registrant = json.loads(row["registrant"] or "{}")
         self.squawk = row["squawk"] or ""
-        self.origin = row["origin"]
-        self.destination = row["destination"]
+        self.origin = json.loads(row["origin"]) if row["origin"] else None
+        self.destination = json.loads(row["destination"]) if row["destination"] else None
         self.matched_rules = json.loads(row["matched_rules"] or "[]")
         self.receiver_sources = json.loads(row["receiver_sources"] or "[]")
         self.force_archive = bool(row["force_archive"])
@@ -589,7 +589,8 @@ class Flight:
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
                 json.dumps(self.operator), json.dumps(self.registrant), self.squawk,
-                self.origin, self.destination,
+                json.dumps(self.origin) if self.origin else None,
+                json.dumps(self.destination) if self.destination else None,
                 json.dumps(self.matched_rules), json.dumps(self.receiver_sources),
                 int(self.force_archive), int(self.route_resolution_attempted),
                 self.route_candidate_airports,
@@ -663,6 +664,16 @@ class Flight:
         if self.registrant:
             registrant = {k: v for k, v in self.registrant.items() if v is not None}
 
+        # Origin/destination: full airport object, None-valued keys dropped
+        # (same plain-dict reason as aircraft/operator/registrant above)
+        origin: Optional[dict] = None
+        if self.origin:
+            origin = {k: v for k, v in self.origin.items() if v is not None}
+
+        destination: Optional[dict] = None
+        if self.destination:
+            destination = {k: v for k, v in self.destination.items() if v is not None}
+
         return CompletedFlight(**{
             "_id": self.flight_id or generate_flight_id(),
             "first_message": datetime.fromtimestamp(self.first_message, tz=timezone.utc),
@@ -675,8 +686,8 @@ class Flight:
             "operator": operator,
             "registrant": registrant,
             "squawk": self.squawk or None,
-            "origin": self.origin,
-            "destination": self.destination,
+            "origin": origin,
+            "destination": destination,
             "matched_rules": self.matched_rules,
             "positions": [p.to_dict() for p in self.positions],
             "velocities": [v.to_dict() for v in self.velocities],

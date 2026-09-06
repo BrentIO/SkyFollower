@@ -329,7 +329,8 @@ class TestResolveOriginDestination:
     def test_direct_route_resolves(self):
         positions = [_pos(37.0, -79.0)]
         origin, destination, is_final, reason = resolve_origin_destination([KJFK, KATL], positions, [])
-        assert (origin, destination) == ("KJFK", "KATL")
+        assert origin == KJFK
+        assert destination == KATL
         assert is_final is True
         assert reason is None
 
@@ -360,7 +361,8 @@ class TestResolveOriginDestination:
         origin, destination, is_final, reason = resolve_origin_destination(
             [KMIA, KJFK, KMIA], positions, _vels(204, 205, 206)
         )
-        assert (origin, destination) == ("KJFK", "KMIA")
+        assert origin == KJFK
+        assert destination == KMIA
         assert is_final is True
         assert reason is None
 

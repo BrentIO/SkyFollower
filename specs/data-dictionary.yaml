@@ -3653,7 +3653,15 @@ records:
               checked by cross-track distance from the candidate great-
               circle line. All-or-nothing with destination: set only when
               exactly one unambiguous, sanity-checked pair was resolved,
-              otherwise both are omitted rather than a partial guess.
+              otherwise both are omitted rather than a partial guess. The
+              full airport object returned by route_airports.lua at this
+              resolution moment is captured once and carried through
+              unchanged — on the Flight, in the rules engine, and on the
+              SkyFollower/rule/{identifier} MQTT notification — rather
+              than re-looked-up at publish or archive time; the archive
+              processor is the only stage that re-derives anything from
+              it, reducing the object to its icao_code string when writing
+              to S3.
 
       destination:
         type: object
@@ -3686,7 +3694,15 @@ records:
               checked by cross-track distance from the candidate great-
               circle line. All-or-nothing with origin: set only when
               exactly one unambiguous, sanity-checked pair was resolved,
-              otherwise both are omitted rather than a partial guess.
+              otherwise both are omitted rather than a partial guess. The
+              full airport object returned by route_airports.lua at this
+              resolution moment is captured once and carried through
+              unchanged — on the Flight, in the rules engine, and on the
+              SkyFollower/rule/{identifier} MQTT notification — rather
+              than re-looked-up at publish or archive time; the archive
+              processor is the only stage that re-derives anything from
+              it, reducing the object to its icao_code string when writing
+              to S3.
 
       matched_rules:
         type: "array[string]"

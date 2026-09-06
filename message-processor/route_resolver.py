@@ -333,10 +333,11 @@ def passes_cross_track_check(positions: list[dict], origin: dict, destination: d
 
 def resolve_origin_destination(
     airports: list[dict], positions: list[dict], velocities: list[dict]
-) -> tuple[Optional[str], Optional[str], bool, Optional[str]]:
-    """Top-level entry point. Returns (origin_icao, destination_icao,
-    is_final, rejection_reason):
-    - The ICAO pair is both None unless exactly one unambiguous,
+) -> tuple[Optional[dict], Optional[dict], bool, Optional[str]]:
+    """Top-level entry point. Returns (origin, destination, is_final,
+    rejection_reason):
+    - origin/destination are the full airport dicts (as returned by
+      route_airports.lua), both None unless exactly one unambiguous,
       sanity-checked leg was resolved -- never a partial or best-guess pair.
     - is_final is False only for the "heading not yet stable" case (see
       select_candidate_leg) -- the caller should not treat a (None, None,
@@ -363,4 +364,4 @@ def resolve_origin_destination(
             f"failed the sanity check: {violation}"
         )
         return None, None, True, reason
-    return origin.get("icao_code"), destination.get("icao_code"), True, None
+    return origin, destination, True, None

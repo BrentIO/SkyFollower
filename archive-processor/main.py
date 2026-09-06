@@ -198,6 +198,27 @@ def _drop_default_value_fields(payload_dict: dict) -> None:
         del payload_dict["matched_rules"]
 
 
+def _reduce_airports_to_icao_codes(payload_dict: dict) -> None:
+    """
+    Down-convert origin/destination from the full airport object (carried
+    all the way through message-processor/rules-engine/MQTT so the rule
+    notification can conform to AirportInfo) to a bare ICAO code string for
+    S3/Parquet persistence — matches the legacy MongoDB document shape and
+    what management-ui's archive-search rehydrates from. Drops the field
+    entirely if the object has no icao_code. Only affects the S3 upload
+    payload; the in-memory CompletedFlight model and every other consumer
+    (RabbitMQ fallback queues, split-flight stitching) are unaffected.
+    """
+    for field in ("origin", "destination"):
+        value = payload_dict.get(field)
+        if isinstance(value, dict):
+            icao_code = value.get("icao_code")
+            if icao_code:
+                payload_dict[field] = icao_code
+            else:
+                del payload_dict[field]
+
+
 # ---------------------------------------------------------------------------
 # Archive Processor
 # ---------------------------------------------------------------------------
@@ -669,6 +690,7 @@ class ArchiveProcessor:
 
         payload_dict = flight.model_dump(by_alias=True, mode="json", exclude_none=True)
         _drop_default_value_fields(payload_dict)
+        _reduce_airports_to_icao_codes(payload_dict)
         payload_json = json.dumps(payload_dict, default=str)
         payload_gz = gzip.compress(payload_json.encode("utf-8"))
 
