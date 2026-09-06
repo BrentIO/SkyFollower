@@ -346,7 +346,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                 <div className="text-sm text-slate-500 dark:text-slate-400">
                   {new Date(view!.first_message).toLocaleString()} ·{" "}
                   {formatDuration(view!.first_message, view!.last_message)} ·{" "}
-                  {view!.total_messages.toLocaleString()} messages
+                  {view!.total_messages.toLocaleString()} message{view!.total_messages === 1 ? "" : "s"}
                 </div>
               </>
             )}
