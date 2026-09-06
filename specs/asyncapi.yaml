@@ -2015,7 +2015,7 @@ components:
         Snapshot of a flight at the moment a rule matched. Excludes _id,
         positions, and velocities. operator, registrant, origin, and
         destination are omitted when not populated.
-      required: [aircraft, first_message, last_message, total_messages, receiver_sources, force_archive, matched_rules, rule]
+      required: [aircraft, first_message, last_message, total_messages, receiver_sources, rule]
       properties:
         aircraft:
           $ref: '#/components/schemas/AircraftInfo'
@@ -2092,7 +2092,7 @@ components:
           example: ["1090"]
         force_archive:
           type: boolean
-          description: True if a matching rule (force_archive) overrides the external-only archive skip for this flight
+          description: True if a matching rule (force_archive) overrides the external-only archive skip for this flight; omitted when false
           example: false
         first_message:
           type: string
