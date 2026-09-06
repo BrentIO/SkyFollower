@@ -14,7 +14,10 @@ autodiscovery payloads on connect — each message processor, receiver,
 archive processor, and data runner appears as a device in Home Assistant
 with sensor entities for its key metrics. Rule notifications (`SkyFollower/rule/{identifier}`)
 carry the flight's current state as JSON and can be consumed by Home
-Assistant automations directly.
+Assistant automations directly — see
+[Rule notifications](/rules-and-areas/#rule-notifications) for the payload
+shape, its omit-when-empty fields, and the delta table for porting
+automations written against the legacy payload.
 :::
 
 ::: tip RabbitMQ / AMQP
