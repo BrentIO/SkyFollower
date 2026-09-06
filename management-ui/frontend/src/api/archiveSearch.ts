@@ -62,6 +62,7 @@ export interface FlightView {
   aircraft_type?: string;
   model?: string;
   serial_number?: string;
+  manufactured_date?: string;
   seats?: number;
   powerplant?: { type?: string; count?: number; manufacturer?: string; model?: string; power_type?: string };
   operator?: { name?: string; callsign?: string; airline_designator?: string; country?: string };

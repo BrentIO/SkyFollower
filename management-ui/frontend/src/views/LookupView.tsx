@@ -15,6 +15,7 @@ import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { MAP_STYLE } from "../lib/maplibreSetup";
 import { categoriesToQuery, type LookupCategory } from "../lib/lookupClassifier";
+import { formatManufacturedDate } from "../lib/manufacturedDate";
 
 // Every lookup type the single search field accepts is alphanumeric plus, at most,
 // a space or hyphen (registrations like "VP-CKA", idents, designators) --
@@ -161,6 +162,9 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   // published (e.g. "737-8H4" from the FAA) -- shown separately when present,
   // absent for aircraft covered only by Mictronics.
   const model = displayStr(data.model);
+  const manufacturedDate = data.manufactured_date
+    ? formatManufacturedDate(String(data.manufactured_date))
+    : undefined;
   const serialNumber = displayStr(data.serial_number);
   const seats = displayStr(data.seats);
 
@@ -170,7 +174,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 
   const hasAircraftSection = !!(
-    category || type || manufacturerModelLine || model || serialNumber || seats || hasPowerplant
+    category || type || manufacturerModelLine || model || manufacturedDate || serialNumber || seats || hasPowerplant
   );
 
   const dataSources = displayArray(data.data_sources);
@@ -220,6 +224,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
             {model && (
               <div>
                 <Label>Model</Label> {model}
+              </div>
+            )}
+            {manufacturedDate && (
+              <div>
+                <Label>Manufactured</Label> {manufacturedDate}
               </div>
             )}
             {serialNumber && (

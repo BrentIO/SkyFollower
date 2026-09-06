@@ -22,6 +22,7 @@ import {
 } from "../api/archiveSearch";
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
+import { formatManufacturedDate } from "../lib/manufacturedDate";
 
 interface FlightViewModalProps {
   // null means closed -- rendered unconditionally by the parent view rather
@@ -311,12 +312,14 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
   const hasRegistrantOrOperator = !!(view?.registrant || view?.operator);
   const powerplant = view?.powerplant;
   const hasPowerplant = !!(powerplant?.count || powerplant?.type || powerplant?.manufacturer || powerplant?.model);
+  const manufacturedDate = view?.manufactured_date ? formatManufacturedDate(view.manufactured_date) : undefined;
   const hasAircraftSection = !!(
     view?.category ||
     view?.aircraft_type ||
     view?.manufacturer_model ||
     view?.type_designator ||
     view?.model ||
+    manufacturedDate ||
     view?.serial_number ||
     view?.seats != null ||
     hasPowerplant
@@ -474,6 +477,11 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                       {view.model && (
                         <div>
                           <Label>Model</Label> {view.model}
+                        </div>
+                      )}
+                      {manufacturedDate && (
+                        <div>
+                          <Label>Manufactured</Label> {manufacturedDate}
                         </div>
                       )}
                       {view.serial_number && (
