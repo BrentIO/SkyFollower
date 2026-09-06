@@ -1651,6 +1651,8 @@ class MessageProcessor:
             notification.pop("origin", None)
         if not notification.get("destination"):
             notification.pop("destination", None)
+        if not notification.get("force_archive"):
+            notification.pop("force_archive", None)
         notification["rule"] = {
             "name": rule.get("name", ""),
             "description": rule.get("description", ""),

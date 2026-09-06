@@ -3640,6 +3640,52 @@ class TestMqttLagGuard:
 
 
 # ---------------------------------------------------------------------------
+# MQTT rule-notification payload: force_archive omitted when false
+# ---------------------------------------------------------------------------
+
+class TestRuleNotificationForceArchive:
+    def _make_flight(self, p, force_archive: bool) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.force_archive = force_archive
+        f.save()
+        return f
+
+    def test_omits_force_archive_when_false(self):
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p, force_archive=False)
+
+        p._publish_rule_notification(f, {"identifier": "rule_a"}, time.time())
+
+        mock_mqtt.publish.assert_called_once()
+        _, payload = mock_mqtt.publish.call_args.args
+        notification = json.loads(payload)
+        assert "force_archive" not in notification
+
+    def test_includes_force_archive_when_true(self):
+        p, _ = _make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        f = self._make_flight(p, force_archive=True)
+
+        p._publish_rule_notification(f, {"identifier": "rule_a"}, time.time())
+
+        mock_mqtt.publish.assert_called_once()
+        _, payload = mock_mqtt.publish.call_args.args
+        notification = json.loads(payload)
+        assert notification["force_archive"] is True
+
+
+# ---------------------------------------------------------------------------
 # flight_ttl_seconds: shared Redis config
 # ---------------------------------------------------------------------------
 
