@@ -17,7 +17,7 @@ export const REPO_ROOT = join(__dirname, "..", "..");
 
 const COMPONENT_DIRS = [
   "receiver", "message-processor", "shared", "archive-processor", "archive-compaction", "management-ui",
-  "core-health", "aws-setup",
+  "core-health", "aws-setup", "map",
 ];
 
 function h1Title(readmePath, fallback) {
