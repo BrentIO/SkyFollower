@@ -2240,6 +2240,10 @@ components:
           type: string
           description: Combined manufacturer + model string
           example: BOEING 767-332ER
+        description_code:
+          type: string
+          description: ICAO Doc 8643 aircraft description code (category + engine count + engine type)
+          example: L2J
         seats:
           type: integer
           example: 189

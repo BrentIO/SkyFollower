@@ -184,6 +184,7 @@ class TestAircraftRecord:
         assert rec.category is None
         assert rec.seats is None
         assert rec.manufacturer_model is None
+        assert rec.description_code is None
 
     def test_type_category_seats_manufacturer_model_fields(self):
         rec = AircraftRecord(
@@ -192,11 +193,13 @@ class TestAircraftRecord:
             category="Land",
             seats=189,
             manufacturer_model="BOEING 767-332ER",
+            description_code="L2J",
         )
         assert rec.type == "Airplane"
         assert rec.category == "Land"
         assert rec.seats == 189
         assert rec.manufacturer_model == "BOEING 767-332ER"
+        assert rec.description_code == "L2J"
 
 
 class TestOperatorRecord:

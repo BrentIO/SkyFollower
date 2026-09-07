@@ -449,6 +449,18 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert record["aircraft"]["manufacturer_model"] == "MONTAER MC-01"
 
+    def test_designator_resolves_sets_description_code(self):
+        record = {"aircraft": {"type_designator": "PA34"}}
+        r = self._make_redis({"manufacturer_model": "PIPER PA-34 Seneca", "description_code": "L2P"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["description_code"] == "L2P"
+
+    def test_description_code_not_in_type_doc_leaves_field_unset(self):
+        record = {"aircraft": {"type_designator": "MC01"}}
+        r = self._make_redis({"manufacturer_model": "MONTAER MC-01"})
+        _apply_type_lookup(record, r)
+        assert "description_code" not in record["aircraft"]
+
     def test_lookup_key_uses_type_designator(self):
         record = {"aircraft": {"type_designator": "PA34"}}
         r = self._make_redis({"manufacturer_model": "PIPER PA-34 Seneca"})

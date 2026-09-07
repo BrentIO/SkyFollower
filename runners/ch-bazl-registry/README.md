@@ -14,7 +14,7 @@
 
 A single `POST` request to the fixed FOCA/BAZL backend endpoint (`page_result_limit: 10000`, `current_page_number: 1`, filtered to `aircraftStatus: ["Registered"]`) returns the entire register as one UTF-16 encoded, semicolon-delimited CSV — no authentication or page discovery needed. Rows are additionally filtered to `Status == "Registered"` and to those with a valid 6-hex-digit `Aircraft Address HEX`. Note that the CSV column headers all carry a leading space (e.g. `" Registration"`, `" Aircraft Type"`) — this is preserved verbatim in the source and must be matched exactly when reading `row.get(...)`. The `Main Owner` field is a single unstructured address string (`Name[, Canton]?, Street, PostalCode City, Switzerland`) that is best-effort parsed by popping known trailing/canton tokens off a comma-split list, since there's no per-field structure to rely on. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from FOCA/BAZL and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from FOCA/BAZL and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -27,7 +27,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | Date of Deregistration | ❌ | Present in source; not read by this runner |
 | Manufacturer | ✅ | → `aircraft.manufacturer` |
 | Aicraft Model (sic, source typo) | ✅ | → `aircraft.model` |
-| ICAO Aircraft Type | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
+| ICAO Aircraft Type | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.description_code` when found |
 | Marketing Designation | ❌ | Present in source; not read by this runner |
 | Aircraft Type | ✅ | Decoded via a type map (e.g. `Homebuilt Airplane` → `Airplane`) → `aircraft.type` |
 | Certification Basis | ❌ | Present in source; not read by this runner |
@@ -73,6 +73,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L1P",
         "manufactured_date": "1944-01-01",
         "manufacturer": "PIPER AIRCRAFT CORPORATION",
         "manufacturer_model": "PIPER J-3 Cub",
@@ -115,6 +116,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L2J",
         "manufactured_date": "2021-01-01",
         "manufacturer": "AIRBUS S.A.S.",
         "manufacturer_model": "AIRBUS A-320neo",
