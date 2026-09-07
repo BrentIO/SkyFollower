@@ -5,9 +5,9 @@
 
 export interface InfoBoxAircraft {
   ident?: string | null;
-  altitude?: number | null; // feet MSL
+  alt?: number | null; // feet MSL
   velocity?: number | null; // knots (groundspeed)
-  vertical_speed?: number | null; // ft/min; negative = descending
+  vs?: number | null; // ft/min; negative = descending
   aircraft?: {
     registration?: string | null;
     type_designator?: string | null;
@@ -47,7 +47,7 @@ export function formatGroundspeed(velocityKt: number): string {
 // altitude (an arrow with nothing to its left would be a stray glyph).
 export function formatAltitudeSpeedLine(aircraft: InfoBoxAircraft): string | null {
   const altitudePart =
-    aircraft.altitude != null ? `${formatAltitude(aircraft.altitude)}${trendArrow(aircraft.vertical_speed)}` : null;
+    aircraft.alt != null ? `${formatAltitude(aircraft.alt)}${trendArrow(aircraft.vs)}` : null;
   const speedPart = aircraft.velocity != null ? formatGroundspeed(aircraft.velocity) : null;
 
   const parts = [altitudePart, speedPart].filter((p): p is string => p !== null);

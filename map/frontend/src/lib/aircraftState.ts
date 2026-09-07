@@ -46,11 +46,11 @@ export type AircraftMap = Record<string, AircraftRecord>;
 export const MAX_TRAIL_POINTS = 300;
 
 function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailPoint[] {
-  if (flight.latitude == null || flight.longitude == null) return trail;
+  if (flight.lat == null || flight.lon == null) return trail;
   const point: TrailPoint = {
-    latitude: flight.latitude,
-    longitude: flight.longitude,
-    altitude: flight.altitude ?? null,
+    latitude: flight.lat,
+    longitude: flight.lon,
+    altitude: flight.alt ?? null,
   };
   const last = trail[trail.length - 1];
   if (last && last.latitude === point.latitude && last.longitude === point.longitude) {

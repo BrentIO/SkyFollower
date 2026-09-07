@@ -419,10 +419,13 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   message's own `received_at`, not wall-clock send time (see
   `_MapUdpPublisher.should_send_position`). A flat object merging whatever
   `Position`/`Velocity` fields that particular message carried (`icao_hex`,
-  `timestamp`, `processor_id`, `latitude`, `longitude`, `altitude`,
-  `velocity`, `heading`, `vertical_speed`); a field absent from that
-  message is omitted, not sent as null, matching
-  `Position.to_dict()`/`Velocity.to_dict()`'s existing convention.
+  `processor_id`, `ts`, `lat`, `lon`, `alt`, `velocity`, `hdg`, `vs` --
+  field names are deliberately abbreviated on this wire protocol, unlike
+  the full `Position`/`Velocity` model field names they're translated
+  from, since this is the single highest-frequency, uncompressed-on-the-UDP-hop
+  payload in the whole system); a field absent from that message is
+  omitted, not sent as null, matching `Position.to_dict()`/`Velocity.to_dict()`'s
+  existing convention.
 - **`metadata`** -- sent the first time a flight's ident/aircraft
   enrichment/operator/registrant/squawk/origin/destination are known, and
   again only when one of those changes. Never throttled by
@@ -435,7 +438,7 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   see `Flight.map_metadata_hash`, persisted across messages, for how a
   change is detected -- plus `processor_id`.
 - **`heartbeat`** -- `{"type": "heartbeat", "processor_id": "mp-1",
-  "timestamp": 1725720000.0}`. A fixed-interval liveness beacon from a
+  "ts": 1725720000.0}`. A fixed-interval liveness beacon from a
   dedicated `_map_heartbeat_loop`, independent of aircraft traffic
   entirely -- it has no `icao_hex` and never touches any flight's state.
   Runs on a separate `MAP_HEARTBEAT_INTERVAL_SECONDS` (5s,

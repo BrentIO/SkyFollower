@@ -153,16 +153,17 @@ _threads: list[threading.Thread] = []
 def _extract_timestamp(payload: dict) -> Optional[float]:
     """The out-of-order guard's comparison key for one UDP packet.
 
-    `position` packets carry a numeric `timestamp` (message-processor's
-    `received_at`) directly. `metadata` packets don't -- they're shaped
-    like message-processor's CompletedFlight notification payload, whose
-    closest equivalent is `last_message` (an ISO-8601 string). Both are
-    stamped from the exact same `received_at` value for one source ADS-B
-    message (see message-processor/main.py's `_update_flight`), so this
-    keeps the two packet types on one comparable clock."""
-    if "timestamp" in payload:
+    `position`/`heartbeat` packets carry a numeric `ts` (message-processor's
+    `received_at`, or wall-clock time for `heartbeat`) directly. `metadata`
+    packets don't -- they're shaped like message-processor's CompletedFlight
+    notification payload, whose closest equivalent is `last_message` (an
+    ISO-8601 string). Both are stamped from the exact same `received_at`
+    value for one source ADS-B message (see message-processor/main.py's
+    `_update_flight`), so this keeps the two packet types on one comparable
+    clock."""
+    if "ts" in payload:
         try:
-            return float(payload["timestamp"])
+            return float(payload["ts"])
         except (TypeError, ValueError):
             return None
     last_message = payload.get("last_message")

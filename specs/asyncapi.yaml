@@ -2438,17 +2438,21 @@ components:
         WebSocket `position` event) or folded into MapFlightState below.
         Each is independently optional per datagram/event -- a field absent
         from the underlying ADS-B message is omitted entirely here, never
-        sent as null.
+        sent as null. Field names are deliberately abbreviated on this
+        wire protocol (unlike shared/models.py's Position/Velocity, which
+        keep their full names for the S3 archive/rules engine) since
+        `position` is sent on every processed message with no throttling --
+        the single highest-frequency payload in the whole system.
       properties:
-        latitude:
+        lat:
           type: number
           format: float
           example: 33.9425
-        longitude:
+        lon:
           type: number
           format: float
           example: -118.408
-        altitude:
+        alt:
           type: integer
           description: feet MSL
           example: 350
@@ -2457,12 +2461,12 @@ components:
           format: float
           description: knots
           example: 450
-        heading:
+        hdg:
           type: number
           format: float
           description: degrees 0-359
           example: 271.4
-        vertical_speed:
+        vs:
           type: integer
           description: ft/min; negative = descending
           example: -1200
@@ -2472,13 +2476,13 @@ components:
         Sent by message-processor on every processed ADS-B message (no
         throttling) once the map UDP feed is enabled (MAP_UDP_HOST
         configured) -- see message-processor/main.py's
-        `_publish_map_position`. icao_hex, timestamp, and processor_id are
+        `_publish_map_position`. icao_hex, ts, and processor_id are
         always present; every MapPositionFields property is independently
         optional.
       allOf:
         - $ref: '#/components/schemas/MapPositionFields'
         - type: object
-          required: [type, icao_hex, timestamp, processor_id]
+          required: [type, icao_hex, ts, processor_id]
           properties:
             type:
               type: string
@@ -2486,7 +2490,7 @@ components:
             icao_hex:
               type: string
               example: A8AE7F
-            timestamp:
+            ts:
               type: number
               format: float
               description: Unix timestamp (seconds) of the source ADS-B message (message-processor's received_at)
@@ -2546,7 +2550,7 @@ components:
         `metadata`, a heartbeat is about the processor being up *now*, not
         about a source message's recency.
       type: object
-      required: [type, processor_id, timestamp]
+      required: [type, processor_id, ts]
       properties:
         type:
           type: string
@@ -2555,7 +2559,7 @@ components:
           type: string
           description: MESSAGE_PROCESSOR_ID of the sending instance -- see MapUdpPosition.processor_id
           example: mp-1
-        timestamp:
+        ts:
           type: number
           format: float
           description: Unix timestamp (seconds) this heartbeat was sent (message-processor's own clock, not a source ADS-B message's)

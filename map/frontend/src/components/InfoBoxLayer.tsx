@@ -44,7 +44,7 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
       // altitude, speed, registration, or type resolved yet).
       .filter(({ lines }) => lines.ident !== null || lines.altitudeSpeed !== null || lines.registrationType !== null);
 
-    return sortByLabelStackOrder(withLines.map(({ item, lines }) => ({ id: item.id, altitude: item.aircraft.altitude, item, lines })));
+    return sortByLabelStackOrder(withLines.map(({ item, lines }) => ({ id: item.id, altitude: item.aircraft.alt, item, lines })));
   }, [items, selected, showAll, hoveredId]);
 
   return (
@@ -56,7 +56,7 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
           style={{
             left: b.item.x + DEFAULT_INFO_BOX_OFFSET,
             top: b.item.y + DEFAULT_INFO_BOX_OFFSET,
-            zIndex: altitudeZIndex(b.item.aircraft.altitude),
+            zIndex: altitudeZIndex(b.item.aircraft.alt),
           }}
         >
           {b.lines.ident !== null && <div className="text-[12px] font-bold whitespace-nowrap">{b.lines.ident}</div>}

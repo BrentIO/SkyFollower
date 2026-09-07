@@ -50,7 +50,7 @@ def _install_fakes(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_extract_timestamp_from_position_packet():
-    assert map_main._extract_timestamp({"type": "position", "timestamp": 123.5}) == 123.5
+    assert map_main._extract_timestamp({"type": "position", "ts": 123.5}) == 123.5
 
 
 def test_extract_timestamp_from_metadata_packet_last_message():
@@ -70,7 +70,7 @@ def test_extract_timestamp_missing_returns_none():
 
 
 def test_extract_timestamp_malformed_returns_none():
-    assert map_main._extract_timestamp({"type": "position", "timestamp": "not-a-number"}) is None
+    assert map_main._extract_timestamp({"type": "position", "ts": "not-a-number"}) is None
     assert map_main._extract_timestamp({"type": "metadata", "last_message": "garbage"}) is None
 
 
@@ -81,12 +81,12 @@ def test_extract_timestamp_malformed_returns_none():
 def test_handle_position_packet_extracts_only_position_fields(monkeypatch):
     store, connections = _install_fakes(monkeypatch)
     store.next_result = {
-        "icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0, "altitude": 3000,
+        "icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0, "alt": 3000,
     }
 
     map_main._handle_packet({
-        "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
-        "latitude": 1.0, "longitude": 2.0, "altitude": 3000,
+        "type": "position", "icao_hex": "A8AE7F", "ts": 500.0,
+        "lat": 1.0, "lon": 2.0, "alt": 3000,
     })
 
     assert len(store.calls) == 1
@@ -94,10 +94,10 @@ def test_handle_position_packet_extracts_only_position_fields(monkeypatch):
     assert icao_hex == "A8AE7F"
     assert msg_type == "position"
     assert timestamp == 500.0
-    assert fields == {"latitude": 1.0, "longitude": 2.0, "altitude": 3000}
+    assert fields == {"lat": 1.0, "lon": 2.0, "alt": 3000}
 
     assert connections.published == [
-        {"type": "position", "icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0, "altitude": 3000},
+        {"type": "position", "icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0, "alt": 3000},
     ]
 
 
@@ -106,18 +106,18 @@ def test_handle_position_packet_omits_absent_fields_from_published_event(monkeyp
     fields the merged state actually has -- it must not synthesize a null
     for a field the aircraft has simply never reported."""
     store, connections = _install_fakes(monkeypatch)
-    store.next_result = {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}
+    store.next_result = {"icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0}
 
     map_main._handle_packet({
-        "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
-        "latitude": 1.0, "longitude": 2.0,
+        "type": "position", "icao_hex": "A8AE7F", "ts": 500.0,
+        "lat": 1.0, "lon": 2.0,
     })
 
     event = connections.published[0]
     assert "velocity" not in event
-    assert "heading" not in event
-    assert "vertical_speed" not in event
-    assert "altitude" not in event
+    assert "hdg" not in event
+    assert "vs" not in event
+    assert "alt" not in event
 
 
 def test_handle_packet_dropped_by_store_publishes_nothing(monkeypatch):
@@ -125,7 +125,7 @@ def test_handle_packet_dropped_by_store_publishes_nothing(monkeypatch):
     store.next_result = None  # out-of-order, dropped
 
     map_main._handle_packet({
-        "type": "position", "icao_hex": "A8AE7F", "timestamp": 1.0, "latitude": 1.0, "longitude": 1.0,
+        "type": "position", "icao_hex": "A8AE7F", "ts": 1.0, "lat": 1.0, "lon": 1.0,
     })
 
     assert connections.published == []
@@ -165,7 +165,7 @@ def test_handle_metadata_packet_publishes_full_merged_record(monkeypatch):
     /api/flights' shape exactly (see map/main.py's get_flights)."""
     store, connections = _install_fakes(monkeypatch)
     store.next_result = {
-        "icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0,
+        "icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0,
         "ident": "DAL2", "aircraft": {"icao_hex": "A8AE7F"},
     }
 
@@ -177,7 +177,7 @@ def test_handle_metadata_packet_publishes_full_merged_record(monkeypatch):
     })
 
     assert connections.published == [{
-        "type": "metadata", "icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0,
+        "type": "metadata", "icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0,
         "ident": "DAL2", "aircraft": {"icao_hex": "A8AE7F"},
     }]
 
@@ -186,7 +186,7 @@ def test_handle_packet_missing_icao_hex_is_ignored(monkeypatch):
     store, connections = _install_fakes(monkeypatch)
 
     map_main._handle_packet({"type": "metadata", "ident": "DAL2"})  # no aircraft.icao_hex
-    map_main._handle_packet({"type": "position", "timestamp": 1.0})  # no icao_hex
+    map_main._handle_packet({"type": "position", "ts": 1.0})  # no icao_hex
 
     assert store.calls == []
     assert connections.published == []
@@ -210,7 +210,7 @@ def test_handle_heartbeat_packet_records_processor_seen_and_nothing_else(monkeyp
     store, connections = _install_fakes(monkeypatch)
 
     with patch("map.main.time.time", return_value=555.5):
-        map_main._handle_packet({"type": "heartbeat", "processor_id": "mp-1", "timestamp": 500.0})
+        map_main._handle_packet({"type": "heartbeat", "processor_id": "mp-1", "ts": 500.0})
 
     assert store.processor_calls == [("mp-1", 555.5)]
     assert store.calls == []  # no flight-state effect
@@ -219,12 +219,12 @@ def test_handle_heartbeat_packet_records_processor_seen_and_nothing_else(monkeyp
 
 def test_handle_position_packet_with_processor_id_records_roster(monkeypatch):
     store, connections = _install_fakes(monkeypatch)
-    store.next_result = {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}
+    store.next_result = {"icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0}
 
     with patch("map.main.time.time", return_value=555.5):
         map_main._handle_packet({
-            "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
-            "processor_id": "mp-1", "latitude": 1.0, "longitude": 2.0,
+            "type": "position", "icao_hex": "A8AE7F", "ts": 500.0,
+            "processor_id": "mp-1", "lat": 1.0, "lon": 2.0,
         })
 
     assert store.processor_calls == [("mp-1", 555.5)]
@@ -258,11 +258,11 @@ def test_handle_packet_without_processor_id_does_not_touch_roster(monkeypatch):
     message-processor that predates processor_id must not raise or record
     a bogus roster entry."""
     store, connections = _install_fakes(monkeypatch)
-    store.next_result = {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}
+    store.next_result = {"icao_hex": "A8AE7F", "lat": 1.0, "lon": 2.0}
 
     map_main._handle_packet({
-        "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
-        "latitude": 1.0, "longitude": 2.0,
+        "type": "position", "icao_hex": "A8AE7F", "ts": 500.0,
+        "lat": 1.0, "lon": 2.0,
     })
 
     assert store.processor_calls == []

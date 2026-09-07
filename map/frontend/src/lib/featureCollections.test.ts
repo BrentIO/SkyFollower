@@ -3,7 +3,7 @@ import { applySnapshot, applyWsEvent, type AircraftMap } from "./aircraftState";
 import { aircraftFeatureCollection, trailFeatureCollection } from "./featureCollections";
 
 function withOnePositionedAircraft(icaoHex = "A1B2C3"): AircraftMap {
-  return applySnapshot([{ icao_hex: icaoHex, latitude: 1, longitude: 2, altitude: 1000 }]);
+  return applySnapshot([{ icao_hex: icaoHex, lat: 1, lon: 2, alt: 1000 }]);
 }
 
 describe("aircraftFeatureCollection", () => {
@@ -31,14 +31,14 @@ describe("aircraftFeatureCollection", () => {
 describe("trailFeatureCollection", () => {
   it("includes trail segments for a visible aircraft in the visible-ids set", () => {
     let aircraft = withOnePositionedAircraft();
-    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", latitude: 1.1, longitude: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]));
     expect(fc.features.length).toBeGreaterThan(0);
   });
 
   it("excludes a hidden aircraft's trail even though its trail data is retained", () => {
     let aircraft = withOnePositionedAircraft();
-    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", latitude: 1.1, longitude: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
 
     // The trail data itself must still be there client-side...
@@ -57,7 +57,7 @@ describe("trailFeatureCollection", () => {
   it("re-includes the bridged trail once the aircraft un-hides via a new position event", () => {
     let aircraft = withOnePositionedAircraft();
     aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
-    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", latitude: 5, longitude: 6 });
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 5, lon: 6 });
 
     const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]));
     // One segment bridging the pre-gap point to the post-gap point.

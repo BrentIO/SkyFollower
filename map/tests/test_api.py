@@ -197,22 +197,22 @@ def _wait_for_flight(server: _Server, icao_hex: str, timeout: float = 3.0, predi
 def test_get_flights_reflects_udp_position_update(server):
     icao_hex = _hex()
     server.send_udp({
-        "type": "position", "icao_hex": icao_hex, "timestamp": time.time(),
-        "latitude": 12.3, "longitude": 45.6, "altitude": 3500,
+        "type": "position", "icao_hex": icao_hex, "ts": time.time(),
+        "lat": 12.3, "lon": 45.6, "alt": 3500,
     })
 
     flight = _wait_for_flight(server, icao_hex)
-    assert flight["latitude"] == 12.3
-    assert flight["longitude"] == 45.6
-    assert flight["altitude"] == 3500
+    assert flight["lat"] == 12.3
+    assert flight["lon"] == 45.6
+    assert flight["alt"] == 3500
 
 
 def test_get_flights_merges_position_and_metadata_into_one_object(server):
     icao_hex = _hex()
     ts = time.time()
     server.send_udp({
-        "type": "position", "icao_hex": icao_hex, "timestamp": ts,
-        "latitude": 1.0, "longitude": 2.0,
+        "type": "position", "icao_hex": icao_hex, "ts": ts,
+        "lat": 1.0, "lon": 2.0,
     })
     server.send_udp({
         "type": "metadata",
@@ -226,8 +226,8 @@ def test_get_flights_merges_position_and_metadata_into_one_object(server):
     flight = _wait_for_flight(server, icao_hex, predicate=lambda f: "ident" in f)
     # Same object carries both the position fields and the metadata
     # fields -- not two separate lists (see map/README.md).
-    assert flight["latitude"] == 1.0
-    assert flight["longitude"] == 2.0
+    assert flight["lat"] == 1.0
+    assert flight["lon"] == 2.0
     assert flight["ident"] == "DAL1"
     assert flight["aircraft"] == {"icao_hex": icao_hex, "registration": "N1"}
 
@@ -239,8 +239,8 @@ def test_websocket_receives_batched_position_and_metadata_events(server):
     async def scenario() -> set[str]:
         async with websockets.connect(server.ws_url) as ws:
             server.send_udp({
-                "type": "position", "icao_hex": icao_hex, "timestamp": ts,
-                "latitude": 9.0, "longitude": 8.0,
+                "type": "position", "icao_hex": icao_hex, "ts": ts,
+                "lat": 9.0, "lon": 8.0,
             })
             server.send_udp({
                 "type": "metadata", "aircraft": {"icao_hex": icao_hex},
@@ -265,8 +265,8 @@ def test_websocket_receives_stale_then_hide_then_remove_on_eviction(server):
     async def scenario() -> list[str]:
         async with websockets.connect(server.ws_url) as ws:
             server.send_udp({
-                "type": "position", "icao_hex": icao_hex, "timestamp": time.time(),
-                "latitude": 1.0, "longitude": 1.0,
+                "type": "position", "icao_hex": icao_hex, "ts": time.time(),
+                "lat": 1.0, "lon": 1.0,
             })
 
             order: list[str] = []
@@ -291,8 +291,8 @@ def test_get_flights_omits_hidden_aircraft(server):
     transmits again or is fully evicted)."""
     icao_hex = _hex()
     server.send_udp({
-        "type": "position", "icao_hex": icao_hex, "timestamp": time.time(),
-        "latitude": 1.0, "longitude": 1.0,
+        "type": "position", "icao_hex": icao_hex, "ts": time.time(),
+        "lat": 1.0, "lon": 1.0,
     })
     _wait_for_flight(server, icao_hex)
 
@@ -333,7 +333,7 @@ def _wait_for_processor(server, processor_id: str, timeout: float = 3.0) -> dict
 
 def test_heartbeat_datagram_adds_processor_to_roster(server):
     processor_id = f"mp-{_hex()}"
-    server.send_udp({"type": "heartbeat", "processor_id": processor_id, "timestamp": time.time()})
+    server.send_udp({"type": "heartbeat", "processor_id": processor_id, "ts": time.time()})
 
     entry = _wait_for_processor(server, processor_id)
     assert entry["status"] == "green"
@@ -345,8 +345,8 @@ def test_position_datagram_with_processor_id_also_updates_roster(server):
     entry alive."""
     processor_id = f"mp-{_hex()}"
     server.send_udp({
-        "type": "position", "icao_hex": _hex(), "timestamp": time.time(),
-        "processor_id": processor_id, "latitude": 1.0, "longitude": 2.0,
+        "type": "position", "icao_hex": _hex(), "ts": time.time(),
+        "processor_id": processor_id, "lat": 1.0, "lon": 2.0,
     })
 
     entry = _wait_for_processor(server, processor_id)
@@ -386,7 +386,7 @@ def test_processor_id_never_leaks_into_flight_state(server):
 
 
 def test_overall_status_green_when_every_processor_green(server):
-    server.send_udp({"type": "heartbeat", "processor_id": f"mp-{_hex()}", "timestamp": time.time()})
+    server.send_udp({"type": "heartbeat", "processor_id": f"mp-{_hex()}", "ts": time.time()})
 
     deadline = time.monotonic() + 3.0
     body = server.get_processors()
