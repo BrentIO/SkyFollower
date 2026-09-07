@@ -96,6 +96,7 @@ jobs:
               aws-setup) name="aws-setup" ;;
               core-health) name="core-health" ;;
               management-ui) name="management-ui" ;;
+              map) name="map" ;;
               runners/*) name="runner-$(basename "$dir")" ;;
               *) echo "Skipping unrecognized Dockerfile: $dockerfile" >&2; continue ;;
             esac
