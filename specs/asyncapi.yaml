@@ -19,6 +19,37 @@ servers:
       MQTT broker (e.g. Home Assistant Mosquitto). Replace host/port with
       your broker's address. TLS and authentication are deployment-specific
       runtime concerns.
+  udp:
+    host: 'localhost:9091'
+    protocol: udp
+    description: >
+      message-processor's map UDP publisher, unicasting to the map
+      service's MAP_LISTEN_HOST:MAP_LISTEN_PORT (message-processor's own
+      destination is MAP_UDP_HOST:MAP_UDP_PORT -- deliberately distinct
+      variable names for the same wire endpoint, see map/README.md). AsyncAPI
+      has no official UDP binding; `protocol: udp` is a free-form value the
+      spec format explicitly allows, with the full JSON message schemas
+      below describing the actual contract. Fire-and-forget: no
+      acknowledgement, ordering, or delivery guarantee.
+  ws:
+    host: 'localhost:8090'
+    protocol: ws
+    description: >
+      The map service's WebSocket API (MAP_HTTP_HOST:MAP_HTTP_PORT).
+      Browser clients should GET /api/flights (see specs/openapi.yaml) for
+      the initial snapshot before or around opening this connection --
+      there is no `snapshot` WebSocket message.
+
+# Every channel below is pinned to `servers: [mqtt]` explicitly. Per the
+# AsyncAPI 3.x Channel Object, a channel with no `servers` list is available
+# on every server in this document -- harmless with one server, but adding
+# `udp`/`ws` above without pinning every existing MQTT channel back to `mqtt`
+# would silently claim each of them is also reachable over UDP/WebSocket
+# (see specs/asyncapi-amqp.yaml's own description for why the AMQP topology
+# was instead kept in a companion file rather than added as a second server
+# here -- this file takes the opposite, explicit-pin approach because these
+# two new servers are genuinely part of this document's externally-facing
+# surface, not an internal-only topology worth isolating).
 
 # ---------------------------------------------------------------------------
 # Channels
@@ -29,6 +60,8 @@ channels:
   # ── Receiver ──────────────────────────────────────────────────────────────
 
   receiverStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/status'
     description: >
       Receiver liveness. Published ONLINE on connect and OFFLINE via LWT.
@@ -47,6 +80,8 @@ channels:
   # channel/message/schema rather than being folded into one object.
 
   receiverMessagesPerSecond:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_per_second'
     description: >
       Average message rate for one specific sources[] connection since
@@ -66,6 +101,8 @@ channels:
         $ref: '#/components/messages/ReceiverMessagesPerSecondMessage'
 
   receiverConnectionConnected:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_connected'
     description: >
       Whether the TCP connection to one specific sources[] entry's readsb
@@ -84,6 +121,8 @@ channels:
         $ref: '#/components/messages/ReceiverConnectionConnectedMessage'
 
   receiverConnectionReconnectCount:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_reconnect_count'
     description: >
       Number of times one specific sources[] connection has dropped and
@@ -111,6 +150,8 @@ channels:
   # itself -- see its own entry below.
 
   receiverConnectionMessagesTotalHour:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_hour'
     description: >
       Cumulative message count for one specific sources[] connection since
@@ -132,6 +173,8 @@ channels:
         $ref: '#/components/messages/ReceiverConnectionMessagesTotalHourMessage'
 
   receiverConnectionMessagesTotalToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_today'
     description: >
       Cumulative message count for one specific sources[] connection since
@@ -152,6 +195,8 @@ channels:
         $ref: '#/components/messages/ReceiverConnectionMessagesTotalTodayMessage'
 
   receiverConnectionMessagesTotalLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/messages_{connection_host}_{connection_port}_total_lifetime'
     description: >
       Cumulative message count for one specific sources[] connection since
@@ -174,6 +219,8 @@ channels:
         $ref: '#/components/messages/ReceiverConnectionMessagesTotalLifetimeMessage'
 
   receiverConnectionConnectedAttributes:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/{connection_host}_{connection_port}_connected_attributes'
     description: >
       JSON attributes for the sibling {connection_host}_{connection_port}_connected
@@ -196,6 +243,8 @@ channels:
         $ref: '#/components/messages/ReceiverConnectionConnectedAttributesMessage'
 
   receiverLocalQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/local_queue_depth'
     description: >
       Number of messages queued in the local SQLite fallback (queue.db).
@@ -208,6 +257,8 @@ channels:
         $ref: '#/components/messages/ReceiverLocalQueueDepthMessage'
 
   receiverDeadLetterQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/dead_letter_queue_depth'
     description: >
       Number of messages dead-lettered from the local SQLite fallback after
@@ -222,6 +273,8 @@ channels:
         $ref: '#/components/messages/ReceiverDeadLetterQueueDepthMessage'
 
   receiverRabbitmqConnected:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/rabbitmq_connected'
     description: >
       Whether the receiver currently has an active RabbitMQ connection.
@@ -234,6 +287,8 @@ channels:
         $ref: '#/components/messages/ReceiverRabbitmqConnectedMessage'
 
   receiverStartedAt:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/started_at'
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
@@ -246,6 +301,8 @@ channels:
         $ref: '#/components/messages/ReceiverStartedAtMessage'
 
   receiverVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/receiver/{receiver_id}/statistic/version'
     description: >
       Running image version, from the VERSION environment variable ("dev" if
@@ -261,6 +318,8 @@ channels:
   # ── Message Processor ─────────────────────────────────────────────────────
 
   messageProcessorStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/status'
     description: >
       Per-message-processor liveness. Published ONLINE on connect and OFFLINE
@@ -275,6 +334,8 @@ channels:
   # One retained topic per stat, matching the receiver above.
 
   messageProcessorMessagesPerSecond:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/messages_per_second'
     description: >
       Average message processing rate since last report. Published every
@@ -287,6 +348,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorMessagesPerSecondMessage'
 
   messageProcessorProcessingTimeHwmMs:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/processing_time_hwm_ms'
     description: >
       End-to-end message processing time high-water mark since last publish;
@@ -299,6 +362,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorProcessingTimeHwmMsMessage'
 
   messageProcessorMessageLatencyHwmMs:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/message_latency_hwm_ms'
     description: >
       Receipt-through-processed latency high-water mark since last publish
@@ -320,6 +385,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorMessageLatencyHwmMsMessage'
 
   messageProcessorRulesEngineHwmNs:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_engine_hwm_ns'
     description: >
       Rules engine duration high-water mark since last publish, in
@@ -335,6 +402,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorRulesEngineHwmNsMessage'
 
   messageProcessorLocalArchiveQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/local_archive_queue_depth'
     description: >
       Number of completed flights queued in the local SQLite fallback
@@ -348,6 +417,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorLocalArchiveQueueDepthMessage'
 
   messageProcessorDeadLetterQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/dead_letter_queue_depth'
     description: >
       Number of completed flights dead-lettered from the local SQLite
@@ -363,6 +434,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorDeadLetterQueueDepthMessage'
 
   messageProcessorRegistrationMissesHour:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_hour'
     description: >
       Aircraft enrichment (registration) Redis cache misses this hour. Message
@@ -379,6 +452,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorRegistrationMissesHourMessage'
 
   messageProcessorRegistrationMissesToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_today'
     description: >
       Aircraft enrichment (registration) Redis cache misses today (UTC).
@@ -393,6 +468,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorRegistrationMissesTodayMessage'
 
   messageProcessorRegistrationMissesLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/registration_misses_lifetime'
     description: >
       Aircraft enrichment (registration) Redis cache misses since this
@@ -408,6 +485,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorRegistrationMissesLifetimeMessage'
 
   messageProcessorOperatorMissesToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/operator_misses_today'
     description: >
       operator:{designator} Redis lookup misses today (UTC) -- a distinct
@@ -425,6 +504,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorOperatorMissesTodayMessage'
 
   messageProcessorOperatorMissesLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/operator_misses_lifetime'
     description: >
       operator:{designator} Redis lookup misses since this process instance
@@ -440,6 +521,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorOperatorMissesLifetimeMessage'
 
   messageProcessorTotalMessagesProcessedHour:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_hour'
     description: >
       Every message this hour for which an attempt to decode was made
@@ -458,6 +541,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedHourMessage'
 
   messageProcessorTotalMessagesProcessedToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_today'
     description: >
       Every message today (UTC, wall-clock processing time) for which an
@@ -472,6 +557,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedTodayMessage'
 
   messageProcessorTotalMessagesProcessedLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/total_messages_processed_lifetime'
     description: >
       Every message since this process instance started for which an
@@ -487,6 +574,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorTotalMessagesProcessedLifetimeMessage'
 
   messageProcessorActiveFlights:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/active_flights'
     description: >
       Number of flights currently tracked in the in-memory SQLite store.
@@ -499,6 +588,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorActiveFlightsMessage'
 
   messageProcessorStartedAt:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/started_at'
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
@@ -511,6 +602,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorStartedAtMessage'
 
   messageProcessorRulesVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rules_version'
     description: >
       Last 8 characters of the SHA-256 hash of the rules config THIS
@@ -528,6 +621,8 @@ channels:
         $ref: '#/components/messages/MessageProcessorRulesVersionMessage'
 
   messageProcessorAreasVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/message-processor/{message_processor_id}/statistic/areas_version'
     description: >
       Last 8 characters of the SHA-256 hash of the areas config THIS
@@ -544,6 +639,8 @@ channels:
   # ── Archive processor ─────────────────────────────────────────────────────
 
   archiveStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/status
     description: >
       Archive processor liveness. Published ONLINE on connect and OFFLINE
@@ -556,6 +653,8 @@ channels:
   # above.
 
   archiveFlightsArchivedHour:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/flights_archived_hour
     description: >
       Flights successfully written to S3 this hour. Published every
@@ -565,6 +664,8 @@ channels:
         $ref: '#/components/messages/ArchiveFlightsArchivedHourMessage'
 
   archiveFlightsArchivedToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/flights_archived_today
     description: >
       Flights successfully written to S3 today (UTC). Published every
@@ -574,6 +675,8 @@ channels:
         $ref: '#/components/messages/ArchiveFlightsArchivedTodayMessage'
 
   archiveFlightsSkippedHour:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/flights_skipped_hour
     description: >
       External-only flights dropped instead of archived this hour. Published
@@ -583,6 +686,8 @@ channels:
         $ref: '#/components/messages/ArchiveFlightsSkippedHourMessage'
 
   archiveFlightsSkippedToday:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/flights_skipped_today
     description: >
       External-only flights dropped instead of archived today (UTC). Published
@@ -592,6 +697,8 @@ channels:
         $ref: '#/components/messages/ArchiveFlightsSkippedTodayMessage'
 
   archiveS3Connected:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/s3_connected
     description: >
       Whether the last S3 write attempt succeeded. Published every
@@ -601,6 +708,8 @@ channels:
         $ref: '#/components/messages/ArchiveS3ConnectedMessage'
 
   archiveLocalQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/local_queue_depth
     description: >
       Number of completed flights queued in the local SQLite fallback
@@ -610,6 +719,8 @@ channels:
         $ref: '#/components/messages/ArchiveLocalQueueDepthMessage'
 
   archiveLocalIndexQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/local_index_queue_depth
     description: >
       Number of Parquet index rows queued for retry (index_queue table in
@@ -620,6 +731,8 @@ channels:
         $ref: '#/components/messages/ArchiveLocalIndexQueueDepthMessage'
 
   archiveDeadLetterQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/dead_letter_queue_depth
     description: >
       Number of completed flights dead-lettered from the local SQLite
@@ -632,6 +745,8 @@ channels:
         $ref: '#/components/messages/ArchiveDeadLetterQueueDepthMessage'
 
   archiveDeadLetterIndexQueueDepth:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/dead_letter_index_queue_depth
     description: >
       Number of Parquet index rows dead-lettered (index_queue table in
@@ -644,6 +759,8 @@ channels:
         $ref: '#/components/messages/ArchiveDeadLetterIndexQueueDepthMessage'
 
   archiveStartedAt:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive/statistic/started_at
     description: >
       UTC ISO-8601 timestamp of process start; never changes after startup.
@@ -660,6 +777,8 @@ channels:
   # channel/message/schema rather than being folded into one object.
 
   archiveCompactionFilesCompacted:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/files_compacted
     description: >
       Count of per-flight Parquet index files merged into this run's
@@ -670,6 +789,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionFilesCompactedMessage'
 
   archiveCompactionFilesDeleteFailed:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/files_delete_failed
     description: >
       Count of files included in a compacted output whose source delete
@@ -680,6 +801,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionFilesDeleteFailedMessage'
 
   archiveCompactionDaysCompacted:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/days_compacted
     description: >
       Number of date partitions successfully compacted this run -- more
@@ -690,6 +813,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionDaysCompactedMessage'
 
   archiveCompactionLastCompactedDate:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/last_compacted_date
     description: >
       The watermark after this run: the most recent UTC date (YYYY-MM-DD)
@@ -700,6 +825,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionLastCompactedDateMessage'
 
   archiveCompactionMismatchDate:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/mismatch_date
     description: >
       UTC date (YYYY-MM-DD) this run stopped at due to a flight/index
@@ -710,6 +837,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionMismatchDateMessage'
 
   archiveCompactionMismatchUuids:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/mismatch_uuids
     description: >
       Comma-separated flight UUIDs missing their Parquet index row on
@@ -721,6 +850,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionMismatchUuidsMessage'
 
   archiveCompactionLastRunAt:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/last_run_at
     description: >
       UTC ISO-8601 timestamp when this run completed. Published once per
@@ -731,6 +862,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionLastRunAtMessage'
 
   archiveCompactionLastRunStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/last_run_status
     description: >
       Outcome of this run: Success, Failure (an exception, e.g. an S3
@@ -742,6 +875,8 @@ channels:
         $ref: '#/components/messages/ArchiveCompactionLastRunStatusMessage'
 
   archiveCompactionVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/version
     description: >
       Running image version, read from the VERSION environment variable
@@ -753,6 +888,8 @@ channels:
   # ── Rule notifications ────────────────────────────────────────────────────
 
   ruleNotification:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/rule/{identifier}'
     description: >
       Published by the message processor when a rule matches a tracked flight. The
@@ -775,6 +912,8 @@ channels:
   # additional stats beyond this set.
 
   runnerRecordsImported:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/runner/{runner_name}/statistic/records_imported'
     description: >
       Number of records written to Redis during this run. Published once
@@ -787,6 +926,8 @@ channels:
         $ref: '#/components/messages/RunnerRecordsImportedMessage'
 
   runnerLastRunAt:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/runner/{runner_name}/statistic/last_run_at'
     description: >
       UTC ISO-8601 timestamp when the run completed. Published once per
@@ -800,6 +941,8 @@ channels:
         $ref: '#/components/messages/RunnerLastRunAtMessage'
 
   runnerLastRunStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
     address: 'SkyFollower/runner/{runner_name}/statistic/last_run_status'
     description: >
       Outcome of the run (Success or Failure). Published once per run,
@@ -810,6 +953,47 @@ channels:
     messages:
       RunnerLastRunStatusMessage:
         $ref: '#/components/messages/RunnerLastRunStatusMessage'
+
+  # ── Map service ──────────────────────────────────────────────────────────
+
+  mapUdpFeed:
+    servers:
+      - $ref: '#/servers/udp'
+    address: null
+    description: >
+      Unicast UDP destination message-processor sends `position`/`metadata`
+      datagrams to (MAP_UDP_HOST:MAP_UDP_PORT on the sender, bound as
+      MAP_LISTEN_HOST:MAP_LISTEN_PORT on the map service). UDP has no
+      notion of a topic/path -- this channel represents the single
+      destination socket both message shapes below share, distinguished
+      from each other by the `type` field on the payload rather than by
+      address. Fire-and-forget: neither message is retained, acknowledged,
+      or guaranteed delivery.
+    messages:
+      MapUdpPositionMessage:
+        $ref: '#/components/messages/MapUdpPositionMessage'
+      MapUdpMetadataMessage:
+        $ref: '#/components/messages/MapUdpMetadataMessage'
+
+  mapWebSocket:
+    servers:
+      - $ref: '#/servers/ws'
+    address: /ws
+    description: >
+      One connection per browser (map/main.py's `flights_ws`). Never sends
+      a snapshot -- clients should GET /api/flights (specs/openapi.yaml)
+      first for the initial state, then open this for live updates. Events
+      are batched (map/broadcaster.py's `ConnectionManager.flush_loop`);
+      this service never expects an inbound client message on this channel.
+    messages:
+      MapWsPositionMessage:
+        $ref: '#/components/messages/MapWsPositionMessage'
+      MapWsMetadataMessage:
+        $ref: '#/components/messages/MapWsMetadataMessage'
+      MapWsStaleMessage:
+        $ref: '#/components/messages/MapWsStaleMessage'
+      MapWsRemoveMessage:
+        $ref: '#/components/messages/MapWsRemoveMessage'
 
 # ---------------------------------------------------------------------------
 # Operations
@@ -1134,6 +1318,18 @@ operations:
     channel:
       $ref: '#/channels/ruleNotification'
     summary: Message processor publishes a rule match notification
+
+  publishMapUdpFeed:
+    action: send
+    channel:
+      $ref: '#/channels/mapUdpFeed'
+    summary: Message processor sends map `position`/`metadata` UDP datagrams
+
+  publishMapWebSocket:
+    action: send
+    channel:
+      $ref: '#/channels/mapWebSocket'
+    summary: Map service sends live `position`/`metadata`/`stale`/`remove` events over WebSocket
 
   publishRunnerRecordsImported:
     action: send
@@ -1568,6 +1764,54 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/FlightRuleNotification'
+
+    MapUdpPositionMessage:
+      name: MapUdpPositionMessage
+      title: Map UDP position datagram
+      summary: Sent on every processed ADS-B message once the map UDP feed is enabled
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapUdpPosition'
+
+    MapUdpMetadataMessage:
+      name: MapUdpMetadataMessage
+      title: Map UDP metadata datagram
+      summary: Sent when a flight's metadata-relevant fields are first known, and again only on change
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapUdpMetadata'
+
+    MapWsPositionMessage:
+      name: MapWsPositionMessage
+      title: Map WebSocket position event
+      summary: Live relay of an accepted UDP `position` update
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapWsPosition'
+
+    MapWsMetadataMessage:
+      name: MapWsMetadataMessage
+      title: Map WebSocket metadata event
+      summary: Live relay of an accepted UDP `metadata` update, broadened to the aircraft's full merged current-state
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapWsMetadata'
+
+    MapWsStaleMessage:
+      name: MapWsStaleMessage
+      title: Map WebSocket stale event
+      summary: An aircraft's liveness sentinel expired; its detail record is still held
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapWsStale'
+
+    MapWsRemoveMessage:
+      name: MapWsRemoveMessage
+      title: Map WebSocket remove event
+      summary: An aircraft's detail record expired; clients should drop it entirely
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapWsRemove'
 
     RunnerRecordsImportedMessage:
       name: RunnerRecordsImportedMessage
@@ -2017,13 +2261,27 @@ components:
           description: Every data runner that contributed a field to this record, mictronics -> registry -> livery order
           example: [mictronics, us-faa-registry]
 
-    FlightRuleNotification:
+    FlightSnapshot:
       type: object
       description: >
-        Snapshot of a flight at the moment a rule matched. Excludes _id,
-        positions, and velocities. operator, registrant, origin, and
-        destination are omitted when not populated.
-      required: [aircraft, first_message, last_message, total_messages, receiver_sources, rule]
+        Snapshot of a flight's metadata-relevant fields (message-processor's
+        _build_flight_notification_payload -- the CompletedFlight shape,
+        minus _id/positions/velocities). Shared base for FlightRuleNotification
+        below and the map UDP/WebSocket `metadata` messages, which reuse this
+        schema via allOf rather than redefining the same field list a third
+        time. icao_hex lives nested at aircraft.icao_hex here, not as a
+        top-level key -- unlike the map `position` messages, which do carry
+        icao_hex at the top level. operator, registrant, origin, destination,
+        and force_archive are omitted when not populated/false rather than
+        published as falsy. No properties are marked required at this base
+        level -- FlightRuleNotification and the map UDP `metadata` message
+        (both always fully populated, since both are built from the same
+        _build_flight_notification_payload) declare their own required list
+        on top; MapFlightState (the map service's broader, incrementally-
+        merged current-state, used by the WebSocket `metadata` message and
+        GET /api/flights) reuses these same properties without requiring
+        any of them, since a freshly-tracked aircraft may have only
+        position fields so far.
       properties:
         aircraft:
           $ref: '#/components/schemas/AircraftInfo'
@@ -2118,19 +2376,208 @@ components:
           items:
             type: string
           example: [military-aircraft]
-        rule:
-          type: object
-          required: [name, description, identifier]
+
+    FlightRuleNotification:
+      description: >
+        Snapshot of a flight at the moment a rule matched -- FlightSnapshot
+        plus the rule that matched.
+      allOf:
+        - $ref: '#/components/schemas/FlightSnapshot'
+        - type: object
+          required: [aircraft, first_message, last_message, total_messages, receiver_sources, rule]
           properties:
-            name:
+            rule:
+              type: object
+              required: [name, description, identifier]
+              properties:
+                name:
+                  type: string
+                  example: Military Aircraft
+                description:
+                  type: string
+                  example: Matches any aircraft with military=true
+                identifier:
+                  type: string
+                  example: military-aircraft
+
+    # ── Map service ──────────────────────────────────────────────────────
+
+    MapPositionFields:
+      type: object
+      description: >
+        Position/velocity fields carried by a map `position` message
+        (message-processor/main.py's `_publish_map_position`, map/main.py's
+        WebSocket `position` event) or folded into MapFlightState below.
+        Each is independently optional per datagram/event -- a field absent
+        from the underlying ADS-B message is omitted entirely here, never
+        sent as null.
+      properties:
+        latitude:
+          type: number
+          format: float
+          example: 33.9425
+        longitude:
+          type: number
+          format: float
+          example: -118.408
+        altitude:
+          type: integer
+          description: feet MSL
+          example: 350
+        velocity:
+          type: number
+          format: float
+          description: knots
+          example: 450
+        heading:
+          type: number
+          format: float
+          description: degrees 0-359
+          example: 271.4
+        vertical_speed:
+          type: integer
+          description: ft/min; negative = descending
+          example: -1200
+
+    MapUdpPosition:
+      description: >
+        Sent by message-processor on every processed ADS-B message (no
+        throttling) once the map UDP feed is enabled (MAP_UDP_HOST
+        configured) -- see message-processor/main.py's
+        `_publish_map_position`. icao_hex and timestamp are always present;
+        every MapPositionFields property is independently optional.
+      allOf:
+        - $ref: '#/components/schemas/MapPositionFields'
+        - type: object
+          required: [type, icao_hex, timestamp]
+          properties:
+            type:
               type: string
-              example: Military Aircraft
-            description:
+              enum: [position]
+            icao_hex:
               type: string
-              example: Matches any aircraft with military=true
-            identifier:
+              example: A8AE7F
+            timestamp:
+              type: number
+              format: float
+              description: Unix timestamp (seconds) of the source ADS-B message (message-processor's received_at)
+              example: 1757000000.0
+
+    MapUdpMetadata:
+      description: >
+        Sent by message-processor the first time a flight's metadata-
+        relevant fields (ident, aircraft enrichment, operator, registrant,
+        squawk, origin, destination) are known, and again only when one of
+        them changes -- never on every message. See map/main.py's
+        `_maybe_publish_map_metadata`. Same FlightSnapshot fields as
+        FlightRuleNotification above (aircraft, first_message, last_message,
+        total_messages, and receiver_sources always present -- both are
+        built by the same _build_flight_notification_payload), minus that
+        schema's `rule` object (this message never carries one), plus this
+        message's own `type` key. icao_hex lives nested at aircraft.icao_hex
+        here, not as a top-level key -- unlike the sibling `position`
+        message above, which puts icao_hex at the top level.
+      allOf:
+        - $ref: '#/components/schemas/FlightSnapshot'
+        - type: object
+          required: [type, aircraft, first_message, last_message, total_messages, receiver_sources]
+          properties:
+            type:
               type: string
-              example: military-aircraft
+              enum: [metadata]
+
+    MapFlightState:
+      description: >
+        One aircraft's full merged current-state, as held in the map
+        service's dedicated Redis (`flight:detail:{icao_hex}`, see
+        map/state_store.py's `FlightStateStore`) -- every field known so far
+        from that aircraft's `position` and `metadata` UDP messages,
+        merged field-by-field so a partial update never clobbers fields it
+        didn't carry. Reuses FlightSnapshot and MapPositionFields rather
+        than redefining their fields a third/fourth time; unlike both,
+        nothing here is required beyond icao_hex -- a freshly-tracked
+        aircraft may have only position fields (or only metadata fields) so
+        far. This is the exact shape of one `GET /api/flights` array
+        element (specs/openapi.yaml) and, with a `type: metadata` key added,
+        of the WebSocket `metadata` message below -- kept in sync manually
+        between the two spec files since this repo has no cross-file $ref
+        tooling for asyncapi.yaml <-> openapi.yaml.
+      required: [icao_hex]
+      allOf:
+        - $ref: '#/components/schemas/FlightSnapshot'
+        - $ref: '#/components/schemas/MapPositionFields'
+        - type: object
+          properties:
+            icao_hex:
+              type: string
+              example: A8AE7F
+
+    MapWsPosition:
+      description: >
+        WebSocket `position` event (map/main.py's `_handle_packet`) -- same
+        optional MapPositionFields as the UDP `position` message, but no
+        `timestamp` (this event reflects the merged current-state, not one
+        source message's receive time).
+      allOf:
+        - $ref: '#/components/schemas/MapPositionFields'
+        - type: object
+          required: [type, icao_hex]
+          properties:
+            type:
+              type: string
+              enum: [position]
+            icao_hex:
+              type: string
+              example: A8AE7F
+
+    MapWsMetadata:
+      description: >
+        WebSocket `metadata` event (map/main.py's `_handle_packet`) --
+        MapFlightState plus a `type` key. Deliberately broader than the UDP
+        `metadata` message it originated from: includes whatever position
+        fields are currently known too, so a client that only just
+        connected (and so missed any earlier `position` events) still has
+        everything needed to place and label the aircraft.
+      allOf:
+        - $ref: '#/components/schemas/MapFlightState'
+        - type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [metadata]
+
+    MapWsStale:
+      type: object
+      description: >
+        WebSocket `stale` event -- the aircraft's `flight:live:{icao_hex}`
+        sentinel expired (no message seen for MAP_STALE_SECONDS), but its
+        detail record has not yet been evicted. See map/state_store.py's
+        `handle_expired_key`.
+      required: [type, icao_hex]
+      properties:
+        type:
+          type: string
+          enum: [stale]
+        icao_hex:
+          type: string
+          example: A8AE7F
+
+    MapWsRemove:
+      type: object
+      description: >
+        WebSocket `remove` event -- the aircraft's `flight:detail:{icao_hex}`
+        record itself expired (no message seen for MAP_EVICT_SECONDS); the
+        client should drop the aircraft entirely. See map/state_store.py's
+        `handle_expired_key`.
+      required: [type, icao_hex]
+      properties:
+        type:
+          type: string
+          enum: [remove]
+        icao_hex:
+          type: string
+          example: A8AE7F
 
   # ---------------------------------------------------------------------------
   # Parameters

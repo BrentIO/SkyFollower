@@ -5,7 +5,9 @@ import AsyncApiViewer from "./AsyncApiViewer.vue";
 # MQTT Reference
 
 Every MQTT topic published by the receiver, message processor, archive
-processor, and rule notifications — rendered interactively from
+processor, and rule notifications, plus the map service's UDP feed
+(message-processor → map) and WebSocket API (map → browser) — rendered
+interactively from
 [`specs/asyncapi.yaml`](https://github.com/BrentIO/SkyFollower/blob/main/specs/asyncapi.yaml).
 
 ::: tip Home Assistant
@@ -21,8 +23,8 @@ automations written against the legacy payload.
 :::
 
 ::: tip RabbitMQ / AMQP
-This page covers MQTT only. The internal RabbitMQ exchanges and queues
-that move messages between the receiver, message processor(s), and
+This page covers MQTT, UDP, and WebSocket. The internal RabbitMQ exchanges
+and queues that move messages between the receiver, message processor(s), and
 archive processor — `skyfollower-adsb`, `skyfollower-adsb-unroutable`,
 `skyfollower-archive`, and each message processor's own
 `skyfollower-message-processor-{id}` queue — are documented separately in

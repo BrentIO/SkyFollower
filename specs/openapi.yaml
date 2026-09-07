@@ -1245,6 +1245,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/flights:
+    get:
+      tags:
+      - flights
+      summary: Get Flights
+      description: Served by the map service (map/main.py), not this file's
+        management-ui backend -- included here so the whole system's REST
+        surface has one spec. One object per currently-tracked aircraft, the
+        same merged current-state shape carried by the WebSocket `metadata`
+        event documented in specs/asyncapi.yaml.
+      operationId: get_flights_api_flights_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/MapFlight'
+                type: array
+                title: Response Get Flights Api Flights Get
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -2118,6 +2139,135 @@ components:
       - type
       - coordinates
       title: LineStringGeometry
+    MapFlight:
+      properties:
+        icao_hex:
+          type: string
+          title: Icao Hex
+        latitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Latitude
+        longitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Longitude
+        altitude:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Altitude
+          description: feet MSL
+        velocity:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Velocity
+          description: knots
+        heading:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Heading
+          description: degrees 0-359
+        vertical_speed:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Vertical Speed
+          description: ft/min; negative = descending
+        aircraft:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Aircraft
+        ident:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ident
+        operator:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Operator
+        registrant:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Registrant
+        squawk:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Squawk
+        origin:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Origin
+        destination:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Destination
+        receiver_sources:
+          items:
+            type: string
+          type: array
+          title: Receiver Sources
+        force_archive:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Force Archive
+        first_message:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: First Message
+        last_message:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Message
+        total_messages:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Total Messages
+        matched_rules:
+          items:
+            type: string
+          type: array
+          title: Matched Rules
+      type: object
+      required:
+      - icao_hex
+      title: MapFlight
+      description: >-
+        One aircraft's full merged current-state, as held in the map
+        service's dedicated Redis (map/state_store.py's FlightStateStore --
+        flight:detail:{icao_hex}). icao_hex is always present; every other
+        field is present only once message-processor has sent a
+        position/metadata UDP packet carrying it for this aircraft, and is
+        entirely absent from the JSON (not sent as null) when not yet
+        known -- shown here as nullable purely for schema-generation
+        consistency with the rest of this document (see FlightView's
+        description above for the same convention). Same shape as the
+        WebSocket `metadata` event in specs/asyncapi.yaml (which adds a
+        `type` key on top of this) -- kept in sync manually between the two
+        spec files, since this repo has no cross-file $ref tooling between
+        asyncapi.yaml and openapi.yaml.
     MatchedRulesCondition:
       properties:
         type:

@@ -6,7 +6,8 @@ import OpenApiViewer from "./OpenApiViewer.vue";
 
 The management-ui backend's full REST API — rules/areas configuration,
 read-only reference-data lookups, and the archive search (Athena/Glue)
-endpoints — rendered interactively from
+endpoints — plus the map service's `GET /api/flights` snapshot endpoint,
+rendered interactively from
 [`specs/openapi.yaml`](https://github.com/BrentIO/SkyFollower/blob/main/specs/openapi.yaml).
 
 ::: tip No auth
