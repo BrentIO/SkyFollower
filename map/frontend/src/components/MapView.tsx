@@ -1,11 +1,11 @@
 import * as maplibregl from "maplibre-gl";
 import type { Feature, FeatureCollection } from "geojson";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MAP_STYLE } from "../lib/maplibreSetup";
 import { altitudeColor } from "../lib/altitudeColor";
 import { AIRCRAFT_ICON_ID, buildAircraftIconImageData } from "../lib/aircraftIcon";
 import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
-import { loadConfig } from "../lib/config";
+import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
 import type { AircraftRecord } from "../lib/aircraftState";
 import { ControlsPanel } from "./ControlsPanel";
@@ -67,13 +67,43 @@ function trailFeatureCollection(
   return { type: "FeatureCollection", features };
 }
 
+// Top-level export: fetches runtime config (GET /api/config -- see
+// map/lib/config.ts's loadConfig) once before the actual map ever mounts,
+// since the map's initial center/zoom and home marker depend on it. A
+// brief loading state is expected and fine here; the fetch is one small
+// same-origin round-trip made once per page load.
+export function MapView() {
+  const [config, setConfig] = useState<AppConfig | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadConfig().then((cfg) => {
+      if (!cancelled) setConfig(cfg);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!config) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-gray-400">
+        Loading map…
+      </div>
+    );
+  }
+
+  return <MapViewInner config={config} />;
+}
+
 // Full-viewport MapLibre live map: aircraft icon layer (heading rotation,
 // altitude-colored fill), live trails, floating info boxes with
 // collision-avoidance placement, floating top-right controls, and a
 // "home" reference-point marker/recenter. See the issue this implements
-// for the full design spec.
-export function MapView() {
-  const config = useMemo(() => loadConfig(), []);
+// for the full design spec. Only ever mounted once `config` has resolved
+// (see MapView above), so every `config.home` read below is a plain,
+// already-loaded value -- no further async handling needed in here.
+function MapViewInner({ config }: { config: AppConfig }) {
   const { aircraft, connected } = useMapFlights(config.wsUrl, config.restFlightsUrl);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -201,8 +231,10 @@ export function MapView() {
       map.remove();
       mapRef.current = null;
     };
-    // Intentionally created once -- config/home never change at runtime
-    // (build-time env vars).
+    // Intentionally created once -- `config` (this component's own prop)
+    // is only ever set once per page load by MapView above; it can change
+    // between page loads (it's now a runtime GET /api/config fetch, not a
+    // build-time constant), but never while this component is mounted.
   }, []);
 
   // --- Keep the aircraft/trail sources and screen positions in sync ---

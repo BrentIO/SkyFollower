@@ -1,10 +1,13 @@
-// Build-time configuration, read the same way management-ui/frontend
-// reads its own build-time values (Vite's standard import.meta.env.VITE_*
-// mechanism -- management-ui/frontend has no *runtime* frontend env-var
-// convention to match; its only VITE_* values, VITE_VERSION/VITE_COMMIT,
-// are likewise baked in at build time by its Dockerfile). See
-// map/frontend/.env.example for the full list and defaults/fallback
-// behavior.
+// Runtime configuration, fetched from the backend's GET /api/config at
+// startup (see map/main.py's get_config) -- Vite's build-time
+// import.meta.env.VITE_* mechanism only ever produces one baked-in bundle,
+// and the published ghcr.io/brentio/skyfollower-map image is built with
+// none of these set, so a per-deployment value (the "home" reference
+// point) has to come from the network instead. VITE_MAP_API_BASE_URL is
+// still resolved at build time -- see resolveApiBaseUrl() below -- since
+// same-origin is the correct default for this project's bundled
+// single-container deployment and there's no bootstrapping problem there
+// (unlike home, which has no sane build-time default at all).
 
 export interface HomePoint {
   latitude: number;
@@ -16,7 +19,13 @@ export interface AppConfig {
   apiBaseUrl: string;
   restFlightsUrl: string;
   wsUrl: string;
-  /** null when VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE are unset/invalid -- home marker and recenter are simply not shown. */
+  /** null when no home reference point is configured on the backend (or,
+   * in `npm run dev`, when VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE are also
+   * unset/invalid) -- home marker and recenter are simply not shown. */
+  home: HomePoint | null;
+}
+
+interface ApiConfigResponse {
   home: HomePoint | null;
 }
 
@@ -34,26 +43,60 @@ function resolveWsUrl(apiBaseUrl: string): string {
   return `${apiBaseUrl.replace(/^http/, "ws")}/ws`;
 }
 
-function resolveHome(): HomePoint | null {
+function isValidHome(home: HomePoint | null | undefined): home is HomePoint {
+  return (
+    !!home &&
+    Number.isFinite(home.latitude) &&
+    Number.isFinite(home.longitude)
+  );
+}
+
+// Dev-only fallback: `npm run dev` runs Vite's own dev server, which has
+// no backend at the same origin to serve GET /api/config unless a proxy is
+// set up -- VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE (map/frontend/.env.example)
+// still work as a local override there. Gated on import.meta.env.DEV so a
+// production build can never fall back to a value baked in at build time.
+function resolveDevHome(): HomePoint | null {
+  if (!import.meta.env.DEV) return null;
   const latRaw = import.meta.env.VITE_HOME_LATITUDE;
   const lonRaw = import.meta.env.VITE_HOME_LONGITUDE;
   if (latRaw === undefined || lonRaw === undefined) return null;
-  const latitude = Number(latRaw);
-  const longitude = Number(lonRaw);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  return { latitude, longitude };
+  const home = { latitude: Number(latRaw), longitude: Number(lonRaw) };
+  return isValidHome(home) ? home : null;
 }
 
-export function loadConfig(): AppConfig {
+async function resolveHome(apiBaseUrl: string): Promise<HomePoint | null> {
+  const devHome = resolveDevHome();
+  if (devHome) return devHome;
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/config`);
+    if (!response.ok) {
+      throw new Error(`GET /api/config -> HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as ApiConfigResponse;
+    return isValidHome(data.home) ? data.home : null;
+  } catch (err) {
+    console.warn("Failed to load /api/config -- home marker/recenter will be unavailable:", err);
+    return null;
+  }
+}
+
+// Fetched once at page load, same as the old build-time-constant model in
+// practice -- but now a real network call rather than a bundle-time
+// constant, so a config change on the backend takes effect on the next
+// page load with no frontend rebuild required.
+export async function loadConfig(): Promise<AppConfig> {
   const apiBaseUrl = resolveApiBaseUrl();
-  const home = resolveHome();
+  const home = await resolveHome(apiBaseUrl);
   if (!home) {
     // eslint has no presence in this project; a plain console.warn is the
     // simplest way to surface a misconfigured deployment without
     // crashing the map itself.
     console.warn(
-      "VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE not set (or not valid numbers) -- " +
-        "the home marker and recenter button will be unavailable.",
+      "No home reference point configured (MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE unset on the " +
+        "backend, or -- in `npm run dev` only -- VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE unset/" +
+        "invalid) -- the home marker and recenter button will be unavailable.",
     );
   }
   return {

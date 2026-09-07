@@ -392,6 +392,25 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     shared between two components' `.env` files instead of two independent
     ones that must simply be kept in agreement operationally."""
     loader, own = _own_loader(loader)
+    # Optional -- unlike message_processor_config()'s LATITUDE/LONGITUDE
+    # (required there), a stock deployment with neither set is expected and
+    # supported: the frontend's home marker/recenter button are simply
+    # unavailable (see map/main.py's GET /api/config and
+    # map/frontend/src/lib/config.ts). Range-validated by hand rather than
+    # via a ConfigLoader helper -- no other block needs a bounded float
+    # today.
+    home_latitude = loader.number("MAP_HOME_LATITUDE", None)
+    if home_latitude is not None and not (-90 <= home_latitude <= 90):
+        loader.problems.append(
+            f"MAP_HOME_LATITUDE must be between -90 and 90 (got {home_latitude!r})"
+        )
+        home_latitude = None
+    home_longitude = loader.number("MAP_HOME_LONGITUDE", None)
+    if home_longitude is not None and not (-180 <= home_longitude <= 180):
+        loader.problems.append(
+            f"MAP_HOME_LONGITUDE must be between -180 and 180 (got {home_longitude!r})"
+        )
+        home_longitude = None
     block = {
         "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
         "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
@@ -399,6 +418,8 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
         "map_http_port": loader.integer("MAP_HTTP_PORT", 80),
         "map_stale_seconds": loader.integer("MAP_STALE_SECONDS", 30),
         "map_evict_seconds": loader.integer("MAP_EVICT_SECONDS", 300),
+        "map_home_latitude": home_latitude,
+        "map_home_longitude": home_longitude,
     }
     if own:
         loader.raise_for_problems()

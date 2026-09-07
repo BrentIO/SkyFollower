@@ -62,6 +62,12 @@ services:
       MAP_REDIS_HOST: ${MAP_REDIS_HOST:-map-redis}
       MAP_REDIS_PORT: ${MAP_REDIS_PORT:-6379}
       MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:-}
+      # Optional "home" reference point (on-map marker, initial camera
+      # position, "Recenter on home") -- read at runtime by this service
+      # and served to the frontend via GET /api/config, not baked into the
+      # frontend bundle at build time. Leave both unset to disable.
+      MAP_HOME_LATITUDE: ${MAP_HOME_LATITUDE:-}
+      MAP_HOME_LONGITUDE: ${MAP_HOME_LONGITUDE:-}
     # RAM-backed, not the container's writable layer -- the healthcheck
     # heartbeat file is rewritten periodically and must never hit host
     # storage. Same convention as every other long-running SkyFollower
