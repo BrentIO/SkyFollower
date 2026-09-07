@@ -9,11 +9,12 @@ below). Three jobs in one process:
    Publisher" section for the wire format) and merges each into per-aircraft
    current-state held in a dedicated Redis instance.
 2. A Redis keyspace-notification listener that turns key expiry into
-   `stale`/`remove` WebSocket events -- eviction is driven entirely by that
-   signal, with no app-level timer loop scanning for expired aircraft.
+   `stale`/`hide`/`remove` WebSocket events -- the three-stage lifecycle
+   described in [Redis State](#redis-state) below -- driven entirely by
+   that signal, with no app-level timer loop scanning for expired aircraft.
 3. A FastAPI app exposing `GET /api/flights` (a snapshot) and `WS /ws` (a
-   live, batched relay of `position`/`metadata`/`stale`/`remove` events),
-   and serving the built frontend SPA itself under `/map` (see
+   live, batched relay of `position`/`metadata`/`stale`/`hide`/`remove`
+   events), and serving the built frontend SPA itself under `/map` (see
    [Frontend](#frontend-frontend) below).
 
 There is exactly one map service instance -- unlike `message-processor`,
@@ -79,7 +80,11 @@ Reads its configuration from environment variables via `shared/config.py`'s
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
 | `MAP_STALE_SECONDS` | ❌ | `30` | TTL on `flight:live:{icao_hex}`; expiry fades an aircraft client-side (a `stale` WebSocket event) without removing it |
-| `MAP_EVICT_SECONDS` | ❌ | `300` | TTL on `flight:detail:{icao_hex}` (and its `flight:trail:{icao_hex}`); expiry hard-removes the aircraft (a `remove` WebSocket event). Should stay clearly longer than `MAP_STALE_SECONDS` |
+| `MAP_HIDE_SECONDS` | ❌ | `60` | TTL on `flight:visible:{icao_hex}`; expiry drops the aircraft from view (a `hide` WebSocket event) while leaving its `flight:detail:{icao_hex}`/`flight:trail:{icao_hex}` untouched -- see [Lifecycle](#lifecycle) below |
+| `MAP_EVICT_SECONDS` | ❌ | `300` | TTL on `flight:detail:{icao_hex}` (and its `flight:trail:{icao_hex}`); expiry hard-removes the aircraft (a `remove` WebSocket event). Should equal the deployment's `flight_ttl_seconds` (core Redis's `config:flight_ttl_seconds`, default 300) -- this service never queries core Redis (see [Data boundary](#map-service) above), so keeping the two in agreement is an operator responsibility, not something enforced across services |
+
+`MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS` must hold --
+`shared/config.py`'s `map_config()` rejects a misordered `.env` at startup.
 | `MAP_HOME_LATITUDE` | ❌ | — | Centered reference point ("home") for the frontend's on-map marker, initial camera position, and "Recenter on home" button. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
 | `MAP_HOME_LONGITUDE` | ❌ | — | |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
@@ -181,20 +186,47 @@ a separate `HGETALL` to build the WebSocket event payload.
 ## Redis State
 
 Dedicated Redis instance (`MAP_REDIS_*`), no persistence -- pure in-memory,
-fully reconstructible from live UDP traffic. Three keys per tracked
+fully reconstructible from live UDP traffic. Four keys per tracked
 aircraft, all TTL'd in seconds and refreshed on every UDP update for that
 aircraft:
 
 | Key | TTL | Contents |
 |---|---|---|
 | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale` |
+| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
-| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{latitude, longitude, altitude}` snapshots, one `RPUSH` per accepted `position` update (once latitude/longitude are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record |
+| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{latitude, longitude, altitude}` snapshots, one `RPUSH` per accepted `position` update (once latitude/longitude are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above |
 
-These three key families are local to this service and are not part of
+These key families are local to this service and are not part of
 `shared/redis_keys.py`'s schema, which documents *core* Redis's keys --
 this service's Redis is a second, separate instance it alone owns, so its
 key namespace has no reason to be centralized alongside core's.
+
+### Lifecycle
+
+A tracked aircraft moves through three stages, each driven by one of the
+TTL'd keys above expiring:
+
+| Stage | Redis key | TTL | Event | Effect on the map |
+|---|---|---|---|---|
+| Stale | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | `stale` | Icon + trail fade to grey |
+| Hidden | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | `hide` | Icon + trail removed from view; trail data retained |
+| Evicted | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | `remove` | Everything evicted (detail + trail) |
+
+The hidden stage exists so a briefly-lost aircraft leaves the screen
+quickly without losing its trail history: if contact resumes before
+`MAP_EVICT_SECONDS`, the aircraft reappears (a `position`/`metadata` event
+clears both `stale` and `hidden` client-side, see
+`src/lib/aircraftState.ts`) with its pre-gap trail intact, rendered as one
+continuous flight -- the gap itself renders as a normal trail segment, with
+no special dashed/faded styling.
+
+`GET /api/flights` only ever lists currently-*visible* aircraft (backed by
+`flight:visible:{icao_hex}`, not `flight:detail:{icao_hex}` -- see
+`map/state_store.py`'s `list_flights()`): a client connecting fresh during
+a hidden gap has no client-accumulated trail for that aircraft either, so a
+lone frozen icon with no trail would be worse than omitting it entirely. It
+reappears for everyone the moment traffic resumes.
 
 ### Eviction
 
@@ -206,22 +238,26 @@ app-level timer loop scanning for expired aircraft. See
 `map/state_store.py`'s `FlightStateStore.handle_expired_key()` and
 `map/main.py`'s `_eviction_loop()`.
 
-`flight:detail:{icao_hex}` expiring (`remove`) also proactively deletes
-`flight:trail:{icao_hex}` -- it's refreshed onto the same TTL on every
-update so it would expire on its own moments later regardless, but this
-guarantees no leftover trail key can survive a detail-key eviction even if
-the two TTLs ever drift apart.
+The `hide` path (`flight:visible:{icao_hex}` expiring) deliberately
+touches nothing else -- `flight:detail`/`flight:trail` are left exactly as
+they are. Only `flight:detail:{icao_hex}` expiring (`remove`) evicts data,
+proactively deleting `flight:trail:{icao_hex}` -- it's refreshed onto the
+same TTL on every update so it would expire on its own moments later
+regardless, but this guarantees no leftover trail key can survive a
+detail-key eviction even if the two TTLs ever drift apart.
 
 ## REST API
 
-`GET /api/flights` -- a JSON list, one object per currently-tracked
-aircraft (i.e. one per `flight:detail:{icao_hex}` hash that currently
-exists). Each object is the same shape a WebSocket `metadata` message
-carries: the full merged current-state, combining both position fields and
-metadata fields into one object per aircraft, not two separate lists.
-`FlightStateStore.list_flights()` finds the tracked aircraft with `SCAN`,
-then issues every aircraft's `HGETALL` in a single pipeline -- one round
-trip regardless of aircraft count, not one `HGETALL` per aircraft.
+`GET /api/flights` -- a JSON list, one object per currently-*visible*
+aircraft (i.e. one per `flight:visible:{icao_hex}` sentinel that currently
+exists -- see [Lifecycle](#lifecycle) above; a hidden-but-not-yet-evicted
+aircraft is omitted). Each object is the same shape a WebSocket `metadata`
+message carries: the full merged current-state, combining both position
+fields and metadata fields into one object per aircraft, not two separate
+lists. `FlightStateStore.list_flights()` finds the visible aircraft with
+`SCAN` over `flight:visible:*`, then issues every aircraft's `flight:detail`
+`HGETALL` in a single pipeline -- one round trip regardless of aircraft
+count, not one `HGETALL` per aircraft.
 
 `GET /api/config` -- runtime configuration the frontend can't otherwise
 get at, since Vite bakes `VITE_*` values into the bundle at `npm run
@@ -240,7 +276,7 @@ under [Frontend](#frontend-frontend) below.
 ## WebSocket API
 
 `WS /ws` -- one connection per browser. Carries `position`, `metadata`,
-`stale`, and `remove` messages only; **never a snapshot** (that's
+`stale`, `hide`, and `remove` messages only; **never a snapshot** (that's
 `GET /api/flights`'s job -- a client is expected to call it once on
 connect, then open the WebSocket for live updates).
 
@@ -249,6 +285,7 @@ connect, then open the WebSocket for live updates).
 | `position` | A `position` UDP packet was applied | The aircraft's current merged position-relevant fields only (`icao_hex` plus whichever of `latitude`/`longitude`/`altitude`/`velocity`/`heading`/`vertical_speed` are currently known) -- a field the aircraft has never reported is omitted, never sent as `null` |
 | `metadata` | A `metadata` UDP packet was applied | The **full** merged current-state -- both position and metadata fields -- matching `GET /api/flights`' per-aircraft shape exactly. A client that only just connected (and so missed any earlier `position` events) still has everything needed to place and label the aircraft the first time it hears about it |
 | `stale` | `flight:live:{icao_hex}` expired | `{"type": "stale", "icao_hex": ...}` -- fade signal |
+| `hide` | `flight:visible:{icao_hex}` expired | `{"type": "hide", "icao_hex": ...}` -- drop-from-view signal. The client must keep the aircraft's record and trail (see `src/lib/aircraftState.ts`), only omitting it from what's drawn, so a resumed flight bridges the gap as one continuous trail |
 | `remove` | `flight:detail:{icao_hex}` expired | `{"type": "remove", "icao_hex": ...}` -- hard-delete signal. The service tells the browser to delete rather than the browser inferring eviction from its own timers |
 
 ### Batching
@@ -329,7 +366,12 @@ button from the backend's `GET /api/config` (see
   unknown-altitude aircraft sort to the bottom, ties broken by icao_hex.
 - `src/lib/aircraftState.ts` -- client-side per-aircraft state: applies the
   REST snapshot, then every WebSocket event, with the same
-  merge-never-overwrite semantics as `state_store.py`'s `apply_update`.
+  merge-never-overwrite semantics as `state_store.py`'s `apply_update`. A
+  `hide` event sets a `hidden` flag without deleting the record or its
+  trail; any `position`/`metadata` event clears both `stale` and `hidden`.
+- `src/lib/featureCollections.ts` -- builds the MapLibre aircraft-icon and
+  per-segment trail GeoJSON feature collections from the live `AircraftMap`,
+  filtering out `hidden` aircraft from both.
 - `src/hooks/useMapFlights.ts` -- owns the WebSocket connection + REST
   snapshot fetch, deliberately sequenced: the WebSocket connects *first*
   (buffering whatever arrives), then `GET /api/flights` is called, then
@@ -338,7 +380,8 @@ button from the backend's `GET /api/config` (see
   "snapshot fetched" and "WS live" a snapshot-then-connect order would
   leave open.
 - `src/components/MapView.tsx` -- map construction, aircraft/trail
-  sources+layers, click-to-toggle-trail, and the info-box overlay.
+  sources+layers (via `src/lib/featureCollections.ts`),
+  click-to-toggle-trail, and the info-box overlay.
 
 ```bash
 cd map/frontend
@@ -347,7 +390,8 @@ npm run dev       # Vite dev server on :5173, serving the app under /map/ (base:
                    # in vite.config.ts, matching production) and proxying /api and /ws
                    # to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
-npm test          # vitest -- altitudeColor, info-box formatting, and label stack-order unit tests
+npm test          # vitest -- aircraftState/featureCollections lifecycle rules, altitudeColor,
+                   # info-box formatting, and label stack-order unit tests
 ```
 
 ### Frontend Configuration

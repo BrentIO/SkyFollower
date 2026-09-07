@@ -392,8 +392,8 @@ def map_redis_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     """The `map` service's own UDP listener bind address/port, HTTP/
-    WebSocket listen host/port, and its two Redis eviction TTLs (stale /
-    evict -- see `map/README.md`).
+    WebSocket listen host/port, and its three Redis eviction TTLs (stale /
+    hide / evict -- see `map/README.md`).
 
     `MAP_LISTEN_HOST`/`MAP_LISTEN_PORT` are deliberately distinct names
     from message-processor's `MAP_UDP_HOST`/`MAP_UDP_PORT` (`map_udp_config()`
@@ -424,13 +424,28 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
             f"MAP_HOME_LONGITUDE must be between -180 and 180 (got {home_longitude!r})"
         )
         home_longitude = None
+    map_stale_seconds = loader.integer("MAP_STALE_SECONDS", 30)
+    map_hide_seconds = loader.integer("MAP_HIDE_SECONDS", 60)
+    map_evict_seconds = loader.integer("MAP_EVICT_SECONDS", 300)
+    # The three-stage lifecycle (see map/README.md) only makes sense in this
+    # order -- a briefly-lost aircraft must go grey before it disappears,
+    # and must disappear before its trail data is evicted. Checked here
+    # rather than left as an implicit assumption in map/state_store.py so a
+    # misconfigured .env fails loudly at startup instead of quietly
+    # producing an aircraft that, say, disappears before it ever goes grey.
+    if not (map_stale_seconds < map_hide_seconds < map_evict_seconds):
+        loader.problems.append(
+            "MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS must hold "
+            f"(got {map_stale_seconds}, {map_hide_seconds}, {map_evict_seconds})"
+        )
     block = {
         "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
         "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
         "map_http_host": loader.string("MAP_HTTP_HOST", "0.0.0.0"),
         "map_http_port": loader.integer("MAP_HTTP_PORT", 80),
-        "map_stale_seconds": loader.integer("MAP_STALE_SECONDS", 30),
-        "map_evict_seconds": loader.integer("MAP_EVICT_SECONDS", 300),
+        "map_stale_seconds": map_stale_seconds,
+        "map_hide_seconds": map_hide_seconds,
+        "map_evict_seconds": map_evict_seconds,
         "map_home_latitude": home_latitude,
         "map_home_longitude": home_longitude,
     }
