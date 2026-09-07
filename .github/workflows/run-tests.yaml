@@ -280,6 +280,13 @@ jobs:
   test:
     name: test (${{ matrix.dir }})
     needs: discover
+    # A literally empty strategy.matrix (e.g. a docs-only diff) doesn't just
+    # skip this job cleanly -- GitHub Actions reports the *workflow run's*
+    # own top-level conclusion as failure even though every listed job
+    # passed (see the all-tests-passed job below, which independently
+    # already handles this correctly). Explicitly skipping via `if:` avoids
+    # ever entering that zero-combination-matrix state at all.
+    if: needs.discover.outputs.matrix != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
