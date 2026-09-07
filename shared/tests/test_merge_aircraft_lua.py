@@ -150,6 +150,21 @@ class TestManufacturerModelFallback:
         assert _merge(redis_client, merge_sha, icao_hex) is None
 
 
+class TestDescriptionCodePromotion:
+    """Guards the generic aircraft.* top-level promotion against regressions
+    for the description_code field specifically -- no dedicated Lua logic
+    exists for it (unlike manufacturer_model's fallback), so this only needs
+    to prove the existing generic promotion mechanism picks it up."""
+
+    def test_mictronics_description_code_promoted_to_top_level(self, redis_client, merge_sha, icao_hex):
+        redis_client.json().set(
+            f"aircraft:mictronics:{icao_hex}", "$",
+            {"aircraft": {"manufacturer_model": "BOEING 767-332ER", "description_code": "L2J"}},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["description_code"] == "L2J"
+
+
 class TestLiveryLayer:
     """Covers the third merge tier — aircraft:livery:{icao_hex}, written by
     the airportwebcams-special-liveries runner — added on top of the existing

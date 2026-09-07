@@ -1357,6 +1357,11 @@ components:
           - type: string
           - type: 'null'
           title: Manufacturer Model
+        description_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description Code
         seats:
           anyOf:
           - type: integer
@@ -1966,6 +1971,11 @@ components:
           - type: string
           - type: 'null'
           title: Manufacturer Model
+        description_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description Code
         category:
           anyOf:
           - type: string

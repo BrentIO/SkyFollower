@@ -14,7 +14,7 @@
 
 The full Registro Aeronáutico Brasileiro (RAB) JSON dump is downloaded from a fixed URL (`utf-8-sig` decoded). Records are filtered to active registrations only — rows with a cancellation date (`DTCANC`) set, or whose `CDINTERDICAO` starts with `R` or `M`, are excluded. The `MARCA` field (e.g. `PPAJH`) is reformatted into a hyphenated registration (`PP-AJH`). Registrations are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index, then a type sanity check compares tokens from `DSMODELO` against the existing Mictronics record, rejecting the match only when both sides have tokens and none overlap. `CDCLS` is a compact 3-character code (`{landing}{engine count}{propulsion}`, or the literal `RPA` for drones) decoded into `aircraft.type`, `aircraft.category`, and the powerplant count/type. The embedded `PROPRIETARIOSJSON` owner list uses a non-standard `/""` escape sequence for embedded quotes that is un-escaped before `json.loads`; only the first owner's name is kept, and placeholder values like `Indisponível` are treated as absent. Unlike the other runners in this batch, writes to Redis here are per-record (not pipelined). Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from ANAC and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from ANAC and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -26,7 +26,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | `CDCLS` | ✅ | Decoded into `aircraft.type`, `aircraft.category`, `aircraft.powerplant.count`, `aircraft.powerplant.type` |
 | `NMFABRICANTE` | ✅ | → `aircraft.manufacturer` |
 | `DSMODELO` | ✅ | → `aircraft.model`; also used for the type sanity check against Mictronics |
-| `CDTIPOICAO` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
+| `CDTIPOICAO` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.description_code` when found |
 | `NRSERIE` | ✅ | → `aircraft.serial_number` |
 | `NRASSENTOS` | ✅ | → `aircraft.seats` |
 | `NRANOFABRICACAO` | ✅ | → `aircraft.manufactured_date` (4-digit year → `YYYY-01-01T00:00:00Z`) |
@@ -65,6 +65,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 {
     "aircraft": {
         "category": "Land",
+        "description_code": "L1P",
         "manufactured_date": "2006-01-01T00:00:00Z",
         "manufacturer": "BEECH AIRCRAFT",
         "manufacturer_model": "BEECH 36 Bonanza",
@@ -101,6 +102,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 {
     "aircraft": {
         "category": "Land",
+        "description_code": "L2J",
         "manufactured_date": "2005-01-01T00:00:00Z",
         "manufacturer": "BOEING COMPANY",
         "manufacturer_model": "BOEING 767-300",

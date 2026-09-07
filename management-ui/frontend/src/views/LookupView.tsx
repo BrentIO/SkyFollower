@@ -162,6 +162,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   // published (e.g. "737-8H4" from the FAA) -- shown separately when present,
   // absent for aircraft covered only by Mictronics.
   const model = displayStr(data.model);
+  const descriptionCode = displayStr(data.description_code);
   const manufacturedDate = data.manufactured_date
     ? formatManufacturedDate(String(data.manufactured_date))
     : undefined;
@@ -174,7 +175,15 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const hasPowerplant = !!(ppCountType || ppManufacturerModel);
 
   const hasAircraftSection = !!(
-    category || type || manufacturerModelLine || model || manufacturedDate || serialNumber || seats || hasPowerplant
+    category ||
+    type ||
+    manufacturerModelLine ||
+    descriptionCode ||
+    model ||
+    manufacturedDate ||
+    serialNumber ||
+    seats ||
+    hasPowerplant
   );
 
   const dataSources = displayArray(data.data_sources);
@@ -219,6 +228,11 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
             {manufacturerModelLine && (
               <div>
                 <Label>Manufacturer/Model</Label> {manufacturerModelLine}
+              </div>
+            )}
+            {descriptionCode && (
+              <div>
+                <Label>Description Code</Label> {descriptionCode}
               </div>
             )}
             {model && (

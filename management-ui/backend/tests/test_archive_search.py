@@ -1689,6 +1689,7 @@ _NESTED_AIRCRAFT = {
     "registration": "N386DA",
     "type_designator": "B738",
     "manufacturer_model": "BOEING 737-800",
+    "description_code": "L2J",
     "aircraft": {
         "type": "Airplane",
         "category": "Land",
@@ -1719,6 +1720,7 @@ class TestFlightView:
         # straight off the unflattened envelope and always got None.
         assert body["type_designator"] == "B738"
         assert body["manufacturer_model"] == "BOEING 737-800"
+        assert body["description_code"] == "L2J"
 
         assert body["category"] == "Land"
         assert body["aircraft_type"] == "Airplane"

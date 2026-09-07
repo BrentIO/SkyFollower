@@ -2880,6 +2880,7 @@ class FlightView(BaseModel):
     military: Optional[bool] = None
     type_designator: Optional[str] = None
     manufacturer_model: Optional[str] = None
+    description_code: Optional[str] = None  # ICAO Doc 8643 aircraft description code, e.g. "L2J"
     category: Optional[str] = None
     aircraft_type: Optional[str] = None   # merge_aircraft.lua's "type" (e.g. "Airplane")
     model: Optional[str] = None           # national-registry-specific designation, distinct from manufacturer_model
@@ -2920,6 +2921,7 @@ def get_archive_flight_view(token: str):
         military=aircraft.get("military"),
         type_designator=aircraft.get("type_designator"),
         manufacturer_model=aircraft.get("manufacturer_model"),
+        description_code=aircraft.get("description_code"),
         category=aircraft.get("category"),
         aircraft_type=aircraft.get("type"),
         model=aircraft.get("model"),

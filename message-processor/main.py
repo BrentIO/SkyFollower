@@ -78,6 +78,7 @@ from shared.redis_keys import (
 from shared.timing import (
     CONFIG_POLL_INTERVAL_SECONDS,
     DEFAULT_FLIGHT_TTL_SECONDS,
+    DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
@@ -253,7 +254,10 @@ class _MapUdpPublisher:
     an unresolvable host or a firewall's immediate ICMP-driven rejection).
     """
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(
+        self, host: str, port: int,
+        min_position_interval_seconds: float = DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
+    ) -> None:
         if host and not port:
             logger.warning(
                 "MAP_UDP_HOST is set (%s) but MAP_UDP_PORT is not set (or is 0) -- "
@@ -274,6 +278,14 @@ class _MapUdpPublisher:
         # logs again instead of going silent forever.
         self._logged_failure = False
 
+        # Per-icao_hex last-sent-position timestamp (message received_at,
+        # not wall-clock send time) -- see should_send_position(). Only
+        # `position` sends are throttled; `metadata` is already
+        # change-gated by _maybe_publish_map_metadata and always goes
+        # through plain send().
+        self._min_position_interval = min_position_interval_seconds
+        self._last_position_sent: dict[str, float] = {}
+
         if self.enabled:
             logger.info("Map UDP feed enabled -> %s:%s", host, port)
         else:
@@ -282,6 +294,20 @@ class _MapUdpPublisher:
     @property
     def enabled(self) -> bool:
         return self._sock is not None
+
+    def should_send_position(self, icao_hex: str, timestamp: float) -> bool:
+        """True if enough time has elapsed since icao_hex's last sent
+        `position` -- or if this is the first position ever sent for
+        icao_hex -- and records `timestamp` as the new last-sent time as a
+        side effect. Compared on the
+        message's own `received_at`, not wall-clock time, so throttling
+        is stable under replay/backlog conditions and doesn't depend on
+        when the send actually happens to execute."""
+        last_sent = self._last_position_sent.get(icao_hex)
+        if last_sent is not None and timestamp - last_sent < self._min_position_interval:
+            return False
+        self._last_position_sent[icao_hex] = timestamp
+        return True
 
     def send(self, payload: dict) -> None:
         if self._sock is None:
@@ -921,7 +947,13 @@ class MessageProcessor:
         # Map UDP publisher -- disabled (no socket) when MAP_UDP_HOST is
         # unset.
         mu = config.get("map_udp") or {}
-        self._map_udp = _MapUdpPublisher(mu.get("host", ""), mu.get("port", 0))
+        self._map_udp = _MapUdpPublisher(
+            mu.get("host", ""), mu.get("port", 0),
+            mu.get(
+                "min_position_interval_seconds",
+                DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
+            ),
+        )
 
         # RabbitMQ
         self._rmq_connection: Optional[pika.BlockingConnection] = None
@@ -1364,8 +1396,9 @@ class MessageProcessor:
                 vertical_speed=data.get("vertical_speed"),
             ))
 
-        # Map UDP `position` message -- sent on every processed message,
-        # no throttling; no-op when MAP_UDP_HOST is unset.
+        # Map UDP `position` message -- throttled per aircraft to at most
+        # one per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS; no-op when
+        # MAP_UDP_HOST is unset.
         self._publish_map_position(flight, data, msg.received_at)
 
         if "squawk" in data and not flight.squawk:
@@ -1852,11 +1885,17 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _publish_map_position(self, flight: Flight, data: dict, received_at: float) -> None:
-        """Sent on every processed message (no throttling) once the map UDP
-        feed is enabled -- one flat object merging whatever Position/
-        Velocity fields this particular message carried. Fields absent
-        from `data` are omitted, not sent as null, matching Position.to_dict()
-        / Velocity.to_dict()'s existing convention."""
+        """Sent once per flight per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
+        (default 1s -- see _MapUdpPublisher.should_send_position) once the
+        map UDP feed is enabled -- one flat object merging whatever
+        Position/Velocity fields this particular message carried. Fields
+        absent from `data` are omitted, not sent as null, matching
+        Position.to_dict() / Velocity.to_dict()'s existing convention.
+
+        The throttle is keyed on `received_at` (the source message's own
+        timestamp), not wall-clock send time -- see should_send_position.
+        `metadata` sends (_maybe_publish_map_metadata) are never throttled
+        here; they're already change-gated on their own terms."""
         if not self._map_udp.enabled:
             return
         lag = time.time() - received_at
@@ -1865,6 +1904,8 @@ class MessageProcessor:
                 "Suppressing map UDP position for %s: message is %.1fs old (backlog replay)",
                 flight.icao_hex, lag,
             )
+            return
+        if not self._map_udp.should_send_position(flight.icao_hex, received_at):
             return
         payload = {
             "type": "position",

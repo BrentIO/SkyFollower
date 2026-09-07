@@ -53,8 +53,8 @@ compose up -d`. Get the relevant file(s) onto each host and write its
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
-| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 80 |
-| `map` | Backend for the live real-time aircraft map: UDP listener, REST snapshot, WebSocket relay | UDP `MAP_LISTEN_PORT`, HTTP `MAP_HTTP_PORT` (default 80) |
+| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 443 (HTTPS, self-signed by default), 80 (redirects to 443) |
+| `map` | Backend for the live real-time aircraft map: UDP listener, REST snapshot, WebSocket relay | UDP `MAP_LISTEN_PORT`, HTTPS `MAP_HTTP_PORT` (default 80, self-signed by default; plain HTTP if no cert is present) |
 | `map-redis` | Dedicated, no-persistence Redis instance backing `map`'s live aircraft state — never core Redis | 6379 (not published to the host; reached only by `map` on the same compose file) |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |

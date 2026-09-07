@@ -390,6 +390,102 @@ generate_password() {
   fi
 }
 
+detect_lan_ip() {
+  # Asks the OS which local interface/IP it would route a packet to a
+  # public address through -- a UDP "connect" never actually sends
+  # anything (UDP has no handshake), so this is a pure routing-table
+  # lookup, not real network traffic. On any normal single-NIC host this
+  # is the LAN IP an operator would actually browse to. Prints nothing
+  # (rather than failing the caller) if python3 is unavailable or there's
+  # no route at all, e.g. an offline sandbox -- the TLS cert's SAN then
+  # just covers localhost + hostname instead.
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -c '
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    print(s.getsockname()[0])
+except Exception:
+    pass
+' 2>/dev/null
+}
+
+tls_san_entry() {
+  # Prints one openssl `-addext subjectAltName=...` entry for an
+  # arbitrary operator-supplied name -- IP:<addr> for a dotted-quad,
+  # DNS:<name> for anything else (a hostname, or a bare LAN name with no
+  # dots that still isn't an IP).
+  local value="$1"
+  if [[ "$value" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    printf 'IP:%s' "$value"
+  else
+    printf 'DNS:%s' "$value"
+  fi
+}
+
+generate_self_signed_cert() {
+  # Idempotent self-signed TLS cert+key generation shared by the
+  # management-ui (fronting nginx) and map (terminated directly in
+  # uvicorn) roles -- see management-ui/README.md's and map/README.md's
+  # TLS sections. Fixed filenames (cert.pem/key.pem) so this doubles as
+  # the BYO-cert path: an operator drops their own pair into $1 under
+  # those same names before running install.sh, and this function leaves
+  # them untouched.
+  #
+  # $1 = tls_dir (host path, e.g. "${role_dir}/data/management-ui/tls")
+  # $2 = label, used only in prompts/log lines (e.g. "management-ui")
+  # $3 = varname to read/record the optional extra SAN name under, so a
+  #      non-interactive run can supply MANAGEMENT_UI_TLS_EXTRA_SAN /
+  #      MAP_TLS_EXTRA_SAN independently rather than sharing one name
+  #      across both roles.
+  local tls_dir="$1" label="$2" san_varname="$3"
+  local cert_file="${tls_dir}/cert.pem" key_file="${tls_dir}/key.pem"
+
+  mkdir -p "$tls_dir"
+
+  if [ -s "$cert_file" ] && [ -s "$key_file" ]; then
+    echo "  ${label} TLS cert already exists at ${tls_dir} -- left as-is."
+    echo "  (This is also how to bring your own: drop cert.pem/key.pem there before running install.sh.)"
+    return
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "  openssl not found -- skipping self-signed TLS cert generation for ${label}." >&2
+    echo "  Drop your own cert.pem/key.pem into ${tls_dir}, or install openssl and re-run." >&2
+    return
+  fi
+
+  local extra_san
+  extra_san="$(prompt_string "$san_varname" "Extra hostname/IP for the ${label} TLS certificate (optional)" "" 0)"
+
+  local lan_ip lan_host
+  lan_ip="$(detect_lan_ip)"
+  lan_host="$(hostname -s 2>/dev/null)"
+  [ -z "$lan_host" ] && lan_host="$(hostname 2>/dev/null)"
+
+  local san="DNS:localhost,IP:127.0.0.1"
+  [ -n "$lan_host" ] && san="${san},DNS:${lan_host}"
+  [ -n "$lan_ip" ] && san="${san},IP:${lan_ip}"
+  [ -n "$extra_san" ] && san="${san},$(tls_san_entry "$extra_san")"
+
+  echo "  Generating self-signed TLS certificate for ${label} (10-year validity; SAN: ${san})..."
+  # umask so the private key is never briefly world/group-readable between
+  # openssl creating it and the explicit chmod below -- same "restrictive
+  # from the first byte" posture write_env_header() uses for .env.
+  if ! (umask 077 && openssl req -x509 -nodes -newkey rsa:2048 \
+      -keyout "$key_file" -out "$cert_file" -days 3650 \
+      -subj "/CN=${lan_host:-localhost}" \
+      -addext "subjectAltName=${san}" >/dev/null 2>&1); then
+    echo "  openssl failed to generate a TLS cert for ${label} -- drop your own cert.pem/key.pem into ${tls_dir} instead." >&2
+    rm -f "$cert_file" "$key_file"
+    return
+  fi
+  chmod 600 "$key_file"
+  chmod 644 "$cert_file"
+  echo "  Wrote ${cert_file} and ${key_file} (never printed to the terminal)."
+}
+
 # All prompt_* helpers are no-ops in --non-interactive mode: they read the
 # named environment variable instead of calling `read`, and record a
 # problem (rather than exiting immediately) if it's required and unset --
@@ -677,10 +773,12 @@ role_data_dirs() {
       echo "data/archive-processor data/archive-compaction data/archive-index-cache"
       ;;
     map)
-      # Nothing to create -- docker-compose.map.yaml gives neither `map`
-      # nor `map-redis` a volume. map-redis is deliberately ephemeral (no
-      # persistence, by design -- see its comments in that compose file),
-      # and the map service itself holds no on-disk state of its own.
+      # map-redis is deliberately ephemeral (no persistence, by design --
+      # see its comments in docker-compose.map.yaml) and the map service
+      # itself holds no other on-disk state -- the TLS directory below
+      # (populated by collect_map_env()'s generate_self_signed_cert() call)
+      # is the one exception.
+      echo "data/map/tls"
       ;;
   esac
 }
@@ -1082,6 +1180,8 @@ collect_management_ui_env() {
   AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "${AWS_PROV_MANAGEMENT_UI_SECRET:-$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)}")"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
 
+  generate_self_signed_cert "${role_dir}/data/management-ui/tls" "management-ui" MANAGEMENT_UI_TLS_EXTRA_SAN
+
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
@@ -1148,6 +1248,8 @@ collect_map_env() {
   # leave blank to leave the feature disabled.
   MAP_HOME_LATITUDE="$(prompt_number_range MAP_HOME_LATITUDE "Home reference latitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LATITUDE)" -90 90 0)"
   MAP_HOME_LONGITUDE="$(prompt_number_range MAP_HOME_LONGITUDE "Home reference longitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LONGITUDE)" -180 180 0)"
+
+  generate_self_signed_cert "${role_dir}/data/map/tls" "map" MAP_TLS_EXTRA_SAN
 
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
