@@ -90,10 +90,3 @@ export function buildInfoBoxLines(aircraft: InfoBoxAircraft): InfoBoxLines {
     registrationType: formatRegistrationTypeLine(aircraft),
   };
 }
-
-// How many of the (up to 3) lines actually render -- used to size the box
-// for the overlap-placement algorithm (lib/placement.ts) before the DOM
-// element exists.
-export function infoBoxLineCount(lines: InfoBoxLines): number {
-  return [lines.ident, lines.altitudeSpeed, lines.registrationType].filter((l) => l !== null).length;
-}

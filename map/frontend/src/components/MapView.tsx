@@ -97,12 +97,13 @@ export function MapView() {
 }
 
 // Full-viewport MapLibre live map: aircraft icon layer (heading rotation,
-// altitude-colored fill), live trails, floating info boxes with
-// collision-avoidance placement, floating top-right controls, and a
-// "home" reference-point marker/recenter. See the issue this implements
-// for the full design spec. Only ever mounted once `config` has resolved
-// (see MapView above), so every `config.home` read below is a plain,
-// already-loaded value -- no further async handling needed in here.
+// altitude-colored fill), live trails, floating info boxes shown only for
+// selected/hovered aircraft (or every aircraft via "Labels: All"),
+// floating top-right controls, and a "home" reference-point marker/recenter.
+// See the issue this implements for the full design spec. Only ever mounted
+// once `config` has resolved (see MapView above), so every `config.home`
+// read below is a plain, already-loaded value -- no further async handling
+// needed in here.
 function MapViewInner({ config }: { config: AppConfig }) {
   const { aircraft, connected } = useMapFlights(config.wsUrl, config.restFlightsUrl);
 
@@ -112,6 +113,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [historyAll, setHistoryAll] = useState(false);
+  const [labelsAll, setLabelsAll] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [screenPositions, setScreenPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   // Kept in a ref so the map's 'move' listener (attached once, on mount)
@@ -202,6 +205,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
       });
       map.on("mouseleave", AIRCRAFT_LAYER_ID, () => {
         map.getCanvas().style.cursor = "";
+        setHoveredId(null);
+      });
+      // Transient label-on-hover -- tracked separately from click-select
+      // so a hovered box disappears again on mouseleave rather than
+      // sticking around like a selection does.
+      map.on("mousemove", AIRCRAFT_LAYER_ID, (e) => {
+        const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
+        setHoveredId(icaoHex ?? null);
       });
 
       // Home / centered reference point -- a fixed marker from config,
@@ -281,12 +292,16 @@ function MapViewInner({ config }: { config: AppConfig }) {
   return (
     <div className="relative h-full w-full">
       <div ref={mapContainerRef} className="h-full w-full" />
-      {mapLoaded && <InfoBoxLayer items={infoBoxItems} />}
+      {mapLoaded && (
+        <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
+      )}
       <ControlsPanel
         connected={connected}
         aircraftCount={Object.keys(aircraft).length}
         historyAll={historyAll}
         onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
+        labelsAll={labelsAll}
+        onToggleLabelsAll={() => setLabelsAll((prev) => !prev)}
         onRecenter={handleRecenter}
         recenterDisabled={!config.home}
       />

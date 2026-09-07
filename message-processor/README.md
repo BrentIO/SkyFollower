@@ -430,8 +430,19 @@ than `MAX_MESSAGE_LAG_SECONDS` at emit time is suppressed rather than sent
 
 A slow, unreachable, or misconfigured `MAP_UDP_HOST`/`MAP_UDP_PORT` can never
 affect the rest of the pipeline -- `_MapUdpPublisher.send()` wraps the
-underlying `socket.sendto()` call and swallows any exception, logged at
-debug level only.
+underlying `socket.sendto()` call and swallows any exception rather than
+propagating it. The first `send()` failure of an outage is logged at
+`WARNING` so a misconfigured or unreachable destination is visible at the
+default log level; repeated failures from the same outage drop to `DEBUG`
+to avoid flooding the log, and the next successful send resets that so a
+later, separate outage warns again.
+
+Startup logs one line naming whether the feed is enabled (with its
+destination) or disabled. Setting only one of `MAP_UDP_HOST`/`MAP_UDP_PORT`
+is also logged at `WARNING` at startup, since that combination is always a
+misconfiguration -- either the feed silently stays disabled (`MAP_UDP_PORT`
+set without `MAP_UDP_HOST`) or it enables with a nonsensical port (`MAP_UDP_HOST`
+set without `MAP_UDP_PORT`, which defaults to `0`).
 
 ## Fault Tolerance
 

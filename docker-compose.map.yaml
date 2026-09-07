@@ -87,6 +87,17 @@ services:
   # this instance holds only plain hashes/lists/sentinel keys, no
   # RediSearch indexing, so the lighter upstream image is used instead.
   #
+  # Pinned to the 7.x line deliberately -- Redis 8+ bundles the Query
+  # Engine / Bloom / JSON / TimeSeries "Stack" modules into the base image
+  # with no module-free 8.x tag available, adding image size, threads, and
+  # log noise this service never uses: map/state_store.py only ever issues
+  # plain core commands (HSET/HGETALL/EXPIRE/SET/RPUSH/LRANGE/SCAN/DELETE/
+  # PING, CONFIG SET notify-keyspace-events, and a keyspace-expiry
+  # psubscribe) via shared/redis_client.build_redis_client() -- no
+  # .json()/.ft() calls anywhere in map/. A future major version bump here
+  # must be a deliberate decision, not a routine Dependabot update (see
+  # .github/dependabot.yml's ignore rule for this image).
+  #
   # No persistence configured on purpose -- no volume, AOF/RDB both
   # disabled -- this Redis is a pure, in-memory, fully
   # reconstructible-from-live-UDP-traffic cache, not a store (see
@@ -113,7 +124,7 @@ services:
   # map-redis is only ever reached by the `map` service in this same
   # compose file, over the default Compose network.
   map-redis:
-    image: redis:8.10-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     command: redis-server --save "" --appendonly no
     healthcheck:
