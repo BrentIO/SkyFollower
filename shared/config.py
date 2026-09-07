@@ -141,6 +141,23 @@ def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
     return block
 
 
+def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """The message processor's live position/metadata feed toward the
+    future map component (not yet built) -- a single unicast
+    UDP destination. Optional everywhere, same convention as mqtt_config()
+    above: host defaults to blank / port to 0, so a component with no
+    MAP_UDP_HOST set simply never creates the socket and never attempts a
+    send, rather than failing to start."""
+    loader, own = _own_loader(loader)
+    block = {
+        "host": loader.string("MAP_UDP_HOST", ""),
+        "port": loader.integer("MAP_UDP_PORT", 0),
+    }
+    if own:
+        loader.raise_for_problems()
+    return block
+
+
 def rabbitmq_config(loader: Optional[ConfigLoader] = None) -> dict:
     loader, own = _own_loader(loader)
     block = {
@@ -340,6 +357,7 @@ def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
 # top-level fields of the component's config.
 _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "mqtt": mqtt_config,
+    "map_udp": map_udp_config,
     "rabbitmq": rabbitmq_config,
     "rabbitmq_management": rabbitmq_management_config,
     "redis": redis_config,

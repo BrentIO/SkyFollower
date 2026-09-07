@@ -14,6 +14,7 @@ from shared.config import (
     athena_config,
     legacy_migration_s3_config,
     load_config,
+    map_udp_config,
     message_processor_config,
     mongo_config,
     mqtt_config,
@@ -478,9 +479,23 @@ class TestBlockHelpers:
             "password": "",
         }
 
+    def test_map_udp_config_never_raises_on_its_own(self, monkeypatch):
+        """Same optional-endpoint convention as mqtt_config() -- both
+        MAP_UDP_HOST/MAP_UDP_PORT unset must not raise, and must leave the
+        feature fully disabled (blank host, port 0)."""
+        monkeypatch.delenv("MAP_UDP_HOST", raising=False)
+        monkeypatch.delenv("MAP_UDP_PORT", raising=False)
+        assert map_udp_config() == {"host": "", "port": 0}
+
+    def test_map_udp_config_reads_host_and_port(self, monkeypatch):
+        monkeypatch.setenv("MAP_UDP_HOST", "map.example.com")
+        monkeypatch.setenv("MAP_UDP_PORT", "9999")
+        assert map_udp_config() == {"host": "map.example.com", "port": 9999}
+
     def test_helpers_share_a_loader_when_given_one(self):
         loader = ConfigLoader({})
         mqtt_config(loader)
+        map_udp_config(loader)
         redis_config(loader)
         rabbitmq_config(loader)
         rabbitmq_management_config(loader)

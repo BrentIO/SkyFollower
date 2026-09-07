@@ -21,6 +21,11 @@ x-message-processor-environment: &message-processor-environment
   MQTT_PORT: ${MQTT_PORT:-1883}
   MQTT_USERNAME: ${MQTT_USERNAME}
   MQTT_PASSWORD: ${MQTT_PASSWORD}
+  # Optional live position/metadata feed toward the future map component
+  # (not yet built). Leave MAP_UDP_HOST unset to disable entirely --
+  # same optional-endpoint convention as MQTT_HOST above.
+  MAP_UDP_HOST: ${MAP_UDP_HOST}
+  MAP_UDP_PORT: ${MAP_UDP_PORT}
 
 # Everything identical across instances. What differs per instance is its
 # fleet-wide ID, used verbatim -- with no local/global translation -- as the
