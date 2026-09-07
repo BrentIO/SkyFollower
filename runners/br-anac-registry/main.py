@@ -259,7 +259,7 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
     """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model when found.
+    and set aircraft.manufacturer_model and aircraft.description_code when found.
 
     Unconditional: this runner's own type_designator is sourced directly from ANAC
     and is authoritative, so the lookup happens regardless of whether Mictronics
@@ -284,6 +284,9 @@ def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
     manufacturer_model = (type_doc.get("manufacturer_model") or "").strip()
     if manufacturer_model:
         aircraft["manufacturer_model"] = manufacturer_model
+    description_code = (type_doc.get("description_code") or "").strip()
+    if description_code:
+        aircraft["description_code"] = description_code
 
 
 # ---------------------------------------------------------------------------

@@ -56,8 +56,8 @@ sources:
         format: "object: icao_hex → [registration, type_designator, flags_string]"
         notes: "flags_string is a 2-char string; [0]='1' → military, [1]='1' → interesting"
       - name: types.json
-        format: "object: type_designator → [manufacturer_model, description, wtc_code]"
-        notes: "Joined against aircrafts.json for per-hex enrichment, and also published standalone as aircraft:type:{designator} — see records.flight.fields.aircraft_type"
+        format: "object: type_designator → [manufacturer_model, description_code, wtc_code]"
+        notes: "description_code (values[1]) is the ICAO Doc 8643 aircraft description code (e.g. L2J); wtc_code (values[2]) stays unimported since wake_turbulence_category is receiver-decode-only. Joined against aircrafts.json for per-hex enrichment, and also published standalone as aircraft:type:{designator} — see records.flight.fields.aircraft_type"
       - name: operators.json
         format: "object: airline_designator → [name, country, callsign]"
 
@@ -2735,6 +2735,61 @@ records:
                   lookup_field: manufacturer_model
                   description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
 
+          description_code:
+            type: string
+            description: >
+              ICAO Doc 8643 aircraft description code (e.g. L2J, H2T, L1P).
+              Three characters: char 1 = aircraft category (L/S/A/H/G/T =
+              landplane/seaplane/amphibian/helicopter/gyrocopter/tilt-wing),
+              digit = engine count, char 3 = engine type (P/T/J/E =
+              piston/turboprop/jet/electric). Distinct from
+              wake_turbulence_category, which is receiver-decode-only.
+            persisted: true
+            sources:
+              - source: mictronics
+                file: types.json
+                field: "values[1]"
+              - source: uk-caa-registry
+                endpoint: details
+                field: "AircraftDetails.ICAOAircraftTypeDesignator"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "field above (ICAOAircraftTypeDesignator) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: nl-ilt-registry
+                file: luchtvaartuigregister-ilt-datas2-{YYYY-MM-DD}.ods
+                field: "ICAO-code"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "field above (ICAO-code) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: au-casa-registry
+                file: acrftreg
+                field: ICAOtypedesig
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "field above (ICAOtypedesig) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: ch-bazl-registry
+                endpoint: bulk
+                field: "ICAO Aircraft Type"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "field above (ICAO Aircraft Type) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: br-anac-registry
+                file: dados_aeronaves.json
+                field: CDTIPOICAO
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+
           serial_number:
             type: string
             persisted: true
@@ -3061,6 +3116,16 @@ records:
                   - source: mictronics
                     file: types.json
                     field: "values[0]"
+              description_code:
+                type: string
+                description: >
+                  ICAO Doc 8643 aircraft description code (e.g. L2J). Present
+                  only when Mictronics' types.json carries a non-empty
+                  values[1] for this designator.
+                sources:
+                  - source: mictronics
+                    file: types.json
+                    field: "values[1]"
 
           powerplant:
             type: object

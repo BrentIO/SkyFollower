@@ -27,6 +27,8 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
+from shared.timing import DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
+
 # Fixed by every compose file's bind mount. It was only ever a path inside
 # the container, and no deployment has a reason to vary it.
 DATA_DIR = "/app/data"
@@ -147,11 +149,24 @@ def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
     everywhere, same convention as mqtt_config() above: host defaults to
     blank / port to 0, so a component with no MAP_UDP_HOST set simply
     never creates the socket and never attempts a send, rather than
-    failing to start."""
+    failing to start.
+
+    min_position_interval_seconds throttles only `position` sends (a
+    per-icao_hex minimum spacing -- see message-processor's
+    _MapUdpPublisher) -- sub-second position updates aren't perceptible on
+    a map, and this is the single biggest lever on the map service's UDP
+    volume / Redis write rate. `metadata` sends are already change-gated
+    and are never throttled by this value; `heartbeat` sends are governed
+    by MAP_HEARTBEAT_INTERVAL_SECONDS instead (shared/timing.py), not this
+    block."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_UDP_HOST", ""),
         "port": loader.integer("MAP_UDP_PORT", 0),
+        "min_position_interval_seconds": loader.number(
+            "MAP_UDP_MIN_POSITION_INTERVAL_SECONDS",
+            DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
+        ),
     }
     if own:
         loader.raise_for_problems()

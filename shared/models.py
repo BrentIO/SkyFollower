@@ -120,6 +120,7 @@ class AircraftRecord(BaseModel):
     manufacturer: Optional[str] = None
     model: Optional[str] = None
     manufacturer_model: Optional[str] = None  # combined manufacturer + model string, e.g. "BOEING 757-200"; synthesized by merge_aircraft.lua from manufacturer/model if absent
+    description_code: Optional[str] = None  # ICAO Doc 8643 aircraft description code, e.g. "L2J": char 1 = category (L/S/A/H/G/T = landplane/seaplane/amphibian/helicopter/gyrocopter/tilt-wing), digit = engine count, char 3 = engine type (P/T/J/E = piston/turboprop/jet/electric)
     seats: Optional[int] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None

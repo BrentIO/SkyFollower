@@ -434,6 +434,18 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert record["aircraft"]["manufacturer_model"] == "AEROSPOOL WT-9 Dynamic"
 
+    def test_designator_resolves_sets_description_code(self):
+        record = {"aircraft": {"type_designator": "C152"}}
+        r = self._make_redis_with_type({"manufacturer_model": "CESSNA 152", "description_code": "L1P"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["description_code"] == "L1P"
+
+    def test_description_code_not_in_type_doc_leaves_field_unset(self):
+        record = {"aircraft": {"type_designator": "WT9"}}
+        r = self._make_redis_with_type({"manufacturer_model": "AEROSPOOL WT-9 Dynamic"})
+        _apply_type_lookup(record, r)
+        assert "description_code" not in record["aircraft"]
+
     def test_lookup_key_uses_type_designator(self):
         record = {"aircraft": {"type_designator": "C152"}}
         r = self._make_redis_with_type({"manufacturer_model": "CESSNA 152"})

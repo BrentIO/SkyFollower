@@ -18,7 +18,9 @@ frontend bundle, and the final stage runs both uvicorn (bound to
 `127.0.0.1:8000`, not exposed outside the container) and nginx, started by
 `entrypoint.sh`. nginx serves the built frontend at `/` (with a `try_files`
 fallback to `index.html` for client-side routing) and proxies `/api/*` to
-uvicorn. `docker-compose.management-ui.yaml` maps `80:80`.
+uvicorn over HTTPS on `443`; `80` is redirect-only (`301` to the same path
+on `443`). `docker-compose.management-ui.yaml` maps both `443:443` and
+`80:80` — see [TLS](#tls) below.
 
 Both base images (`node:26-slim` for the frontend stage, `python:3.14-slim`
 for the final stage) are pinned to an explicit `@sha256:<digest>` so
@@ -26,6 +28,39 @@ Dependabot surfaces a rebuild PR when either tag is re-pushed upstream.
 Resolve a current digest with `docker buildx imagetools inspect <image>:<tag>`;
 a CI guard in `.github/workflows/run-tests.yaml` fails the build on any
 unpinned `FROM` line.
+
+## TLS
+
+Served over HTTPS on `443` with a self-signed certificate by default; `80`
+only ever answers with a `301` redirect to the same URL on `443` (kept,
+rather than dropped, for old bookmarks/muscle memory). There is no
+authentication either way (see the table above) — TLS here is about
+encrypting traffic on the LAN, not access control.
+
+- **Certificate generation**: `scripts/install.sh` generates a ~10-year
+  self-signed cert (`openssl req -x509 ...`) the first time you install or
+  re-run it for the `management-ui` role, writing `cert.pem`/`key.pem` into
+  `./data/management-ui/tls/` (bind-mounted read-only into the container at
+  `/etc/nginx/tls/` — see `docker-compose.management-ui.yaml`). The
+  certificate's SAN covers `localhost`, `127.0.0.1`, the host's detected
+  hostname/LAN IP, and an optional extra hostname/IP you're prompted for
+  during install. Generation is idempotent — re-running install.sh never
+  overwrites an existing cert.
+- **Bring your own certificate**: drop your own `cert.pem`/`key.pem` into
+  `./data/management-ui/tls/` (matching those exact filenames) before
+  running `scripts/install.sh` — the installer leaves an existing pair
+  alone entirely and never generates a replacement.
+- **First-visit browser warning**: since the certificate is self-signed,
+  every browser shows an untrusted-certificate warning the first time you
+  visit. This is expected — click through it (or add an exception), or
+  import `cert.pem` into your OS/browser's trust store if you'd rather not
+  see it again. There's no ACME/Let's Encrypt integration — this
+  deployment model is LAN-only, with no public DNS name or open inbound
+  80/443 for ACME's HTTP-01/TLS-ALPN-01 challenges to work against.
+- **Replacing a certificate**: overwrite `cert.pem`/`key.pem` in
+  `./data/management-ui/tls/` and restart the container
+  (`docker compose -f docker-compose.management-ui.yaml restart
+  management-ui`) — nginx has no separate reload step wired up for this.
 
 ## Endpoints
 

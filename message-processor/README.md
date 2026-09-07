@@ -36,6 +36,7 @@ interpolated by Compose from this host's `.env` (written by
 | `MQTT_PASSWORD` | ❌ | — | |
 | `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata/heartbeat UDP feed toward the `map` service (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
 | `MAP_UDP_PORT` | ❌ | — | |
+| `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` | ❌ | `1` | Minimum spacing, per aircraft, between `position` sends (see [Map UDP Publisher](#map-udp-publisher)). Does not throttle `metadata` sends |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
@@ -411,15 +412,22 @@ and MQTT topics), which the map service uses to update a per-processor
 liveness roster from *any* of the three, not just `heartbeat` -- see
 [map/README.md](../map/README.md)'s "Processor Roster" section:
 
-- **`position`** -- sent on every processed message, no throttling. A flat
-  object merging whatever `Position`/`Velocity` fields that particular
-  message carried (`icao_hex`, `timestamp`, `processor_id`, `latitude`,
-  `longitude`, `altitude`, `velocity`, `heading`, `vertical_speed`); a
-  field absent from that message is omitted, not sent as null, matching
+- **`position`** -- sent at most once per `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS`
+  (default 1s) per aircraft -- sub-second position updates aren't
+  perceptible on a map, and this is the single biggest lever on UDP
+  volume / map-Redis write rate. Throttled per `icao_hex` on the source
+  message's own `received_at`, not wall-clock send time (see
+  `_MapUdpPublisher.should_send_position`). A flat object merging whatever
+  `Position`/`Velocity` fields that particular message carried (`icao_hex`,
+  `timestamp`, `processor_id`, `latitude`, `longitude`, `altitude`,
+  `velocity`, `heading`, `vertical_speed`); a field absent from that
+  message is omitted, not sent as null, matching
   `Position.to_dict()`/`Velocity.to_dict()`'s existing convention.
 - **`metadata`** -- sent the first time a flight's ident/aircraft
   enrichment/operator/registrant/squawk/origin/destination are known, and
-  again only when one of those changes. Reuses the exact same
+  again only when one of those changes. Never throttled by
+  `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` -- this change-gating is already
+  its own throttle. Reuses the exact same
   `CompletedFlight`-shape payload the `SkyFollower/rule/{IDENTIFIER}` MQTT
   notification publishes (positions/velocities/`_id` popped, empty
   operator/registrant/origin/destination/force_archive omitted) minus the

@@ -37,8 +37,9 @@ each new record is deep-merged into whatever already exists at that key
 written by an earlier one.
 
 `types.json` is also published standalone as `aircraft:type:{designator}` —
-one JSON key per type designator, holding `type_designator` and
-`manufacturer_model`.
+one JSON key per type designator, holding `type_designator`,
+`manufacturer_model`, and (when present) `description_code`, the ICAO
+Doc 8643 aircraft description code (e.g. `L2J`).
 This is a plain lookup table, not merged into any per-hex record: it exists
 so a country registry runner that only knows a `type_designator` (not a full
 `manufacturer_model`) can resolve one directly via `JSON.GET
@@ -68,7 +69,7 @@ The ZIP archive contains four data files that are inspected independently below 
 |---|---|---|
 | key (type_designator) | ✅ | Join key into `aircrafts.json`; also the Redis key suffix for the standalone `aircraft:type:{designator}` record |
 | values[0] (manufacturer_model) | ✅ | Split on first space → `aircraft.manufacturer` (per-hex record); full string kept as `aircraft.manufacturer_model` (per-hex) and `manufacturer_model` (standalone `aircraft:type:{designator}` record) |
-| values[1] (ICAO aircraft description code, e.g. `L2J`, `H2T`, `L1P`) | ❌ | Never read by this runner — the `powerplant`/`category` columns declared in the local SQLite schema are never populated from it |
+| values[1] (ICAO Doc 8643 description code, e.g. `L2J`, `H2T`, `L1P`) | ✅ | → `aircraft.description_code` (per-hex) and `description_code` (standalone `aircraft:type:{designator}` record). Three characters: char 1 = aircraft category (`L`=landplane, `S`=seaplane, `A`=amphibian, `H`=helicopter, `G`=gyrocopter, `T`=tilt-wing), digit = engine count, char 3 = engine type (`P`=piston, `T`=turboprop, `J`=jet, `E`=electric). Empty/missing values are omitted, not stored as an empty string. |
 | values[2] (wtc code) | ❌ | `wake_turbulence_category` is receiver-decode-only (live ADS-B/UAT category data), never sourced from registry/Mictronics data — never read by this runner |
 
 Every `types.json` entry with a non-empty `manufacturer_model` is written to its own `aircraft:type:{designator}` key, independent of whether that designator appears anywhere in `aircrafts.json`.
@@ -109,6 +110,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L1P",
         "manufacturer": "The New Piper Aircraft, Inc",
         "manufacturer_model": "PIPER PA-28-201T/235/236",
         "model": "PA-28-235",
@@ -133,6 +135,7 @@ docker run --rm --network host redis:latest redis-cli JSON.GET aircraft:type:B76
 
 ```json
 {
+    "description_code": "L2J",
     "manufacturer_model": "BOEING 767-300",
     "type_designator": "B763"
 }

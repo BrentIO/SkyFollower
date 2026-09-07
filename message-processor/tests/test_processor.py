@@ -4166,17 +4166,21 @@ class TestMapUdpDisabledByDefault:
         assert p._map_udp.enabled is False
 
 
+def _make_map_flight(p, icao_hex: str = "A8AE7F") -> Flight:
+    f = Flight(p._db)
+    f.icao_hex = icao_hex
+    f.flight_id = "fid-1"
+    f.first_message = 1757000000.0
+    f.last_message = 1757000000.0
+    f.total_messages = 1
+    f.receiver_sources = ["1090"]
+    f.save()
+    return f
+
+
 class TestMapUdpPosition:
     def _make_flight(self, p) -> Flight:
-        f = Flight(p._db)
-        f.icao_hex = "A8AE7F"
-        f.flight_id = "fid-1"
-        f.first_message = 1757000000.0
-        f.last_message = 1757000000.0
-        f.total_messages = 1
-        f.receiver_sources = ["1090"]
-        f.save()
-        return f
+        return _make_map_flight(p)
 
     def test_payload_shape_matches_spec_exactly(self):
         p, _ = _make_processor()
@@ -4291,6 +4295,73 @@ class TestMapUdpPosition:
         position_sends = [s for s in sent if s["type"] == "position"]
         assert len(position_sends) == 1
         assert position_sends[0]["icao_hex"] == "A8AE7F"
+
+
+class TestMapUdpPositionThrottle:
+    """MAP_UDP_MIN_POSITION_INTERVAL_SECONDS -- a per-icao_hex minimum
+    spacing between `position` sends, keyed on each message's own
+    received_at (see _MapUdpPublisher.should_send_position), never applied
+    to `metadata` sends."""
+
+    def _enable_with_interval(self, p, interval: float) -> MagicMock:
+        publisher = _MapUdpPublisher("127.0.0.1", 9999, min_position_interval_seconds=interval)
+        mock_sock = MagicMock()
+        publisher._sock = mock_sock
+        p._map_udp = publisher
+        return mock_sock
+
+    def test_second_position_within_interval_is_suppressed(self):
+        p, _ = _make_processor()
+        mock_sock = self._enable_with_interval(p, 1.0)
+        f = _make_map_flight(p)
+
+        with patch("message_processor.main.time.time", return_value=1757000000.5):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+            p._publish_map_position(f, {"latitude": 1.1, "longitude": 2.1}, 1757000000.5)
+
+        assert mock_sock.sendto.call_count == 1
+
+    def test_position_after_interval_elapsed_is_sent(self):
+        p, _ = _make_processor()
+        mock_sock = self._enable_with_interval(p, 1.0)
+        f = _make_map_flight(p)
+
+        with patch("message_processor.main.time.time", return_value=1757000001.5):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+            p._publish_map_position(f, {"latitude": 1.1, "longitude": 2.1}, 1757000001.5)
+
+        assert mock_sock.sendto.call_count == 2
+
+    def test_throttle_is_per_icao_hex(self):
+        """One aircraft's throttled send must never suppress a different
+        aircraft's position in the same window."""
+        p, _ = _make_processor()
+        mock_sock = self._enable_with_interval(p, 1.0)
+        f1 = _make_map_flight(p, icao_hex="A8AE7F")
+        f2 = _make_map_flight(p, icao_hex="B00000")
+
+        with patch("message_processor.main.time.time", return_value=1757000000.1):
+            p._publish_map_position(f1, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+            p._publish_map_position(f2, {"latitude": 3.0, "longitude": 4.0}, 1757000000.1)
+
+        assert mock_sock.sendto.call_count == 2
+
+    def test_metadata_is_never_throttled(self):
+        """A change-gated metadata send must go out even when a position
+        for the same aircraft was just suppressed by the throttle."""
+        p, _ = _make_processor()
+        mock_sock = self._enable_with_interval(p, 1.0)
+        f = _make_map_flight(p)
+        f.aircraft = {"icao_hex": "A8AE7F"}
+        f.ident = "DAL2"
+
+        with patch("message_processor.main.time.time", return_value=1757000000.5):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+            p._publish_map_position(f, {"latitude": 1.1, "longitude": 2.1}, 1757000000.5)
+            p._maybe_publish_map_metadata(f, 1757000000.5)
+
+        sent = [json.loads(c.args[0].decode("utf-8")) for c in mock_sock.sendto.call_args_list]
+        assert [s["type"] for s in sent] == ["position", "metadata"]
 
 
 class TestMapUdpMetadata:

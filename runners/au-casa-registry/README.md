@@ -14,7 +14,7 @@
 
 The CASA register CSV is downloaded from a fixed URL and parsed with `csv.DictReader` (BOM-tolerant `utf-8-sig` decoding). Rows whose `suspendstatus` is `suspended` are filtered out before lookup. Registrations (`VH-` + `Mark`) are resolved to `icao_hex` in batches of 100 via RediSearch against the Mictronics index, then a type sanity check compares tokens extracted from the CASA `Model` column against the existing Mictronics `type_designator`/`manufacturer_model` fields, rejecting the match only when both sides have tokens and none overlap. `Airframe` and `Engtype` are decoded from CASA's plain-English categories (e.g. `Power Driven Aeroplane` → `Airplane`, `Turbofan` → `Turbo-fan`) and `regholdCountry` full country names are mapped to ISO 3166-1 alpha-2 codes, with unmapped values passed through as-is. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from CASA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from CASA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -58,7 +58,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | `Regexpirydate` | ❌ | Present in source; not read by this runner |
 | `suspendstatus` | ✅ | Used only as a filter (`suspended` rows are dropped); not stored |
 | `suspenddate` | ❌ | Present in source; not read by this runner |
-| `ICAOtypedesig` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
+| `ICAOtypedesig` | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.description_code` when found |
 | `IDERA_Authorised_Party` | ❌ | Present in source; not read by this runner |
 
 See `specs/data-dictionary.yaml` (`au-casa-registry` entry) for full column semantics and cross-source schema notes.
@@ -74,6 +74,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L1P",
         "manufactured_date": "2008-01-01T00:00:00Z",
         "manufacturer": "CESSNA AIRCRAFT COMPANY",
         "manufacturer_model": "CESSNA 172 Skyhawk",
@@ -118,6 +119,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L4J",
         "manufactured_date": "2008-01-01T00:00:00Z",
         "manufacturer": "AIRBUS INDUSTRIE",
         "manufacturer_model": "AIRBUS A-380-800",

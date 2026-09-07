@@ -74,11 +74,28 @@ logger = logging.getLogger("map")
 # Docker HEALTHCHECK heartbeat to -- see shared/healthcheck.py.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
+# Fixed in-container TLS mount point (docker-compose.map.yaml's
+# ./data/map/tls bind mount, populated by scripts/install.sh's --role map
+# cert generation, or an operator's own cert/key dropped in under these
+# same filenames). No env var for this -- same convention as
+# _HEALTHCHECK_HEARTBEAT_PATH above: the path is a fixed part of the
+# container's own layout, not something a deployment ever needs to move.
+_TLS_CERT_PATH = "/app/tls/cert.pem"
+_TLS_KEY_PATH = "/app/tls/key.pem"
+
 # recvfrom() bound so the UDP listener thread wakes periodically to check
 # the shutdown event, rather than blocking forever on a socket with no
 # incoming traffic.
 _UDP_RECV_TIMEOUT_SECONDS = 1.0
 _UDP_MAX_DATAGRAM_BYTES = 65535
+
+# Requested kernel receive buffer size for the UDP socket -- the OS caps
+# this at its own configured maximum (e.g. net.core.rmem_max on Linux), so
+# this is a best-effort request, not a guarantee. Bigger than the OS
+# default gives _handle_packet's single-threaded processing more slack to
+# fall behind briefly (a GC pause, a slow Redis round trip) without the
+# kernel silently dropping datagrams that arrive in the meantime.
+_UDP_RECV_BUFFER_BYTES = 1024 * 1024
 
 # Vite's build output (map/frontend/vite.config.ts sets base: '/map/' so
 # built asset URLs already point at this same sub-path). Only present in
@@ -232,6 +249,12 @@ def _udp_loop() -> None:
     listen_port = _cfg["map_listen_port"]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _UDP_RECV_BUFFER_BYTES)
+    except OSError as exc:
+        # Best-effort -- a platform/permission that refuses the larger
+        # buffer just keeps the OS default rather than failing startup.
+        logger.warning("Could not raise UDP SO_RCVBUF: %r", exc)
     sock.bind((listen_host, listen_port))
     sock.settimeout(_UDP_RECV_TIMEOUT_SECONDS)
     logger.info("UDP listener bound to %s:%s.", listen_host, listen_port)
@@ -467,6 +490,27 @@ else:
     )
 
 
+def _uvicorn_tls_kwargs() -> dict:
+    """uvicorn.run() SSL kwargs when a cert/key pair exists at the fixed
+    TLS mount point (_TLS_CERT_PATH/_TLS_KEY_PATH), else an empty dict.
+
+    Degrades to plain HTTP with a logged warning rather than raising --
+    covers running `python -m map.main` (or bare `uvicorn map.main:app`)
+    standalone outside the installer flow, where no TLS directory was ever
+    generated or mounted. Same "optional, log and carry on" shape as this
+    module's other absent-config paths (e.g. MAP_HOME_LATITUDE/
+    MAP_HOME_LONGITUDE unset -- see get_config())."""
+    if os.path.isfile(_TLS_CERT_PATH) and os.path.isfile(_TLS_KEY_PATH):
+        return {"ssl_certfile": _TLS_CERT_PATH, "ssl_keyfile": _TLS_KEY_PATH}
+    logger.warning(
+        "No TLS cert/key found at %s / %s -- serving plain HTTP. Run "
+        "scripts/install.sh for the map role to generate a self-signed "
+        "pair, or drop your own cert.pem/key.pem there.",
+        _TLS_CERT_PATH, _TLS_KEY_PATH,
+    )
+    return {}
+
+
 def main() -> None:  # pragma: no cover -- exercised via `python -m map.main`
     import uvicorn
 
@@ -476,6 +520,7 @@ def main() -> None:  # pragma: no cover -- exercised via `python -m map.main`
         host=cfg["map_http_host"],
         port=cfg["map_http_port"],
         log_config=None,
+        **_uvicorn_tls_kwargs(),
     )
 
 

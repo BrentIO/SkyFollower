@@ -359,6 +359,18 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert record["aircraft"]["manufacturer_model"] == "AIRBUS HELICOPTERS EC-225/725"
 
+    def test_designator_resolves_sets_description_code(self):
+        record = {"aircraft": {"type_designator": "EC25"}}
+        r = self._make_redis({"manufacturer_model": "AIRBUS HELICOPTERS EC-225/725", "description_code": "H2T"})
+        _apply_type_lookup(record, r)
+        assert record["aircraft"]["description_code"] == "H2T"
+
+    def test_description_code_not_in_type_doc_leaves_field_unset(self):
+        record = {"aircraft": {"type_designator": "R44"}}
+        r = self._make_redis({"manufacturer_model": "ROBINSON R-44 Raven"})
+        _apply_type_lookup(record, r)
+        assert "description_code" not in record["aircraft"]
+
     def test_lookup_key_uses_type_designator(self):
         record = {"aircraft": {"type_designator": "R44"}}
         r = self._make_redis({"manufacturer_model": "ROBINSON R-44 Raven"})

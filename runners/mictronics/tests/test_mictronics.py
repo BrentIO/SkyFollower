@@ -244,8 +244,8 @@ class TestStageData:
 
     def test_types_staged(self):
         # SAMPLE_TYPES' third element (wtc) is present in the raw input,
-        # matching real Mictronics data, but is no longer staged -- this
-        # runner only cares about manufacturer_model now.
+        # matching real Mictronics data, but is not staged -- this runner
+        # cares about manufacturer_model and description_code only.
         files = _make_zip_files(
             aircrafts=SAMPLE_AIRCRAFTS,
             operators=SAMPLE_OPERATORS,
@@ -255,10 +255,24 @@ class TestStageData:
             conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
             cur = conn.cursor()
             cur.execute(
-                "SELECT manufacturer_model FROM types WHERE type_designator = 'B763'"
+                "SELECT manufacturer_model, description_code FROM types WHERE type_designator = 'B763'"
             )
             row = cur.fetchone()
             assert row[0] == "Boeing 767-332ER"
+            assert row[1] == "L2J"
+            conn.close()
+
+    def test_types_staged_missing_description_code(self):
+        types = {"C172": ["Cessna 172 Skyhawk", "", "L"]}
+        files = _make_zip_files(aircrafts=SAMPLE_AIRCRAFTS, operators=SAMPLE_OPERATORS, types=types)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conn = stage_data(files, os.path.join(tmpdir, "staging.db"))
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT description_code FROM types WHERE type_designator = 'C172'"
+            )
+            row = cur.fetchone()
+            assert row[0] is None
             conn.close()
 
     def test_icao_hex_uppercased(self):
@@ -278,7 +292,7 @@ class TestStageData:
 # ---------------------------------------------------------------------------
 
 class TestBuildAircraftRecord:
-    def _row(self, icao_hex, registration, type_designator, military, interesting=False, manufacturer_model=None):
+    def _row(self, icao_hex, registration, type_designator, military, interesting=False, manufacturer_model=None, description_code=None):
         return {
             "icao_hex": icao_hex,
             "registration": registration,
@@ -286,10 +300,14 @@ class TestBuildAircraftRecord:
             "military": military,
             "interesting": interesting,
             "manufacturer_model": manufacturer_model,
+            "description_code": description_code,
         }
 
     def test_full_record_shape(self):
-        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
+        row = self._row(
+            "A8AE7F", "N659DL", "B763", False,
+            manufacturer_model="Boeing 767-332ER", description_code="L2J",
+        )
         record = build_aircraft_record(row, row)
 
         assert record["icao_hex"] == "A8AE7F"
@@ -300,6 +318,12 @@ class TestBuildAircraftRecord:
         assert ac["type_designator"] == "B763"
         assert ac["manufacturer"] == "Boeing"
         assert ac["manufacturer_model"] == "Boeing 767-332ER"
+        assert ac["description_code"] == "L2J"
+
+    def test_missing_description_code_omitted(self):
+        row = self._row("A8AE7F", "N659DL", "B763", False, manufacturer_model="Boeing 767-332ER")
+        record = build_aircraft_record(row, row)
+        assert "description_code" not in record["aircraft"]
 
     def test_source_field(self):
         row = self._row("A8AE7F", "N659DL", "B763", False)
@@ -481,19 +505,26 @@ class TestWriteOperatorsToRedis:
 # ---------------------------------------------------------------------------
 
 class TestBuildTypeRecord:
-    def _row(self, designator, manufacturer_model):
+    def _row(self, designator, manufacturer_model, description_code=None):
         return {
             "type_designator": designator,
             "manufacturer_model": manufacturer_model,
+            "description_code": description_code,
         }
 
     def test_full_record(self):
-        row = self._row("B763", "Boeing 767-332ER")
+        row = self._row("B763", "Boeing 767-332ER", description_code="L2J")
         record = build_type_record(row)
         assert record == {
             "type_designator": "B763",
             "manufacturer_model": "Boeing 767-332ER",
+            "description_code": "L2J",
         }
+
+    def test_missing_description_code_omitted(self):
+        row = self._row("B763", "Boeing 767-332ER")
+        record = build_type_record(row)
+        assert "description_code" not in record
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +615,21 @@ class TestWriteTypesToRedis:
         count = write_types_to_redis(conn, r, REDIS_TTL)
         assert count == 0
         pipe_json.set.assert_not_called()
+        conn.close()
+
+    def test_description_code_written(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_mod._SCHEMA)
+        conn.execute(
+            "INSERT INTO types (type_designator, manufacturer_model, description_code) "
+            "VALUES ('B763', 'Boeing 767-332ER', 'L2J')"
+        )
+        conn.commit()
+        r, _, pipe_json = self._mock_redis()
+        write_types_to_redis(conn, r, REDIS_TTL)
+        written = pipe_json.set.call_args_list[0].args[2]
+        assert written["description_code"] == "L2J"
         conn.close()
 
 
