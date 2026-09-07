@@ -1,11 +1,12 @@
 -- map_apply_update.lua
 --
 -- Collapses map/state_store.py's FlightStateStore.apply_update into a
--- single round trip: the out-of-order check, the merge HSET, both TTL
--- refreshes (flight:detail:{icao_hex}'s EXPIRE and flight:live:{icao_hex}'s
--- SET...EX), and -- for `position` packets only -- the trail RPUSH, then
--- returns the full merged current-state so the caller never needs a
--- separate HGETALL to build the WebSocket event payload.
+-- single round trip: the out-of-order check, the merge HSET, all three TTL
+-- refreshes (flight:detail:{icao_hex}'s EXPIRE, flight:live:{icao_hex}'s
+-- SET...EX, and flight:visible:{icao_hex}'s SET...EX), and -- for
+-- `position` packets only -- the trail RPUSH, then returns the full merged
+-- current-state so the caller never needs a separate HGETALL to build the
+-- WebSocket event payload.
 --
 -- ARGV[1] : icao_hex
 -- ARGV[2] : msg_type ("position" or "metadata")
@@ -23,6 +24,7 @@
 --           header comment) ever enters the round trip.
 -- ARGV[6] : stale_seconds (flight:live:{icao_hex} TTL)
 -- ARGV[7] : evict_seconds (flight:detail:{icao_hex} / flight:trail:{icao_hex} TTL)
+-- ARGV[8] : hide_seconds (flight:visible:{icao_hex} TTL)
 --
 -- Returns nil if the packet is dropped as out-of-order; otherwise a JSON
 -- object string matching map/state_store.py's get_flight() shape exactly
@@ -44,12 +46,14 @@ local field_names = cjson.decode(ARGV[4])
 local field_values = cjson.decode(ARGV[5])
 local stale_seconds = tonumber(ARGV[6])
 local evict_seconds = tonumber(ARGV[7])
+local hide_seconds = tonumber(ARGV[8])
 
 local TIMESTAMP_EPSILON_SECONDS = 0.001
 local LAST_APPLIED_TIMESTAMP_FIELD = '_last_applied_timestamp'
 
 local detail_key = 'flight:detail:' .. icao_hex
 local live_key = 'flight:live:' .. icao_hex
+local visible_key = 'flight:visible:' .. icao_hex
 local trail_key = 'flight:trail:' .. icao_hex
 
 local last_raw = redis.call('HGET', detail_key, LAST_APPLIED_TIMESTAMP_FIELD)
@@ -73,6 +77,7 @@ table.insert(hset_args, cjson.encode(timestamp))
 redis.call('HSET', detail_key, unpack(hset_args))
 redis.call('EXPIRE', detail_key, evict_seconds)
 redis.call('SET', live_key, '1', 'EX', stale_seconds)
+redis.call('SET', visible_key, '1', 'EX', hide_seconds)
 
 -- Re-reading the hash after the write (rather than folding the
 -- just-applied fields into a Lua-side copy of the previous state) is what

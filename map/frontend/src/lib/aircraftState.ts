@@ -21,6 +21,14 @@ export interface TrailPoint {
 export interface AircraftRecord extends MapFlight {
   /** True after a `stale` event and before the next position/metadata event or a `remove`. */
   stale: boolean;
+  /**
+   * True after a `hide` event and before the next position/metadata event
+   * or a `remove`. A hidden aircraft is dropped from view (see
+   * featureCollections.ts's feature-collection builders) but its record
+   * and `trail` are kept -- a resumed flight reappears with its pre-gap
+   * trail intact.
+   */
+  hidden: boolean;
   /** Oldest-first; client-accumulated only, see module docstring. */
   trail: TrailPoint[];
 }
@@ -62,6 +70,7 @@ export function applySnapshot(snapshot: MapFlight[]): AircraftMap {
     state[flight.icao_hex] = {
       ...flight,
       stale: false,
+      hidden: false,
       trail: pushTrailPoint([], flight),
     };
   }
@@ -83,9 +92,10 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
       const existing = state[icao_hex];
       const { type: _type, ...fields } = event;
       const merged: AircraftRecord = {
-        ...(existing ?? { icao_hex, stale: false, trail: [] }),
+        ...(existing ?? { icao_hex, stale: false, hidden: false, trail: [] }),
         ...fields,
         stale: false, // Any live update un-fades a previously-stale aircraft.
+        hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
       };
       merged.trail = event.type === "position" ? pushTrailPoint(existing?.trail ?? [], merged) : (existing?.trail ?? []);
       return { ...state, [icao_hex]: merged };
@@ -94,6 +104,13 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
       const existing = state[event.icao_hex];
       if (!existing || existing.stale) return state;
       return { ...state, [event.icao_hex]: { ...existing, stale: true } };
+    }
+    case "hide": {
+      const existing = state[event.icao_hex];
+      // Do not delete the record -- its trail must survive so a resumed
+      // flight reappears as one continuous track (see AircraftRecord.hidden).
+      if (!existing || existing.hidden) return state;
+      return { ...state, [event.icao_hex]: { ...existing, hidden: true } };
     }
     case "remove": {
       if (!(event.icao_hex in state)) return state;

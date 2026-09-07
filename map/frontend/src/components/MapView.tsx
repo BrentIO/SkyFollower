@@ -1,15 +1,17 @@
 import * as maplibregl from "maplibre-gl";
-import type { Feature, FeatureCollection } from "geojson";
 import { useEffect, useRef, useState } from "react";
 import { MAP_STYLE } from "../lib/maplibreSetup";
-import { altitudeColor } from "../lib/altitudeColor";
 import { AIRCRAFT_ICON_ID, buildAircraftIconImageData } from "../lib/aircraftIcon";
 import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
-import type { AircraftRecord } from "../lib/aircraftState";
-import { buildTrailSegments } from "../lib/trailSegments";
+import {
+  aircraftFeatureCollection,
+  EMPTY_FEATURE_COLLECTION,
+  hasPosition,
+  trailFeatureCollection,
+} from "../lib/featureCollections";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
@@ -17,57 +19,6 @@ const AIRCRAFT_SOURCE_ID = "sf-aircraft";
 const AIRCRAFT_LAYER_ID = "sf-aircraft-icons";
 const TRAIL_SOURCE_ID = "sf-trails";
 const TRAIL_LAYER_ID = "sf-trails-line";
-
-const EMPTY_FEATURE_COLLECTION: FeatureCollection = { type: "FeatureCollection", features: [] };
-
-function hasPosition(a: AircraftRecord): a is AircraftRecord & { latitude: number; longitude: number } {
-  return a.latitude != null && a.longitude != null;
-}
-
-function aircraftFeatureCollection(
-  aircraft: Record<string, AircraftRecord>,
-  selected: Set<string>,
-): FeatureCollection {
-  const features: Feature[] = Object.values(aircraft)
-    .filter(hasPosition)
-    .map((a) => ({
-      type: "Feature",
-      geometry: { type: "Point", coordinates: [a.longitude, a.latitude] },
-      properties: {
-        icao_hex: a.icao_hex,
-        heading: a.heading ?? 0,
-        color: altitudeColor(a.altitude ?? null),
-        selected: selected.has(a.icao_hex),
-        stale: a.stale,
-      },
-    }));
-  return { type: "FeatureCollection", features };
-}
-
-function trailFeatureCollection(
-  aircraft: Record<string, AircraftRecord>,
-  visibleIds: Set<string>,
-): FeatureCollection {
-  const features: Feature[] = [];
-  for (const a of Object.values(aircraft)) {
-    if (!visibleIds.has(a.icao_hex)) continue;
-    // Per-segment coloring (see trailSegments.ts) -- each two-point piece
-    // of the trail is colored by the altitude the aircraft actually had
-    // at its earlier point, not by the aircraft's current altitude. Only
-    // the icon fill (aircraftFeatureCollection above) uses current altitude.
-    for (const segment of buildTrailSegments(a.trail)) {
-      features.push({
-        type: "Feature",
-        geometry: { type: "LineString", coordinates: segment.coordinates },
-        properties: {
-          icao_hex: a.icao_hex,
-          color: segment.color,
-        },
-      });
-    }
-  }
-  return { type: "FeatureCollection", features };
-}
 
 // Top-level export: fetches runtime config (GET /api/config -- see
 // map/lib/config.ts's loadConfig) once before the actual map ever mounts,
@@ -284,6 +235,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
+    .filter((a) => !a.hidden)
     .filter((a) => screenPositions[a.icao_hex] !== undefined)
     .map((a) => ({
       id: a.icao_hex,

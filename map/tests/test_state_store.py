@@ -65,6 +65,7 @@ from map.state_store import (  # noqa: E402
     flight_detail_key,
     flight_live_key,
     flight_trail_key,
+    flight_visible_key,
     overall_processor_status,
     parse_expired_key,
     processor_status,
@@ -78,6 +79,10 @@ from map.state_store import (  # noqa: E402
 
 def test_parse_expired_key_live():
     assert parse_expired_key("flight:live:A8AE7F") == ("live", "A8AE7F")
+
+
+def test_parse_expired_key_visible():
+    assert parse_expired_key("flight:visible:A8AE7F") == ("visible", "A8AE7F")
 
 
 def test_parse_expired_key_detail():
@@ -94,7 +99,7 @@ def test_parse_expired_key_unrelated():
 # ---------------------------------------------------------------------------
 
 def test_partial_position_updates_merge_without_erasing_each_other(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     merged = store.apply_update(
@@ -125,7 +130,7 @@ def test_partial_position_updates_merge_without_erasing_each_other(redis_client)
 
 
 def test_metadata_merges_alongside_position_fields(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 2000.0, {"latitude": 1.0, "longitude": 2.0})
@@ -159,7 +164,7 @@ def test_metadata_merges_alongside_position_fields(redis_client):
 # ---------------------------------------------------------------------------
 
 def test_out_of_order_packet_is_dropped(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 5000.0, {"latitude": 10.0, "longitude": 20.0})
@@ -177,7 +182,7 @@ def test_equal_timestamp_is_accepted_not_dropped(redis_client):
     ADS-B message share message-processor's exact `received_at` value --
     equal timestamps must not be treated as out-of-order, or metadata would
     silently never apply the first time an aircraft is seen."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 7000.0, {"latitude": 5.0, "longitude": 6.0})
@@ -195,7 +200,7 @@ def test_equal_timestamp_is_accepted_not_dropped(redis_client):
 # ---------------------------------------------------------------------------
 
 def test_trail_accumulates_across_position_updates(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0, "altitude": 1000})
@@ -213,7 +218,7 @@ def test_trail_accumulates_across_position_updates(redis_client):
 def test_trail_not_appended_before_position_known(redis_client):
     """A velocity/heading-only position packet, before any lat/lon has ever
     been seen for this aircraft, has nothing meaningful to plot yet."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 1.0, {"velocity": 200.0, "heading": 45.0})
@@ -224,7 +229,7 @@ def test_trail_not_appended_before_position_known(redis_client):
 
 
 def test_metadata_packets_do_not_append_to_trail(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
@@ -238,7 +243,7 @@ def test_metadata_packets_do_not_append_to_trail(redis_client):
 # ---------------------------------------------------------------------------
 
 def test_list_flights_returns_one_entry_per_tracked_aircraft(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     hex_a, hex_b = _hex(), _hex()
 
     store.apply_update(hex_a, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
@@ -251,7 +256,7 @@ def test_list_flights_returns_one_entry_per_tracked_aircraft(redis_client):
 
 
 def test_get_flight_returns_none_for_unknown_aircraft(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     assert store.get_flight(_hex()) is None
 
 
@@ -284,7 +289,7 @@ def test_apply_update_issues_exactly_one_round_trip(redis_client, monkeypatch):
     must issue exactly one evalsha call and zero direct HGET/HSET/EXPIRE/
     SET/RPUSH/pipeline calls -- every one of those now happens inside the
     Lua script, invisible at the client-command level."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     evalsha_calls = _count_calls(monkeypatch, redis_client, "evalsha")
@@ -305,7 +310,7 @@ def test_list_flights_issues_one_pipelined_round_trip_not_n_plus_one(redis_clien
     aircraft -- N+1. The pipelined implementation must still issue exactly
     one execute() (one round trip for every aircraft's HGETALL combined),
     and never call HGETALL directly (outside a pipeline) at all."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     hexes = [_hex() for _ in range(5)]
     for i, icao_hex in enumerate(hexes):
         store.apply_update(icao_hex, "position", 1.0, {"latitude": float(i), "longitude": float(i)})
@@ -338,7 +343,7 @@ def test_list_flights_issues_one_pipelined_round_trip_not_n_plus_one(redis_clien
 def test_list_flights_empty_store_issues_no_pipeline_at_all(redis_client, monkeypatch):
     """No tracked aircraft -- scan_iter finds nothing, so there's nothing
     to pipeline; must not construct an empty pipeline just to execute it."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
 
     pipeline_calls = _count_calls(monkeypatch, redis_client, "pipeline")
 
@@ -368,22 +373,23 @@ def _drain_expired_events(redis_client, store, deadline: float) -> list[dict]:
     return events
 
 
-def test_eviction_fires_stale_then_remove_at_correct_ttls(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=1, evict_seconds=2)
+def test_eviction_fires_stale_then_hide_then_remove_at_correct_ttls(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=2, evict_seconds=3)
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
     store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
 
-    # Both keys exist immediately after the update.
+    # All three keys exist immediately after the update.
     assert redis_client.exists(flight_live_key(icao_hex))
+    assert redis_client.exists(flight_visible_key(icao_hex))
     assert redis_client.exists(flight_detail_key(icao_hex))
 
-    events = _drain_expired_events(redis_client, store, deadline=time.monotonic() + 4.0)
+    events = _drain_expired_events(redis_client, store, deadline=time.monotonic() + 5.0)
     kinds_for_hex = [e["type"] for e in events if e["icao_hex"] == icao_hex]
 
-    assert kinds_for_hex == ["stale", "remove"], (
-        f"expected stale then remove for {icao_hex}, got {kinds_for_hex} "
+    assert kinds_for_hex == ["stale", "hide", "remove"], (
+        f"expected stale, hide, then remove for {icao_hex}, got {kinds_for_hex} "
         f"(all events observed: {events})"
     )
     # The detail hash and trail are both actually gone once "remove" fires.
@@ -391,8 +397,50 @@ def test_eviction_fires_stale_then_remove_at_correct_ttls(redis_client):
     assert redis_client.exists(flight_trail_key(icao_hex)) == 0
 
 
+def test_hide_leaves_detail_and_trail_intact(redis_client):
+    """The "hide" signal (flight:visible expiring) must not touch
+    flight:detail/flight:trail -- only "remove" evicts data. A long
+    evict_seconds keeps the remove event from firing during this test's
+    observation window."""
+    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=2, evict_seconds=10)
+    store.enable_keyspace_notifications()
+    icao_hex = _hex()
+
+    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+
+    events = _drain_expired_events(redis_client, store, deadline=time.monotonic() + 4.0)
+    kinds_for_hex = [e["type"] for e in events if e["icao_hex"] == icao_hex]
+    assert kinds_for_hex == ["stale", "hide"], (
+        f"expected stale then hide (not remove yet) for {icao_hex}, got {kinds_for_hex}"
+    )
+
+    # flight:visible is gone (that's what fired "hide")...
+    assert redis_client.exists(flight_visible_key(icao_hex)) == 0
+    # ...but detail and trail are both still fully intact.
+    assert store.get_flight(icao_hex) is not None
+    assert store.get_flight(icao_hex)["latitude"] == 1.0
+    assert redis_client.exists(flight_trail_key(icao_hex))
+    # list_flights (GET /api/flights) must now omit the hidden aircraft.
+    assert icao_hex not in {f["icao_hex"] for f in store.list_flights()}
+
+
+def test_visible_key_refreshed_on_update(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=1, evict_seconds=5)
+    icao_hex = _hex()
+
+    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+    time.sleep(0.6)
+    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.1, "longitude": 1.1})
+    time.sleep(0.6)
+
+    # 1.2s elapsed > hide_seconds=1, but the refresh on the second update
+    # reset the clock -- the visible key must still exist.
+    assert redis_client.exists(flight_visible_key(icao_hex))
+    assert icao_hex in {f["icao_hex"] for f in store.list_flights()}
+
+
 def test_update_refreshes_ttl_so_live_aircraft_never_goes_stale(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=1, evict_seconds=3)
+    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=2, evict_seconds=4)
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
@@ -459,7 +507,7 @@ def test_overall_status_red_when_roster_empty():
 # ---------------------------------------------------------------------------
 
 def test_record_and_get_processor_roster(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     store.record_processor_seen("mp-1", 1000.0)
     store.record_processor_seen("mp-2", 1005.0)
 
@@ -467,7 +515,7 @@ def test_record_and_get_processor_roster(redis_client):
 
 
 def test_record_processor_seen_overwrites_last_seen(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     store.record_processor_seen("mp-1", 1000.0)
     store.record_processor_seen("mp-1", 2000.0)
 
@@ -475,12 +523,12 @@ def test_record_processor_seen_overwrites_last_seen(redis_client):
 
 
 def test_get_processor_roster_empty_when_nothing_seen(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     assert store.get_processor_roster() == {}
 
 
 def test_get_processor_statuses_reflects_thresholds(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     now = 100000.0
     store.record_processor_seen("mp-green", now - 5)
     store.record_processor_seen("mp-amber", now - 30)
@@ -491,7 +539,7 @@ def test_get_processor_statuses_reflects_thresholds(redis_client):
 
 
 def test_get_processor_statuses_sorted_by_processor_id(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     store.record_processor_seen("mp-2", 1.0)
     store.record_processor_seen("mp-1", 1.0)
 
@@ -503,7 +551,7 @@ def test_get_processor_statuses_defaults_now_to_current_time(redis_client):
     """Calling without an explicit `now` (the real GET /api/processors
     code path) must use the current wall clock, not treat every entry as
     infinitely old/new."""
-    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     store.record_processor_seen("mp-1", time.time())
 
     statuses = {p["processor_id"]: p["status"] for p in store.get_processor_statuses()}
@@ -527,7 +575,7 @@ def test_processor_roster_resets_on_fresh_redis_state():
         host=_REDIS_HOST, port=_REDIS_PORT, db=_TEST_DB, decode_responses=True,
     )
     try:
-        store = FlightStateStore(client, stale_seconds=30, evict_seconds=300)
+        store = FlightStateStore(client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
         assert store.get_processor_roster() == {}
     finally:
         client.close()

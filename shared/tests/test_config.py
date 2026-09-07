@@ -582,6 +582,41 @@ class TestBlockHelpers:
         assert cfg["map_home_latitude"] is None
         assert cfg["map_home_longitude"] is None
 
+    def test_map_config_defaults_lifecycle_ttls_in_order(self, monkeypatch):
+        monkeypatch.delenv("MAP_STALE_SECONDS", raising=False)
+        monkeypatch.delenv("MAP_HIDE_SECONDS", raising=False)
+        monkeypatch.delenv("MAP_EVICT_SECONDS", raising=False)
+        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
+        cfg = map_config()
+        assert cfg["map_stale_seconds"] == 30
+        assert cfg["map_hide_seconds"] == 60
+        assert cfg["map_evict_seconds"] == 300
+
+    @pytest.mark.parametrize(
+        "stale,hide,evict",
+        [
+            (30, 30, 300),   # stale >= hide
+            (60, 30, 300),   # stale >= hide
+            (30, 300, 300),  # hide >= evict
+            (30, 400, 300),  # hide >= evict
+        ],
+    )
+    def test_map_config_rejects_misordered_lifecycle_ttls(self, monkeypatch, stale, hide, evict):
+        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
+        monkeypatch.setenv("MAP_STALE_SECONDS", str(stale))
+        monkeypatch.setenv("MAP_HIDE_SECONDS", str(hide))
+        monkeypatch.setenv("MAP_EVICT_SECONDS", str(evict))
+        with pytest.raises(ConfigError):
+            map_config()
+
+    def test_map_config_accepts_correctly_ordered_lifecycle_ttls(self, monkeypatch):
+        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
+        monkeypatch.setenv("MAP_STALE_SECONDS", "30")
+        monkeypatch.setenv("MAP_HIDE_SECONDS", "60")
+        monkeypatch.setenv("MAP_EVICT_SECONDS", "300")
+        cfg = map_config()
+        assert (cfg["map_stale_seconds"], cfg["map_hide_seconds"], cfg["map_evict_seconds"]) == (30, 60, 300)
+
     def test_map_config_reads_home_lat_long(self):
         cfg = map_config(ConfigLoader({
             "MAP_LISTEN_PORT": "30500",

@@ -74,6 +74,39 @@ describe("applyWsEvent -- position/metadata merge", () => {
     const revived = applyWsEvent(staled, { type: "position", icao_hex: "A1B2C3", heading: 10 });
     expect(revived.A1B2C3.stale).toBe(false);
   });
+
+  it("un-hides (clears hidden) on any live position/metadata update", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3", latitude: 1, longitude: 2 }]);
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(hidden.A1B2C3.hidden).toBe(true);
+    const revived = applyWsEvent(hidden, { type: "position", icao_hex: "A1B2C3", latitude: 1.5, longitude: 2.5 });
+    expect(revived.A1B2C3.hidden).toBe(false);
+    // The pre-gap trail point survives the hide/reveal round trip.
+    expect(revived.A1B2C3.trail[0]).toEqual({ latitude: 1, longitude: 2, altitude: null });
+    expect(revived.A1B2C3.trail).toHaveLength(2);
+  });
+});
+
+describe("applyWsEvent -- hide", () => {
+  it("marks an existing aircraft hidden without deleting it or its trail", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3", latitude: 1, longitude: 2 }]);
+    const next = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(next.A1B2C3).toBeDefined();
+    expect(next.A1B2C3.hidden).toBe(true);
+    expect(next.A1B2C3.trail).toEqual(base.A1B2C3.trail);
+  });
+
+  it("is a no-op (same reference) for a hide event on an untracked aircraft", () => {
+    const base = applySnapshot([]);
+    const next = applyWsEvent(base, { type: "hide", icao_hex: "UNKNOWN" });
+    expect(next).toBe(base);
+  });
+
+  it("is a no-op (same reference) when the aircraft is already hidden", () => {
+    const base = applyWsEvent(applySnapshot([{ icao_hex: "A1B2C3" }]), { type: "hide", icao_hex: "A1B2C3" });
+    const next = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(next).toBe(base);
+  });
 });
 
 describe("applyWsEvent -- stale/remove", () => {
