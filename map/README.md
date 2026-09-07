@@ -263,7 +263,7 @@ marker/recenter button from build-time config.
 ```bash
 cd map/frontend
 npm install
-npm run dev       # Vite dev server on :5173, proxying /api and /ws to localhost:8090
+npm run dev       # Vite dev server on :5173, proxying /api and /ws to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- altitudeColor, info-box formatting, and overlap-placement unit tests
 ```
