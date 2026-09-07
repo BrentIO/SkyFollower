@@ -4207,14 +4207,14 @@ class TestMapUdpPosition:
         assert payload == {
             "type": "position",
             "icao_hex": "A8AE7F",
-            "timestamp": 1757000000.0,
+            "ts": 1757000000.0,
             "processor_id": "0",
-            "latitude": 33.9425,
-            "longitude": -118.408,
-            "altitude": 350,
+            "lat": 33.9425,
+            "lon": -118.408,
+            "alt": 350,
             "velocity": 450,
-            "heading": 271.4,
-            "vertical_speed": -1200,
+            "hdg": 271.4,
+            "vs": -1200,
         }
 
     def test_absent_fields_are_omitted_not_null(self):
@@ -4232,12 +4232,12 @@ class TestMapUdpPosition:
         assert payload == {
             "type": "position",
             "icao_hex": "A8AE7F",
-            "timestamp": 1757000000.0,
+            "ts": 1757000000.0,
             "processor_id": "0",
-            "latitude": 33.9425,
-            "longitude": -118.408,
+            "lat": 33.9425,
+            "lon": -118.408,
         }
-        for absent in ("altitude", "velocity", "heading", "vertical_speed"):
+        for absent in ("alt", "velocity", "hdg", "vs"):
             assert absent not in payload
 
     def test_suppressed_when_message_older_than_max_lag(self, caplog):
@@ -4495,7 +4495,7 @@ class TestMapHeartbeatLoop:
         assert payload == {
             "type": "heartbeat",
             "processor_id": "0",
-            "timestamp": 1757000000.0,
+            "ts": 1757000000.0,
         }
 
     def test_skipped_when_position_sent_within_the_window(self):

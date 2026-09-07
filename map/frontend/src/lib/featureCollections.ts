@@ -12,8 +12,8 @@ import { buildTrailSegments } from "./trailSegments";
 
 export const EMPTY_FEATURE_COLLECTION: FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export function hasPosition(a: AircraftRecord): a is AircraftRecord & { latitude: number; longitude: number } {
-  return a.latitude != null && a.longitude != null;
+export function hasPosition(a: AircraftRecord): a is AircraftRecord & { lat: number; lon: number } {
+  return a.lat != null && a.lon != null;
 }
 
 // A hidden aircraft (past MAP_HIDE_SECONDS, not yet evicted) is omitted
@@ -30,11 +30,11 @@ export function aircraftFeatureCollection(
     .filter((a) => !a.hidden)
     .map((a) => ({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [a.longitude, a.latitude] },
+      geometry: { type: "Point", coordinates: [a.lon, a.lat] },
       properties: {
         icao_hex: a.icao_hex,
-        heading: a.heading ?? 0,
-        color: altitudeColor(a.altitude ?? null),
+        heading: a.hdg ?? 0,
+        color: altitudeColor(a.alt ?? null),
         selected: selected.has(a.icao_hex),
         stale: a.stale,
       },

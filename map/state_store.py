@@ -78,7 +78,7 @@ _LAST_APPLIED_TIMESTAMP_FIELD = "_last_applied_timestamp"
 # map_udp_config() destination; wire format is message-processor's
 # _publish_map_position()). A field absent from a given packet is left
 # untouched on the merged hash, not blanked -- see apply_update.
-POSITION_FIELDS = ("latitude", "longitude", "altitude", "velocity", "heading", "vertical_speed")
+POSITION_FIELDS = ("lat", "lon", "alt", "velocity", "hdg", "vs")
 
 
 def flight_live_key(icao_hex: str) -> str:

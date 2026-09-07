@@ -1932,12 +1932,19 @@ class MessageProcessor:
         payload = {
             "type": "position",
             "icao_hex": flight.icao_hex,
-            "timestamp": received_at,
+            "ts": received_at,
             "processor_id": self._id,
         }
-        for key in ("latitude", "longitude", "altitude", "velocity", "heading", "vertical_speed"):
+        for key, short_key in (
+            ("latitude", "lat"),
+            ("longitude", "lon"),
+            ("altitude", "alt"),
+            ("velocity", "velocity"),
+            ("heading", "hdg"),
+            ("vertical_speed", "vs"),
+        ):
             if key in data:
-                payload[key] = data[key]
+                payload[short_key] = data[key]
         self._map_udp.send(payload)
 
     def _maybe_publish_map_metadata(self, flight: Flight, received_at: float) -> None:
@@ -1994,7 +2001,7 @@ class MessageProcessor:
             self._map_udp.send({
                 "type": "heartbeat",
                 "processor_id": self._id,
-                "timestamp": time.time(),
+                "ts": time.time(),
             })
 
     # ------------------------------------------------------------------

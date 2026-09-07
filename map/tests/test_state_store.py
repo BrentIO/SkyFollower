@@ -104,26 +104,26 @@ def test_partial_position_updates_merge_without_erasing_each_other(redis_client)
 
     merged = store.apply_update(
         icao_hex, "position", 1000.0,
-        {"latitude": 33.9, "longitude": -118.4, "altitude": 5000},
+        {"lat": 33.9, "lon": -118.4, "alt": 5000},
     )
-    assert merged["latitude"] == 33.9
-    assert merged["longitude"] == -118.4
-    assert merged["altitude"] == 5000
+    assert merged["lat"] == 33.9
+    assert merged["lon"] == -118.4
+    assert merged["alt"] == 5000
     assert "velocity" not in merged
-    assert "heading" not in merged
+    assert "hdg" not in merged
 
     merged = store.apply_update(
         icao_hex, "position", 1001.0,
-        {"velocity": 250.0, "heading": 90.0, "vertical_speed": -500},
+        {"velocity": 250.0, "hdg": 90.0, "vs": -500},
     )
     # The heading/velocity-only update must not blank out the previously
     # known position, and must add its own fields alongside it.
-    assert merged["latitude"] == 33.9
-    assert merged["longitude"] == -118.4
-    assert merged["altitude"] == 5000
+    assert merged["lat"] == 33.9
+    assert merged["lon"] == -118.4
+    assert merged["alt"] == 5000
     assert merged["velocity"] == 250.0
-    assert merged["heading"] == 90.0
-    assert merged["vertical_speed"] == -500
+    assert merged["hdg"] == 90.0
+    assert merged["vs"] == -500
 
     # get_flight() independently reflects the same fully-merged record.
     assert store.get_flight(icao_hex) == merged
@@ -133,7 +133,7 @@ def test_metadata_merges_alongside_position_fields(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 2000.0, {"latitude": 1.0, "longitude": 2.0})
+    store.apply_update(icao_hex, "position", 2000.0, {"lat": 1.0, "lon": 2.0})
     merged = store.apply_update(
         icao_hex, "metadata", 2000.0,
         {
@@ -148,8 +148,8 @@ def test_metadata_merges_alongside_position_fields(redis_client):
         },
     )
     # Position fields from the earlier update survive the metadata merge.
-    assert merged["latitude"] == 1.0
-    assert merged["longitude"] == 2.0
+    assert merged["lat"] == 1.0
+    assert merged["lon"] == 2.0
     # Metadata fields, including a nested dict, round-trip intact.
     assert merged["aircraft"] == {"icao_hex": icao_hex, "registration": "N12345"}
     assert merged["ident"] == "DAL123"
@@ -167,14 +167,14 @@ def test_out_of_order_packet_is_dropped(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 5000.0, {"latitude": 10.0, "longitude": 20.0})
-    result = store.apply_update(icao_hex, "position", 4000.0, {"latitude": 99.0, "longitude": 99.0})
+    store.apply_update(icao_hex, "position", 5000.0, {"lat": 10.0, "lon": 20.0})
+    result = store.apply_update(icao_hex, "position", 4000.0, {"lat": 99.0, "lon": 99.0})
 
     assert result is None
     # Displayed state must not have "rewound" to the older packet's values.
     current = store.get_flight(icao_hex)
-    assert current["latitude"] == 10.0
-    assert current["longitude"] == 20.0
+    assert current["lat"] == 10.0
+    assert current["lon"] == 20.0
 
 
 def test_equal_timestamp_is_accepted_not_dropped(redis_client):
@@ -185,14 +185,14 @@ def test_equal_timestamp_is_accepted_not_dropped(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 7000.0, {"latitude": 5.0, "longitude": 6.0})
+    store.apply_update(icao_hex, "position", 7000.0, {"lat": 5.0, "lon": 6.0})
     merged = store.apply_update(
         icao_hex, "metadata", 7000.0,
         {"ident": "UAL456", "aircraft": {"icao_hex": icao_hex}},
     )
     assert merged is not None
     assert merged["ident"] == "UAL456"
-    assert merged["latitude"] == 5.0
+    assert merged["lat"] == 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -203,15 +203,15 @@ def test_trail_accumulates_across_position_updates(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0, "altitude": 1000})
-    store.apply_update(icao_hex, "position", 2.0, {"latitude": 1.1, "longitude": 1.1})
-    store.apply_update(icao_hex, "position", 3.0, {"latitude": 1.2, "longitude": 1.2, "altitude": 3000})
+    store.apply_update(icao_hex, "position", 1.0, {"lat": 1.0, "lon": 1.0, "alt": 1000})
+    store.apply_update(icao_hex, "position", 2.0, {"lat": 1.1, "lon": 1.1})
+    store.apply_update(icao_hex, "position", 3.0, {"lat": 1.2, "lon": 1.2, "alt": 3000})
 
     trail = store.get_trail(icao_hex)
     assert trail == [
-        {"latitude": 1.0, "longitude": 1.0, "altitude": 1000},
-        {"latitude": 1.1, "longitude": 1.1, "altitude": 1000},
-        {"latitude": 1.2, "longitude": 1.2, "altitude": 3000},
+        {"lat": 1.0, "lon": 1.0, "alt": 1000},
+        {"lat": 1.1, "lon": 1.1, "alt": 1000},
+        {"lat": 1.2, "lon": 1.2, "alt": 3000},
     ]
 
 
@@ -221,18 +221,18 @@ def test_trail_not_appended_before_position_known(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 1.0, {"velocity": 200.0, "heading": 45.0})
+    store.apply_update(icao_hex, "position", 1.0, {"velocity": 200.0, "hdg": 45.0})
     assert store.get_trail(icao_hex) == []
 
-    store.apply_update(icao_hex, "position", 2.0, {"latitude": 9.0, "longitude": 9.0})
-    assert store.get_trail(icao_hex) == [{"latitude": 9.0, "longitude": 9.0, "altitude": None}]
+    store.apply_update(icao_hex, "position", 2.0, {"lat": 9.0, "lon": 9.0})
+    assert store.get_trail(icao_hex) == [{"lat": 9.0, "lon": 9.0, "alt": None}]
 
 
 def test_metadata_packets_do_not_append_to_trail(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
+    store.apply_update(icao_hex, "position", 1.0, {"lat": 1.0, "lon": 1.0})
     store.apply_update(icao_hex, "metadata", 2.0, {"ident": "TST1"})
 
     assert len(store.get_trail(icao_hex)) == 1
@@ -246,13 +246,13 @@ def test_list_flights_returns_one_entry_per_tracked_aircraft(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     hex_a, hex_b = _hex(), _hex()
 
-    store.apply_update(hex_a, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
-    store.apply_update(hex_b, "position", 1.0, {"latitude": 2.0, "longitude": 2.0})
+    store.apply_update(hex_a, "position", 1.0, {"lat": 1.0, "lon": 1.0})
+    store.apply_update(hex_b, "position", 1.0, {"lat": 2.0, "lon": 2.0})
 
     flights = {f["icao_hex"]: f for f in store.list_flights()}
     assert set(flights) == {hex_a, hex_b}
-    assert flights[hex_a]["latitude"] == 1.0
-    assert flights[hex_b]["latitude"] == 2.0
+    assert flights[hex_a]["lat"] == 1.0
+    assert flights[hex_b]["lat"] == 2.0
 
 
 def test_get_flight_returns_none_for_unknown_aircraft(redis_client):
@@ -296,9 +296,9 @@ def test_apply_update_issues_exactly_one_round_trip(redis_client, monkeypatch):
     other_call_names = ("hget", "hset", "expire", "set", "rpush", "pipeline")
     other_calls = {name: _count_calls(monkeypatch, redis_client, name) for name in other_call_names}
 
-    merged = store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
+    merged = store.apply_update(icao_hex, "position", 1.0, {"lat": 1.0, "lon": 1.0})
 
-    assert merged == {"icao_hex": icao_hex, "latitude": 1.0, "longitude": 1.0}
+    assert merged == {"icao_hex": icao_hex, "lat": 1.0, "lon": 1.0}
     assert len(evalsha_calls) == 1
     for name, calls in other_calls.items():
         assert calls == [], f"expected no direct {name} calls, got {len(calls)}"
@@ -313,7 +313,7 @@ def test_list_flights_issues_one_pipelined_round_trip_not_n_plus_one(redis_clien
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     hexes = [_hex() for _ in range(5)]
     for i, icao_hex in enumerate(hexes):
-        store.apply_update(icao_hex, "position", 1.0, {"latitude": float(i), "longitude": float(i)})
+        store.apply_update(icao_hex, "position", 1.0, {"lat": float(i), "lon": float(i)})
 
     direct_hgetall_calls = _count_calls(monkeypatch, redis_client, "hgetall")
 
@@ -378,7 +378,7 @@ def test_eviction_fires_stale_then_hide_then_remove_at_correct_ttls(redis_client
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.0, "lon": 1.0})
 
     # All three keys exist immediately after the update.
     assert redis_client.exists(flight_live_key(icao_hex))
@@ -406,7 +406,7 @@ def test_hide_leaves_detail_and_trail_intact(redis_client):
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.0, "lon": 1.0})
 
     events = _drain_expired_events(redis_client, store, deadline=time.monotonic() + 4.0)
     kinds_for_hex = [e["type"] for e in events if e["icao_hex"] == icao_hex]
@@ -418,7 +418,7 @@ def test_hide_leaves_detail_and_trail_intact(redis_client):
     assert redis_client.exists(flight_visible_key(icao_hex)) == 0
     # ...but detail and trail are both still fully intact.
     assert store.get_flight(icao_hex) is not None
-    assert store.get_flight(icao_hex)["latitude"] == 1.0
+    assert store.get_flight(icao_hex)["lat"] == 1.0
     assert redis_client.exists(flight_trail_key(icao_hex))
     # list_flights (GET /api/flights) must now omit the hidden aircraft.
     assert icao_hex not in {f["icao_hex"] for f in store.list_flights()}
@@ -428,9 +428,9 @@ def test_visible_key_refreshed_on_update(redis_client):
     store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=1, evict_seconds=5)
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.0, "lon": 1.0})
     time.sleep(0.6)
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.1, "longitude": 1.1})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.1, "lon": 1.1})
     time.sleep(0.6)
 
     # 1.2s elapsed > hide_seconds=1, but the refresh on the second update
@@ -444,10 +444,10 @@ def test_update_refreshes_ttl_so_live_aircraft_never_goes_stale(redis_client):
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.0, "longitude": 1.0})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.0, "lon": 1.0})
     time.sleep(0.6)
     # Refresh before the 1s stale TTL would otherwise fire.
-    store.apply_update(icao_hex, "position", time.time(), {"latitude": 1.1, "longitude": 1.1})
+    store.apply_update(icao_hex, "position", time.time(), {"lat": 1.1, "lon": 1.1})
     time.sleep(0.6)
 
     # 1.2s of elapsed time > stale_seconds=1, but the refresh reset the

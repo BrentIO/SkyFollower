@@ -102,7 +102,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
       const positions: Record<string, { x: number; y: number }> = {};
       for (const a of Object.values(current)) {
         if (!hasPosition(a)) continue;
-        const p = map.project([a.longitude, a.latitude]);
+        const p = map.project([a.lon, a.lat]);
         positions[a.icao_hex] = { x: p.x, y: p.y };
       }
       setScreenPositions(positions);
@@ -219,7 +219,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     const positions: Record<string, { x: number; y: number }> = {};
     for (const a of Object.values(aircraft)) {
       if (!hasPosition(a)) continue;
-      const p = map.project([a.longitude, a.latitude]);
+      const p = map.project([a.lon, a.lat]);
       positions[a.icao_hex] = { x: p.x, y: p.y };
     }
     setScreenPositions(positions);

@@ -146,8 +146,8 @@ drop datagrams that arrive in the meantime.
 ### Out-of-order protection
 
 Each incoming packet carries the source ADS-B message's original
-timestamp (`position`'s `timestamp` field directly; `metadata`'s
-`last_message` field, since it has no dedicated `timestamp` key -- both
+timestamp (`position`'s `ts` field directly; `metadata`'s
+`last_message` field, since it has no dedicated `ts` key -- both
 are stamped from the same `received_at` value for one source message, see
 `_extract_timestamp()` in `map/main.py`). A packet strictly older than the
 last one actually applied for that `icao_hex` is silently dropped, so a
@@ -172,8 +172,10 @@ bearing on which fields a packet may contain (see Partial Updates below).
 A real ADS-B message almost never carries position (lat/lon/altitude) and
 velocity (groundspeed/heading/vertical_speed) data at the same time --
 they come from physically different squitter types. `position` messages
-routinely carry only a subset of `{latitude, longitude, altitude, velocity,
-heading, vertical_speed}`.
+routinely carry only a subset of `{lat, lon, alt, velocity, hdg, vs}`
+(the wire protocol's deliberately abbreviated field names -- see
+[Map UDP Publisher](../message-processor/README.md#map-udp-publisher) in
+message-processor/README.md).
 
 Every incoming field is merged into the aircraft's existing current-state
 via a field-level Redis `HSET` on `flight:detail:{icao_hex}` -- never a
@@ -204,7 +206,7 @@ aircraft, plus one untracked-by-aircraft key for the processor roster:
 | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale` |
 | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
-| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{latitude, longitude, altitude}` snapshots, one `RPUSH` per accepted `position` update (once latitude/longitude are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above |
+| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 
 These key families are local to this service and are not part of
@@ -362,7 +364,7 @@ connect, then open the WebSocket for live updates).
 
 | Type | When | Payload |
 |---|---|---|
-| `position` | A `position` UDP packet was applied | The aircraft's current merged position-relevant fields only (`icao_hex` plus whichever of `latitude`/`longitude`/`altitude`/`velocity`/`heading`/`vertical_speed` are currently known) -- a field the aircraft has never reported is omitted, never sent as `null` |
+| `position` | A `position` UDP packet was applied | The aircraft's current merged position-relevant fields only (`icao_hex` plus whichever of `lat`/`lon`/`alt`/`velocity`/`hdg`/`vs` are currently known) -- a field the aircraft has never reported is omitted, never sent as `null` |
 | `metadata` | A `metadata` UDP packet was applied | The **full** merged current-state -- both position and metadata fields -- matching `GET /api/flights`' per-aircraft shape exactly. A client that only just connected (and so missed any earlier `position` events) still has everything needed to place and label the aircraft the first time it hears about it |
 | `stale` | `flight:live:{icao_hex}` expired | `{"type": "stale", "icao_hex": ...}` -- fade signal |
 | `hide` | `flight:visible:{icao_hex}` expired | `{"type": "hide", "icao_hex": ...}` -- drop-from-view signal. The client must keep the aircraft's record and trail (see `src/lib/aircraftState.ts`), only omitting it from what's drawn, so a resumed flight bridges the gap as one continuous trail |
@@ -378,12 +380,31 @@ array of event objects -- rather than one frame per update. See
 ### Compression
 
 `permessage-deflate` is negotiated automatically whenever a connecting
-client offers it. This requires no extra code: uvicorn's `websockets`
-ASGI implementation (selected automatically once the `websockets` package
-is installed -- see `map/requirements.txt`) defaults its
-`ws_per_message_deflate` config option to `True`, wrapping every
-WebSocket connection in a `ServerPerMessageDeflateFactory` extension
-unconditionally.
+client offers it. This requires no extra code: `map/main.py`'s
+`uvicorn.run(...)` call sets no `ws`/`ws_per_message_deflate` kwargs at
+all, so it rides uvicorn's own default -- `ws_per_message_deflate=True` --
+which wraps every WebSocket connection in a `ServerPerMessageDeflateFactory`
+extension unconditionally, regardless of which of uvicorn's WebSocket
+implementations `ws="auto"` happens to select (currently
+`websockets-sansio` for the pinned `uvicorn`/`websockets` versions in
+`map/requirements.txt` -- both it and the older `websockets` implementation
+read the same `ws_per_message_deflate` config flag). Confirmed directly
+against those pinned versions: a real WebSocket handshake against this
+service's `/ws` endpoint returns an HTTP 101 response whose
+`Sec-WebSocket-Extensions` header includes `permessage-deflate`.
+
+**Verifying this**: don't trust browser DevTools' Network/WS frame
+inspector -- it shows the *decompressed* payload regardless of whether
+`permessage-deflate` was actually negotiated on the wire, since the
+browser's own WebSocket implementation transparently decompresses before
+handing frames to DevTools. To actually confirm compression is
+negotiating, inspect the HTTP 101 upgrade response's headers directly --
+e.g. in a browser, DevTools' Network panel still shows the raw response
+*headers* for the `/ws` request (separate from the frame inspector) and
+one of them will be `Sec-WebSocket-Extensions: permessage-deflate; ...`;
+or from the command line/a script, open a raw WebSocket handshake (e.g.
+Python's `websockets` client) and read `.response.headers` for the same
+header.
 
 ## Fault Tolerance
 

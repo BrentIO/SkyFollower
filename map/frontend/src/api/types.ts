@@ -28,12 +28,12 @@ export interface AircraftInfo {
 // may have only position fields, or only metadata fields, so far.
 export interface MapFlight {
   icao_hex: string;
-  latitude?: number;
-  longitude?: number;
-  altitude?: number;
+  lat?: number;
+  lon?: number;
+  alt?: number;
   velocity?: number;
-  heading?: number;
-  vertical_speed?: number;
+  hdg?: number;
+  vs?: number;
   ident?: string;
   aircraft?: AircraftInfo;
   squawk?: string;
@@ -44,7 +44,7 @@ export interface MapFlight {
   matched_rules?: string[];
 }
 
-export interface MapWsPositionEvent extends Pick<MapFlight, "latitude" | "longitude" | "altitude" | "velocity" | "heading" | "vertical_speed"> {
+export interface MapWsPositionEvent extends Pick<MapFlight, "lat" | "lon" | "alt" | "velocity" | "hdg" | "vs"> {
   type: "position";
   icao_hex: string;
 }

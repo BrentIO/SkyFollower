@@ -57,28 +57,28 @@ describe("formatGroundspeed", () => {
 
 describe("formatAltitudeSpeedLine", () => {
   it("renders the full example from the design spec", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: -1200, velocity: 450 })).toBe("35000↓ 450kt");
+    expect(formatAltitudeSpeedLine({ alt: 35000, vs: -1200, velocity: 450 })).toBe("35000↓ 450kt");
   });
 
   it("omits the arrow entirely when level", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: 0, velocity: 450 })).toBe("35000 450kt");
+    expect(formatAltitudeSpeedLine({ alt: 35000, vs: 0, velocity: 450 })).toBe("35000 450kt");
   });
 
   it("omits the groundspeed half when velocity is unknown, keeping altitude+arrow", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 12000, vertical_speed: 1500, velocity: null })).toBe("12000↑");
+    expect(formatAltitudeSpeedLine({ alt: 12000, vs: 1500, velocity: null })).toBe("12000↑");
   });
 
   it("omits the altitude+arrow half when altitude is unknown, keeping groundspeed", () => {
-    expect(formatAltitudeSpeedLine({ altitude: null, vertical_speed: 1500, velocity: 200 })).toBe("200kt");
+    expect(formatAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 })).toBe("200kt");
   });
 
   it("never attaches an arrow to a missing altitude even if vertical_speed is known", () => {
-    const result = formatAltitudeSpeedLine({ altitude: null, vertical_speed: 1500, velocity: 200 });
+    const result = formatAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 });
     expect(result).not.toContain("↑");
   });
 
   it("returns null (whole line omitted) when both altitude and velocity are unknown", () => {
-    expect(formatAltitudeSpeedLine({ altitude: null, vertical_speed: null, velocity: null })).toBeNull();
+    expect(formatAltitudeSpeedLine({ alt: null, vs: null, velocity: null })).toBeNull();
   });
 });
 
@@ -130,8 +130,8 @@ describe("buildInfoBoxLines", () => {
   it("builds all three lines in the fixed ident/altitude-speed/registration-type order", () => {
     const lines = buildInfoBoxLines({
       ident: "DAL659",
-      altitude: 35000,
-      vertical_speed: -1200,
+      alt: 35000,
+      vs: -1200,
       velocity: 450,
       aircraft: { registration: "N988DL", type_designator: "B752" },
     });
@@ -145,8 +145,8 @@ describe("buildInfoBoxLines", () => {
   it("drops to a 2-line box when only registration/type is missing", () => {
     const lines = buildInfoBoxLines({
       ident: "DAL659",
-      altitude: 35000,
-      vertical_speed: 0,
+      alt: 35000,
+      vs: 0,
       velocity: 450,
       aircraft: {},
     });

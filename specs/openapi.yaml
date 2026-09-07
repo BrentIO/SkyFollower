@@ -2178,21 +2178,21 @@ components:
         icao_hex:
           type: string
           title: Icao Hex
-        latitude:
+        lat:
           anyOf:
           - type: number
           - type: 'null'
-          title: Latitude
-        longitude:
+          title: Lat
+        lon:
           anyOf:
           - type: number
           - type: 'null'
-          title: Longitude
-        altitude:
+          title: Lon
+        alt:
           anyOf:
           - type: integer
           - type: 'null'
-          title: Altitude
+          title: Alt
           description: feet MSL
         velocity:
           anyOf:
@@ -2200,17 +2200,17 @@ components:
           - type: 'null'
           title: Velocity
           description: knots
-        heading:
+        hdg:
           anyOf:
           - type: number
           - type: 'null'
-          title: Heading
+          title: Hdg
           description: degrees 0-359
-        vertical_speed:
+        vs:
           anyOf:
           - type: integer
           - type: 'null'
-          title: Vertical Speed
+          title: Vs
           description: ft/min; negative = descending
         aircraft:
           anyOf:

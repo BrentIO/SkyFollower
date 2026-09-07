@@ -91,11 +91,11 @@ local altitude_value = nil
 for i = 1, #raw, 2 do
     local field = raw[i]
     local value = raw[i + 1]
-    if field == 'latitude' then
+    if field == 'lat' then
         latitude_value = value
-    elseif field == 'longitude' then
+    elseif field == 'lon' then
         longitude_value = value
-    elseif field == 'altitude' then
+    elseif field == 'alt' then
         altitude_value = value
     end
     if field ~= LAST_APPLIED_TIMESTAMP_FIELD then
@@ -111,9 +111,9 @@ local merged_json = '{' .. table.concat(parts, ',') .. '}'
 -- to plot yet. altitude defaults to JSON null (not omitted) so every trail
 -- point has the same shape regardless of whether altitude is known yet.
 if msg_type == 'position' and latitude_value and longitude_value then
-    local point = '{"latitude":' .. latitude_value ..
-        ',"longitude":' .. longitude_value ..
-        ',"altitude":' .. (altitude_value or 'null') .. '}'
+    local point = '{"lat":' .. latitude_value ..
+        ',"lon":' .. longitude_value ..
+        ',"alt":' .. (altitude_value or 'null') .. '}'
     redis.call('RPUSH', trail_key, point)
     redis.call('EXPIRE', trail_key, evict_seconds)
 end
