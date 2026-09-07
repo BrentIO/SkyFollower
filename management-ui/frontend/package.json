@@ -13,7 +13,7 @@
   "dependencies": {
     "@mdi/js": "^7.4.47",
     "lucide-react": "^1.39.0",
-    "maplibre-gl": "^6.6.0",
+    "maplibre-gl": "^6.7.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.18.3",
