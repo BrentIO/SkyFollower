@@ -12,13 +12,20 @@ import {
   hasPosition,
   trailFeatureCollection,
 } from "../lib/featureCollections";
+import {
+  AIRCRAFT_LAYER_ID,
+  AIRCRAFT_SOURCE_ID,
+  RANGE_RING_LABEL_LAYER_ID,
+  RANGE_RING_LABEL_SOURCE_ID,
+  RANGE_RING_LAYER_ID,
+  RANGE_RING_SOURCE_ID,
+  SELECTABLE_LAYER_IDS,
+  TRAIL_LAYER_ID,
+  TRAIL_SOURCE_ID,
+} from "../lib/mapLayerIds";
+import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
-
-const AIRCRAFT_SOURCE_ID = "sf-aircraft";
-const AIRCRAFT_LAYER_ID = "sf-aircraft-icons";
-const TRAIL_SOURCE_ID = "sf-trails";
-const TRAIL_LAYER_ID = "sf-trails-line";
 
 // Top-level export: fetches runtime config (GET /api/config -- see
 // map/lib/config.ts's loadConfig) once before the actual map ever mounts,
@@ -111,6 +118,44 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.on("load", () => {
       map.addImage(AIRCRAFT_ICON_ID, buildAircraftIconImageData(), { sdf: true });
 
+      // Static "home" range rings (100/150/200nmi) -- computed once from
+      // config.home, which never changes after this component mounts (see
+      // MapView above). Added before the trail/aircraft layers so they
+      // render beneath live traffic. Not part of SELECTABLE_LAYER_IDS, so
+      // clicking a ring or its label never triggers aircraft selection.
+      map.addSource(RANGE_RING_SOURCE_ID, {
+        type: "geojson",
+        data: rangeRingsFeatureCollection(config.home),
+      });
+      map.addLayer({
+        id: RANGE_RING_LAYER_ID,
+        type: "line",
+        source: RANGE_RING_SOURCE_ID,
+        paint: { "line-color": "#000000", "line-width": 1 },
+      });
+
+      map.addSource(RANGE_RING_LABEL_SOURCE_ID, {
+        type: "geojson",
+        data: rangeRingLabelsFeatureCollection(config.home),
+      });
+      map.addLayer({
+        id: RANGE_RING_LABEL_LAYER_ID,
+        type: "symbol",
+        source: RANGE_RING_LABEL_SOURCE_ID,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 11,
+          "text-anchor": "top",
+          "text-offset": [0, 0.3],
+          "text-allow-overlap": true,
+        },
+        paint: {
+          "text-color": "#000000",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
+        },
+      });
+
       map.addSource(TRAIL_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
       map.addLayer({
         id: TRAIL_LAYER_ID,
@@ -144,30 +189,35 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
       });
 
-      map.on("click", AIRCRAFT_LAYER_ID, (e) => {
-        const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
-        if (!icaoHex) return;
-        setSelected((prev) => {
-          const next = new Set(prev);
-          if (next.has(icaoHex)) next.delete(icaoHex);
-          else next.add(icaoHex);
-          return next;
+      // Only SELECTABLE_LAYER_IDS ever gets click/hover handlers -- range
+      // rings and their labels are intentionally not in that list, so they
+      // can never be selected or hovered (see #1587).
+      for (const layerId of SELECTABLE_LAYER_IDS) {
+        map.on("click", layerId, (e) => {
+          const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
+          if (!icaoHex) return;
+          setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(icaoHex)) next.delete(icaoHex);
+            else next.add(icaoHex);
+            return next;
+          });
         });
-      });
-      map.on("mouseenter", AIRCRAFT_LAYER_ID, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", AIRCRAFT_LAYER_ID, () => {
-        map.getCanvas().style.cursor = "";
-        setHoveredId(null);
-      });
-      // Transient label-on-hover -- tracked separately from click-select
-      // so a hovered box disappears again on mouseleave rather than
-      // sticking around like a selection does.
-      map.on("mousemove", AIRCRAFT_LAYER_ID, (e) => {
-        const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
-        setHoveredId(icaoHex ?? null);
-      });
+        map.on("mouseenter", layerId, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+          setHoveredId(null);
+        });
+        // Transient label-on-hover -- tracked separately from click-select
+        // so a hovered box disappears again on mouseleave rather than
+        // sticking around like a selection does.
+        map.on("mousemove", layerId, (e) => {
+          const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
+          setHoveredId(icaoHex ?? null);
+        });
+      }
 
       // Home / centered reference point -- a fixed marker from config,
       // never derived from received data.
