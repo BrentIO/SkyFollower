@@ -194,6 +194,15 @@ DEFAULT_FLIGHT_TTL_SECONDS = 300
 # per update.
 MAP_WS_BATCH_INTERVAL_SECONDS = 0.25
 
+# Fallback for MAP_UDP_MIN_POSITION_INTERVAL_SECONDS when unset -- the
+# minimum spacing, per icao_hex, between `position` datagrams message
+# processor's _MapUdpPublisher will actually send toward the map service.
+# Sub-second position updates aren't perceptible on a map, so this is the
+# single biggest lever on UDP volume / map-Redis write rate. Like
+# DEFAULT_FLIGHT_TTL_SECONDS above, this is the one operator-tunable value
+# here (via that env var), so only its fallback default lives here.
+DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS = 1
+
 # --- Rule trigger counters --------------------------------------------------
 
 # TTL the message processor sets on each rule_triggers:{identifier}:{date}

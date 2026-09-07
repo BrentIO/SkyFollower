@@ -483,15 +483,28 @@ class TestBlockHelpers:
     def test_map_udp_config_never_raises_on_its_own(self, monkeypatch):
         """Same optional-endpoint convention as mqtt_config() -- both
         MAP_UDP_HOST/MAP_UDP_PORT unset must not raise, and must leave the
-        feature fully disabled (blank host, port 0)."""
+        feature fully disabled (blank host, port 0), with the position
+        throttle defaulting to 1 second."""
         monkeypatch.delenv("MAP_UDP_HOST", raising=False)
         monkeypatch.delenv("MAP_UDP_PORT", raising=False)
-        assert map_udp_config() == {"host": "", "port": 0}
+        monkeypatch.delenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", raising=False)
+        assert map_udp_config() == {
+            "host": "", "port": 0, "min_position_interval_seconds": 1,
+        }
 
     def test_map_udp_config_reads_host_and_port(self, monkeypatch):
         monkeypatch.setenv("MAP_UDP_HOST", "map.example.com")
         monkeypatch.setenv("MAP_UDP_PORT", "9999")
-        assert map_udp_config() == {"host": "map.example.com", "port": 9999}
+        monkeypatch.delenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", raising=False)
+        assert map_udp_config() == {
+            "host": "map.example.com", "port": 9999, "min_position_interval_seconds": 1,
+        }
+
+    def test_map_udp_config_reads_min_position_interval(self, monkeypatch):
+        monkeypatch.setenv("MAP_UDP_HOST", "map.example.com")
+        monkeypatch.setenv("MAP_UDP_PORT", "9999")
+        monkeypatch.setenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", "2.5")
+        assert map_udp_config()["min_position_interval_seconds"] == 2.5
 
     def test_helpers_share_a_loader_when_given_one(self):
         loader = ConfigLoader({})
