@@ -271,7 +271,7 @@ cd map/frontend
 npm install
 npm run dev       # Vite dev server on :5173, serving the app under /map/ (base: '/map/'
                    # in vite.config.ts, matching production) and proxying /api and /ws
-                   # to localhost:8090
+                   # to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- altitudeColor, info-box formatting, and overlap-placement unit tests
 ```
