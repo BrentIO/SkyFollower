@@ -59,8 +59,8 @@ export default defineConfig({
       // map/README.md's MAP_HTTP_PORT default -- proxies both the REST
       // snapshot and the WebSocket (ws: true) during `vite dev` so
       // VITE_MAP_API_BASE_URL can be left unset locally.
-      "/api": "http://localhost:8090",
-      "/ws": { target: "ws://localhost:8090", ws: true },
+      "/api": "http://localhost:80",
+      "/ws": { target: "ws://localhost:80", ws: true },
     },
   },
 });
