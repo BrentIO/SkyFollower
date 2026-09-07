@@ -356,6 +356,26 @@ def get_flights() -> list[dict]:
     return _store.list_flights()
 
 
+@app.get("/api/config", tags=["config"])
+def get_config() -> dict:
+    """Runtime configuration the frontend can't otherwise get at -- Vite
+    bakes VITE_* values into the bundle at `npm run build` time, so a
+    published image built with none set has no way to carry a per-
+    deployment "home" reference point without a runtime channel like this
+    one (see shared/config.py's map_config(), MAP_HOME_LATITUDE/
+    MAP_HOME_LONGITUDE, and map/frontend/src/lib/config.ts's loadConfig()).
+
+    A flat top-level object with named sub-keys -- not a bare value -- so a
+    later addition (e.g. stale_seconds/evict_seconds) doesn't need a
+    breaking shape change."""
+    latitude = _cfg.get("map_home_latitude")
+    longitude = _cfg.get("map_home_longitude")
+    home = None
+    if latitude is not None and longitude is not None:
+        home = {"latitude": latitude, "longitude": longitude}
+    return {"home": home}
+
+
 @app.websocket("/ws")
 async def flights_ws(websocket: WebSocket) -> None:
     """One connection per browser. Never sends a snapshot -- only

@@ -498,22 +498,34 @@ prompt_int_range() {
 
 prompt_number_range() {
   # Latitude/longitude -- decimal, not integer, so validated with a regex
-  # rather than shell integer comparison.
-  local varname="$1" label="$2" default="$3" min="$4" max="$5"
+  # rather than shell integer comparison. `required` (default 1, matching
+  # prompt_string's own convention) lets a caller allow a blank answer to
+  # mean "leave this feature disabled" -- see collect_map_env()'s home
+  # lat/long -- instead of forcing a numeric value.
+  local varname="$1" label="$2" default="$3" min="$4" max="$5" required="${6:-1}"
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
     local val="${!varname:-$default}"
     if [ -z "$val" ]; then
-      record_problem "$varname is required but is not set"
+      if [ "$required" -eq 1 ]; then
+        record_problem "$varname is required but is not set"
+      fi
     elif ! python3 -c "import sys; v=float('$val'); sys.exit(0 if $min<=v<=$max else 1)" 2>/dev/null; then
       record_problem "$varname must be a number between $min and $max (got '$val')"
     fi
     printf '%s' "$val"
     return
   fi
-  local input
+  local input prompt_default="$default"
+  if [ -z "$prompt_default" ] && [ "$required" -eq 0 ]; then
+    prompt_default="blank to disable"
+  fi
   while true; do
-    read -r -p "  ${label} [${default:-required}]: " input </dev/tty
+    read -r -p "  ${label} [${prompt_default:-required}]: " input </dev/tty
     input="${input:-$default}"
+    if [ -z "$input" ] && [ "$required" -eq 0 ]; then
+      printf '%s' ""
+      return
+    fi
     if [ -n "$input" ] && python3 -c "import sys; v=float('$input'); sys.exit(0 if $min<=v<=$max else 1)" 2>/dev/null; then
       printf '%s' "$input"
       return
@@ -1123,13 +1135,14 @@ collect_map_env() {
   MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
   probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
 
-  # The frontend's own centered-reference-point config (VITE_HOME_LATITUDE/
-  # VITE_HOME_LONGITUDE, per map/frontend/.env.example) is deliberately NOT
-  # prompted for here: it's a Vite build-time value baked into the frontend
-  # bundle at `npm run build`, not a runtime container env var this backend
-  # role's .env/docker-compose.map.yaml ever reads -- same reason
-  # management-ui/frontend's VITE_VERSION/VITE_COMMIT aren't install.sh
-  # prompts either. See map/frontend/.env.example directly.
+  # Optional "home" reference point for the frontend's on-map marker,
+  # initial camera position, and "Recenter on home" button -- read at
+  # runtime by this backend role and served to the frontend over GET
+  # /api/config (shared/config.py's map_config(), MAP_HOME_LATITUDE/
+  # MAP_HOME_LONGITUDE), not a Vite build-time value. Both or neither:
+  # leave blank to leave the feature disabled.
+  MAP_HOME_LATITUDE="$(prompt_number_range MAP_HOME_LATITUDE "Home reference latitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LATITUDE)" -90 90 0)"
+  MAP_HOME_LONGITUDE="$(prompt_number_range MAP_HOME_LONGITUDE "Home reference longitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LONGITUDE)" -180 180 0)"
 
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
@@ -1154,6 +1167,11 @@ MAP_REDIS_PASSWORD=${MAP_REDIS_PASSWORD}
 # than MAP_EVICT_SECONDS.
 MAP_STALE_SECONDS=${MAP_STALE_SECONDS}
 MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
+
+# Optional "home" reference point (on-map marker, initial camera position,
+# "Recenter on home"). Leave both blank to disable.
+MAP_HOME_LATITUDE=${MAP_HOME_LATITUDE}
+MAP_HOME_LONGITUDE=${MAP_HOME_LONGITUDE}
 
 # "info" or "debug".
 LOG_LEVEL=info

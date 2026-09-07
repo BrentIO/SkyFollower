@@ -43,6 +43,8 @@ Reads its configuration from environment variables via `shared/config.py`'s
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
 | `MAP_STALE_SECONDS` | ❌ | `30` | TTL on `flight:live:{icao_hex}`; expiry fades an aircraft client-side (a `stale` WebSocket event) without removing it |
 | `MAP_EVICT_SECONDS` | ❌ | `300` | TTL on `flight:detail:{icao_hex}` (and its `flight:trail:{icao_hex}`); expiry hard-removes the aircraft (a `remove` WebSocket event). Should stay clearly longer than `MAP_STALE_SECONDS` |
+| `MAP_HOME_LATITUDE` | ❌ | — | Centered reference point ("home") for the frontend's on-map marker, initial camera position, and "Recenter on home" button. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
+| `MAP_HOME_LONGITUDE` | ❌ | — | |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 The WebSocket batching interval (~250ms) is not an environment variable --
@@ -168,6 +170,20 @@ exists). Each object is the same shape a WebSocket `metadata` message
 carries: the full merged current-state, combining both position fields and
 metadata fields into one object per aircraft, not two separate lists.
 
+`GET /api/config` -- runtime configuration the frontend can't otherwise
+get at, since Vite bakes `VITE_*` values into the bundle at `npm run
+build` time and the published image is built with none of them set. A
+flat top-level object with named sub-keys, so a later addition doesn't
+need a breaking shape change:
+
+```json
+{ "home": { "latitude": 33.9425, "longitude": -118.4081 } }
+```
+
+or `{ "home": null }` when `MAP_HOME_LATITUDE`/`MAP_HOME_LONGITUDE` are
+unset. See [Configuration](#configuration) above and `src/lib/config.ts`
+under [Frontend](#frontend-frontend) below.
+
 ## WebSocket API
 
 `WS /ws` -- one connection per browser. Carries `position`, `metadata`,
@@ -244,7 +260,8 @@ top of a cluster), a client-accumulated live trail per aircraft (this
 service has no trail/history endpoint -- see REST API above -- so the
 frontend builds each aircraft's trail itself, purely from `position`
 events observed after the page loaded), and a fixed "home" marker/recenter
-button from build-time config.
+button from the backend's `GET /api/config` (see
+[REST API](#rest-api) above).
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
   `altitudeColor()`; used for both the icon fill and the live trail color.
@@ -282,11 +299,22 @@ npm test          # vitest -- altitudeColor, info-box formatting, and label stac
 
 ### Frontend Configuration
 
-Build-time only (Vite's `import.meta.env.VITE_*`, baked into the bundle at
-`npm run build` time, not read at container runtime -- see `.env.example`):
+`src/lib/config.ts`'s `loadConfig()` fetches `GET /api/config` (see
+[REST API](#rest-api) above) once at page load for the "home" reference
+point -- a runtime value read from this service's own `MAP_HOME_LATITUDE`/
+`MAP_HOME_LONGITUDE` (see [Configuration](#configuration) above), not a
+Vite build-time value. Changing it on the backend takes effect on the next
+page load; no frontend rebuild required.
+
+`VITE_MAP_API_BASE_URL` is still Vite build-time only (baked into the
+bundle at `npm run build` time -- see `.env.example`):
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `VITE_MAP_API_BASE_URL` | ❌ | same-origin | Base URL of this service's REST/WebSocket API. Leave unset when the built frontend is served from the same host:port as this service |
-| `VITE_HOME_LATITUDE` | ❌ | — | Centered reference point for the "home" marker and initial camera. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target |
-| `VITE_HOME_LONGITUDE` | ❌ | — | |
+
+`VITE_HOME_LATITUDE`/`VITE_HOME_LONGITUDE` still exist, but only as an
+`npm run dev` fallback (Vite's dev server has no backend at the same
+origin to serve `GET /api/config` unless a proxy is set up) -- see
+`.env.example`. They have no effect on a production build or the
+published image.

@@ -236,6 +236,8 @@ Declining falls through to entering those values by hand. See
 | `MAP_REDIS_PASSWORD` | ❌ | — |
 | `MAP_STALE_SECONDS` | ❌ | `30` |
 | `MAP_EVICT_SECONDS` | ❌ | `300` |
+| `MAP_HOME_LATITUDE` | ❌ | — |
+| `MAP_HOME_LONGITUDE` | ❌ | — |
 
 `MAP_REDIS_HOST` is this role's own dedicated `map-redis` (bundled in
 `docker-compose.map.yaml`), never core Redis -- `scripts/install.sh`
@@ -245,15 +247,22 @@ rather than reading a `REDIS_HOST` value from another role's `.env`.
 default (same "trusted network" posture as `management-ui`), so this is
 only set when pointing at an external, already-secured Redis instead.
 `MAP_LISTEN_PORT` must match whatever `message-processor`'s `MAP_UDP_PORT`
-(above) is set to.
+(above) is set to. `MAP_HOME_LATITUDE`/`MAP_HOME_LONGITUDE` are the
+frontend's "home" marker/recenter reference point -- both optional
+(together, or neither), read at runtime and served to the frontend over
+`GET /api/config` rather than baked into the frontend bundle, so changing
+them takes effect on the next page load with no image rebuild.
 
-The frontend's own build-time configuration (`VITE_MAP_API_BASE_URL`,
-`VITE_HOME_LATITUDE`/`VITE_HOME_LONGITUDE`) is not part of this table --
-see [Map](https://github.com/BrentIO/SkyFollower/blob/main/map/README.md#frontend-configuration)'s
-"Frontend Configuration" section. Those are Vite `import.meta.env.VITE_*`
-values baked into the frontend's static bundle at `npm run build` time,
+The frontend's own build-time configuration (`VITE_MAP_API_BASE_URL`) is
+not part of this table -- see
+[Map](https://github.com/BrentIO/SkyFollower/blob/main/map/README.md#frontend-configuration)'s
+"Frontend Configuration" section. It's a Vite `import.meta.env.VITE_*`
+value baked into the frontend's static bundle at `npm run build` time,
 read from `map/frontend/.env`, not a runtime container environment
 variable `scripts/install.sh` or `docker-compose.map.yaml` ever touches.
+That same section also covers `VITE_HOME_LATITUDE`/`VITE_HOME_LONGITUDE`,
+which only matter for `npm run dev` -- they have no effect on a
+production build or the published image.
 
 See the component pages for everything beyond configuration:
 [Receiver](/components/receiver), [Message Processor](/components/message-processor),
