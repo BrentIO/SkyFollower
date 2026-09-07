@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 from typing import Optional
 
 logger = logging.getLogger("map.state_store")
+
+_LUA_PATH = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "map_apply_update.lua"
 
 _LIVE_PREFIX = "flight:live:"
 _DETAIL_PREFIX = "flight:detail:"
@@ -39,15 +42,6 @@ _TRAIL_PREFIX = "flight:trail:"
 # the last packet actually applied for this icao_hex, used for the
 # out-of-order guard (see apply_update). Never returned from get_flight().
 _LAST_APPLIED_TIMESTAMP_FIELD = "_last_applied_timestamp"
-
-# Tolerance applied around the out-of-order comparison in apply_update --
-# see that method's docstring for why a bare `<` misreads a `metadata`
-# packet's ISO-8601-round-tripped timestamp as older than a same-tick
-# `position` packet's raw float timestamp. 1ms is many orders of magnitude
-# looser than the sub-microsecond noise that round-trip introduces, and
-# many orders of magnitude tighter than any real spacing between distinct
-# ADS-B messages for one aircraft.
-_TIMESTAMP_EPSILON_SECONDS = 0.001
 
 # Fields carried by a `position` UDP message (shared/config.py's
 # map_udp_config() destination; wire format is message-processor's
@@ -93,6 +87,7 @@ class FlightStateStore:
         self._redis = redis_client
         self._stale_seconds = stale_seconds
         self._evict_seconds = evict_seconds
+        self._apply_update_sha = redis_client.script_load(_LUA_PATH.read_text())
 
     def enable_keyspace_notifications(self) -> None:
         """Best-effort -- a CONFIG SET, not persisted by this
@@ -126,8 +121,9 @@ class FlightStateStore:
         strictly older than the last one applied is treated as
         out-of-order/reordered.
 
-        A small tolerance (`_TIMESTAMP_EPSILON_SECONDS`) is applied around
-        that comparison rather than a bare `<`: `position`'s `timestamp` is
+        A small tolerance is applied around that comparison rather than a
+        bare `<` (see map_apply_update.lua's TIMESTAMP_EPSILON_SECONDS):
+        `position`'s `timestamp` is
         message-processor's raw float `received_at`, while `metadata`'s
         comparison key is derived by round-tripping that same float through
         `datetime.fromtimestamp(...).isoformat()` and back (see
@@ -139,59 +135,37 @@ class FlightStateStore:
         The tolerance is many orders of magnitude tighter than any real
         ADS-B message spacing, so a genuinely reordered/stale packet is
         still rejected.
+
+        The out-of-order check, the merge HSET, both TTL refreshes, and the
+        trail RPUSH (position packets only) are all done server-side in one
+        round trip by map_apply_update.lua (shared/lua/), which also
+        returns the merged hash -- see that script for the field-by-field
+        protocol.
         """
-        key = flight_detail_key(icao_hex)
-        last_raw = self._redis.hget(key, _LAST_APPLIED_TIMESTAMP_FIELD)
-        if last_raw is not None:
-            try:
-                if timestamp < float(last_raw) - _TIMESTAMP_EPSILON_SECONDS:
-                    logger.debug(
-                        "Dropping out-of-order %s packet for %s: %s <= last-applied %s",
-                        msg_type, icao_hex, timestamp, last_raw,
-                    )
-                    return None
-            except ValueError:
-                pass  # Corrupt bookkeeping field -- treat as no prior timestamp.
-
         mapping = {k: json.dumps(v) for k, v in fields.items()}
-        mapping["icao_hex"] = json.dumps(icao_hex)
-        mapping[_LAST_APPLIED_TIMESTAMP_FIELD] = json.dumps(timestamp)
+        field_names = list(mapping.keys())
+        field_values = list(mapping.values())
 
-        pipe = self._redis.pipeline()
-        pipe.hset(key, mapping=mapping)
-        pipe.expire(key, self._evict_seconds)
-        pipe.set(flight_live_key(icao_hex), "1", ex=self._stale_seconds)
-        pipe.execute()
-
-        merged = self.get_flight(icao_hex)
-
-        # Trail accumulation: every accepted `position` packet appends the
-        # *merged* (not just this packet's) lat/lon/altitude snapshot, once
-        # a latitude/longitude are actually known -- an aircraft whose only
-        # traffic so far is velocity/heading-only position packets has
-        # nothing meaningful to plot yet.
-        if msg_type == "position" and merged and "latitude" in merged and "longitude" in merged:
-            point = {
-                "latitude": merged["latitude"],
-                "longitude": merged["longitude"],
-                "altitude": merged.get("altitude"),
-            }
-            trail_pipe = self._redis.pipeline()
-            trail_pipe.rpush(flight_trail_key(icao_hex), json.dumps(point))
-            trail_pipe.expire(flight_trail_key(icao_hex), self._evict_seconds)
-            trail_pipe.execute()
-
-        return merged
-
-    def get_flight(self, icao_hex: str) -> Optional[dict]:
-        """Decodes icao_hex's flight:detail hash into a plain dict --
-        every field JSON-decoded uniformly (nested objects like `aircraft`/
-        `operator` round-trip as dicts, lists as lists), with the internal
-        out-of-order bookkeeping field stripped. None if the aircraft isn't
-        currently tracked (hash doesn't exist / already evicted)."""
-        raw = self._redis.hgetall(flight_detail_key(icao_hex))
-        if not raw:
+        raw = self._redis.evalsha(
+            self._apply_update_sha, 0,
+            icao_hex, msg_type, timestamp,
+            json.dumps(field_names), json.dumps(field_values),
+            self._stale_seconds, self._evict_seconds,
+        )
+        if raw is None:
+            logger.debug(
+                "Dropping out-of-order %s packet for %s at timestamp %s",
+                msg_type, icao_hex, timestamp,
+            )
             return None
+        return json.loads(raw)
+
+    @staticmethod
+    def _decode_hash(raw: dict) -> dict:
+        """Shared by get_flight() and list_flights(): every field
+        JSON-decoded uniformly (nested objects like `aircraft`/`operator`
+        round-trip as dicts, lists as lists), with the internal
+        out-of-order bookkeeping field stripped."""
         result: dict = {}
         for field, value in raw.items():
             if field == _LAST_APPLIED_TIMESTAMP_FIELD:
@@ -202,17 +176,32 @@ class FlightStateStore:
                 result[field] = value
         return result
 
+    def get_flight(self, icao_hex: str) -> Optional[dict]:
+        """Decodes icao_hex's flight:detail hash into a plain dict. None if
+        the aircraft isn't currently tracked (hash doesn't exist / already
+        evicted)."""
+        raw = self._redis.hgetall(flight_detail_key(icao_hex))
+        if not raw:
+            return None
+        return self._decode_hash(raw)
+
     def list_flights(self) -> list[dict]:
         """One decoded current-state dict per currently-tracked aircraft,
         i.e. one per flight:detail:{icao_hex} hash that currently exists --
-        matches GET /api/flights exactly (see map/main.py)."""
-        flights: list[dict] = []
-        for key in self._redis.scan_iter(match=f"{_DETAIL_PREFIX}*"):
-            icao_hex = key[len(_DETAIL_PREFIX):]
-            flight = self.get_flight(icao_hex)
-            if flight is not None:
-                flights.append(flight)
-        return flights
+        matches GET /api/flights exactly (see map/main.py).
+
+        The SCAN itself may take more than one round trip on a large
+        keyspace (redis-py's scan_iter pages through cursors), but every
+        aircraft's HGETALL is issued as one pipeline -- a single round
+        trip -- instead of the previous one-HGETALL-per-aircraft N+1."""
+        keys = list(self._redis.scan_iter(match=f"{_DETAIL_PREFIX}*"))
+        if not keys:
+            return []
+        pipe = self._redis.pipeline()
+        for key in keys:
+            pipe.hgetall(key)
+        results = pipe.execute()
+        return [self._decode_hash(raw) for raw in results if raw]
 
     def get_trail(self, icao_hex: str) -> list[dict]:
         """Every accumulated trail point for icao_hex, oldest first."""

@@ -87,6 +87,11 @@ Publisher" section for the exact payload shapes
 (`message-processor/main.py`'s `_publish_map_position`/
 `_maybe_publish_map_metadata`).
 
+The socket requests a larger-than-default kernel receive buffer
+(`SO_RCVBUF`, best-effort -- the OS caps this at its own configured
+maximum) so a brief processing stall doesn't cause the kernel to silently
+drop datagrams that arrive in the meantime.
+
 ### Out-of-order protection
 
 Each incoming packet carries the source ADS-B message's original
@@ -127,6 +132,14 @@ position, and a position-only update does not blank out a previously known
 heading; it's expected and normal for an aircraft's displayed position to
 sit still while its heading updates on its own, or vice versa. `metadata`
 fields merge into the same per-aircraft hash the same way.
+
+The out-of-order check, the merge `HSET`, both TTL refreshes, and the
+trail `RPUSH` (`position` packets only) are all performed server-side in
+a single round trip by `EVALSHA` → `shared/lua/map_apply_update.lua`
+(`SCRIPT LOAD`ed once at startup, matching message-processor's
+`merge_aircraft.lua`/`route_airports.lua` convention), which also returns
+the merged current-state so `FlightStateStore.apply_update()` never needs
+a separate `HGETALL` to build the WebSocket event payload.
 
 ## Redis State
 
@@ -169,6 +182,9 @@ aircraft (i.e. one per `flight:detail:{icao_hex}` hash that currently
 exists). Each object is the same shape a WebSocket `metadata` message
 carries: the full merged current-state, combining both position fields and
 metadata fields into one object per aircraft, not two separate lists.
+`FlightStateStore.list_flights()` finds the tracked aircraft with `SCAN`,
+then issues every aircraft's `HGETALL` in a single pipeline -- one round
+trip regardless of aircraft count, not one `HGETALL` per aircraft.
 
 `GET /api/config` -- runtime configuration the frontend can't otherwise
 get at, since Vite bakes `VITE_*` values into the bundle at `npm run

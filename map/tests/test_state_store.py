@@ -254,6 +254,97 @@ def test_get_flight_returns_none_for_unknown_aircraft(redis_client):
 
 
 # ---------------------------------------------------------------------------
+# Round-trip counts -- the whole point of the Lua collapse / pipelined
+# list_flights (#1566). Each test wraps a real, live-Redis client method
+# with a counter and delegates to the original, so these prove the actual
+# number of client<->server exchanges, not just that the right data comes
+# back (already covered above).
+# ---------------------------------------------------------------------------
+
+def _count_calls(monkeypatch, obj, name):
+    """Wraps obj.name with a call counter that still delegates to the real
+    (bound) method, and returns a list whose length grows by one per call."""
+    calls: list = []
+    original = getattr(obj, name)
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(obj, name, counting)
+    return calls
+
+
+def test_apply_update_issues_exactly_one_round_trip(redis_client, monkeypatch):
+    """The old implementation issued an HGET, a pipeline (HSET+EXPIRE+SET),
+    a get_flight() HGETALL, and (for position packets) a second pipeline
+    (RPUSH+EXPIRE) -- 3-4 round trips. The EVALSHA-based implementation
+    must issue exactly one evalsha call and zero direct HGET/HSET/EXPIRE/
+    SET/RPUSH/pipeline calls -- every one of those now happens inside the
+    Lua script, invisible at the client-command level."""
+    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    icao_hex = _hex()
+
+    evalsha_calls = _count_calls(monkeypatch, redis_client, "evalsha")
+    other_call_names = ("hget", "hset", "expire", "set", "rpush", "pipeline")
+    other_calls = {name: _count_calls(monkeypatch, redis_client, name) for name in other_call_names}
+
+    merged = store.apply_update(icao_hex, "position", 1.0, {"latitude": 1.0, "longitude": 1.0})
+
+    assert merged == {"icao_hex": icao_hex, "latitude": 1.0, "longitude": 1.0}
+    assert len(evalsha_calls) == 1
+    for name, calls in other_calls.items():
+        assert calls == [], f"expected no direct {name} calls, got {len(calls)}"
+
+
+def test_list_flights_issues_one_pipelined_round_trip_not_n_plus_one(redis_client, monkeypatch):
+    """The old implementation issued one SCAN (itself possibly more than
+    one round trip on a large keyspace) plus one HGETALL per tracked
+    aircraft -- N+1. The pipelined implementation must still issue exactly
+    one execute() (one round trip for every aircraft's HGETALL combined),
+    and never call HGETALL directly (outside a pipeline) at all."""
+    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+    hexes = [_hex() for _ in range(5)]
+    for i, icao_hex in enumerate(hexes):
+        store.apply_update(icao_hex, "position", 1.0, {"latitude": float(i), "longitude": float(i)})
+
+    direct_hgetall_calls = _count_calls(monkeypatch, redis_client, "hgetall")
+
+    original_pipeline = redis_client.pipeline
+    execute_calls: list = []
+
+    def counting_pipeline(*args, **kwargs):
+        pipe = original_pipeline(*args, **kwargs)
+        original_execute = pipe.execute
+
+        def counting_execute(*a, **kw):
+            execute_calls.append(1)
+            return original_execute(*a, **kw)
+
+        pipe.execute = counting_execute
+        return pipe
+
+    monkeypatch.setattr(redis_client, "pipeline", counting_pipeline)
+
+    flights = store.list_flights()
+
+    assert {f["icao_hex"] for f in flights} == set(hexes)
+    assert len(execute_calls) == 1, "expected exactly one pipelined round trip for all aircraft"
+    assert direct_hgetall_calls == [], "expected no HGETALL issued outside the pipeline"
+
+
+def test_list_flights_empty_store_issues_no_pipeline_at_all(redis_client, monkeypatch):
+    """No tracked aircraft -- scan_iter finds nothing, so there's nothing
+    to pipeline; must not construct an empty pipeline just to execute it."""
+    store = FlightStateStore(redis_client, stale_seconds=30, evict_seconds=300)
+
+    pipeline_calls = _count_calls(monkeypatch, redis_client, "pipeline")
+
+    assert store.list_flights() == []
+    assert pipeline_calls == []
+
+
+# ---------------------------------------------------------------------------
 # TTL refresh + real keyspace-notification eviction (the part most likely
 # to have a subtle timing bug -- exercised end to end, not mocked).
 # ---------------------------------------------------------------------------
