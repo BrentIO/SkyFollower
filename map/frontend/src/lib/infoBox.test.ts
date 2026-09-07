@@ -34,14 +34,14 @@ describe("trendArrow", () => {
 });
 
 describe("formatAltitude", () => {
-  it("comma-formats full feet, never flight-level shorthand", () => {
-    expect(formatAltitude(35000)).toBe("35,000");
+  it("formats full feet with no thousands separator, never flight-level shorthand", () => {
+    expect(formatAltitude(35000)).toBe("35000");
     expect(formatAltitude(900)).toBe("900");
     expect(formatAltitude(0)).toBe("0");
   });
 
   it("rounds to the nearest foot", () => {
-    expect(formatAltitude(1250.6)).toBe("1,251");
+    expect(formatAltitude(1250.6)).toBe("1251");
   });
 });
 
@@ -57,15 +57,15 @@ describe("formatGroundspeed", () => {
 
 describe("formatAltitudeSpeedLine", () => {
   it("renders the full example from the design spec", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: -1200, velocity: 450 })).toBe("35,000↓ 450kt");
+    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: -1200, velocity: 450 })).toBe("35000↓ 450kt");
   });
 
   it("omits the arrow entirely when level", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: 0, velocity: 450 })).toBe("35,000 450kt");
+    expect(formatAltitudeSpeedLine({ altitude: 35000, vertical_speed: 0, velocity: 450 })).toBe("35000 450kt");
   });
 
   it("omits the groundspeed half when velocity is unknown, keeping altitude+arrow", () => {
-    expect(formatAltitudeSpeedLine({ altitude: 12000, vertical_speed: 1500, velocity: null })).toBe("12,000↑");
+    expect(formatAltitudeSpeedLine({ altitude: 12000, vertical_speed: 1500, velocity: null })).toBe("12000↑");
   });
 
   it("omits the altitude+arrow half when altitude is unknown, keeping groundspeed", () => {
@@ -137,7 +137,7 @@ describe("buildInfoBoxLines", () => {
     });
     expect(lines).toEqual({
       ident: "DAL659",
-      altitudeSpeed: "35,000↓ 450kt",
+      altitudeSpeed: "35000↓ 450kt",
       registrationType: "N988DL B752",
     });
   });

@@ -167,7 +167,8 @@ class TestDecode1090:
         assert data["wake_turbulence_category"] == "heavy"
 
     def test_gps_velocity(self):
-        # TC=19 subtype 1 (GPS): groundspeed=159, track≈182.88, vertical_rate=-832
+        # TC=19 subtype 1 (GPS): groundspeed=159, track≈182.8804 raw from
+        # pyModeS, rounded to 1 decimal place by _decode_1090.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="8D485020994409940838175B284F",
@@ -175,7 +176,7 @@ class TestDecode1090:
         )
         data = p._decode_1090(msg)
         assert data["velocity"] == 159
-        assert data["heading"] == pytest.approx(182.88, abs=0.01)
+        assert data["heading"] == 182.9
         assert data["vertical_speed"] == -832
 
     def test_airspeed_velocity(self):
@@ -466,6 +467,39 @@ class TestDecode1090:
         assert data["longitude"] == -73.78
         assert data["altitude"] == 38000
 
+    def test_verified_position_rounded_to_five_decimal_places(self):
+        # Same precision cap as Position._cap_coordinate_precision, applied
+        # here at decode time rather than only at archive-construction time
+        # -- so the map feed and rules engine see the same rounded value
+        # the archive path does.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "latitude": 28.754805225436968,
+            "longitude": -81.30412345678901,
+        }):
+            data = p._decode_1090(msg)
+        assert data["latitude"] == 28.75481
+        assert data["longitude"] == -81.30412
+
+    def test_heading_rounded_to_one_decimal_place(self):
+        # Same precision cap as Velocity._cap_heading_precision.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "track": 85.69553103949202,
+        }):
+            data = p._decode_1090(msg)
+        assert data["heading"] == 85.7
+
 
 # ---------------------------------------------------------------------------
 # _decode_978 (pyModeS978 UAT decoding)
@@ -629,6 +663,37 @@ class TestDecode978:
         assert data["latitude"] == 37.6213
         assert data["longitude"] == -122.3790
         assert data["altitude"] == 34875
+
+    def test_position_rounded_to_five_decimal_places(self):
+        # Same precision cap as Position._cap_coordinate_precision, applied
+        # here at decode time rather than only at archive-construction time
+        # -- so the map feed and rules engine see the same rounded value
+        # the archive path does.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with patch("message_processor.main.pyModeS978.decode", return_value={
+            "latitude": 28.754805225436968,
+            "longitude": -81.30412345678901,
+        }):
+            data = p._decode_978(msg)
+        assert data["latitude"] == 28.75481
+        assert data["longitude"] == -81.30412
+
+    def test_heading_rounded_to_one_decimal_place(self):
+        # Same precision cap as Velocity._cap_heading_precision.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with patch("message_processor.main.pyModeS978.decode", return_value={
+            "track": 85.69553103949202,
+        }):
+            data = p._decode_978(msg)
+        assert data["heading"] == 85.7
 
 
 class TestDecodeMessageRouting:
