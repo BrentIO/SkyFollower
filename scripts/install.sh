@@ -13,7 +13,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 #
 # <role> is one of: receiver, core, management-ui, message-processor,
-# archive -- may be repeated to select several in one
+# archive, map -- may be repeated to select several in one
 # run (e.g. --role core --role management-ui, since both live on the same
 # host). Omit entirely for an interactive multi-select prompt.
 #
@@ -79,13 +79,18 @@ SELECTED_ROLES=()
 DEV_BUILD=0
 BRANCH=""
 
-ALL_ROLES="core management-ui archive message-processor receiver"
+ALL_ROLES="core management-ui archive message-processor receiver map"
 
 # Fixed dependency order the selected roles are sorted into before the
 # install loop runs, regardless of the order they were selected or typed:
 # core stashes shared secrets the others read, and archive must deploy the
-# CloudFormation stack before management-ui reads its outputs.
-ROLE_DEPENDENCY_ORDER="core receiver message-processor archive management-ui"
+# CloudFormation stack before management-ui reads its outputs. map has no
+# dependency on (or from) any other role -- its own dedicated map-redis is
+# bundled in docker-compose.map.yaml, and MAP_UDP_HOST/PORT (the
+# message-processor side of the pairing) is a plain manual value, not
+# something map's own collect_map_env() produces for message-processor to
+# read -- so it's appended at the end, order otherwise irrelevant.
+ROLE_DEPENDENCY_ORDER="core receiver message-processor archive management-ui map"
 
 # usage()'s exit code depends on why it's being shown: 0 for an explicit
 # --help request (informational, not an error), 1 for anything else
@@ -94,7 +99,7 @@ usage() {
   local code="${1:-1}"
   cat >&2 <<USAGE
 Usage: $SCRIPT_NAME [--root <path>] [--role <role> ...] [--non-interactive] [--upgrade]
-  role: receiver | core | management-ui | message-processor | archive
+  role: receiver | core | management-ui | message-processor | archive | map
   env: branch=<name>  install/upgrade a dev build from that branch instead
                       of the latest release (images must be published first
                       via build-container-images.yaml's dev_mode)
@@ -629,6 +634,9 @@ role_files() {
     archive)
       echo "docker-compose.archive.yaml"
       ;;
+    map)
+      echo "docker-compose.map.yaml"
+      ;;
   esac
 }
 
@@ -655,6 +663,12 @@ role_data_dirs() {
       ;;
     archive)
       echo "data/archive-processor data/archive-compaction data/archive-index-cache"
+      ;;
+    map)
+      # Nothing to create -- docker-compose.map.yaml gives neither `map`
+      # nor `map-redis` a volume. map-redis is deliberately ephemeral (no
+      # persistence, by design -- see its comments in that compose file),
+      # and the map service itself holds no on-disk state of its own.
       ;;
   esac
 }
@@ -1079,6 +1093,73 @@ LOG_LEVEL=info
 ENV_EOF
 }
 
+collect_map_env() {
+  local role_dir="$1" env_file="${1}/.env"
+  echo "-- ${role_dir} (map) --"
+
+  # Single instance -- no MAP_SERVICE_ID-style claim/heartbeat, no
+  # per-instance service blocks to generate (map/README.md: "unlike
+  # message-processor, this is not horizontally scaled"). Same
+  # existing-.env-only default precedence as collect_management_ui_env()
+  # -- map has nothing in common with the RabbitMQ/Redis/MQTT values
+  # SHARED_CONN_* caches for the other roles, so it isn't a participant
+  # there.
+  MAP_LISTEN_HOST="$(prompt_string MAP_LISTEN_HOST "UDP listener bind address" "$(existing_env_value_or "$env_file" MAP_LISTEN_HOST 0.0.0.0)")"
+  MAP_LISTEN_PORT="$(prompt_int_range MAP_LISTEN_PORT "UDP listener bind port (message-processor's MAP_UDP_PORT must point here)" "$(existing_env_value_or "$env_file" MAP_LISTEN_PORT 30500)" 1 65535)"
+  MAP_HTTP_HOST="$(prompt_string MAP_HTTP_HOST "REST/WebSocket bind address" "$(existing_env_value_or "$env_file" MAP_HTTP_HOST 0.0.0.0)")"
+  MAP_HTTP_PORT="$(prompt_int_range MAP_HTTP_PORT "REST/WebSocket bind port" "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 8090)" 1 65535)"
+  # Dedicated map-redis (bundled in docker-compose.map.yaml) -- never core
+  # Redis (see map/README.md's "Data boundary" section). Defaults to the
+  # map-redis service name since both containers live in that same
+  # compose file/host.
+  MAP_REDIS_HOST="$(prompt_string MAP_REDIS_HOST "map-redis host" "$(existing_env_value_or "$env_file" MAP_REDIS_HOST map-redis)")"
+  MAP_REDIS_PORT="$(prompt_int_range MAP_REDIS_PORT "map-redis port" "$(existing_env_value_or "$env_file" MAP_REDIS_PORT 6379)" 1 65535)"
+  # Optional -- map-redis ships with no auth by default (see
+  # docker-compose.map.yaml's comments); only set this if MAP_REDIS_HOST
+  # points at an external, already-secured Redis instead of the bundled
+  # one.
+  MAP_REDIS_PASSWORD="$(prompt_password_value MAP_REDIS_PASSWORD "map-redis password (blank for none)" "$(existing_env_value "$env_file" MAP_REDIS_PASSWORD)" 0)"
+  MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 30)" 1 86400)"
+  MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
+  probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
+
+  # The frontend's own centered-reference-point config (VITE_HOME_LATITUDE/
+  # VITE_HOME_LONGITUDE, per map/frontend/.env.example) is deliberately NOT
+  # prompted for here: it's a Vite build-time value baked into the frontend
+  # bundle at `npm run build`, not a runtime container env var this backend
+  # role's .env/docker-compose.map.yaml ever reads -- same reason
+  # management-ui/frontend's VITE_VERSION/VITE_COMMIT aren't install.sh
+  # prompts either. See map/frontend/.env.example directly.
+
+  write_env_header "$env_file" "$role_dir"
+  cat >> "$env_file" <<ENV_EOF
+
+# UDP listener -- message-processor's MAP_UDP_HOST/MAP_UDP_PORT must point
+# at this host, on this same port.
+MAP_LISTEN_HOST=${MAP_LISTEN_HOST}
+MAP_LISTEN_PORT=${MAP_LISTEN_PORT}
+
+# REST (\`GET /api/flights\`) + WebSocket (\`/ws\`), same port.
+MAP_HTTP_HOST=${MAP_HTTP_HOST}
+MAP_HTTP_PORT=${MAP_HTTP_PORT}
+
+# Dedicated Redis (map-redis, in docker-compose.map.yaml) -- never core
+# Redis. MAP_REDIS_PASSWORD is optional; leave blank to match map-redis's
+# no-auth default.
+MAP_REDIS_HOST=${MAP_REDIS_HOST}
+MAP_REDIS_PORT=${MAP_REDIS_PORT}
+MAP_REDIS_PASSWORD=${MAP_REDIS_PASSWORD}
+
+# Eviction TTLs, seconds. MAP_STALE_SECONDS should stay clearly shorter
+# than MAP_EVICT_SECONDS.
+MAP_STALE_SECONDS=${MAP_STALE_SECONDS}
+MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
+
+# "info" or "debug".
+LOG_LEVEL=info
+ENV_EOF
+}
+
 normalize_message_processor_id() {
   # Accepts either the full "skyfollower-message-processor-{id}" form or a
   # bare "{id}", and prints the bare id -- always what's actually stored/
@@ -1279,6 +1360,20 @@ collect_message_processor_env() {
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
+  # Optional live position/metadata UDP feed toward the map component (see
+  # docker-compose.map.yaml / the `map` role) -- leave MAP_UDP_HOST blank
+  # to disable entirely, same optional-endpoint convention as MQTT_HOST
+  # above. Not a SHARED_CONN_* value: it isn't a connection this role
+  # shares with any sibling role in the same run. MAP_UDP_PORT is always
+  # prompted (same "port still has a value even when the host is blank"
+  # convention REDIS_PORT uses above) -- its suggested default matches
+  # collect_map_env()'s own MAP_LISTEN_PORT default, so accepting both
+  # defaults leaves the pairing already agreeing. Not probed with
+  # probe_tcp: this is a UDP destination, and a TCP connect attempt
+  # against it would misleadingly report "unreachable" even when
+  # correctly configured.
+  MAP_UDP_HOST="$(prompt_string MAP_UDP_HOST "Map UDP destination host (leave blank to disable)" "$(existing_env_value "$env_file" MAP_UDP_HOST)" 0)"
+  MAP_UDP_PORT="$(prompt_int_range MAP_UDP_PORT "Map UDP destination port" "$(existing_env_value_or "$env_file" MAP_UDP_PORT 30500)" 1 65535)"
   probe_tcp "$RABBITMQ_HOST" "$RABBITMQ_PORT" "RabbitMQ"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
@@ -1323,6 +1418,12 @@ MQTT_HOST=${MQTT_HOST}
 MQTT_PORT=${MQTT_PORT}
 MQTT_USERNAME=${MQTT_USERNAME}
 MQTT_PASSWORD=${MQTT_PASSWORD}
+
+# Optional -- leave MAP_UDP_HOST blank to disable this feed entirely.
+# Must point at wherever the map role's own MAP_LISTEN_HOST/MAP_LISTEN_PORT
+# are bound (see map/README.md's "Deliberately distinct variable names").
+MAP_UDP_HOST=${MAP_UDP_HOST}
+MAP_UDP_PORT=${MAP_UDP_PORT}
 
 # "info" or "debug".
 LOG_LEVEL=info
@@ -2221,6 +2322,7 @@ main() {
       management-ui) collect_management_ui_env "$role_dir" ;;
       message-processor) collect_message_processor_env "$role_dir" ;;
       archive) collect_archive_env "$role_dir" ;;
+      map) collect_map_env "$role_dir" ;;
     esac
 
     installed_dirs+=("$role_dir")

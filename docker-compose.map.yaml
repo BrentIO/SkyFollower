@@ -1,0 +1,115 @@
+name: skyfollower-map
+
+# Runs on its own standalone host -- see CLAUDE.md's Host Topology ("Host
+# E"), not colocated with Host B (core: rabbitmq/redis/ofelia/runners/
+# management-ui) or Host C (message-processor), given the expected
+# UDP-ingest + WebSocket-fan-out load. Interpolated from this host's .env,
+# written by `scripts/install.sh --role map` (its `collect_map_env()`) --
+# same convention as every other role in this repo. There is no
+# config/map.env.example or similar template file: no component in this
+# repo works that way (see scripts/install.sh's own header comment on
+# replacing download-host-files.sh -- .env is always generated
+# interactively, never copied from a checked-in example).
+#
+# ASSUMPTION (revisit once #1493, the map frontend, merges): as of this
+# writing map/main.py has no static-file-serving route and map/README.md
+# describes no such mechanism, so this file assumes the frontend ships as
+# its own separate deployable (its own container, or served some other way
+# outside this compose file) rather than being served by the `map` image
+# itself. If #1493 lands with the backend serving the built frontend
+# instead, this service definition (and possibly a frontend build stage in
+# map/Dockerfile) needs to be revisited.
+#
+# No auth on either service below -- same "trusted network" posture as
+# docker-compose.management-ui.yaml.
+
+services:
+
+  map:
+    image: ghcr.io/brentio/skyfollower-map:${SKYFOLLOWER_VERSION:-latest}
+    restart: unless-stopped
+    # No depends_on -- matches this repo's convention elsewhere (e.g.
+    # docker-compose.core.yaml's core-health) of a client retrying its own
+    # connection on its own poll cadence rather than gating container start
+    # order. map/README.md's Fault Tolerance section: a slow/unreachable
+    # MAP_REDIS_HOST blocks this service's own readiness, not its process
+    # start.
+    ports:
+      # UDP listener -- message-processor's MAP_UDP_HOST/MAP_UDP_PORT must
+      # point at this host on this same port. Required, no default (see
+      # shared/config.py's map_config()).
+      - "${MAP_LISTEN_PORT}:${MAP_LISTEN_PORT}/udp"
+      # REST (`GET /api/flights`) + WebSocket (`/ws`) -- one port, both
+      # served by the same FastAPI app.
+      - "${MAP_HTTP_PORT:-8090}:${MAP_HTTP_PORT:-8090}"
+    # Named one by one from this host's .env rather than `env_file: .env`,
+    # so the container only ever holds the values it actually reads.
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAP_LISTEN_HOST: ${MAP_LISTEN_HOST:-0.0.0.0}
+      MAP_LISTEN_PORT: ${MAP_LISTEN_PORT}
+      MAP_HTTP_HOST: ${MAP_HTTP_HOST:-0.0.0.0}
+      MAP_HTTP_PORT: ${MAP_HTTP_PORT:-8090}
+      MAP_STALE_SECONDS: ${MAP_STALE_SECONDS:-30}
+      MAP_EVICT_SECONDS: ${MAP_EVICT_SECONDS:-300}
+      # This service's own dedicated Redis (map-redis, below) -- never core
+      # Redis (see map/README.md's "Data boundary" section). Host defaults
+      # to the map-redis service name below since both containers live on
+      # this same compose file/host; override in .env only if pointing at
+      # an external Redis instead of the bundled one.
+      MAP_REDIS_HOST: ${MAP_REDIS_HOST:-map-redis}
+      MAP_REDIS_PORT: ${MAP_REDIS_PORT:-6379}
+      MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:-}
+    # RAM-backed, not the container's writable layer -- the healthcheck
+    # heartbeat file is rewritten periodically and must never hit host
+    # storage. Same convention as every other long-running SkyFollower
+    # service.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Dedicated to this service alone -- never core Redis (see
+  # map/README.md's "Data boundary" section). Deliberately NOT
+  # redis/redis-stack-server (docker-compose.core.yaml's core Redis image):
+  # this instance holds only plain hashes/lists/sentinel keys, no
+  # RediSearch indexing, so the lighter upstream image is used instead.
+  #
+  # No persistence configured on purpose -- no volume, AOF/RDB both
+  # disabled -- this Redis is a pure, in-memory, fully
+  # reconstructible-from-live-UDP-traffic cache, not a store (see
+  # map/README.md's "Fault Tolerance" section). Losing this container's
+  # data on restart is expected and safe.
+  #
+  # No `requirepass` baked in -- matches the "no auth, trusted network"
+  # posture called out at the top of this file. MAP_REDIS_PASSWORD still
+  # exists as a config option on the `map` service above for the case
+  # where MAP_REDIS_HOST is pointed at an external, already-secured Redis
+  # instance instead of this bundled one; there's no way to conditionally
+  # add `--requirepass` to the command below from an optional .env value
+  # without a shell-wrapper convention this repo doesn't otherwise use, so
+  # an operator who wants auth on the bundled instance should run their own
+  # Redis with `requirepass` set and point MAP_REDIS_HOST at it instead.
+  #
+  # `notify-keyspace-events Ex` is NOT set here -- map/state_store.py's
+  # FlightStateStore enables it itself via a runtime `CONFIG SET` on every
+  # connect/reconnect (see map/README.md's "Eviction" section), so baking
+  # it into this container's startup command would be redundant.
+  #
+  # No host port published -- unlike core Redis (reached cross-host by
+  # message-processor/archive-processor/management-ui/runners),
+  # map-redis is only ever reached by the `map` service in this same
+  # compose file, over the default Compose network.
+  map-redis:
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
