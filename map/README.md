@@ -236,13 +236,15 @@ Full-viewport live map, no persistent side panel: a symbol layer for
 tracked aircraft (icon rotates via `icon-rotate` bound to `heading`; an SDF
 icon so its fill can be recolored per feature via `icon-color`, driven by
 altitude -- ported from `management-ui/frontend/src/lib/flightView.ts`'s
-`altitudeColor()`), an ATC-style floating info box per aircraft (custom
-collision/nudge placement so every box stays visible, never MapLibre's
-`text-allow-overlap: false` collision-hiding), a client-accumulated live
-trail per aircraft (this service has no trail/history endpoint -- see REST
-API above -- so the frontend builds each aircraft's trail itself, purely
-from `position` events observed after the page loaded), and a fixed "home"
-marker/recenter button from build-time config.
+`altitudeColor()`), an ATC-style floating info box per aircraft (hidden by
+default, shown for a selected or hovered aircraft, or for every aircraft
+via the "Labels: All" toggle -- boxes overlap freely with no leader lines,
+stacked by altitude so a higher-altitude aircraft's box always draws on
+top of a cluster), a client-accumulated live trail per aircraft (this
+service has no trail/history endpoint -- see REST API above -- so the
+frontend builds each aircraft's trail itself, purely from `position`
+events observed after the page loaded), and a fixed "home" marker/recenter
+button from build-time config.
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
   `altitudeColor()`; used for both the icon fill and the live trail color.
@@ -252,7 +254,9 @@ marker/recenter button from build-time config.
   altitude+trend-arrow+groundspeed, registration+type), each independently
   omitted (never a `?`/`N/A` placeholder) when its underlying field is
   unknown.
-- `src/lib/placement.ts` -- the info-box overlap/nudge placement algorithm.
+- `src/lib/labelStackOrder.ts` -- maps altitude to a bounded z-index so
+  overlapping info boxes stack with the higher-altitude aircraft on top;
+  unknown-altitude aircraft sort to the bottom, ties broken by icao_hex.
 - `src/lib/aircraftState.ts` -- client-side per-aircraft state: applies the
   REST snapshot, then every WebSocket event, with the same
   merge-never-overwrite semantics as `state_store.py`'s `apply_update`.
@@ -273,7 +277,7 @@ npm run dev       # Vite dev server on :5173, serving the app under /map/ (base:
                    # in vite.config.ts, matching production) and proxying /api and /ws
                    # to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
-npm test          # vitest -- altitudeColor, info-box formatting, and overlap-placement unit tests
+npm test          # vitest -- altitudeColor, info-box formatting, and label stack-order unit tests
 ```
 
 ### Frontend Configuration

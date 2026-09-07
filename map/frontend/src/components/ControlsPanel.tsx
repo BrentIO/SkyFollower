@@ -5,19 +5,23 @@ export interface ControlsPanelProps {
   aircraftCount: number;
   historyAll: boolean;
   onToggleHistoryAll: () => void;
+  labelsAll: boolean;
+  onToggleLabelsAll: () => void;
   onRecenter: () => void;
   recenterDisabled: boolean;
 }
 
 // Top-right floating controls: connection-status dot, aircraft-tracked
-// count, the "History: All" toggle, and (as its own separate square
-// control below the status panel) the recenter button. No persistent
-// side panel in v1 -- see the issue's Page layout section.
+// count, the "History: All" and "Labels: All" toggles, and (as its own
+// separate square control below the status panel) the recenter button. No
+// persistent side panel in v1 -- see the issue's Page layout section.
 export function ControlsPanel({
   connected,
   aircraftCount,
   historyAll,
   onToggleHistoryAll,
+  labelsAll,
+  onToggleLabelsAll,
   onRecenter,
   recenterDisabled,
 }: ControlsPanelProps) {
@@ -42,6 +46,18 @@ export function ControlsPanel({
           }`}
         >
           History: All
+        </button>
+        <button
+          type="button"
+          onClick={onToggleLabelsAll}
+          aria-pressed={labelsAll}
+          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${
+            labelsAll
+              ? "border-sky-500 bg-sky-500 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          }`}
+        >
+          Labels: All
         </button>
       </div>
 

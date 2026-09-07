@@ -6,7 +6,6 @@ import {
   formatGroundspeed,
   formatIdentLine,
   formatRegistrationTypeLine,
-  infoBoxLineCount,
   trendArrow,
 } from "./infoBox";
 
@@ -127,7 +126,7 @@ describe("formatIdentLine", () => {
   });
 });
 
-describe("buildInfoBoxLines / infoBoxLineCount", () => {
+describe("buildInfoBoxLines", () => {
   it("builds all three lines in the fixed ident/altitude-speed/registration-type order", () => {
     const lines = buildInfoBoxLines({
       ident: "DAL659",
@@ -141,7 +140,6 @@ describe("buildInfoBoxLines / infoBoxLineCount", () => {
       altitudeSpeed: "35,000↓ 450kt",
       registrationType: "N988DL B752",
     });
-    expect(infoBoxLineCount(lines)).toBe(3);
   });
 
   it("drops to a 2-line box when only registration/type is missing", () => {
@@ -153,12 +151,10 @@ describe("buildInfoBoxLines / infoBoxLineCount", () => {
       aircraft: {},
     });
     expect(lines.registrationType).toBeNull();
-    expect(infoBoxLineCount(lines)).toBe(2);
   });
 
   it("returns a 0-line box for a freshly-tracked aircraft with nothing resolved yet", () => {
     const lines = buildInfoBoxLines({});
     expect(lines).toEqual({ ident: null, altitudeSpeed: null, registrationType: null });
-    expect(infoBoxLineCount(lines)).toBe(0);
   });
 });
