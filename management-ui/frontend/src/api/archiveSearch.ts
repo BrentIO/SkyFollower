@@ -58,6 +58,7 @@ export interface FlightView {
   military?: boolean;
   type_designator?: string;
   manufacturer_model?: string;
+  description_code?: string;
   category?: string;
   aircraft_type?: string;
   model?: string;

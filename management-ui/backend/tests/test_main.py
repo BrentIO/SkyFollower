@@ -1246,6 +1246,7 @@ class TestAircraftLookup:
                 "category": "Land",
                 "seats": 189,
                 "manufacturer_model": "BOEING 767-332ER",
+                "description_code": "L2J",
             },
             "registrant": {
                 "names": ["Delta Air Lines Inc"],
@@ -1264,6 +1265,7 @@ class TestAircraftLookup:
         assert body["category"] == "Land"
         assert body["seats"] == 189
         assert body["manufacturer_model"] == "BOEING 767-332ER"
+        assert body["description_code"] == "L2J"
         assert body["registrant"] == {
             "names": ["Delta Air Lines Inc"],
             "street": ["1030 Delta Blvd"],

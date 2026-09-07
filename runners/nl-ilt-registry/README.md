@@ -27,7 +27,7 @@ explicitly sets `military: false` — this register is exclusively civil, and
 the explicit value ensures a stale `military: true` flag (from Mictronics or
 a prior record on a reused hex) is corrected on re-registration.
 
-Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` is set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the ILT register and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
+Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the ILT register and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
 ## Columns
 
@@ -49,7 +49,7 @@ Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_design
 | Configuration | ❌ | Present in source; not read by this runner |
 | MTOM | ❌ | Present in source; not read by this runner |
 | MLM | ❌ | Present in source; not read by this runner |
-| ICAO-code | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` when found |
+| ICAO-code | ✅ | → `aircraft.type_designator`; also used to look up `aircraft:type:{type_designator}` in Redis, setting `aircraft.manufacturer_model` and `aircraft.description_code` when found |
 | AOC | ❌ | Present in source; not read by this runner |
 | 83Bis | ❌ | Present in source; not read by this runner |
 | Representative | ❌ | Present in source; not read by this runner |
@@ -110,6 +110,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L1P",
         "manufactured_date": "2007-01-01T00:00:00Z",
         "manufacturer": "Piper Aircraft, Inc.",
         "manufacturer_model": "PIPER PA-28-140/150/160/180",
@@ -141,6 +142,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 ```json
 {
     "aircraft": {
+        "description_code": "L2J",
         "manufactured_date": "2012-01-01T00:00:00Z",
         "manufacturer": "Airbus S.A.S. (Société par Actions Simplifiée)",
         "manufacturer_model": "AIRBUS A-330-300",

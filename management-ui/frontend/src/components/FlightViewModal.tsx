@@ -317,6 +317,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
     view?.category ||
     view?.aircraft_type ||
     view?.manufacturer_model ||
+    view?.description_code ||
     view?.type_designator ||
     view?.model ||
     manufacturedDate ||
@@ -472,6 +473,11 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                           {[view.manufacturer_model, view.type_designator ? `(${view.type_designator})` : undefined]
                             .filter(Boolean)
                             .join(" ")}
+                        </div>
+                      )}
+                      {view.description_code && (
+                        <div>
+                          <Label>Description Code</Label> {view.description_code}
                         </div>
                       )}
                       {view.model && (
