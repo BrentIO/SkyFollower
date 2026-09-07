@@ -53,6 +53,7 @@ services:
       MAP_HTTP_HOST: ${MAP_HTTP_HOST:-0.0.0.0}
       MAP_HTTP_PORT: ${MAP_HTTP_PORT:-80}
       MAP_STALE_SECONDS: ${MAP_STALE_SECONDS:-30}
+      MAP_HIDE_SECONDS: ${MAP_HIDE_SECONDS:-60}
       MAP_EVICT_SECONDS: ${MAP_EVICT_SECONDS:-300}
       # This service's own dedicated Redis (map-redis, below) -- never core
       # Redis (see map/README.md's "Data boundary" section). Host defaults

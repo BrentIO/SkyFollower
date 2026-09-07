@@ -101,7 +101,8 @@ class _Server:
             "MAP_HTTP_HOST": "127.0.0.1",
             "MAP_HTTP_PORT": str(self.http_port),
             "MAP_STALE_SECONDS": "1",
-            "MAP_EVICT_SECONDS": "2",
+            "MAP_HIDE_SECONDS": "2",
+            "MAP_EVICT_SECONDS": "3",
             "PYTHONPATH": _REPO_ROOT,
         })
         self.proc = subprocess.Popen(
@@ -240,7 +241,7 @@ def test_websocket_receives_batched_position_and_metadata_events(server):
     assert "metadata" in seen_types
 
 
-def test_websocket_receives_stale_then_remove_on_eviction(server):
+def test_websocket_receives_stale_then_hide_then_remove_on_eviction(server):
     icao_hex = _hex()
 
     async def scenario() -> list[str]:
@@ -252,16 +253,38 @@ def test_websocket_receives_stale_then_remove_on_eviction(server):
 
             order: list[str] = []
             async with asyncio.timeout(8):
-                while not {"stale", "remove"} <= set(order):
+                while not {"stale", "hide", "remove"} <= set(order):
                     batch = json.loads(await ws.recv())
                     order.extend(
                         e["type"] for e in batch
-                        if e.get("icao_hex") == icao_hex and e["type"] in ("stale", "remove")
+                        if e.get("icao_hex") == icao_hex and e["type"] in ("stale", "hide", "remove")
                     )
             return order
 
     order = asyncio.run(scenario())
-    assert order == ["stale", "remove"], f"unexpected event order: {order}"
+    assert order == ["stale", "hide", "remove"], f"unexpected event order: {order}"
+
+
+def test_get_flights_omits_hidden_aircraft(server):
+    """Once MAP_HIDE_SECONDS elapses, the aircraft must drop out of the
+    GET /api/flights snapshot (its detail/trail data is still present
+    server-side -- see map/state_store.py's list_flights -- but a fresh
+    client has no trail to bridge with, so it's omitted until it either
+    transmits again or is fully evicted)."""
+    icao_hex = _hex()
+    server.send_udp({
+        "type": "position", "icao_hex": icao_hex, "timestamp": time.time(),
+        "latitude": 1.0, "longitude": 1.0,
+    })
+    _wait_for_flight(server, icao_hex)
+
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline:
+        flights = {f["icao_hex"] for f in server.get_flights()}
+        if icao_hex not in flights:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"{icao_hex} was never omitted from GET /api/flights after hiding")
 
 
 def test_get_flights_only_lists_currently_tracked_aircraft(server):

@@ -1132,7 +1132,12 @@ collect_map_env() {
   # one.
   MAP_REDIS_PASSWORD="$(prompt_password_value MAP_REDIS_PASSWORD "map-redis password (blank for none)" "$(existing_env_value "$env_file" MAP_REDIS_PASSWORD)" 0)"
   MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 30)" 1 86400)"
-  MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
+  MAP_HIDE_SECONDS="$(prompt_int_range MAP_HIDE_SECONDS "Hide TTL, seconds (aircraft drops from view but trail data is kept)" "$(existing_env_value_or "$env_file" MAP_HIDE_SECONDS 60)" 1 86400)"
+  # Should equal core Redis's config:flight_ttl_seconds for this
+  # deployment (default 300, matching MAP_EVICT_SECONDS's own default) --
+  # this role never queries core Redis (map/README.md's "Data boundary"
+  # section), so there's nothing to auto-detect here; just a reminder.
+  MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed -- should match this deployment's flight_ttl_seconds)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
   probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
 
   # Optional "home" reference point for the frontend's on-map marker,
@@ -1163,9 +1168,11 @@ MAP_REDIS_HOST=${MAP_REDIS_HOST}
 MAP_REDIS_PORT=${MAP_REDIS_PORT}
 MAP_REDIS_PASSWORD=${MAP_REDIS_PASSWORD}
 
-# Eviction TTLs, seconds. MAP_STALE_SECONDS should stay clearly shorter
-# than MAP_EVICT_SECONDS.
+# Lifecycle TTLs, seconds. MAP_STALE_SECONDS < MAP_HIDE_SECONDS <
+# MAP_EVICT_SECONDS must hold. MAP_EVICT_SECONDS should match this
+# deployment's flight_ttl_seconds (core Redis's config:flight_ttl_seconds).
 MAP_STALE_SECONDS=${MAP_STALE_SECONDS}
+MAP_HIDE_SECONDS=${MAP_HIDE_SECONDS}
 MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
 
 # Optional "home" reference point (on-map marker, initial camera position,

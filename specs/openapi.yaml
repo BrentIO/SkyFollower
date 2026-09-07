@@ -1252,9 +1252,12 @@ paths:
       summary: Get Flights
       description: Served by the map service (map/main.py), not this file's
         management-ui backend -- included here so the whole system's REST
-        surface has one spec. One object per currently-tracked aircraft, the
-        same merged current-state shape carried by the WebSocket `metadata`
-        event documented in specs/asyncapi.yaml.
+        surface has one spec. One object per currently-*visible* aircraft
+        (an aircraft past MAP_HIDE_SECONDS with no traffic since is omitted
+        until it either reappears or is fully evicted -- see
+        map/README.md's Lifecycle section), the same merged current-state
+        shape carried by the WebSocket `metadata` event documented in
+        specs/asyncapi.yaml.
       operationId: get_flights_api_flights_get
       responses:
         '200':

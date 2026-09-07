@@ -302,6 +302,7 @@ async def lifespan(app: FastAPI):
     _store = FlightStateStore(
         _redis,
         stale_seconds=_cfg["map_stale_seconds"],
+        hide_seconds=_cfg["map_hide_seconds"],
         evict_seconds=_cfg["map_evict_seconds"],
     )
     _store.enable_keyspace_notifications()

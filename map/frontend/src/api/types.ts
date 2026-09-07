@@ -58,9 +58,14 @@ export interface MapWsStaleEvent {
   icao_hex: string;
 }
 
+export interface MapWsHideEvent {
+  type: "hide";
+  icao_hex: string;
+}
+
 export interface MapWsRemoveEvent {
   type: "remove";
   icao_hex: string;
 }
 
-export type MapWsEvent = MapWsPositionEvent | MapWsMetadataEvent | MapWsStaleEvent | MapWsRemoveEvent;
+export type MapWsEvent = MapWsPositionEvent | MapWsMetadataEvent | MapWsStaleEvent | MapWsHideEvent | MapWsRemoveEvent;

@@ -992,6 +992,8 @@ channels:
         $ref: '#/components/messages/MapWsMetadataMessage'
       MapWsStaleMessage:
         $ref: '#/components/messages/MapWsStaleMessage'
+      MapWsHideMessage:
+        $ref: '#/components/messages/MapWsHideMessage'
       MapWsRemoveMessage:
         $ref: '#/components/messages/MapWsRemoveMessage'
 
@@ -1805,6 +1807,14 @@ components:
       payload:
         $ref: '#/components/schemas/MapWsStale'
 
+    MapWsHideMessage:
+      name: MapWsHideMessage
+      title: Map WebSocket hide event
+      summary: An aircraft's visibility sentinel expired; drop it from view but keep its record and trail
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapWsHide'
+
     MapWsRemoveMessage:
       name: MapWsRemoveMessage
       title: Map WebSocket remove event
@@ -2559,6 +2569,26 @@ components:
         type:
           type: string
           enum: [stale]
+        icao_hex:
+          type: string
+          example: A8AE7F
+
+    MapWsHide:
+      type: object
+      description: >
+        WebSocket `hide` event -- the aircraft's `flight:visible:{icao_hex}`
+        sentinel expired (no message seen for MAP_HIDE_SECONDS). Unlike
+        `remove`, the aircraft's detail record and trail are left
+        untouched server-side; the client must likewise keep the record
+        and its accumulated trail, only omitting it from what's drawn, so
+        a resumed flight bridges the gap as one continuous trail if
+        contact resumes before MAP_EVICT_SECONDS. See
+        map/state_store.py's `handle_expired_key`.
+      required: [type, icao_hex]
+      properties:
+        type:
+          type: string
+          enum: [hide]
         icao_hex:
           type: string
           example: A8AE7F

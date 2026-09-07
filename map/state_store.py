@@ -1,23 +1,28 @@
 """
 Redis-backed per-aircraft live state for the map service.
 
-Two keys per tracked aircraft, both in the map service's own dedicated
+Three keys per tracked aircraft, all in the map service's own dedicated
 Redis instance (never core Redis -- see map/README.md):
 
 - ``flight:live:{icao_hex}`` -- short-TTL sentinel, no meaningful value.
   Its expiry is the "stale" signal (see FlightStateStore.parse_expired_key).
+- ``flight:visible:{icao_hex}`` -- a second, longer-TTL sentinel. Its
+  expiry is the "hide" signal: the aircraft leaves the map's screen, but
+  its detail/trail data is left alone so a resumed flight reappears as one
+  continuous track.
 - ``flight:detail:{icao_hex}`` -- a Redis hash holding the aircraft's
   merged current-state: every field known from both `position` and
   `metadata` UDP messages, field-level HSET on each update so a partial
   update never clobbers fields it didn't carry. Its expiry is the "remove"
   signal.
 
-``flight:trail:{icao_hex}`` is a third, related key: a plain list of JSON
+``flight:trail:{icao_hex}`` is a fourth, related key: a plain list of JSON
 lat/lon/altitude snapshots appended on every accepted `position` update,
 refreshed onto the same TTL/lifecycle as ``flight:detail`` so it lives and
-dies alongside the aircraft's detail record.
+dies alongside the aircraft's detail record -- independent of the
+stale/hide sentinels above, so it survives both.
 
-These three key families are local to this service -- they're not part of
+These key families are local to this service -- they're not part of
 shared/redis_keys.py's schema, which documents *core* Redis's keys. The map
 service's Redis is a second, separate instance this service alone owns, so
 its key namespace has no reason to be centralized alongside core's.
@@ -32,6 +37,7 @@ from typing import Optional
 logger = logging.getLogger("map.state_store")
 
 _LIVE_PREFIX = "flight:live:"
+_VISIBLE_PREFIX = "flight:visible:"
 _DETAIL_PREFIX = "flight:detail:"
 _TRAIL_PREFIX = "flight:trail:"
 
@@ -60,6 +66,10 @@ def flight_live_key(icao_hex: str) -> str:
     return f"{_LIVE_PREFIX}{icao_hex}"
 
 
+def flight_visible_key(icao_hex: str) -> str:
+    return f"{_VISIBLE_PREFIX}{icao_hex}"
+
+
 def flight_detail_key(icao_hex: str) -> str:
     return f"{_DETAIL_PREFIX}{icao_hex}"
 
@@ -70,12 +80,14 @@ def flight_trail_key(icao_hex: str) -> str:
 
 def parse_expired_key(key: str) -> Optional[tuple[str, str]]:
     """Classifies a key name reported by a Redis `expired` keyevent
-    notification. Returns (kind, icao_hex) where kind is "live" or
-    "detail", or None for a key this service doesn't act on the expiry of
-    (flight:trail:* expires silently -- it's cleaned up explicitly as a
+    notification. Returns (kind, icao_hex) where kind is "live", "visible",
+    or "detail", or None for a key this service doesn't act on the expiry
+    of (flight:trail:* expires silently -- it's cleaned up explicitly as a
     side effect of the "detail" case instead, see MapService._handle_expired_key)."""
     if key.startswith(_LIVE_PREFIX):
         return "live", key[len(_LIVE_PREFIX):]
+    if key.startswith(_VISIBLE_PREFIX):
+        return "visible", key[len(_VISIBLE_PREFIX):]
     if key.startswith(_DETAIL_PREFIX):
         return "detail", key[len(_DETAIL_PREFIX):]
     return None
@@ -89,9 +101,12 @@ class FlightStateStore:
     Lua-script atomicity is used here, since there's exactly one writer.
     """
 
-    def __init__(self, redis_client, stale_seconds: int, evict_seconds: int) -> None:
+    def __init__(
+        self, redis_client, stale_seconds: int, hide_seconds: int, evict_seconds: int,
+    ) -> None:
         self._redis = redis_client
         self._stale_seconds = stale_seconds
+        self._hide_seconds = hide_seconds
         self._evict_seconds = evict_seconds
 
     def enable_keyspace_notifications(self) -> None:
@@ -161,6 +176,7 @@ class FlightStateStore:
         pipe.hset(key, mapping=mapping)
         pipe.expire(key, self._evict_seconds)
         pipe.set(flight_live_key(icao_hex), "1", ex=self._stale_seconds)
+        pipe.set(flight_visible_key(icao_hex), "1", ex=self._hide_seconds)
         pipe.execute()
 
         merged = self.get_flight(icao_hex)
@@ -203,12 +219,20 @@ class FlightStateStore:
         return result
 
     def list_flights(self) -> list[dict]:
-        """One decoded current-state dict per currently-tracked aircraft,
-        i.e. one per flight:detail:{icao_hex} hash that currently exists --
-        matches GET /api/flights exactly (see map/main.py)."""
+        """One decoded current-state dict per currently-*visible* aircraft,
+        i.e. one per flight:visible:{icao_hex} sentinel that currently
+        exists -- matches GET /api/flights exactly (see map/main.py).
+
+        Deliberately keyed off flight:visible rather than flight:detail: a
+        hidden aircraft (past MAP_HIDE_SECONDS but not yet evicted) still
+        has a flight:detail hash and trail, but a client connecting fresh
+        during that gap has no client-accumulated trail for it either --
+        a lone frozen icon with no trail would be worse than omitting the
+        aircraft entirely. It reappears for everyone the moment a
+        `position`/`metadata` event arrives again."""
         flights: list[dict] = []
-        for key in self._redis.scan_iter(match=f"{_DETAIL_PREFIX}*"):
-            icao_hex = key[len(_DETAIL_PREFIX):]
+        for key in self._redis.scan_iter(match=f"{_VISIBLE_PREFIX}*"):
+            icao_hex = key[len(_VISIBLE_PREFIX):]
             flight = self.get_flight(icao_hex)
             if flight is not None:
                 flights.append(flight)
@@ -221,20 +245,27 @@ class FlightStateStore:
 
     def handle_expired_key(self, key: str) -> Optional[dict]:
         """Turns a Redis `expired` keyevent's key name into the WebSocket
-        event to broadcast ("stale" for flight:live:*, "remove" for
-        flight:detail:*), or None for a key this service doesn't act on.
+        event to broadcast ("stale" for flight:live:*, "hide" for
+        flight:visible:*, "remove" for flight:detail:*), or None for a key
+        this service doesn't act on.
 
-        A "remove" (flight:detail:{icao_hex} expired) also proactively
-        deletes flight:trail:{icao_hex} -- it's refreshed onto the same TTL
-        on every update, so it will expire on its own moments later in the
-        normal case, but this guarantees no leftover trail key can survive
-        a detail-key eviction even if the two TTLs ever drift apart."""
+        The "hide" path deliberately touches nothing else -- flight:detail
+        and flight:trail are left exactly as they are, so a flight that
+        resumes after the hidden gap reappears with its pre-gap trail
+        intact. Only "remove" (flight:detail:{icao_hex} expired) evicts
+        data, proactively deleting flight:trail:{icao_hex} -- it's
+        refreshed onto the same TTL on every update, so it will expire on
+        its own moments later in the normal case, but this guarantees no
+        leftover trail key can survive a detail-key eviction even if the
+        two TTLs ever drift apart."""
         parsed = parse_expired_key(key)
         if parsed is None:
             return None
         kind, icao_hex = parsed
         if kind == "live":
             return {"type": "stale", "icao_hex": icao_hex}
+        if kind == "visible":
+            return {"type": "hide", "icao_hex": icao_hex}
         # kind == "detail"
         try:
             self._redis.delete(flight_trail_key(icao_hex))
