@@ -1,7 +1,11 @@
 import { useMemo } from "react";
 import { buildInfoBoxLines, type InfoBoxAircraft } from "../lib/infoBox";
-import { estimateInfoBoxSize } from "../lib/infoBoxSize";
-import { placeInfoBoxes } from "../lib/placement";
+import { altitudeZIndex, sortByLabelStackOrder } from "../lib/labelStackOrder";
+
+// Gap between the aircraft icon's screen position and the info box's
+// near (top-left) corner. Fixed -- boxes are never nudged to avoid a
+// collision, so this is the box's only position, not just a default.
+export const DEFAULT_INFO_BOX_OFFSET = 34;
 
 export interface InfoBoxLayerItem {
   id: string;
@@ -13,60 +17,54 @@ export interface InfoBoxLayerItem {
 
 export interface InfoBoxLayerProps {
   items: InfoBoxLayerItem[];
+  /** icao_hex of every currently-selected aircraft -- always labeled. */
+  selected: Set<string>;
+  /** "Labels: All" toggle -- when on, every aircraft is labeled regardless of selection. */
+  showAll: boolean;
+  /** icao_hex of the aircraft currently hovered, if any -- shown as a transient label. */
+  hoveredId?: string | null;
 }
 
-// Renders every visible aircraft's ATC-style info box, floating directly
-// on the map (no side panel), plus a leader line for any box that had to
-// be nudged clear of a collision (see lib/placement.ts) -- never for a
-// box at its default offset. Shown for every aircraft simultaneously, not
-// hover/click-only.
-export function InfoBoxLayer({ items }: InfoBoxLayerProps) {
-  const placements = useMemo(() => {
-    const inputs = items.map((item) => {
-      const lines = buildInfoBoxLines(item.aircraft);
-      const { width, height } = estimateInfoBoxSize(lines);
-      return { id: item.id, x: item.x, y: item.y, width, height, lines };
-    });
-    // Nothing to place for an aircraft whose box is empty (no ident,
-    // altitude, speed, registration, or type resolved yet).
-    const placeable = inputs.filter((i) => i.width > 0 && i.height > 0);
-    const placed = placeInfoBoxes(placeable);
-    const linesById = new Map(inputs.map((i) => [i.id, i.lines]));
-    return placed.map((p) => ({ ...p, lines: linesById.get(p.id)! }));
-  }, [items]);
+// Renders one floating ATC-style info box per labeled aircraft, directly
+// on the map (no side panel). Hidden by default: a box only renders for a
+// selected or hovered aircraft, unless the "Labels: All" toggle
+// (ControlsPanel) is on. Each box sits at a fixed offset from its
+// aircraft's icon -- no leader line, no collision-avoidance nudging -- so
+// boxes are free to overlap when aircraft are close together. Where boxes
+// overlap, the higher-altitude aircraft's box draws on top (see
+// lib/labelStackOrder.ts); unknown-altitude aircraft sit at the bottom of
+// the stack.
+export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLayerProps) {
+  const boxes = useMemo(() => {
+    const labeled = items.filter((item) => showAll || selected.has(item.id) || item.id === hoveredId);
+
+    const withLines = labeled
+      .map((item) => ({ item, lines: buildInfoBoxLines(item.aircraft) }))
+      // Nothing to show for an aircraft whose box is empty (no ident,
+      // altitude, speed, registration, or type resolved yet).
+      .filter(({ lines }) => lines.ident !== null || lines.altitudeSpeed !== null || lines.registrationType !== null);
+
+    return sortByLabelStackOrder(withLines.map(({ item, lines }) => ({ id: item.id, altitude: item.aircraft.altitude, item, lines })));
+  }, [items, selected, showAll, hoveredId]);
 
   return (
     <div className="pointer-events-none absolute inset-0">
-      <svg className="absolute inset-0 h-full w-full">
-        {placements
-          .filter((p) => p.nudged)
-          .map((p) => (
-            <line
-              key={p.id}
-              x1={p.anchorX}
-              y1={p.anchorY}
-              x2={p.x}
-              y2={p.y}
-              // Dark, not white -- the basemap (MAP_STYLE, "positron") is
-              // light, so a dark line is what actually stays visible
-              // against it.
-              stroke="rgba(30,41,59,0.7)"
-              strokeWidth={1.5}
-            />
-          ))}
-      </svg>
-      {placements.map((p) => (
+      {boxes.map((b) => (
         <div
-          key={p.id}
+          key={b.id}
           className="absolute rounded bg-black/40 px-1.5 py-1 font-mono leading-tight text-white"
-          style={{ left: p.x, top: p.y }}
+          style={{
+            left: b.item.x + DEFAULT_INFO_BOX_OFFSET,
+            top: b.item.y + DEFAULT_INFO_BOX_OFFSET,
+            zIndex: altitudeZIndex(b.item.aircraft.altitude),
+          }}
         >
-          {p.lines.ident !== null && <div className="text-[12px] font-bold whitespace-nowrap">{p.lines.ident}</div>}
-          {p.lines.altitudeSpeed !== null && (
-            <div className="text-[10.5px] whitespace-nowrap">{p.lines.altitudeSpeed}</div>
+          {b.lines.ident !== null && <div className="text-[12px] font-bold whitespace-nowrap">{b.lines.ident}</div>}
+          {b.lines.altitudeSpeed !== null && (
+            <div className="text-[10.5px] whitespace-nowrap">{b.lines.altitudeSpeed}</div>
           )}
-          {p.lines.registrationType !== null && (
-            <div className="text-[10.5px] whitespace-nowrap">{p.lines.registrationType}</div>
+          {b.lines.registrationType !== null && (
+            <div className="text-[10.5px] whitespace-nowrap">{b.lines.registrationType}</div>
           )}
         </div>
       ))}
