@@ -42,7 +42,7 @@ RUN rm -f /etc/nginx/sites-enabled/default && chmod +x /entrypoint.sh
 
 ENV PYTHONPATH=/app
 
-EXPOSE 80
+EXPOSE 80 443
 
 # VERSION changes every release; placed last so it only busts this
 # cheap final layer, not the pip-install layer above.

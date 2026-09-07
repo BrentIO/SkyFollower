@@ -26,6 +26,43 @@ Redis (enrichment keys, `config:*`, etc.) directly -- all enrichment needed
 for display (registration, operator, aircraft type) arrives pre-resolved in
 `message-processor`'s `metadata` payload.
 
+## TLS
+
+`GET /api/flights`, `WS /ws`, and the served frontend SPA are all HTTPS on
+`MAP_HTTP_PORT` by default, terminated directly by uvicorn -- unlike
+`management-ui`, there's no nginx in front of this service, so
+`uvicorn.run()` itself is handed `ssl_certfile`/`ssl_keyfile`
+(`map/main.py`'s `_uvicorn_tls_kwargs()`) rather than a reverse proxy doing
+TLS termination. There is no authentication either way (see the top of
+this README) -- TLS here is about encrypting traffic on the LAN, not
+access control. The UDP listener (message-processor's position/metadata
+feed) is unaffected -- UDP has no TLS.
+
+- **Certificate generation**: `scripts/install.sh` generates a ~10-year
+  self-signed cert the first time you install or re-run it for the `map`
+  role, writing `cert.pem`/`key.pem` into `./data/map/tls/` (bind-mounted
+  read-only into the container at `/app/tls/` -- see
+  `docker-compose.map.yaml`). Same SAN-prompting and idempotent-skip
+  behavior as `management-ui`'s cert generation -- see
+  [management-ui/README.md](../management-ui/README.md#tls).
+- **Bring your own certificate**: drop your own `cert.pem`/`key.pem` into
+  `./data/map/tls/` (matching those exact filenames) before running
+  `scripts/install.sh` -- it leaves an existing pair alone entirely.
+- **No cert present**: `_uvicorn_tls_kwargs()` falls back to plain HTTP
+  with a logged warning rather than failing to start -- covers running
+  `python -m map.main` (or bare `uvicorn map.main:app`) standalone outside
+  the installer flow, where no TLS directory was ever generated or
+  mounted.
+- **First-visit browser warning**: since the certificate is self-signed,
+  every browser shows an untrusted-certificate warning the first time you
+  visit. Click through it (or add an exception), or import `cert.pem` into
+  your OS/browser's trust store if you'd rather not see it again. No
+  ACME/Let's Encrypt integration, for the same LAN-only reasoning as
+  `management-ui`.
+- **Replacing a certificate**: overwrite `cert.pem`/`key.pem` in
+  `./data/map/tls/` and restart the container (`docker compose -f
+  docker-compose.map.yaml restart map`).
+
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
@@ -37,7 +74,7 @@ Reads its configuration from environment variables via `shared/config.py`'s
 | `MAP_LISTEN_HOST` | ❌ | `0.0.0.0` | Bind address for the UDP listener |
 | `MAP_LISTEN_PORT` | ✅ | — | Bind port for the UDP listener. Must match whatever port a message processor's `MAP_UDP_PORT` sends datagrams to -- see [Deliberately distinct variable names](#deliberately-distinct-variable-names) below |
 | `MAP_HTTP_HOST` | ❌ | `0.0.0.0` | Bind address for the REST/WebSocket API |
-| `MAP_HTTP_PORT` | ❌ | `80` | Bind port for the REST/WebSocket API |
+| `MAP_HTTP_PORT` | ❌ | `80` | Bind port for the REST/WebSocket API. HTTPS when a TLS cert/key pair is present (see [TLS](#tls) above), plain HTTP otherwise |
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
