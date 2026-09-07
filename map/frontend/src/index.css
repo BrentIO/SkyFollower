@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Without this, the browser has no way to know the page follows a
+   coordinated light/dark presentation, so native UI chrome it renders
+   itself can end up with mismatched contrast in dark mode. Same
+   convention as management-ui/frontend/src/index.css. */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
