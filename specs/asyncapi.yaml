@@ -32,7 +32,7 @@ servers:
       below describing the actual contract. Fire-and-forget: no
       acknowledgement, ordering, or delivery guarantee.
   ws:
-    host: 'localhost:8090'
+    host: 'localhost:80'
     protocol: ws
     description: >
       The map service's WebSocket API (MAP_HTTP_HOST:MAP_HTTP_PORT).

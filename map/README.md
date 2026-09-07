@@ -36,7 +36,7 @@ Reads its configuration from environment variables via `shared/config.py`'s
 | `MAP_LISTEN_HOST` | ❌ | `0.0.0.0` | Bind address for the UDP listener |
 | `MAP_LISTEN_PORT` | ✅ | — | Bind port for the UDP listener. Must match whatever port a message processor's `MAP_UDP_PORT` sends datagrams to -- see [Deliberately distinct variable names](#deliberately-distinct-variable-names) below |
 | `MAP_HTTP_HOST` | ❌ | `0.0.0.0` | Bind address for the REST/WebSocket API |
-| `MAP_HTTP_PORT` | ❌ | `8090` | Bind port for the REST/WebSocket API |
+| `MAP_HTTP_PORT` | ❌ | `80` | Bind port for the REST/WebSocket API |
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
