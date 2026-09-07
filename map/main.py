@@ -6,17 +6,21 @@ Backend for the live-map frontend (`frontend/`, a separate Vite project --
 see map/README.md). Three independent jobs, plus serving the built
 frontend itself:
 
-1. A UDP listener that receives `position`/`metadata` datagrams from any/all
-   message-processor instances (message-processor/main.py's
-   `_MapUdpPublisher`) and merges each into per-aircraft current-state held
-   in a dedicated Redis instance -- never core Redis.
+1. A UDP listener that receives `position`/`metadata`/`heartbeat` datagrams
+   from any/all message-processor instances (message-processor/main.py's
+   `_MapUdpPublisher`), merges `position`/`metadata` into per-aircraft
+   current-state, and records every message's `processor_id` (all three
+   types carry one) into a per-processor liveness roster -- both held in a
+   dedicated Redis instance -- never core Redis.
 2. A Redis keyspace-notification listener that turns key expiry into
    `stale`/`remove` WebSocket events (no app-level timer loop scanning for
    expired aircraft -- expiry itself is the signal).
-3. A FastAPI app exposing `GET /api/flights` (a snapshot) and `WS /ws`
-   (a live, batched relay of position/metadata/stale/remove events), and
-   serving the frontend's built static assets (`frontend/dist/`, Vite's
-   `base: '/map/'` output) under `/map` with SPA-fallback routing.
+3. A FastAPI app exposing `GET /api/flights` (a snapshot), `GET
+   /api/processors` (the message-processor liveness roster/status), and
+   `WS /ws` (a live, batched relay of position/metadata/stale/remove
+   events), and serving the frontend's built static assets
+   (`frontend/dist/`, Vite's `base: '/map/'` output) under `/map` with
+   SPA-fallback routing.
 
 One process runs all three; there is exactly one map service instance (no
 MESSAGE_PROCESSOR_ID-style horizontal scaling here -- see map/README.md).
@@ -58,7 +62,11 @@ from shared.timing import (  # noqa: E402
 )
 
 from map.broadcaster import ConnectionManager  # noqa: E402
-from map.state_store import POSITION_FIELDS, FlightStateStore  # noqa: E402
+from map.state_store import (  # noqa: E402
+    POSITION_FIELDS,
+    FlightStateStore,
+    overall_processor_status,
+)
 
 logger = logging.getLogger("map")
 
@@ -152,8 +160,24 @@ def _extract_timestamp(payload: dict) -> Optional[float]:
 def _handle_packet(payload: dict) -> None:
     """Dispatches one decoded UDP datagram: applies it to Redis state (out-
     of-order guard + merge, see FlightStateStore.apply_update) and, if
-    accepted, publishes the corresponding live WebSocket event."""
+    accepted, publishes the corresponding live WebSocket event.
+
+    Every message type -- `heartbeat`, `position`, and `metadata` alike --
+    carries `processor_id`, and every one of them updates that processor's
+    liveness roster entry here first, before any type-specific handling.
+    This is the traffic-reduction design's other half (see
+    message-processor/main.py's `_map_heartbeat_loop`): a busy processor's
+    ordinary position/metadata datagrams keep it "green" without ever
+    needing a standalone heartbeat."""
     msg_type = payload.get("type")
+
+    processor_id = payload.get("processor_id")
+    if processor_id:
+        _store.record_processor_seen(processor_id, time.time())
+
+    if msg_type == "heartbeat":
+        return  # Liveness-only -- no flight state to apply, nothing to broadcast.
+
     if msg_type == "position":
         icao_hex = payload.get("icao_hex")
     elif msg_type == "metadata":
@@ -178,7 +202,10 @@ def _handle_packet(payload: dict) -> None:
     if msg_type == "position":
         fields = {k: payload[k] for k in POSITION_FIELDS if k in payload}
     else:
-        fields = {k: v for k, v in payload.items() if k not in ("type", "icao_hex")}
+        # processor_id describes the sending processor, not the aircraft --
+        # excluded here (like type/icao_hex) so it never leaks into the
+        # per-aircraft merged state / GET /api/flights.
+        fields = {k: v for k, v in payload.items() if k not in ("type", "icao_hex", "processor_id")}
 
     merged = _store.apply_update(icao_hex, msg_type, timestamp, fields)
     if merged is None:
@@ -354,6 +381,25 @@ def get_flights() -> list[dict]:
     current-state shape a WebSocket `metadata` message carries (see
     _handle_packet)."""
     return _store.list_flights()
+
+
+@app.get("/api/processors", tags=["flights"])
+def get_processor_status() -> dict:
+    """Per-message-processor liveness roster this map instance has derived
+    from UDP `heartbeat`/`position`/`metadata` traffic carrying
+    `processor_id` since its own dedicated Redis last reset (a full map +
+    map-redis restart -- see map/README.md's "Processor Roster" section),
+    plus the aggregated `overall` status the frontend's connection
+    indicator renders. Polled by the frontend rather than pushed over `WS
+    /ws` -- a processor's status can change purely from time passing
+    (green ageing into amber/red) with no new packet to trigger a push, so
+    computing it fresh on each request is both simpler and always
+    accurate."""
+    processors = _store.get_processor_statuses()
+    return {
+        "overall": overall_processor_status([p["status"] for p in processors]),
+        "processors": processors,
+    }
 
 
 @app.get("/api/config", tags=["config"])

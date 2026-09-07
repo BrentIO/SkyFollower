@@ -34,7 +34,7 @@ interpolated by Compose from this host's `.env` (written by
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
-| `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata UDP feed toward the future map component (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
+| `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata/heartbeat UDP feed toward the `map` service (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
 | `MAP_UDP_PORT` | ❌ | — | |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
@@ -398,21 +398,25 @@ needed.
 
 ## Map UDP Publisher
 
-An optional, fire-and-forget UDP feed of live aircraft data toward a future
-`map` service (tracked separately, not yet built). Fully disabled -- no
-socket ever created, no send ever attempted -- unless `MAP_UDP_HOST` is set;
-same optional-endpoint convention as `MQTT_HOST` above.
+An optional, fire-and-forget UDP feed of live aircraft data toward the
+`map` service. Fully disabled -- no socket ever created, no send ever
+attempted -- unless `MAP_UDP_HOST` is set; same optional-endpoint
+convention as `MQTT_HOST` above.
 
 When enabled, unicasts one UTF-8 JSON object per UDP datagram to
-`MAP_UDP_HOST:MAP_UDP_PORT`, of two types distinguished by a top-level
-`"type"` field:
+`MAP_UDP_HOST:MAP_UDP_PORT`, of three types distinguished by a top-level
+`"type"` field. All three carry `processor_id` (`MESSAGE_PROCESSOR_ID` --
+the same value used for the `message_processor:{id}:heartbeat` Redis key
+and MQTT topics), which the map service uses to update a per-processor
+liveness roster from *any* of the three, not just `heartbeat` -- see
+[map/README.md](../map/README.md)'s "Processor Roster" section:
 
 - **`position`** -- sent on every processed message, no throttling. A flat
   object merging whatever `Position`/`Velocity` fields that particular
-  message carried (`icao_hex`, `timestamp`, `latitude`, `longitude`,
-  `altitude`, `velocity`, `heading`, `vertical_speed`); a field absent from
-  that message is omitted, not sent as null, matching `Position.to_dict()`/
-  `Velocity.to_dict()`'s existing convention.
+  message carried (`icao_hex`, `timestamp`, `processor_id`, `latitude`,
+  `longitude`, `altitude`, `velocity`, `heading`, `vertical_speed`); a
+  field absent from that message is omitted, not sent as null, matching
+  `Position.to_dict()`/`Velocity.to_dict()`'s existing convention.
 - **`metadata`** -- sent the first time a flight's ident/aircraft
   enrichment/operator/registrant/squawk/origin/destination are known, and
   again only when one of those changes. Reuses the exact same
@@ -421,12 +425,29 @@ When enabled, unicasts one UTF-8 JSON object per UDP datagram to
   operator/registrant/origin/destination/force_archive omitted) minus the
   `rule` key, via a shared `_build_flight_notification_payload()` helper —
   see `Flight.map_metadata_hash`, persisted across messages, for how a
-  change is detected.
+  change is detected -- plus `processor_id`.
+- **`heartbeat`** -- `{"type": "heartbeat", "processor_id": "mp-1",
+  "timestamp": 1725720000.0}`. A fixed-interval liveness beacon from a
+  dedicated `_map_heartbeat_loop`, independent of aircraft traffic
+  entirely -- it has no `icao_hex` and never touches any flight's state.
+  Runs on a separate `MAP_HEARTBEAT_INTERVAL_SECONDS` (5s,
+  `shared/timing.py`) timer from `_heartbeat_loop` above (the unrelated
+  Redis NX duplicate-ID-guard refresh on `HEARTBEAT_INTERVAL_SECONDS`) --
+  don't confuse the two. **Traffic-reduction skip**: on each 5s tick,
+  `_map_heartbeat_loop` checks `_MapUdpPublisher.last_sent_at` (the
+  timestamp of the *last* datagram this publisher sent, of any type) and
+  skips sending a standalone heartbeat if that was within the last
+  `MAP_HEARTBEAT_INTERVAL_SECONDS` -- so a processor with steady
+  position/metadata traffic almost never emits one; only an idle/
+  low-traffic processor sees it fire on (nearly) every tick. Not
+  throttled by `MAX_MESSAGE_LAG_SECONDS` -- unlike `position`/`metadata`,
+  a heartbeat is about the processor being up *now*, not about a source
+  message's recency.
 
-Both message types apply the same staleness suppression
+`position`/`metadata` both apply the same staleness suppression
 `SkyFollower/rule/{IDENTIFIER}` notifications already do: a message older
 than `MAX_MESSAGE_LAG_SECONDS` at emit time is suppressed rather than sent
-(logged at debug level).
+(logged at debug level). `heartbeat` is exempt -- see above.
 
 A slow, unreachable, or misconfigured `MAP_UDP_HOST`/`MAP_UDP_PORT` can never
 affect the rest of the pipeline -- `_MapUdpPublisher.send()` wraps the

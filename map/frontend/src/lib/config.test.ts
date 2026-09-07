@@ -102,6 +102,7 @@ describe("loadConfig -- apiBaseUrl/restFlightsUrl/wsUrl", () => {
 
     expect(config.apiBaseUrl).toBe("");
     expect(config.restFlightsUrl).toBe("/api/flights");
+    expect(config.restProcessorsUrl).toBe("/api/processors");
     expect(config.wsUrl).toBe("ws://localhost:5173/ws");
   });
 
@@ -112,6 +113,7 @@ describe("loadConfig -- apiBaseUrl/restFlightsUrl/wsUrl", () => {
 
     expect(config.apiBaseUrl).toBe("http://map-host:8080");
     expect(config.restFlightsUrl).toBe("http://map-host:8080/api/flights");
+    expect(config.restProcessorsUrl).toBe("http://map-host:8080/api/processors");
     expect(config.wsUrl).toBe("ws://map-host:8080/ws");
     expect(fetch).toHaveBeenCalledWith("http://map-host:8080/api/config");
   });

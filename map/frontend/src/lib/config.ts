@@ -18,6 +18,7 @@ export interface AppConfig {
   /** "" means same-origin (this frontend's own host:port). */
   apiBaseUrl: string;
   restFlightsUrl: string;
+  restProcessorsUrl: string;
   wsUrl: string;
   /** null when no home reference point is configured on the backend (or,
    * in `npm run dev`, when VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE are also
@@ -102,6 +103,7 @@ export async function loadConfig(): Promise<AppConfig> {
   return {
     apiBaseUrl,
     restFlightsUrl: `${apiBaseUrl}/api/flights`,
+    restProcessorsUrl: `${apiBaseUrl}/api/processors`,
     wsUrl: resolveWsUrl(apiBaseUrl),
     home,
   };

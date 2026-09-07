@@ -194,6 +194,27 @@ DEFAULT_FLIGHT_TTL_SECONDS = 300
 # per update.
 MAP_WS_BATCH_INTERVAL_SECONDS = 0.25
 
+# How often each message processor's dedicated _map_heartbeat_loop ticks.
+# The loop skips actually sending a `heartbeat` datagram on a given tick if
+# a `position`/`metadata` datagram already went out within this same
+# window (see _MapUdpPublisher.last_sent_at in message-processor/main.py),
+# so a busy processor's own traffic keeps the map's per-processor status
+# green without a standalone heartbeat ever being needed.
+MAP_HEARTBEAT_INTERVAL_SECONDS = 5
+
+# Per-processor status thresholds the map service applies to
+# now - last_seen, where last_seen is updated by *any* map UDP message
+# type carrying processor_id (heartbeat, position, or metadata alike --
+# see map/state_store.py's processor_status()). green ("Connected") at or
+# under this many seconds -- three missed heartbeat intervals, so one
+# dropped datagram never flips a processor to amber.
+MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS = 15
+
+# amber ("Reconnecting") from the green threshold up to this many seconds;
+# red ("Disconnected") beyond it, or if the processor has never been seen
+# at all. Twelve missed heartbeat intervals.
+MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS = 60
+
 # --- Rule trigger counters --------------------------------------------------
 
 # TTL the message processor sets on each rule_triggers:{identifier}:{date}
@@ -221,4 +242,13 @@ assert HEARTBEAT_TTL_SECONDS > HEARTBEAT_INTERVAL_SECONDS, (
 # Route data is deliberately the more perishable of the two runner TTLs.
 assert ROUTE_TTL_SECONDS < ENRICHMENT_TTL_SECONDS, (
     "ROUTE_TTL_SECONDS is meant to be shorter than ENRICHMENT_TTL_SECONDS"
+)
+
+# One missed heartbeat tick must never flip a processor straight to amber,
+# and the green/amber boundary must sit strictly inside the amber/red one.
+assert MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS > MAP_HEARTBEAT_INTERVAL_SECONDS, (
+    "MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS must exceed MAP_HEARTBEAT_INTERVAL_SECONDS"
+)
+assert MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS > MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS, (
+    "MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS must exceed MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS"
 )

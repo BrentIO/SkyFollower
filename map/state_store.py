@@ -17,7 +17,16 @@ lat/lon/altitude snapshots appended on every accepted `position` update,
 refreshed onto the same TTL/lifecycle as ``flight:detail`` so it lives and
 dies alongside the aircraft's detail record.
 
-These three key families are local to this service -- they're not part of
+A fourth key, unrelated to any one aircraft, tracks message-processor
+liveness instead: ``map:processors`` -- a Redis hash (field = processor_id,
+value = last-seen epoch timestamp) recording every message processor this
+map instance has seen a `heartbeat`/`position`/`metadata` UDP packet from.
+Unlike the three keys above, it has no TTL -- see
+``FlightStateStore.record_processor_seen``'s docstring for why, and
+``processor_status``/``overall_processor_status`` for how a roster entry
+becomes a green/amber/red status.
+
+These four key families are local to this service -- they're not part of
 shared/redis_keys.py's schema, which documents *core* Redis's keys. The map
 service's Redis is a second, separate instance this service alone owns, so
 its key namespace has no reason to be centralized alongside core's.
@@ -27,13 +36,29 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
+
+from shared.timing import (
+    MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS,
+    MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS,
+)
 
 logger = logging.getLogger("map.state_store")
 
 _LIVE_PREFIX = "flight:live:"
 _DETAIL_PREFIX = "flight:detail:"
 _TRAIL_PREFIX = "flight:trail:"
+
+# Single Redis hash (field = processor_id, value = last-seen epoch
+# timestamp) tracking every message processor this map instance has heard
+# from -- see FlightStateStore.record_processor_seen/get_processor_roster.
+# Deliberately not TTL'd like flight:live/flight:detail above: a processor
+# that goes silent is meant to sit in the roster as "red" indefinitely (so
+# an operator sees it), not quietly disappear the way a completed flight
+# does. The roster resets only when this no-persistence Redis instance
+# itself restarts -- see map/README.md's "Processor Roster" section.
+_PROCESSOR_ROSTER_KEY = "map:processors"
 
 # Internal bookkeeping field on the flight:detail hash -- the timestamp of
 # the last packet actually applied for this icao_hex, used for the
@@ -66,6 +91,41 @@ def flight_detail_key(icao_hex: str) -> str:
 
 def flight_trail_key(icao_hex: str) -> str:
     return f"{_TRAIL_PREFIX}{icao_hex}"
+
+
+def processor_status(last_seen: Optional[float], now: float) -> str:
+    """One message processor's liveness classification (final thresholds,
+    see shared/timing.py's MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS /
+    MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS):
+
+    - "green" ("Connected") -- last_seen at most the green threshold ago.
+    - "amber" ("Reconnecting") -- between the green and amber thresholds.
+    - "red" ("Disconnected") -- beyond the amber threshold, or last_seen is
+      None (never seen at all).
+    """
+    if last_seen is None:
+        return "red"
+    age = now - last_seen
+    if age <= MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS:
+        return "green"
+    if age <= MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS:
+        return "amber"
+    return "red"
+
+
+def overall_processor_status(statuses: list[str]) -> str:
+    """The map connection indicator's aggregate color: green only when
+    every rostered processor is green, red only when every rostered
+    processor is red (an empty roster -- nothing has ever been received --
+    counts as red too), amber otherwise (at least one green, at least one
+    amber/red)."""
+    if not statuses:
+        return "red"
+    if all(s == "green" for s in statuses):
+        return "green"
+    if any(s == "green" for s in statuses):
+        return "amber"
+    return "red"
 
 
 def parse_expired_key(key: str) -> Optional[tuple[str, str]]:
@@ -241,3 +301,51 @@ class FlightStateStore:
         except Exception as exc:
             logger.debug("Trail cleanup failed for %s: %r", icao_hex, exc)
         return {"type": "remove", "icao_hex": icao_hex}
+
+    # ------------------------------------------------------------------
+    # Processor roster -- per-message-processor liveness, derived from
+    # *any* map UDP message type carrying a processor_id (heartbeat,
+    # position, or metadata alike). See map/main.py's _handle_packet for
+    # where this is called from, and the module-level docstring above for
+    # the roster's reset semantics.
+    # ------------------------------------------------------------------
+
+    def record_processor_seen(self, processor_id: str, timestamp: float) -> None:
+        """Records processor_id as alive as of `timestamp` (the map
+        service's own receipt time -- see map/main.py's _handle_packet,
+        not the sending processor's clock, so cross-host clock skew can
+        never distort the green/amber/red thresholds). A later call simply
+        overwrites the earlier last-seen value; there is no history kept
+        beyond "most recent"."""
+        self._redis.hset(_PROCESSOR_ROSTER_KEY, processor_id, timestamp)
+
+    def get_processor_roster(self) -> dict[str, float]:
+        """Every processor_id ever recorded since this Redis instance's
+        roster hash was last reset (i.e. since its own last restart -- see
+        the module docstring), mapped to its last-seen epoch timestamp. A
+        malformed value (should never happen outside direct Redis
+        tampering) is skipped rather than raising."""
+        raw = self._redis.hgetall(_PROCESSOR_ROSTER_KEY)
+        roster: dict[str, float] = {}
+        for processor_id, value in raw.items():
+            try:
+                roster[processor_id] = float(value)
+            except (TypeError, ValueError):
+                logger.warning("Discarding malformed roster entry %s=%r", processor_id, value)
+        return roster
+
+    def get_processor_statuses(self, now: Optional[float] = None) -> list[dict]:
+        """One {"processor_id", "last_seen", "status"} dict per rostered
+        processor, sorted by processor_id -- a stable order for GET
+        /api/processors, independent of insertion/recency order."""
+        if now is None:
+            now = time.time()
+        roster = self.get_processor_roster()
+        return [
+            {
+                "processor_id": processor_id,
+                "last_seen": last_seen,
+                "status": processor_status(last_seen, now),
+            }
+            for processor_id, last_seen in sorted(roster.items())
+        ]

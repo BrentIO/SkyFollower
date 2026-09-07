@@ -138,6 +138,10 @@ class _Server:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/flights", timeout=5) as resp:
             return json.loads(resp.read())
 
+    def get_processors(self) -> dict:
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/processors", timeout=5) as resp:
+            return json.loads(resp.read())
+
     def close(self) -> None:
         self.proc.terminate()
         try:
@@ -149,6 +153,20 @@ class _Server:
 
 @pytest.fixture
 def server():
+    # map:processors (the processor roster hash) has no TTL by design (see
+    # map/state_store.py) -- unlike flight:live/flight:detail, which TTL
+    # themselves out within this file's MAP_STALE_SECONDS/MAP_EVICT_SECONDS
+    # window regardless of test order, a roster entry from an earlier test
+    # in this module would otherwise sit forever in this shared real Redis
+    # (all of this module's tests use the same db, unlike
+    # test_state_store.py's dedicated db 15) and pollute a later test's
+    # roster/overall-status assertions.
+    client = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+    try:
+        client.delete("map:processors")
+    finally:
+        client.close()
+
     srv = _Server()
     yield srv
     srv.close()
@@ -271,3 +289,95 @@ def test_get_flights_only_lists_currently_tracked_aircraft(server):
     flights = server.get_flights()
     assert isinstance(flights, list)
     assert _hex() not in {f["icao_hex"] for f in flights}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/processors -- message-processor liveness roster/status
+# ---------------------------------------------------------------------------
+
+def _wait_for_processor(server, processor_id: str, timeout: float = 3.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        body = server.get_processors()
+        by_id = {p["processor_id"]: p for p in body["processors"]}
+        if processor_id in by_id:
+            return by_id[processor_id]
+        last = body
+        time.sleep(0.05)
+    raise AssertionError(f"{processor_id} never appeared in GET /api/processors (last seen: {last})")
+
+
+def test_heartbeat_datagram_adds_processor_to_roster(server):
+    processor_id = f"mp-{_hex()}"
+    server.send_udp({"type": "heartbeat", "processor_id": processor_id, "timestamp": time.time()})
+
+    entry = _wait_for_processor(server, processor_id)
+    assert entry["status"] == "green"
+
+
+def test_position_datagram_with_processor_id_also_updates_roster(server):
+    """The traffic-reduction design's core claim: ordinary position
+    traffic, not just a dedicated heartbeat, keeps a processor's roster
+    entry alive."""
+    processor_id = f"mp-{_hex()}"
+    server.send_udp({
+        "type": "position", "icao_hex": _hex(), "timestamp": time.time(),
+        "processor_id": processor_id, "latitude": 1.0, "longitude": 2.0,
+    })
+
+    entry = _wait_for_processor(server, processor_id)
+    assert entry["status"] == "green"
+
+
+def test_metadata_datagram_with_processor_id_also_updates_roster(server):
+    processor_id = f"mp-{_hex()}"
+    icao_hex = _hex()
+    server.send_udp({
+        "type": "metadata",
+        "aircraft": {"icao_hex": icao_hex},
+        "ident": "DAL2",
+        "processor_id": processor_id,
+        "last_message": _iso(time.time()),
+    })
+
+    entry = _wait_for_processor(server, processor_id)
+    assert entry["status"] == "green"
+
+
+def test_processor_id_never_leaks_into_flight_state(server):
+    """processor_id describes the sender, not the aircraft -- it must never
+    show up on the GET /api/flights record it arrived alongside."""
+    processor_id = f"mp-{_hex()}"
+    icao_hex = _hex()
+    server.send_udp({
+        "type": "metadata",
+        "aircraft": {"icao_hex": icao_hex},
+        "ident": "DAL2",
+        "processor_id": processor_id,
+        "last_message": _iso(time.time()),
+    })
+
+    flight = _wait_for_flight(server, icao_hex, predicate=lambda f: "ident" in f)
+    assert "processor_id" not in flight
+
+
+def test_overall_status_green_when_every_processor_green(server):
+    server.send_udp({"type": "heartbeat", "processor_id": f"mp-{_hex()}", "timestamp": time.time()})
+
+    deadline = time.monotonic() + 3.0
+    body = server.get_processors()
+    while body["overall"] != "green" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        body = server.get_processors()
+    assert body["overall"] == "green"
+    assert all(p["status"] == "green" for p in body["processors"])
+
+
+def test_processors_endpoint_empty_roster_reports_red_overall(server):
+    """A map instance that has received nothing at all reports `overall:
+    red` -- not some neutral "unknown" state -- with an empty processors
+    list."""
+    body = server.get_processors()
+    assert body["processors"] == []
+    assert body["overall"] == "red"

@@ -142,12 +142,12 @@ def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """The message processor's live position/metadata feed toward the
-    future map component (not yet built) -- a single unicast
-    UDP destination. Optional everywhere, same convention as mqtt_config()
-    above: host defaults to blank / port to 0, so a component with no
-    MAP_UDP_HOST set simply never creates the socket and never attempts a
-    send, rather than failing to start."""
+    """The message processor's live position/metadata/heartbeat feed
+    toward the `map` service -- a single unicast UDP destination. Optional
+    everywhere, same convention as mqtt_config() above: host defaults to
+    blank / port to 0, so a component with no MAP_UDP_HOST set simply
+    never creates the socket and never attempts a send, rather than
+    failing to start."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_UDP_HOST", ""),

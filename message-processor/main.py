@@ -81,6 +81,7 @@ from shared.timing import (
     HEALTHCHECK_INTERVAL_SECONDS,
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
+    MAP_HEARTBEAT_INTERVAL_SECONDS,
     MAX_MESSAGE_LAG_SECONDS,
     MQTT_PUBLISH_INTERVAL_SECONDS,
     PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
@@ -273,6 +274,11 @@ class _MapUdpPublisher:
         # message -- but a transient outage that recovers and later recurs
         # logs again instead of going silent forever.
         self._logged_failure = False
+        # Wall-clock time.time() of the most recent send() call, of any
+        # message type -- consulted by _map_heartbeat_loop's skip-if-
+        # recently-sent check (see that method's docstring). None until
+        # the first send() this process lifetime.
+        self._last_sent_at: Optional[float] = None
 
         if self.enabled:
             logger.info("Map UDP feed enabled -> %s:%s", host, port)
@@ -283,9 +289,20 @@ class _MapUdpPublisher:
     def enabled(self) -> bool:
         return self._sock is not None
 
+    @property
+    def last_sent_at(self) -> Optional[float]:
+        """Wall-clock time.time() of the most recent send() call
+        (regardless of message type, and regardless of whether the
+        underlying sendto() actually succeeded -- a fire-and-forget UDP
+        transmit *attempt* is what "sent" means here, not confirmed
+        delivery), or None if send() has never been called this process
+        lifetime."""
+        return self._last_sent_at
+
     def send(self, payload: dict) -> None:
         if self._sock is None:
             return
+        self._last_sent_at = time.time()
         try:
             body = json.dumps(payload, default=str).encode("utf-8")
             self._sock.sendto(body, self._addr)
@@ -946,6 +963,7 @@ class MessageProcessor:
         threading.Thread(target=self._eviction_loop, daemon=True, name="eviction").start()
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
+        threading.Thread(target=self._map_heartbeat_loop, daemon=True, name="map-heartbeat").start()
 
         self._consume_loop()
 
@@ -1847,8 +1865,8 @@ class MessageProcessor:
         )
 
     # ------------------------------------------------------------------
-    # Map UDP publisher -- fire-and-forget position/metadata feed toward
-    # the future map component (not yet built).
+    # Map UDP publisher -- fire-and-forget position/metadata/heartbeat
+    # feed toward the map service.
     # ------------------------------------------------------------------
 
     def _publish_map_position(self, flight: Flight, data: dict, received_at: float) -> None:
@@ -1856,7 +1874,10 @@ class MessageProcessor:
         feed is enabled -- one flat object merging whatever Position/
         Velocity fields this particular message carried. Fields absent
         from `data` are omitted, not sent as null, matching Position.to_dict()
-        / Velocity.to_dict()'s existing convention."""
+        / Velocity.to_dict()'s existing convention. Carries `processor_id`
+        (like `metadata` and `heartbeat`) so the map service's per-processor
+        liveness roster can be updated from ordinary traffic, not just the
+        dedicated heartbeat -- see _map_heartbeat_loop."""
         if not self._map_udp.enabled:
             return
         lag = time.time() - received_at
@@ -1870,6 +1891,7 @@ class MessageProcessor:
             "type": "position",
             "icao_hex": flight.icao_hex,
             "timestamp": received_at,
+            "processor_id": self._id,
         }
         for key in ("latitude", "longitude", "altitude", "velocity", "heading", "vertical_speed"):
             if key in data:
@@ -1882,7 +1904,8 @@ class MessageProcessor:
         known, and again only when one of them changes -- never on every
         message. See _flight_metadata_snapshot for the change-detection
         approach and Flight.map_metadata_hash for the persisted snapshot
-        this is compared against."""
+        this is compared against. Carries `processor_id` -- see
+        _publish_map_position's docstring."""
         if not self._map_udp.enabled:
             return
         lag = time.time() - received_at
@@ -1897,8 +1920,40 @@ class MessageProcessor:
             return
         payload = self._build_flight_notification_payload(flight)
         payload["type"] = "metadata"
+        payload["processor_id"] = self._id
         self._map_udp.send(payload)
         flight.map_metadata_hash = snapshot
+
+    def _map_heartbeat_loop(self) -> None:
+        """Fixed MAP_HEARTBEAT_INTERVAL_SECONDS (5s) liveness beacon toward
+        the map service, independent of aircraft traffic -- mirrors
+        _heartbeat_loop's structure below, but that one refreshes the
+        unrelated Redis NX duplicate-ID guard on HEARTBEAT_INTERVAL_SECONDS;
+        this is a separate concern entirely. No-op when the map UDP feed is
+        disabled, same as position/metadata.
+
+        Traffic-reduction skip: if a position/metadata datagram already
+        went out (for any aircraft -- _map_udp is one shared publisher, not
+        per-aircraft) within the last MAP_HEARTBEAT_INTERVAL_SECONDS, this
+        tick is skipped entirely. A busy processor's own ordinary traffic
+        already tells the map service it's alive; only an idle/low-traffic
+        processor actually needs the standalone datagram.
+
+        Not gated by MAX_MESSAGE_LAG_SECONDS, unlike position/metadata -- a
+        heartbeat is about the processor being up *now*, not about a
+        source message's recency."""
+        while not self._shutdown.is_set():
+            time.sleep(MAP_HEARTBEAT_INTERVAL_SECONDS)
+            if not self._map_udp.enabled:
+                continue
+            last_sent_at = self._map_udp.last_sent_at
+            if last_sent_at is not None and time.time() - last_sent_at < MAP_HEARTBEAT_INTERVAL_SECONDS:
+                continue
+            self._map_udp.send({
+                "type": "heartbeat",
+                "processor_id": self._id,
+                "timestamp": time.time(),
+            })
 
     # ------------------------------------------------------------------
     # Telemetry

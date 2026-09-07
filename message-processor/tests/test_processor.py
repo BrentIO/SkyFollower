@@ -79,7 +79,11 @@ from shared.redis_keys import (
     rule_trigger_day_key,
     rule_trigger_lifetime_key,
 )
-from shared.timing import MAX_MESSAGE_LAG_SECONDS, RULE_TRIGGER_DAY_TTL_SECONDS  # noqa: E402
+from shared.timing import (  # noqa: E402
+    MAP_HEARTBEAT_INTERVAL_SECONDS,
+    MAX_MESSAGE_LAG_SECONDS,
+    RULE_TRIGGER_DAY_TTL_SECONDS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -4200,6 +4204,7 @@ class TestMapUdpPosition:
             "type": "position",
             "icao_hex": "A8AE7F",
             "timestamp": 1757000000.0,
+            "processor_id": "0",
             "latitude": 33.9425,
             "longitude": -118.408,
             "altitude": 350,
@@ -4224,6 +4229,7 @@ class TestMapUdpPosition:
             "type": "position",
             "icao_hex": "A8AE7F",
             "timestamp": 1757000000.0,
+            "processor_id": "0",
             "latitude": 33.9425,
             "longitude": -118.408,
         }
@@ -4312,6 +4318,7 @@ class TestMapUdpMetadata:
         payload = _sent_payload(mock_sock)
         expected = p._build_flight_notification_payload(f)
         expected["type"] = "metadata"
+        expected["processor_id"] = "0"
         assert payload == expected
         assert "rule" not in payload
         assert "positions" not in payload
@@ -4379,6 +4386,129 @@ class TestMapUdpMetadata:
         # unchanged metadata on every single message forever).
         p._maybe_publish_map_metadata(f, time.time())
         assert f.map_metadata_hash is not None
+
+
+class TestMapHeartbeatLoop:
+    """_map_heartbeat_loop -- the dedicated 5s liveness beacon, independent
+    of aircraft traffic. See message_processor.main.MAP_HEARTBEAT_INTERVAL_SECONDS."""
+
+    def _run_one_heartbeat_tick(self, p) -> None:
+        """Same pattern as TestFallback's _run_one_telemetry_tick: the
+        mocked time.sleep sets _shutdown so the loop body runs exactly
+        once and then the while loop exits, actually exercising the real
+        method rather than re-implementing its conditional here."""
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep):
+            p._map_heartbeat_loop()
+
+    def test_no_op_when_map_udp_disabled(self):
+        p, _ = _make_processor()
+        assert p._map_udp.enabled is False
+        # Must not raise even though there's no socket at all.
+        self._run_one_heartbeat_tick(p)
+
+    def test_fires_when_never_sent_before(self):
+        """An idle processor that has never sent anything on the map UDP
+        feed must emit a heartbeat on its very first tick."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        assert p._map_udp.last_sent_at is None
+
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            self._run_one_heartbeat_tick(p)
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload == {
+            "type": "heartbeat",
+            "processor_id": "0",
+            "timestamp": 1757000000.0,
+        }
+
+    def test_skipped_when_position_sent_within_the_window(self):
+        """Acceptance criterion: a message processor with steady
+        position/metadata traffic must almost never emit a standalone
+        heartbeat -- simulate a recent position send, tick the heartbeat
+        loop, and confirm send() was not called with a heartbeat payload."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = TestMapUdpPosition()._make_flight(p)
+
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+        mock_sock.reset_mock()
+
+        with patch(
+            "message_processor.main.time.time",
+            return_value=1757000000.0 + MAP_HEARTBEAT_INTERVAL_SECONDS - 1,
+        ):
+            self._run_one_heartbeat_tick(p)
+
+        mock_sock.sendto.assert_not_called()
+
+    def test_skipped_when_metadata_sent_within_the_window(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = TestMapUdpMetadata()._make_flight(p)
+
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            p._maybe_publish_map_metadata(f, 1757000000.0)
+        mock_sock.reset_mock()
+
+        with patch(
+            "message_processor.main.time.time",
+            return_value=1757000000.0 + MAP_HEARTBEAT_INTERVAL_SECONDS - 1,
+        ):
+            self._run_one_heartbeat_tick(p)
+
+        mock_sock.sendto.assert_not_called()
+
+    def test_fires_when_idle_past_the_window(self):
+        """Acceptance criterion: an idle processor emits a heartbeat every
+        ~5s -- once the skip window has fully elapsed since the last send
+        (of any type), the next tick sends one."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = TestMapUdpPosition()._make_flight(p)
+
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, 1757000000.0)
+        mock_sock.reset_mock()
+
+        with patch(
+            "message_processor.main.time.time",
+            return_value=1757000000.0 + MAP_HEARTBEAT_INTERVAL_SECONDS,
+        ):
+            self._run_one_heartbeat_tick(p)
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload["type"] == "heartbeat"
+
+    def test_heartbeat_not_suppressed_by_max_message_lag(self):
+        """Unlike position/metadata, a heartbeat has no source-message
+        timestamp to be "stale" relative to -- it must always send once the
+        skip-if-recent check passes, regardless of MAX_MESSAGE_LAG_SECONDS."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+
+        # A very large fixed "now" simulates a long-idle process -- there
+        # is no message-age concept here at all, so nothing should suppress
+        # this send.
+        with patch("message_processor.main.time.time", return_value=1757000000.0 + 10_000):
+            self._run_one_heartbeat_tick(p)
+
+        mock_sock.sendto.assert_called_once()
+
+    def test_send_failure_does_not_propagate(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+
+        # Must not raise.
+        self._run_one_heartbeat_tick(p)
 
 
 class TestFlightMetadataSnapshot:
