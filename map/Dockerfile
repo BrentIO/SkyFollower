@@ -1,3 +1,21 @@
+# Builds the frontend SPA (map/frontend/, a standalone Vite project --
+# see map/README.md's "Frontend" section) so the final image can serve it
+# itself under /map (map/main.py's _SPAStaticFiles mount) -- one container,
+# no separate static-file server. Mirrors management-ui/Dockerfile's
+# node-build-stage-then-python-stage structure, but the built assets land
+# inside the Python stage's own app tree (map/frontend/dist/) rather than
+# an nginx html root, since this image serves them itself via FastAPI
+# rather than nginx.
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS frontend-build
+
+WORKDIR /frontend
+
+COPY map/frontend/package*.json ./
+RUN npm ci
+
+COPY map/frontend/ ./
+RUN npm run build
+
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS base
 
 WORKDIR /app
@@ -8,6 +26,12 @@ RUN pip install --no-cache-dir -r shared_requirements.txt -r requirements.txt
 
 COPY shared/ ./shared/
 COPY map/ ./map/
+
+# Built frontend assets, read by map/main.py's _FRONTEND_DIST_DIR /
+# _SPAStaticFiles mount at /app/map/frontend/dist -- same relative
+# location `npm run build` produces outside Docker (map/frontend/dist/),
+# so the mount path needs no Docker-specific special-casing.
+COPY --from=frontend-build /frontend/dist ./map/frontend/dist
 
 # Pinned at /app/healthcheck.py in every image that has one, so all compose
 # files can name the identical HEALTHCHECK command regardless of how each

@@ -29,7 +29,12 @@ function maplibreWorkerAssets(): Plugin {
     name: "maplibre-worker-assets",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const name = req.url?.replace(/^\/assets\//, "");
+        // Matches ".../assets/<file>" regardless of what (if anything)
+        // precedes "assets/" -- with base: "/map/" set below, the browser
+        // requests "/map/assets/maplibre-gl-worker.mjs" (per
+        // maplibreSetup.ts's import.meta.env.BASE_URL-prefixed URL), not
+        // the bare "/assets/..." this middleware originally only matched.
+        const name = req.url?.match(/\/assets\/([^/?]+)(?:\?.*)?$/)?.[1];
         if (!name || !MAPLIBRE_WORKER_FILES.includes(name)) {
           next();
           return;
@@ -53,6 +58,13 @@ function maplibreWorkerAssets(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  // map/main.py mounts the built dist/ under /map (see its _SPAStaticFiles
+  // mount), so built asset URLs must be emitted rooted at /map/ rather
+  // than / -- both dist/index.html's own <script>/<link> tags (handled by
+  // Vite automatically) and the maplibre-gl worker URL src/lib/
+  // maplibreSetup.ts sets explicitly at runtime via
+  // import.meta.env.BASE_URL, which Vite derives from this same setting.
+  base: "/map/",
   plugins: [react(), tailwindcss(), maplibreWorkerAssets()],
   server: {
     proxy: {

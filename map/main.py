@@ -2,8 +2,9 @@
 """
 SkyFollower Map Service
 
-Backend for the live-map frontend (frontend itself is a separate,
-not-yet-built component -- see map/README.md). Three independent jobs:
+Backend for the live-map frontend (`frontend/`, a separate Vite project --
+see map/README.md). Three independent jobs, plus serving the built
+frontend itself:
 
 1. A UDP listener that receives `position`/`metadata` datagrams from any/all
    message-processor instances (message-processor/main.py's
@@ -13,7 +14,9 @@ not-yet-built component -- see map/README.md). Three independent jobs:
    `stale`/`remove` WebSocket events (no app-level timer loop scanning for
    expired aircraft -- expiry itself is the signal).
 3. A FastAPI app exposing `GET /api/flights` (a snapshot) and `WS /ws`
-   (a live, batched relay of position/metadata/stale/remove events).
+   (a live, batched relay of position/metadata/stale/remove events), and
+   serving the frontend's built static assets (`frontend/dist/`, Vite's
+   `base: '/map/'` output) under `/map` with SPA-fallback routing.
 
 One process runs all three; there is exactly one map service instance (no
 MESSAGE_PROCESSOR_ID-style horizontal scaling here -- see map/README.md).
@@ -35,6 +38,8 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Add the repo root to sys.path so shared/ is importable when this module is
 # run outside Docker (e.g. tests, local `uvicorn map.main:app`). In the
@@ -66,6 +71,35 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # incoming traffic.
 _UDP_RECV_TIMEOUT_SECONDS = 1.0
 _UDP_MAX_DATAGRAM_BYTES = 65535
+
+# Vite's build output (map/frontend/vite.config.ts sets base: '/map/' so
+# built asset URLs already point at this same sub-path). Only present in
+# the Docker image (map/Dockerfile's frontend-build stage) or after a
+# manual `npm run build` in map/frontend/ -- see the mount guard below,
+# which degrades to a 404-only /map rather than failing app startup when
+# it's absent (e.g. bare `pytest map/tests`, `uvicorn map.main:app`
+# outside Docker).
+_FRONTEND_DIST_DIR = os.path.join(_HERE, "frontend", "dist")
+
+
+class _SPAStaticFiles(StaticFiles):
+    """Serves the built frontend with real single-page-app fallback: any
+    GET/HEAD under /map/* that doesn't resolve to an actual file in dist/
+    (a deep link into a client-side route, or a plain refresh of one) gets
+    index.html instead of a bare HTTP 404, so client-side routing survives
+    a full page reload. Plain `html=True` alone only covers the mount's
+    own directory index (`/map`/`/map/`) -- it does not fall back to
+    index.html for an arbitrary unmatched sub-path, which is what SPA
+    deep-link support actually requires."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and scope["method"] in ("GET", "HEAD"):
+                return await super().get_response("index.html", scope)
+            raise
+
 
 # Module-level state, built in lifespan() -- same convention
 # management-ui/backend/main.py uses (globals rather than app.state), since
@@ -307,7 +341,8 @@ app = FastAPI(
     description="Live aircraft position/metadata feed for the map "
     "frontend: a UDP listener fed by message-processor instances, a "
     "dedicated Redis instance holding current per-aircraft state, a "
-    "GET /api/flights snapshot, and a batched WS /ws live relay.",
+    "GET /api/flights snapshot, and a batched WS /ws live relay. Also "
+    "serves the built frontend SPA itself, mounted at /map.",
     version="9999.99.99",
     lifespan=lifespan,
 )
@@ -340,6 +375,30 @@ async def flights_ws(websocket: WebSocket) -> None:
         pass
     finally:
         _connections.unregister(websocket)
+
+
+# Registered last, after both API routes above -- a Mount only ever
+# matches paths starting with /map (Starlette compiles it to
+# "/map/{path:path}"), so it can never shadow /api/flights or /ws
+# regardless of registration order, but this ordering keeps the specific
+# routes visually grouped ahead of the catch-all frontend mount. Guarded
+# on the directory actually existing so importing this module (e.g. `pytest
+# map/tests`, `uvicorn map.main:app` outside Docker) never fails just
+# because `npm run build` hasn't been run locally -- the Docker image
+# always has it (see map/Dockerfile's frontend-build stage).
+if os.path.isdir(_FRONTEND_DIST_DIR):
+    app.mount(
+        "/map",
+        _SPAStaticFiles(directory=_FRONTEND_DIST_DIR, html=True),
+        name="map-frontend",
+    )
+else:
+    logger.warning(
+        "Frontend build not found at %s -- /map will 404 until `npm run "
+        "build` has been run in map/frontend/ (always present in the "
+        "Docker image).",
+        _FRONTEND_DIST_DIR,
+    )
 
 
 def main() -> None:  # pragma: no cover -- exercised via `python -m map.main`

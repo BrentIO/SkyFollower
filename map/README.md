@@ -12,7 +12,9 @@ below). Three jobs in one process:
    `stale`/`remove` WebSocket events -- eviction is driven entirely by that
    signal, with no app-level timer loop scanning for expired aircraft.
 3. A FastAPI app exposing `GET /api/flights` (a snapshot) and `WS /ws` (a
-   live, batched relay of `position`/`metadata`/`stale`/`remove` events).
+   live, batched relay of `position`/`metadata`/`stale`/`remove` events),
+   and serving the built frontend SPA itself under `/map` (see
+   [Frontend](#frontend-frontend) below).
 
 There is exactly one map service instance -- unlike `message-processor`,
 this is not horizontally scaled (no `MAP_SERVICE_ID`-style claim/heartbeat
@@ -219,12 +221,16 @@ project -- its own `package.json`, not a view inside `management-ui/frontend`
 (that frontend has its own separate backend/purpose; this one exists purely
 to render this service's live feed). It sits alongside this directory's
 Python backend the same way `management-ui/frontend` sits alongside
-`management-ui/backend`, but is never built into this service's own Docker
-image -- this service serves `GET /api/flights` and `WS /ws` only, no
-static files. How the built frontend is actually served (its own
-container/nginx, folded into a future image, a separate static host) is
-left open for whoever deploys it; see the frontend's own build output
-under `frontend/dist/` after `npm run build`.
+`management-ui/backend`, but unlike that pairing (frontend built into an
+nginx html root, served on its own port), this frontend is built and
+served by the `map` image itself: `map/Dockerfile`'s `frontend-build`
+stage runs `npm ci && npm run build`, and the resulting `frontend/dist/`
+is copied into the final Python-stage image, where `map/main.py` mounts it
+at `/map` (FastAPI/Starlette `StaticFiles`, with SPA-fallback routing so a
+deep link/refresh under `/map/*` doesn't 404). `GET /api/flights` and
+`WS /ws` stay unprefixed -- `/map` is only the SPA's own mount point.
+Vite's `base: '/map/'` (`vite.config.ts`) keeps the built bundle's own
+asset URLs rooted at that same sub-path.
 
 Full-viewport live map, no persistent side panel: a symbol layer for
 tracked aircraft (icon rotates via `icon-rotate` bound to `heading`; an SDF
@@ -263,7 +269,9 @@ marker/recenter button from build-time config.
 ```bash
 cd map/frontend
 npm install
-npm run dev       # Vite dev server on :5173, proxying /api and /ws to localhost:80
+npm run dev       # Vite dev server on :5173, serving the app under /map/ (base: '/map/'
+                   # in vite.config.ts, matching production) and proxying /api and /ws
+                   # to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- altitudeColor, info-box formatting, and overlap-placement unit tests
 ```

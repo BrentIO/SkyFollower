@@ -11,14 +11,16 @@ name: skyfollower-map
 # replacing download-host-files.sh -- .env is always generated
 # interactively, never copied from a checked-in example).
 #
-# ASSUMPTION (revisit once #1493, the map frontend, merges): as of this
-# writing map/main.py has no static-file-serving route and map/README.md
-# describes no such mechanism, so this file assumes the frontend ships as
-# its own separate deployable (its own container, or served some other way
-# outside this compose file) rather than being served by the `map` image
-# itself. If #1493 lands with the backend serving the built frontend
-# instead, this service definition (and possibly a frontend build stage in
-# map/Dockerfile) needs to be revisited.
+# DECIDED: the `map` image serves both the API and the built frontend SPA
+# itself -- one container, no separate frontend deployable/container. The
+# frontend (`map/frontend/`, a standalone Vite project) is built into this
+# same image by map/Dockerfile's frontend-build stage and served by
+# map/main.py under the /map URL path (Vite's `base: '/map/'`,
+# a FastAPI/Starlette StaticFiles mount with SPA-fallback routing so a
+# deep link/refresh under /map/* doesn't 404). GET /api/flights and
+# WS /ws stay unprefixed -- /map is only the SPA's own mount point, not an
+# API prefix. There is accordingly no separate frontend service/port
+# below; the single `map` service's HTTP port serves all three.
 #
 # No auth on either service below -- same "trusted network" posture as
 # docker-compose.management-ui.yaml.
@@ -39,8 +41,8 @@ services:
       # point at this host on this same port. Required, no default (see
       # shared/config.py's map_config()).
       - "${MAP_LISTEN_PORT}:${MAP_LISTEN_PORT}/udp"
-      # REST (`GET /api/flights`) + WebSocket (`/ws`) -- one port, both
-      # served by the same FastAPI app.
+      # REST (`GET /api/flights`) + WebSocket (`/ws`) + the built frontend
+      # SPA (`/map`) -- one port, all served by the same FastAPI app.
       - "${MAP_HTTP_PORT:-80}:${MAP_HTTP_PORT:-80}"
     # Named one by one from this host's .env rather than `env_file: .env`,
     # so the container only ever holds the values it actually reads.
