@@ -184,14 +184,20 @@ jobs:
 
   # Discovers every component directory with its own requirements.txt, same
   # `find` pattern this workflow always used for the (now-removed) combined
-  # install, just turned into a matrix instead of a concatenation target.
+  # install, then filters that list down to only the directories touched by
+  # this trigger's diff. `fetch-depth: 0` is required here (unlike the other
+  # jobs' default shallow checkout) so that both endpoints of the diff below
+  # -- the PR's base/head commits, or a push's before/after commits -- are
+  # guaranteed to be present as local objects for `git diff` to compare.
   discover:
     name: 🔎 Discover components
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.discover.outputs.matrix }}
+      matrix: ${{ steps.filter.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Find every component with its own requirements.txt
         id: discover
@@ -204,6 +210,72 @@ jobs:
           json=$(printf '%s\n' "${dirs[@]}" | sed 's|^\./||' | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "Discovered $(echo "$json" | jq 'length') component(s)."
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+      # A manual workflow_dispatch run always gets the full matrix (an
+      # intentional full run, not something to diff against). Otherwise the
+      # matrix is filtered to only the discovered component directories that
+      # contain at least one file from this trigger's diff -- pull_request
+      # diffs the PR's base/head commits, push diffs the pushed commit's
+      # before/after -- with a fallback to the full, unfiltered matrix
+      # whenever a file under shared/ changed (nearly every component
+      # imports it) or this workflow file itself changed (a bug in this
+      # filtering logic should be caught by the full matrix it's supposedly
+      # filtering, not trusted blindly). A diff that matches neither
+      # fallback and touches none of the discovered directories legitimately
+      # produces an empty matrix.
+      - name: Filter matrix to components touched by this diff
+        id: filter
+        run: |
+          set -euo pipefail
+          full_matrix='${{ steps.discover.outputs.matrix }}'
+          event_name="${{ github.event_name }}"
+
+          use_full_matrix() {
+            echo "Using full matrix ($(echo "$full_matrix" | jq 'length') component(s)): $1"
+            echo "matrix=$full_matrix" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$event_name" = "workflow_dispatch" ]; then
+            use_full_matrix "manual workflow_dispatch run"
+            exit 0
+          fi
+
+          if [ "$event_name" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files=$(git diff --name-only "$base_sha" "$head_sha")
+          elif [ "$event_name" = "push" ]; then
+            before_sha="${{ github.event.before }}"
+            after_sha="${{ github.event.after }}"
+            if [ "$before_sha" = "0000000000000000000000000000000000000000" ]; then
+              use_full_matrix "push 'before' SHA is all-zeros (new branch); nothing to diff against"
+              exit 0
+            fi
+            changed_files=$(git diff --name-only "$before_sha" "$after_sha")
+          else
+            use_full_matrix "unrecognized event '$event_name'"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$changed_files"
+
+          if echo "$changed_files" | grep -q '^shared/'; then
+            use_full_matrix "a file under shared/ changed"
+            exit 0
+          fi
+
+          if echo "$changed_files" | grep -qxF '.github/workflows/run-tests.yaml'; then
+            use_full_matrix "the run-tests.yaml workflow file itself changed"
+            exit 0
+          fi
+
+          changed_json=$(printf '%s\n' "$changed_files" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          filtered=$(echo "$full_matrix" | jq -c --argjson changed "$changed_json" \
+            'map(select(. as $dir | $changed | any(startswith($dir + "/"))))')
+
+          echo "Filtered to $(echo "$filtered" | jq 'length') component(s): $filtered"
+          echo "matrix=$filtered" >> "$GITHUB_OUTPUT"
 
   test:
     name: test (${{ matrix.dir }})
@@ -289,7 +361,10 @@ jobs:
             echo "::error::check-dependabot-sync did not succeed (${{ needs.check-dependabot-sync.result }})."
             exit 1
           fi
-          if [ "${{ needs.test.result }}" != "success" ]; then
+          # "skipped" is expected and acceptable here: an empty filtered
+          # matrix (e.g. a docs-only diff) makes GitHub Actions skip the
+          # test job's matrix entirely rather than reporting "success".
+          if [ "${{ needs.test.result }}" != "success" ] && [ "${{ needs.test.result }}" != "skipped" ]; then
             echo "::error::One or more component test jobs did not succeed (${{ needs.test.result }})."
             exit 1
           fi
