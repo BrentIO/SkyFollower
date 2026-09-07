@@ -17,7 +17,7 @@ same host or on separate hosts -- see `MESSAGE_PROCESSOR_ID` below for how
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
-`load_config("rabbitmq", "redis", "mqtt", "telemetry", "message_processor")`,
+`load_config("rabbitmq", "redis", "mqtt", "message_processor", "map_udp")`,
 interpolated by Compose from this host's `.env` (written by
 `scripts/install.sh`).
 
@@ -34,6 +34,8 @@ interpolated by Compose from this host's `.env` (written by
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
 | `MQTT_PASSWORD` | ❌ | — | |
+| `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata UDP feed toward the future map component (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
+| `MAP_UDP_PORT` | ❌ | — | |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
@@ -393,6 +395,43 @@ payloads are published to
 connect; each sensor's `state_topic` points directly at its own
 `SkyFollower/message-processor/{ID}/statistic/{field}` topic — no `value_template`
 needed.
+
+## Map UDP Publisher
+
+An optional, fire-and-forget UDP feed of live aircraft data toward a future
+`map` service (tracked separately, not yet built). Fully disabled -- no
+socket ever created, no send ever attempted -- unless `MAP_UDP_HOST` is set;
+same optional-endpoint convention as `MQTT_HOST` above.
+
+When enabled, unicasts one UTF-8 JSON object per UDP datagram to
+`MAP_UDP_HOST:MAP_UDP_PORT`, of two types distinguished by a top-level
+`"type"` field:
+
+- **`position`** -- sent on every processed message, no throttling. A flat
+  object merging whatever `Position`/`Velocity` fields that particular
+  message carried (`icao_hex`, `timestamp`, `latitude`, `longitude`,
+  `altitude`, `velocity`, `heading`, `vertical_speed`); a field absent from
+  that message is omitted, not sent as null, matching `Position.to_dict()`/
+  `Velocity.to_dict()`'s existing convention.
+- **`metadata`** -- sent the first time a flight's ident/aircraft
+  enrichment/operator/registrant/squawk/origin/destination are known, and
+  again only when one of those changes. Reuses the exact same
+  `CompletedFlight`-shape payload the `SkyFollower/rule/{IDENTIFIER}` MQTT
+  notification publishes (positions/velocities/`_id` popped, empty
+  operator/registrant/origin/destination/force_archive omitted) minus the
+  `rule` key, via a shared `_build_flight_notification_payload()` helper —
+  see `Flight.map_metadata_hash`, persisted across messages, for how a
+  change is detected.
+
+Both message types apply the same staleness suppression
+`SkyFollower/rule/{IDENTIFIER}` notifications already do: a message older
+than `MAX_MESSAGE_LAG_SECONDS` at emit time is suppressed rather than sent
+(logged at debug level).
+
+A slow, unreachable, or misconfigured `MAP_UDP_HOST`/`MAP_UDP_PORT` can never
+affect the rest of the pipeline -- `_MapUdpPublisher.send()` wraps the
+underlying `socket.sendto()` call and swallows any exception, logged at
+debug level only.
 
 ## Fault Tolerance
 

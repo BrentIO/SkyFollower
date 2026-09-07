@@ -168,6 +168,8 @@ here rather than the `redis` service name core's own components use.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
+| `MAP_UDP_HOST` | ❌ | — |
+| `MAP_UDP_PORT` | ❌ | — |
 
 `MESSAGE_PROCESSOR_ID` isn't in this table: it's not read from `.env` at
 all. Each instance's ID is a literal in its generated compose service

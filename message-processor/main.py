@@ -15,6 +15,7 @@ across the whole deployment.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -22,6 +23,7 @@ import os
 import pathlib
 import re
 import signal
+import socket
 import sqlite3
 import sys
 import threading
@@ -197,6 +199,74 @@ def _confirm_after_repeated_sightings(
     return {"value": value, "sightings": sightings}, len(sightings) >= required_count
 
 
+def _flight_metadata_snapshot(flight: Flight) -> str:
+    """Canonical hash of the flight fields the map UDP `metadata` message
+    carries -- ident, aircraft enrichment, operator, registrant,
+    squawk, origin, destination. Compared against the flight's last-sent
+    snapshot (Flight.map_metadata_hash, persisted across messages so it
+    survives this process reloading the flight from SQLite on every
+    message) to decide whether a re-send is needed. Hashed rather than
+    compared field-by-field so a metadata-relevant field added to Flight
+    later is covered automatically without a matching change here."""
+    payload = {
+        "ident": flight.ident,
+        "aircraft": flight.aircraft,
+        "operator": flight.operator,
+        "registrant": flight.registrant,
+        "squawk": flight.squawk,
+        "origin": flight.origin,
+        "destination": flight.destination,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+class _MapUdpPublisher:
+    """Fire-and-forget UDP publisher for the map component's live
+    position/metadata feed (the map service itself is a separate,
+    not-yet-built component). Unicasts to a single configured destination.
+
+    Disabled entirely -- no socket ever created -- when `host` is blank,
+    matching the optional-endpoint convention MQTT_HOST/RABBITMQ_HOST
+    already use in shared/config.py's load_config() system.
+
+    send() must never affect the main processing pipeline: a slow,
+    unreachable, or misconfigured destination is just a swallowed, debug-
+    logged exception, never a delay or a propagated error. UDP is
+    connectionless and sendto() on a datagram socket does not block on the
+    peer, so the only failure mode here is a local/immediate OSError (e.g.
+    an unresolvable host or a firewall's immediate ICMP-driven rejection).
+    """
+
+    def __init__(self, host: str, port: int) -> None:
+        self._addr: Optional[tuple[str, int]] = (host, port) if host else None
+        self._sock: Optional[socket.socket] = (
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if self._addr else None
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return self._sock is not None
+
+    def send(self, payload: dict) -> None:
+        if self._sock is None:
+            return
+        try:
+            body = json.dumps(payload, default=str).encode("utf-8")
+            self._sock.sendto(body, self._addr)
+        except Exception as exc:
+            # OSError (unreachable host, refused connection, etc.) is the
+            # expected failure mode; caught broadly so nothing about this
+            # best-effort feed -- not even an unexpected serialization
+            # issue -- can ever propagate into the caller's hot path.
+            logger.debug("Map UDP send failed: %s", exc)
+
+    def close(self) -> None:
+        if self._sock is not None:
+            self._sock.close()
+
+
 # ---------------------------------------------------------------------------
 # SQLite schema (active flight store)
 # ---------------------------------------------------------------------------
@@ -220,7 +290,8 @@ CREATE TABLE IF NOT EXISTS flights (
     route_resolution_attempted INTEGER,
     route_candidate_airports TEXT,
     pending_squawk TEXT,
-    pending_ident  TEXT
+    pending_ident  TEXT,
+    map_metadata_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS positions (
     icao_hex  TEXT,
@@ -280,6 +351,12 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE flights ADD COLUMN pending_ident TEXT")
     if "registrant" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN registrant TEXT")
+    if "map_metadata_hash" not in existing:
+        # A flight recovered from a store predating this column has never
+        # had a map UDP metadata message sent for it -- NULL (no prior
+        # snapshot) is the correct starting value, same as a brand-new
+        # flight, so the next message always sends one.
+        db.execute("ALTER TABLE flights ADD COLUMN map_metadata_hash TEXT")
 
     # positions/velocities had no uniqueness constraint before this
     # migration, so RabbitMQ redelivery -- a normal at-least-once
@@ -465,7 +542,7 @@ class Flight:
         "aircraft", "ident", "operator", "registrant", "squawk", "origin", "destination",
         "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
         "route_candidate_airports", "pending_squawk", "pending_ident",
-        "positions", "velocities", "_db",
+        "map_metadata_hash", "positions", "velocities", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -504,6 +581,10 @@ class Flight:
         # confirmed (or not yet pending). See _confirm_after_repeated_sightings.
         self.pending_squawk: Optional[dict] = None
         self.pending_ident: Optional[dict] = None
+        # Snapshot hash of the map UDP `metadata` fields as of the last
+        # time that message was sent -- None until the first send. See
+        # _flight_metadata_snapshot / MessageProcessor._maybe_publish_map_metadata.
+        self.map_metadata_hash: Optional[str] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
 
@@ -519,7 +600,7 @@ class Flight:
             "SELECT icao_hex, flight_id, first_message, last_message, total_messages, "
             "aircraft, ident, operator, registrant, squawk, origin, destination, "
             "matched_rules, receiver_sources, force_archive, route_resolution_attempted, "
-            "route_candidate_airports, pending_squawk, pending_ident "
+            "route_candidate_airports, pending_squawk, pending_ident, map_metadata_hash "
             "FROM flights WHERE icao_hex=?",
             (self.icao_hex,),
         )
@@ -545,6 +626,7 @@ class Flight:
         self.route_candidate_airports = row["route_candidate_airports"]
         self.pending_squawk = json.loads(row["pending_squawk"]) if row["pending_squawk"] else None
         self.pending_ident = json.loads(row["pending_ident"]) if row["pending_ident"] else None
+        self.map_metadata_hash = row["map_metadata_hash"]
 
         self._load_positions(limit=limit)
         self._load_velocities(limit=limit)
@@ -583,8 +665,8 @@ class Flight:
             "total_messages, aircraft, ident, operator, registrant, squawk, origin, "
             "destination, matched_rules, receiver_sources, force_archive, "
             "route_resolution_attempted, route_candidate_airports, "
-            "pending_squawk, pending_ident) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "pending_squawk, pending_ident, map_metadata_hash) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 self.icao_hex, self.flight_id, self.first_message, self.last_message,
                 self.total_messages, json.dumps(self.aircraft), self.ident,
@@ -596,6 +678,7 @@ class Flight:
                 self.route_candidate_airports,
                 json.dumps(self.pending_squawk) if self.pending_squawk else None,
                 json.dumps(self.pending_ident) if self.pending_ident else None,
+                self.map_metadata_hash,
             ),
         )
         self._db.commit()
@@ -792,6 +875,11 @@ class MessageProcessor:
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
         self._mqtt_connected = False
+
+        # Map UDP publisher -- disabled (no socket) when MAP_UDP_HOST is
+        # unset.
+        mu = config.get("map_udp") or {}
+        self._map_udp = _MapUdpPublisher(mu.get("host", ""), mu.get("port", 0))
 
         # RabbitMQ
         self._rmq_connection: Optional[pika.BlockingConnection] = None
@@ -1212,6 +1300,10 @@ class MessageProcessor:
                 vertical_speed=data.get("vertical_speed"),
             ))
 
+        # Map UDP `position` message -- sent on every processed message,
+        # no throttling; no-op when MAP_UDP_HOST is unset.
+        self._publish_map_position(flight, data, msg.received_at)
+
         if "squawk" in data and not flight.squawk:
             squawk = str(data["squawk"])
             if data.get("verified", True) or squawk not in _RESERVED_SQUAWKS:
@@ -1262,6 +1354,11 @@ class MessageProcessor:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
 
         self._maybe_resolve_route(flight)
+
+        # Map UDP `metadata` message -- only when ident/aircraft/operator/
+        # registrant/squawk/origin/destination have changed since the last
+        # send; no-op when MAP_UDP_HOST is unset.
+        self._maybe_publish_map_metadata(flight, msg.received_at)
 
         # Rules evaluation. Nanoseconds, not milliseconds -- a single
         # evaluate() call is an in-process, no-I/O rule match against one
@@ -1637,17 +1734,14 @@ class MessageProcessor:
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
 
-    def _publish_rule_notification(self, flight: Flight, rule: dict, received_at: float) -> None:
-        lag = time.time() - received_at
-        if lag > MAX_MESSAGE_LAG_SECONDS:
-            logger.debug(
-                "Suppressing MQTT rule notification for %s (rule=%s): "
-                "message is %.1fs old (backlog replay)",
-                flight.icao_hex, rule["identifier"], lag,
-            )
-            return
-        if not (self._mqtt and self._mqtt_connected):
-            return
+    def _build_flight_notification_payload(self, flight: Flight) -> dict:
+        """CompletedFlight-shape payload shared by the MQTT rule
+        notification and the map UDP `metadata` message -- same
+        field-dropping logic (positions/velocities/_id popped; empty
+        operator/registrant/origin/destination/force_archive omitted
+        rather than published as falsy). Callers add their own extra key
+        on top: MQTT adds `rule`, the map UDP metadata message adds
+        `type`."""
         notification = flight.to_completed_flight().model_dump(
             by_alias=True, mode="json", exclude_none=True
         )
@@ -1664,6 +1758,20 @@ class MessageProcessor:
             notification.pop("destination", None)
         if not notification.get("force_archive"):
             notification.pop("force_archive", None)
+        return notification
+
+    def _publish_rule_notification(self, flight: Flight, rule: dict, received_at: float) -> None:
+        lag = time.time() - received_at
+        if lag > MAX_MESSAGE_LAG_SECONDS:
+            logger.debug(
+                "Suppressing MQTT rule notification for %s (rule=%s): "
+                "message is %.1fs old (backlog replay)",
+                flight.icao_hex, rule["identifier"], lag,
+            )
+            return
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        notification = self._build_flight_notification_payload(flight)
         notification["rule"] = {
             "name": rule.get("name", ""),
             "description": rule.get("description", ""),
@@ -1673,6 +1781,60 @@ class MessageProcessor:
             f"SkyFollower/rule/{rule['identifier']}",
             json.dumps(notification, default=str),
         )
+
+    # ------------------------------------------------------------------
+    # Map UDP publisher -- fire-and-forget position/metadata feed toward
+    # the future map component (not yet built).
+    # ------------------------------------------------------------------
+
+    def _publish_map_position(self, flight: Flight, data: dict, received_at: float) -> None:
+        """Sent on every processed message (no throttling) once the map UDP
+        feed is enabled -- one flat object merging whatever Position/
+        Velocity fields this particular message carried. Fields absent
+        from `data` are omitted, not sent as null, matching Position.to_dict()
+        / Velocity.to_dict()'s existing convention."""
+        if not self._map_udp.enabled:
+            return
+        lag = time.time() - received_at
+        if lag > MAX_MESSAGE_LAG_SECONDS:
+            logger.debug(
+                "Suppressing map UDP position for %s: message is %.1fs old (backlog replay)",
+                flight.icao_hex, lag,
+            )
+            return
+        payload = {
+            "type": "position",
+            "icao_hex": flight.icao_hex,
+            "timestamp": received_at,
+        }
+        for key in ("latitude", "longitude", "altitude", "velocity", "heading", "vertical_speed"):
+            if key in data:
+                payload[key] = data[key]
+        self._map_udp.send(payload)
+
+    def _maybe_publish_map_metadata(self, flight: Flight, received_at: float) -> None:
+        """Sent the first time a flight's metadata fields (ident, aircraft
+        enrichment, operator, registrant, squawk, origin, destination) are
+        known, and again only when one of them changes -- never on every
+        message. See _flight_metadata_snapshot for the change-detection
+        approach and Flight.map_metadata_hash for the persisted snapshot
+        this is compared against."""
+        if not self._map_udp.enabled:
+            return
+        lag = time.time() - received_at
+        if lag > MAX_MESSAGE_LAG_SECONDS:
+            logger.debug(
+                "Suppressing map UDP metadata for %s: message is %.1fs old (backlog replay)",
+                flight.icao_hex, lag,
+            )
+            return
+        snapshot = _flight_metadata_snapshot(flight)
+        if snapshot == flight.map_metadata_hash:
+            return
+        payload = self._build_flight_notification_payload(flight)
+        payload["type"] = "metadata"
+        self._map_udp.send(payload)
+        flight.map_metadata_hash = snapshot
 
     # ------------------------------------------------------------------
     # Telemetry
@@ -2039,6 +2201,7 @@ class MessageProcessor:
                 f"SkyFollower/message-processor/{self._id}/status", "OFFLINE", retain=True
             )
             self._mqtt.loop_stop()
+        self._map_udp.close()
         self._db.close()
         logger.info("Shutdown complete.")
 
@@ -2050,7 +2213,7 @@ class MessageProcessor:
 def main() -> None:
     try:
         config = load_config(
-            "rabbitmq", "redis", "mqtt", "message_processor"
+            "rabbitmq", "redis", "mqtt", "message_processor", "map_udp"
         )
     except ConfigError as exc:
         configure_logging()

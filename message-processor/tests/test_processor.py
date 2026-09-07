@@ -52,9 +52,11 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     MessageProcessor,
     _CounterAccumulator,
     _KeyedCounterAccumulator,
+    _MapUdpPublisher,
     _RateTracker,
     _TimeTracker,
     _SCHEMA,
+    _flight_metadata_snapshot,
     _migrate_schema,
     _confirm_after_repeated_sightings,
     _PARITY_ERROR_CONFIRM_COUNT,
@@ -77,7 +79,7 @@ from shared.redis_keys import (
     rule_trigger_day_key,
     rule_trigger_lifetime_key,
 )
-from shared.timing import RULE_TRIGGER_DAY_TTL_SECONDS  # noqa: E402
+from shared.timing import MAX_MESSAGE_LAG_SECONDS, RULE_TRIGGER_DAY_TTL_SECONDS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -3780,3 +3782,334 @@ class TestFlightTtlLoad:
         f2 = Flight(p._db)
         f2.load("A8AE7F")
         assert f2.flight_id != "old-flight-id"
+
+
+# ---------------------------------------------------------------------------
+# Map UDP publisher -- fire-and-forget position/metadata feed toward
+# the future map component (not yet built).
+# ---------------------------------------------------------------------------
+
+def _enable_map_udp(p: MessageProcessor) -> MagicMock:
+    """Swap in a _MapUdpPublisher backed by a mocked socket, bypassing the
+    real socket.socket() call that MAP_UDP_HOST being set would normally
+    trigger -- gives tests a controllable, inspectable sendto() without
+    binding a real UDP socket."""
+    publisher = _MapUdpPublisher("127.0.0.1", 9999)
+    mock_sock = MagicMock()
+    publisher._sock = mock_sock
+    p._map_udp = publisher
+    return mock_sock
+
+
+def _sent_payload(mock_sock: MagicMock) -> dict:
+    body, addr = mock_sock.sendto.call_args.args
+    assert addr == ("127.0.0.1", 9999)
+    return json.loads(body.decode("utf-8"))
+
+
+class TestMapUdpPublisherConstruction:
+    def test_disabled_when_host_blank(self):
+        publisher = _MapUdpPublisher("", 0)
+        assert publisher.enabled is False
+
+    def test_enabled_when_host_set(self):
+        publisher = _MapUdpPublisher("127.0.0.1", 9999)
+        assert publisher.enabled is True
+        publisher.close()
+
+    def test_send_is_a_no_op_when_disabled(self):
+        publisher = _MapUdpPublisher("", 0)
+        # Must not raise even though there's no socket at all.
+        publisher.send({"type": "position"})
+
+    def test_send_swallows_oserror_from_sendto(self, caplog):
+        publisher = _MapUdpPublisher("127.0.0.1", 9999)
+        mock_sock = MagicMock()
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+        publisher._sock = mock_sock
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            publisher.send({"type": "position"})  # must not raise
+        assert "network unreachable" in caplog.text
+
+
+class TestMapUdpDisabledByDefault:
+    """MAP_UDP_HOST/MAP_UDP_PORT unset -- _minimal_config() carries no
+    map_udp block at all, matching an operator who never set the env vars."""
+
+    def test_no_socket_created(self):
+        p, _ = _make_processor()
+        assert p._map_udp.enabled is False
+
+    def test_publish_map_position_is_a_no_op(self):
+        p, _ = _make_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        # Must not raise, and must not even construct a socket send.
+        p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, time.time())
+
+    def test_maybe_publish_map_metadata_is_a_no_op(self):
+        p, _ = _make_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._maybe_publish_map_metadata(f, time.time())
+        assert f.map_metadata_hash is None
+
+    def test_config_defaults_disable_the_feature(self):
+        """load_config()'s own map_udp_config() default -- host blank, port
+        0 -- must produce a disabled publisher (not just an absent key, as
+        the two tests above cover)."""
+        p, _ = _make_processor(_minimal_config() | {"map_udp": {"host": "", "port": 0}})
+        assert p._map_udp.enabled is False
+
+
+class TestMapUdpPosition:
+    def _make_flight(self, p) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = 1757000000.0
+        f.last_message = 1757000000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        return f
+
+    def test_payload_shape_matches_spec_exactly(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+        data = {
+            "icao_hex": "A8AE7F",
+            "latitude": 33.9425,
+            "longitude": -118.408,
+            "altitude": 350,
+            "velocity": 450,
+            "heading": 271.4,
+            "vertical_speed": -1200,
+        }
+
+        # A fixed message timestamp, not "now" -- so it must be paired with
+        # a matching time.time() at emit time, or the staleness guard
+        # (MAX_MESSAGE_LAG_SECONDS) would suppress it as backlog replay.
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            p._publish_map_position(f, data, 1757000000.0)
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload == {
+            "type": "position",
+            "icao_hex": "A8AE7F",
+            "timestamp": 1757000000.0,
+            "latitude": 33.9425,
+            "longitude": -118.408,
+            "altitude": 350,
+            "velocity": 450,
+            "heading": 271.4,
+            "vertical_speed": -1200,
+        }
+
+    def test_absent_fields_are_omitted_not_null(self):
+        """A message carrying only a bare position (no altitude/velocity/
+        heading/vertical_speed) must not include those keys at all."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+        data = {"icao_hex": "A8AE7F", "latitude": 33.9425, "longitude": -118.408}
+
+        with patch("message_processor.main.time.time", return_value=1757000000.0):
+            p._publish_map_position(f, data, 1757000000.0)
+
+        payload = _sent_payload(mock_sock)
+        assert payload == {
+            "type": "position",
+            "icao_hex": "A8AE7F",
+            "timestamp": 1757000000.0,
+            "latitude": 33.9425,
+            "longitude": -118.408,
+        }
+        for absent in ("altitude", "velocity", "heading", "vertical_speed"):
+            assert absent not in payload
+
+    def test_suppressed_when_message_older_than_max_lag(self, caplog):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+        old_received_at = time.time() - (MAX_MESSAGE_LAG_SECONDS + 60)
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, old_received_at)
+
+        mock_sock.sendto.assert_not_called()
+        assert "A8AE7F" in caplog.text
+
+    def test_sent_when_message_recent(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+
+        p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, time.time() - 1)
+
+        mock_sock.sendto.assert_called_once()
+
+    def test_send_failure_does_not_propagate(self):
+        """A send failure (unreachable/misconfigured MAP_UDP_HOST) must
+        never raise into the caller -- the main processing path continues
+        regardless."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+        f = self._make_flight(p)
+
+        # Must not raise.
+        p._publish_map_position(f, {"latitude": 1.0, "longitude": 2.0}, time.time())
+
+    def test_every_processed_message_sends_exactly_one_position(self):
+        """End-to-end via _update_flight -- the real per-message pipeline
+        entry point -- rather than calling _publish_map_position directly,
+        confirming the hook is actually wired into the hot path. A brand-new
+        flight's first message also triggers a `metadata` send (see
+        TestMapUdpMetadata.test_sent_first_time_metadata_is_known), so this
+        asserts on the `position`-typed sends specifically, not on the
+        socket's total call count."""
+        p, mock_redis = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_redis.evalsha.return_value = None
+
+        msg = InboundMessage(
+            raw="00" * 14, icao_hex="A8AE7F", received_at=time.time(), source="1090",
+        )
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}, msg)
+
+        sent = [json.loads(c.args[0].decode("utf-8")) for c in mock_sock.sendto.call_args_list]
+        position_sends = [s for s in sent if s["type"] == "position"]
+        assert len(position_sends) == 1
+        assert position_sends[0]["icao_hex"] == "A8AE7F"
+
+
+class TestMapUdpMetadata:
+    def _make_flight(self, p) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = 1757000000.0
+        f.last_message = 1757000000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.aircraft = {"icao_hex": "A8AE7F", "registration": "N12345"}
+        f.ident = "DAL2"
+        f.save()
+        return f
+
+    def test_payload_matches_completed_flight_minus_rule_positions_velocities_id(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+
+        p._maybe_publish_map_metadata(f, time.time())
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        expected = p._build_flight_notification_payload(f)
+        expected["type"] = "metadata"
+        assert payload == expected
+        assert "rule" not in payload
+        assert "positions" not in payload
+        assert "velocities" not in payload
+        assert "_id" not in payload
+
+    def test_sent_first_time_metadata_is_known(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+        assert f.map_metadata_hash is None
+
+        p._maybe_publish_map_metadata(f, time.time())
+
+        mock_sock.sendto.assert_called_once()
+        assert f.map_metadata_hash is not None
+
+    def test_not_resent_when_nothing_relevant_changed(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+
+        p._maybe_publish_map_metadata(f, time.time())
+        p._maybe_publish_map_metadata(f, time.time())
+        p._maybe_publish_map_metadata(f, time.time())
+
+        mock_sock.sendto.assert_called_once()
+
+    def test_resent_when_a_relevant_field_changes(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+
+        p._maybe_publish_map_metadata(f, time.time())
+        assert mock_sock.sendto.call_count == 1
+
+        f.squawk = "1200"
+        p._maybe_publish_map_metadata(f, time.time())
+        assert mock_sock.sendto.call_count == 2
+
+        payload = _sent_payload(mock_sock)
+        assert payload["squawk"] == "1200"
+
+    def test_suppressed_when_message_older_than_max_lag(self, caplog):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+        old_received_at = time.time() - (MAX_MESSAGE_LAG_SECONDS + 60)
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            p._maybe_publish_map_metadata(f, old_received_at)
+
+        mock_sock.sendto.assert_not_called()
+        assert f.map_metadata_hash is None
+        assert "A8AE7F" in caplog.text
+
+    def test_send_failure_does_not_propagate(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+        f = self._make_flight(p)
+
+        # Must not raise, and the hash still advances (send is best-effort;
+        # a permanently unreachable destination must not force a resend of
+        # unchanged metadata on every single message forever).
+        p._maybe_publish_map_metadata(f, time.time())
+        assert f.map_metadata_hash is not None
+
+
+class TestFlightMetadataSnapshot:
+    def _make_flight(self, p) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.save()
+        return f
+
+    def test_stable_for_unchanged_fields(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p)
+        f.ident = "DAL2"
+        assert _flight_metadata_snapshot(f) == _flight_metadata_snapshot(f)
+
+    def test_changes_when_a_tracked_field_changes(self):
+        p, _ = _make_processor()
+        f = self._make_flight(p)
+        before = _flight_metadata_snapshot(f)
+        f.squawk = "7700"
+        after = _flight_metadata_snapshot(f)
+        assert before != after
+
+    def test_unaffected_by_untracked_fields(self):
+        """positions/velocities/matched_rules/route_resolution_attempted
+        etc. are not part of the map UDP metadata payload, so they must not
+        affect the snapshot."""
+        p, _ = _make_processor()
+        f = self._make_flight(p)
+        before = _flight_metadata_snapshot(f)
+        f.matched_rules.append("rule_a")
+        f.total_messages += 1
+        after = _flight_metadata_snapshot(f)
+        assert before == after
