@@ -396,7 +396,7 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
         "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
         "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
         "map_http_host": loader.string("MAP_HTTP_HOST", "0.0.0.0"),
-        "map_http_port": loader.integer("MAP_HTTP_PORT", 8090),
+        "map_http_port": loader.integer("MAP_HTTP_PORT", 80),
         "map_stale_seconds": loader.integer("MAP_STALE_SECONDS", 30),
         "map_evict_seconds": loader.integer("MAP_EVICT_SECONDS", 300),
     }
