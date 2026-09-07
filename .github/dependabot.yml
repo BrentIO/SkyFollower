@@ -50,6 +50,13 @@ updates:
       time: "23:40"
       timezone: "Etc/UTC"
   - package-ecosystem: "pip"
+    directory: "/map"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "23:50"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "pip"
     directory: "/message-processor"
     schedule:
       interval: "weekly"
@@ -482,6 +489,13 @@ updates:
       interval: "weekly"
       day: "tuesday"
       time: "23:40"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "docker"
+    directory: "/map"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "23:50"
       timezone: "Etc/UTC"
   - package-ecosystem: "docker"
     directory: "/message-processor"
