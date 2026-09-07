@@ -374,6 +374,98 @@ class TestDecode1090:
         assert data["ident"] == "N30GD"
         assert data["verified"] is False
 
+    # Plausibility filtering (#1565): crafting a real hex frame that decodes
+    # to an out-of-range or fabricated-but-in-range lat/lon/altitude isn't
+    # practical (CPR position encoding doesn't map to arbitrary lat/lon
+    # values), so these patch pms.decode() directly with hand-built result
+    # dicts -- exercising exactly the field-level logic in _decode_1090
+    # without needing a real corrupted-bits capture.
+    def test_verified_altitude_out_of_range_dropped_but_squawk_survives(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "squawk": "1200",
+            "altitude": 70000,
+        }):
+            data = p._decode_1090(msg)
+        assert data["squawk"] == "1200"
+        assert data["verified"] is True
+        assert "altitude" not in data
+
+    def test_verified_latitude_out_of_range_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "latitude": 95.0,
+            "longitude": 10.0,
+        }):
+            data = p._decode_1090(msg)
+        assert data is None
+
+    def test_verified_longitude_out_of_range_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "latitude": 10.0,
+            "longitude": 200.0,
+        }):
+            data = p._decode_1090(msg)
+        assert data is None
+
+    def test_unverified_df5_20_21_never_contributes_position_or_altitude(self):
+        # crc_valid=None (DF5/20/21): an in-range but fabricated position
+        # must still be dropped -- only a genuinely CRC-verified DF17/18
+        # message (crc_valid=True) may supply latitude/longitude/altitude.
+        # The squawk sibling field is unaffected, still surfaced with
+        # verified=False as before this change.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="A800030F992252CD453820AD87FB",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": None,
+            "squawk": "1200",
+            "latitude": 40.0,
+            "longitude": -74.0,
+            "altitude": 10000,
+        }):
+            data = p._decode_1090(msg)
+        assert data["squawk"] == "1200"
+        assert data["verified"] is False
+        assert "latitude" not in data
+        assert "longitude" not in data
+        assert "altitude" not in data
+
+    def test_verified_valid_position_and_altitude_pass_through_unchanged(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F00000000000000000000",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "crc_valid": True,
+            "latitude": 40.64,
+            "longitude": -73.78,
+            "altitude": 38000,
+        }):
+            data = p._decode_1090(msg)
+        assert data["latitude"] == 40.64
+        assert data["longitude"] == -73.78
+        assert data["altitude"] == 38000
+
 
 # ---------------------------------------------------------------------------
 # _decode_978 (pyModeS978 UAT decoding)
@@ -491,6 +583,52 @@ class TestDecode978:
             icao_hex="A3D3E3", received_at=1.0, source="978",
         )
         assert p._decode_978(msg) is None
+
+    # Plausibility filtering (#1565): same rationale as TestDecode1090's
+    # equivalent tests above -- patch pyModeS978.decode() directly rather
+    # than crafting a real UAT frame with an out-of-range position/altitude.
+    def test_altitude_out_of_range_dropped_but_squawk_survives(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with patch("message_processor.main.pyModeS978.decode", return_value={
+            "squawk": "1200",
+            "altitude": 70000,
+        }):
+            data = p._decode_978(msg)
+        assert data["squawk"] == "1200"
+        assert "altitude" not in data
+
+    def test_latitude_out_of_range_dropped(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with patch("message_processor.main.pyModeS978.decode", return_value={
+            "latitude": 95.0,
+            "longitude": 10.0,
+        }):
+            data = p._decode_978(msg)
+        assert data is None
+
+    def test_valid_position_and_altitude_pass_through_unchanged(self):
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E30000000000000000000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        with patch("message_processor.main.pyModeS978.decode", return_value={
+            "latitude": 37.6213,
+            "longitude": -122.3790,
+            "altitude": 34875,
+        }):
+            data = p._decode_978(msg)
+        assert data["latitude"] == 37.6213
+        assert data["longitude"] == -122.3790
+        assert data["altitude"] == 34875
 
 
 class TestDecodeMessageRouting:

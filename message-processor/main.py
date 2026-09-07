@@ -155,6 +155,20 @@ def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
 # sourced from a message _decode_1090 couldn't CRC-verify.
 _RESERVED_SQUAWKS = frozenset({"7500", "7600", "7700", "7777"})
 
+# Plausibility bounds applied to decoded position/altitude at the single
+# construction site (_decode_1090/_decode_978) so every downstream consumer
+# (archive, rules, map) inherits the filter automatically. Altitude matches
+# rules_engine.py's own condition bound (0..65000), widened slightly on the
+# low end to tolerate below-sea-level airports/pressure-altitude quirks --
+# ADS-B's 25-ft-increment altitude field tops out near 101,350 ft, so
+# anything at/near that ceiling is effectively always garbage.
+_MIN_LATITUDE = -90
+_MAX_LATITUDE = 90
+_MIN_LONGITUDE = -180
+_MAX_LONGITUDE = 180
+_MIN_ALTITUDE_FT = -1500
+_MAX_ALTITUDE_FT = 65000
+
 
 def _short_hash(full: Optional[str]) -> str:
     """Last 8 characters of a config version hash, for a compact,
@@ -1192,12 +1206,23 @@ class MessageProcessor:
         if canonical_wtc:
             data["wake_turbulence_category"] = canonical_wtc
 
-        if result.get("latitude") is not None:
-            data["latitude"] = result["latitude"]
-            data["longitude"] = result["longitude"]
+        # Position/altitude are only trusted from a genuinely CRC-verified
+        # message (DF17/18). DF5/20/21 (crc_valid=None) can fabricate an
+        # in-range-looking position/altitude from corrupted bits just as
+        # readily as the squawk/ident cases above, but unlike those there's
+        # no repeat-sighting confirmation path for a lat/lon pair -- so
+        # these fields are simply never populated from an unverified
+        # message rather than trusted-then-confirmed.
+        if verified:
+            if result.get("latitude") is not None:
+                lat, lon = result["latitude"], result["longitude"]
+                if _MIN_LATITUDE <= lat <= _MAX_LATITUDE and _MIN_LONGITUDE <= lon <= _MAX_LONGITUDE:
+                    data["latitude"] = lat
+                    data["longitude"] = lon
 
-        if result.get("altitude") is not None:
-            data["altitude"] = result["altitude"]
+            altitude = result.get("altitude")
+            if altitude is not None and _MIN_ALTITUDE_FT <= altitude <= _MAX_ALTITUDE_FT:
+                data["altitude"] = altitude
 
         # subtype 1/2 (GPS): groundspeed + track; subtype 3/4 (airspeed):
         # airspeed + heading. `or` would mishandle a genuine 0 kt/0 deg
@@ -1257,11 +1282,14 @@ class MessageProcessor:
                 data["wake_turbulence_category"] = canonical_wtc
 
         if result.get("latitude") is not None:
-            data["latitude"] = result["latitude"]
-            data["longitude"] = result["longitude"]
+            lat, lon = result["latitude"], result["longitude"]
+            if _MIN_LATITUDE <= lat <= _MAX_LATITUDE and _MIN_LONGITUDE <= lon <= _MAX_LONGITUDE:
+                data["latitude"] = lat
+                data["longitude"] = lon
 
-        if result.get("altitude") is not None:
-            data["altitude"] = result["altitude"]
+        altitude = result.get("altitude")
+        if altitude is not None and _MIN_ALTITUDE_FT <= altitude <= _MAX_ALTITUDE_FT:
+            data["altitude"] = altitude
 
         if result.get("groundspeed") is not None:
             data["velocity"] = result["groundspeed"]
