@@ -226,13 +226,15 @@ class TestDecode1090:
         data = p._decode_1090(msg)
         assert data["squawk"] == "2646"
 
-    def test_crc_valid_is_a_no_op_for_df21(self):
-        """Documents real pyModeS behavior (verified by reading message.py):
-        crc_valid is hardcoded True for DF0/4/5/11/16/20/21 regardless of
-        the actual message content — their CRC field encodes the ICAO
-        itself, so there's no single-message corruption signal for these
-        DF types at all. A squawk is trusted once decoded; there's nothing
-        else to check it against in single-message mode."""
+    def test_crc_valid_is_none_and_a_no_op_for_df21(self):
+        """Documents real pyModeS behavior (verified empirically): crc_valid
+        is None for DF5/20/21 — pyModeS can't compute a real crc_valid for
+        these DF types without an ICAO hint we don't supply, so it reports
+        None rather than True or False. That still means there's no
+        single-message corruption signal to check a squawk against here
+        (None is neither True nor False), so decoding is a no-op either
+        way — see _decode_1090's own comments for how crc_valid is treated
+        downstream."""
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="A800030F992252CD453820AD87FB",
