@@ -882,3 +882,10 @@ updates:
       day: "monday"
       time: "23:20"
       timezone: "Etc/UTC"
+  - package-ecosystem: "npm"
+    directory: "/map/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "23:40"
+      timezone: "Etc/UTC"

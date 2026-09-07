@@ -1,8 +1,7 @@
 # Map Service
 
-Backend for the live-map frontend (frontend itself is a separate,
-not-yet-built component -- tracked as its own issue, not covered here).
-Three jobs in one process:
+Backend for the live-map frontend (`frontend/`, see [Frontend](#frontend-frontend)
+below). Three jobs in one process:
 
 1. A UDP listener that receives `position`/`metadata` datagrams from any/all
    `message-processor` instances (see
@@ -212,3 +211,70 @@ service's own startup (unlike message-processor's fire-and-forget UDP
 service's only state store, so there's nothing useful to do without it.
 The eviction listener reconnects (re-enabling keyspace notifications each
 time) on any pubsub error rather than exiting.
+
+## Frontend (`frontend/`)
+
+A standalone React (TypeScript) + Vite + Tailwind CSS + MapLibre GL JS
+project -- its own `package.json`, not a view inside `management-ui/frontend`
+(that frontend has its own separate backend/purpose; this one exists purely
+to render this service's live feed). It sits alongside this directory's
+Python backend the same way `management-ui/frontend` sits alongside
+`management-ui/backend`, but is never built into this service's own Docker
+image -- this service serves `GET /api/flights` and `WS /ws` only, no
+static files. How the built frontend is actually served (its own
+container/nginx, folded into a future image, a separate static host) is
+left open for whoever deploys it; see the frontend's own build output
+under `frontend/dist/` after `npm run build`.
+
+Full-viewport live map, no persistent side panel: a symbol layer for
+tracked aircraft (icon rotates via `icon-rotate` bound to `heading`; an SDF
+icon so its fill can be recolored per feature via `icon-color`, driven by
+altitude -- ported from `management-ui/frontend/src/lib/flightView.ts`'s
+`altitudeColor()`), an ATC-style floating info box per aircraft (custom
+collision/nudge placement so every box stays visible, never MapLibre's
+`text-allow-overlap: false` collision-hiding), a client-accumulated live
+trail per aircraft (this service has no trail/history endpoint -- see REST
+API above -- so the frontend builds each aircraft's trail itself, purely
+from `position` events observed after the page loaded), and a fixed "home"
+marker/recenter button from build-time config.
+
+- `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
+  `altitudeColor()`; used for both the icon fill and the live trail color.
+- `src/lib/aircraftIcon.ts` -- the custom-authored top-down dart/chevron
+  aircraft silhouette, rendered as an SDF image.
+- `src/lib/infoBox.ts` -- info-box field formatting/omission rules (ident,
+  altitude+trend-arrow+groundspeed, registration+type), each independently
+  omitted (never a `?`/`N/A` placeholder) when its underlying field is
+  unknown.
+- `src/lib/placement.ts` -- the info-box overlap/nudge placement algorithm.
+- `src/lib/aircraftState.ts` -- client-side per-aircraft state: applies the
+  REST snapshot, then every WebSocket event, with the same
+  merge-never-overwrite semantics as `state_store.py`'s `apply_update`.
+- `src/hooks/useMapFlights.ts` -- owns the WebSocket connection + REST
+  snapshot fetch, deliberately sequenced: the WebSocket connects *first*
+  (buffering whatever arrives), then `GET /api/flights` is called, then
+  every buffered WS message is applied on top of that snapshot before the
+  first `aircraft` state is ever published -- closing the gap between
+  "snapshot fetched" and "WS live" a snapshot-then-connect order would
+  leave open.
+- `src/components/MapView.tsx` -- map construction, aircraft/trail
+  sources+layers, click-to-toggle-trail, and the info-box overlay.
+
+```bash
+cd map/frontend
+npm install
+npm run dev       # Vite dev server on :5173, proxying /api and /ws to localhost:8090
+npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
+npm test          # vitest -- altitudeColor, info-box formatting, and overlap-placement unit tests
+```
+
+### Frontend Configuration
+
+Build-time only (Vite's `import.meta.env.VITE_*`, baked into the bundle at
+`npm run build` time, not read at container runtime -- see `.env.example`):
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `VITE_MAP_API_BASE_URL` | ❌ | same-origin | Base URL of this service's REST/WebSocket API. Leave unset when the built frontend is served from the same host:port as this service |
+| `VITE_HOME_LATITUDE` | ❌ | — | Centered reference point for the "home" marker and initial camera. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target |
+| `VITE_HOME_LONGITUDE` | ❌ | — | |
