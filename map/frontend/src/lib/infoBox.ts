@@ -30,9 +30,9 @@ export function trendArrow(verticalSpeed: number | null | undefined): TrendArrow
   return "";
 }
 
-// "35,000" -- full feet, comma-formatted, never flight-level shorthand.
+// "35000" -- full feet, no thousands separator, never flight-level shorthand.
 export function formatAltitude(altitudeFt: number): string {
-  return Math.round(altitudeFt).toLocaleString("en-US");
+  return String(Math.round(altitudeFt));
 }
 
 // "450kt" -- no space before the unit suffix.
@@ -40,7 +40,7 @@ export function formatGroundspeed(velocityKt: number): string {
   return `${Math.round(velocityKt)}kt`;
 }
 
-// Line 2: "35,000↓ 450kt". Either half (altitude+arrow, or groundspeed)
+// Line 2: "35000↓ 450kt". Either half (altitude+arrow, or groundspeed)
 // is independently omitted when its underlying field is unknown -- never
 // shown as a placeholder. The whole line is omitted (null) only when both
 // halves are unknown. The trend arrow is only ever attached to a known

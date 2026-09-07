@@ -1217,8 +1217,11 @@ class MessageProcessor:
             if result.get("latitude") is not None:
                 lat, lon = result["latitude"], result["longitude"]
                 if _MIN_LATITUDE <= lat <= _MAX_LATITUDE and _MIN_LONGITUDE <= lon <= _MAX_LONGITUDE:
-                    data["latitude"] = lat
-                    data["longitude"] = lon
+                    # Same precision cap as Position._cap_coordinate_precision,
+                    # applied here so every downstream consumer (archive, map,
+                    # rules) sees consistent values from one place.
+                    data["latitude"] = round(lat, 5)
+                    data["longitude"] = round(lon, 5)
 
             altitude = result.get("altitude")
             if altitude is not None and _MIN_ALTITUDE_FT <= altitude <= _MAX_ALTITUDE_FT:
@@ -1237,7 +1240,8 @@ class MessageProcessor:
         if heading is None:
             heading = result.get("heading")
         if heading is not None:
-            data["heading"] = heading
+            # Same precision cap as Velocity._cap_heading_precision.
+            data["heading"] = round(heading, 1)
 
         if result.get("vertical_rate") is not None:
             data["vertical_speed"] = result["vertical_rate"]
@@ -1284,8 +1288,11 @@ class MessageProcessor:
         if result.get("latitude") is not None:
             lat, lon = result["latitude"], result["longitude"]
             if _MIN_LATITUDE <= lat <= _MAX_LATITUDE and _MIN_LONGITUDE <= lon <= _MAX_LONGITUDE:
-                data["latitude"] = lat
-                data["longitude"] = lon
+                # Same precision cap as Position._cap_coordinate_precision,
+                # applied here so every downstream consumer (archive, map,
+                # rules) sees consistent values from one place.
+                data["latitude"] = round(lat, 5)
+                data["longitude"] = round(lon, 5)
 
         altitude = result.get("altitude")
         if altitude is not None and _MIN_ALTITUDE_FT <= altitude <= _MAX_ALTITUDE_FT:
@@ -1298,7 +1305,8 @@ class MessageProcessor:
         if heading is None:
             heading = result.get("heading")
         if heading is not None:
-            data["heading"] = heading
+            # Same precision cap as Velocity._cap_heading_precision.
+            data["heading"] = round(heading, 1)
 
         if result.get("vertical_rate") is not None:
             data["vertical_speed"] = result["vertical_rate"]
