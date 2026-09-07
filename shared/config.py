@@ -353,11 +353,64 @@ def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
     return block
 
 
+def map_redis_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """The `map` service's own dedicated Redis instance -- separate from
+    core Redis (`redis_config()` above), holding only live/ephemeral
+    aircraft state (fully reconstructible from live UDP traffic, no
+    persistence) under its own `MAP_REDIS_*` variable names, since a host
+    may run both a core Redis and this one.
+
+    Unlike `redis_config()`, `MAP_REDIS_PASSWORD` is optional (defaults
+    blank, same "leave unset to disable" convention `mqtt_config()` uses)
+    rather than required: this instance holds no enrichment/config data,
+    only a live cache reconstructible from scratch within one eviction-TTL
+    window, so requiring auth here is a deployment choice, not a hard
+    requirement the way it is for core Redis."""
+    loader, own = _own_loader(loader)
+    block = {
+        "host": loader.string("MAP_REDIS_HOST"),
+        "port": loader.integer("MAP_REDIS_PORT", 6379),
+        "password": loader.string("MAP_REDIS_PASSWORD", ""),
+    }
+    if own:
+        loader.raise_for_problems()
+    return block
+
+
+def map_config(loader: Optional[ConfigLoader] = None) -> dict:
+    """The `map` service's own UDP listener bind address/port, HTTP/
+    WebSocket listen host/port, and its two Redis eviction TTLs (stale /
+    evict -- see `map/README.md`).
+
+    `MAP_LISTEN_HOST`/`MAP_LISTEN_PORT` are deliberately distinct names
+    from message-processor's `MAP_UDP_HOST`/`MAP_UDP_PORT` (`map_udp_config()`
+    above), even though `MAP_LISTEN_PORT` must operationally equal whatever
+    port a message processor's `MAP_UDP_PORT` sends datagrams to -- the two
+    values live in separate `.env` files for separate hosts/components, and
+    "bind address" and "send-to destination" are different concepts that
+    happening to share a variable name risked being misread as one setting
+    shared between two components' `.env` files instead of two independent
+    ones that must simply be kept in agreement operationally."""
+    loader, own = _own_loader(loader)
+    block = {
+        "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
+        "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
+        "map_http_host": loader.string("MAP_HTTP_HOST", "0.0.0.0"),
+        "map_http_port": loader.integer("MAP_HTTP_PORT", 8090),
+        "map_stale_seconds": loader.integer("MAP_STALE_SECONDS", 30),
+        "map_evict_seconds": loader.integer("MAP_EVICT_SECONDS", 300),
+    }
+    if own:
+        loader.raise_for_problems()
+    return block
+
+
 # Blocks that land under a key of their own, and blocks whose values are
 # top-level fields of the component's config.
 _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "mqtt": mqtt_config,
     "map_udp": map_udp_config,
+    "map_redis": map_redis_config,
     "rabbitmq": rabbitmq_config,
     "rabbitmq_management": rabbitmq_management_config,
     "redis": redis_config,
@@ -370,6 +423,7 @@ _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
 _FLAT_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "receiver": receiver_config,
     "message_processor": message_processor_config,
+    "map": map_config,
 }
 
 
