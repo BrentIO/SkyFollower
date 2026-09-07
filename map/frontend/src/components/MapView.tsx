@@ -8,6 +8,7 @@ import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
 import type { AircraftRecord } from "../lib/aircraftState";
+import { buildTrailSegments } from "../lib/trailSegments";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
@@ -48,21 +49,21 @@ function trailFeatureCollection(
 ): FeatureCollection {
   const features: Feature[] = [];
   for (const a of Object.values(aircraft)) {
-    if (!visibleIds.has(a.icao_hex) || a.trail.length < 2) continue;
-    features.push({
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: a.trail.map((p) => [p.longitude, p.latitude]),
-      },
-      properties: {
-        icao_hex: a.icao_hex,
-        // Current altitude, not per-point -- the trail is a single flat
-        // color per aircraft, same mechanism as the icon fill (see the
-        // issue's Live trail section), not a per-point gradient.
-        color: altitudeColor(a.altitude ?? null),
-      },
-    });
+    if (!visibleIds.has(a.icao_hex)) continue;
+    // Per-segment coloring (see trailSegments.ts) -- each two-point piece
+    // of the trail is colored by the altitude the aircraft actually had
+    // at its earlier point, not by the aircraft's current altitude. Only
+    // the icon fill (aircraftFeatureCollection above) uses current altitude.
+    for (const segment of buildTrailSegments(a.trail)) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: segment.coordinates },
+        properties: {
+          icao_hex: a.icao_hex,
+          color: segment.color,
+        },
+      });
+    }
   }
   return { type: "FeatureCollection", features };
 }

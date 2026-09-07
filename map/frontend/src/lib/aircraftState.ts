@@ -27,6 +27,16 @@ export interface AircraftRecord extends MapFlight {
 
 export type AircraftMap = Record<string, AircraftRecord>;
 
+// Caps how many points a client-accumulated trail can hold. Since #1567
+// the trail is rendered as one two-point LineString feature per
+// consecutive pair of points, so an unbounded trail means unbounded
+// features per aircraft on a long-lived page session. A point-count cap
+// is used rather than a time-window cap because TrailPoint carries no
+// timestamp -- adding one purely to support capping would be a bigger
+// change than the cap itself needs. 300 deduplicated position samples is
+// generous history for "a few dozen aircraft" at this map's scale.
+export const MAX_TRAIL_POINTS = 300;
+
 function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailPoint[] {
   if (flight.latitude == null || flight.longitude == null) return trail;
   const point: TrailPoint = {
@@ -38,7 +48,8 @@ function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailP
   if (last && last.latitude === point.latitude && last.longitude === point.longitude) {
     return trail; // Same position as the last sample -- nothing new to plot.
   }
-  return [...trail, point];
+  const next = [...trail, point];
+  return next.length > MAX_TRAIL_POINTS ? next.slice(next.length - MAX_TRAIL_POINTS) : next;
 }
 
 // Builds the initial AircraftMap from GET /api/flights. Seeds each

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MapFlight, MapWsEvent } from "../api/types";
-import { applySnapshot, applyWsEvent, applyWsEvents } from "./aircraftState";
+import { applySnapshot, applyWsEvent, applyWsEvents, MAX_TRAIL_POINTS } from "./aircraftState";
 
 describe("applySnapshot", () => {
   it("seeds a trail point from each aircraft's current position, when known", () => {
@@ -100,6 +100,30 @@ describe("applyWsEvent -- stale/remove", () => {
     const base = applySnapshot([]);
     const next = applyWsEvent(base, { type: "remove", icao_hex: "UNKNOWN" });
     expect(next).toBe(base);
+  });
+});
+
+describe("trail cap", () => {
+  it("drops the oldest points once the cap is exceeded, keeping the newest", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", latitude: 0, longitude: 0, altitude: 0 }]);
+    const overflow = 10;
+    for (let i = 1; i <= MAX_TRAIL_POINTS + overflow; i++) {
+      state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", latitude: i, longitude: i, altitude: i });
+    }
+    const trail = state.A1B2C3.trail;
+    expect(trail).toHaveLength(MAX_TRAIL_POINTS);
+    // The newest point (the last one pushed) survives...
+    expect(trail[trail.length - 1].latitude).toBe(MAX_TRAIL_POINTS + overflow);
+    // ...and the oldest `overflow` points (including the seed point at 0) were dropped.
+    expect(trail[0].latitude).toBe(overflow + 1);
+  });
+
+  it("never exceeds the cap even across many more pushes than the cap", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", latitude: 0, longitude: 0 }]);
+    for (let i = 1; i <= MAX_TRAIL_POINTS * 3; i++) {
+      state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", latitude: i, longitude: i });
+    }
+    expect(state.A1B2C3.trail.length).toBe(MAX_TRAIL_POINTS);
   });
 });
 
