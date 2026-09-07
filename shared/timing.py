@@ -186,6 +186,14 @@ ROUTE_TTL_SECONDS = 3 * 86400
 # default lives here.
 DEFAULT_FLIGHT_TTL_SECONDS = 300
 
+# --- Map service ----------------------------------------------------------
+
+# How often the map service flushes buffered position/metadata/stale/remove
+# events to each connected WebSocket client, coalescing several aircraft
+# updates arriving within the window into one frame instead of one frame
+# per update.
+MAP_WS_BATCH_INTERVAL_SECONDS = 0.25
+
 # --- Rule trigger counters --------------------------------------------------
 
 # TTL the message processor sets on each rule_triggers:{identifier}:{date}

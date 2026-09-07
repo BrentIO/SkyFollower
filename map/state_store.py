@@ -1,0 +1,243 @@
+"""
+Redis-backed per-aircraft live state for the map service.
+
+Two keys per tracked aircraft, both in the map service's own dedicated
+Redis instance (never core Redis -- see map/README.md):
+
+- ``flight:live:{icao_hex}`` -- short-TTL sentinel, no meaningful value.
+  Its expiry is the "stale" signal (see FlightStateStore.parse_expired_key).
+- ``flight:detail:{icao_hex}`` -- a Redis hash holding the aircraft's
+  merged current-state: every field known from both `position` and
+  `metadata` UDP messages, field-level HSET on each update so a partial
+  update never clobbers fields it didn't carry. Its expiry is the "remove"
+  signal.
+
+``flight:trail:{icao_hex}`` is a third, related key: a plain list of JSON
+lat/lon/altitude snapshots appended on every accepted `position` update,
+refreshed onto the same TTL/lifecycle as ``flight:detail`` so it lives and
+dies alongside the aircraft's detail record.
+
+These three key families are local to this service -- they're not part of
+shared/redis_keys.py's schema, which documents *core* Redis's keys. The map
+service's Redis is a second, separate instance this service alone owns, so
+its key namespace has no reason to be centralized alongside core's.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Optional
+
+logger = logging.getLogger("map.state_store")
+
+_LIVE_PREFIX = "flight:live:"
+_DETAIL_PREFIX = "flight:detail:"
+_TRAIL_PREFIX = "flight:trail:"
+
+# Internal bookkeeping field on the flight:detail hash -- the timestamp of
+# the last packet actually applied for this icao_hex, used for the
+# out-of-order guard (see apply_update). Never returned from get_flight().
+_LAST_APPLIED_TIMESTAMP_FIELD = "_last_applied_timestamp"
+
+# Tolerance applied around the out-of-order comparison in apply_update --
+# see that method's docstring for why a bare `<` misreads a `metadata`
+# packet's ISO-8601-round-tripped timestamp as older than a same-tick
+# `position` packet's raw float timestamp. 1ms is many orders of magnitude
+# looser than the sub-microsecond noise that round-trip introduces, and
+# many orders of magnitude tighter than any real spacing between distinct
+# ADS-B messages for one aircraft.
+_TIMESTAMP_EPSILON_SECONDS = 0.001
+
+# Fields carried by a `position` UDP message (shared/config.py's
+# map_udp_config() destination; wire format is message-processor's
+# _publish_map_position()). A field absent from a given packet is left
+# untouched on the merged hash, not blanked -- see apply_update.
+POSITION_FIELDS = ("latitude", "longitude", "altitude", "velocity", "heading", "vertical_speed")
+
+
+def flight_live_key(icao_hex: str) -> str:
+    return f"{_LIVE_PREFIX}{icao_hex}"
+
+
+def flight_detail_key(icao_hex: str) -> str:
+    return f"{_DETAIL_PREFIX}{icao_hex}"
+
+
+def flight_trail_key(icao_hex: str) -> str:
+    return f"{_TRAIL_PREFIX}{icao_hex}"
+
+
+def parse_expired_key(key: str) -> Optional[tuple[str, str]]:
+    """Classifies a key name reported by a Redis `expired` keyevent
+    notification. Returns (kind, icao_hex) where kind is "live" or
+    "detail", or None for a key this service doesn't act on the expiry of
+    (flight:trail:* expires silently -- it's cleaned up explicitly as a
+    side effect of the "detail" case instead, see MapService._handle_expired_key)."""
+    if key.startswith(_LIVE_PREFIX):
+        return "live", key[len(_LIVE_PREFIX):]
+    if key.startswith(_DETAIL_PREFIX):
+        return "detail", key[len(_DETAIL_PREFIX):]
+    return None
+
+
+class FlightStateStore:
+    """Wraps the dedicated map Redis instance: merge-on-write current
+    state, TTL refresh, trail accumulation, and the out-of-order guard.
+    Callers are expected to serialize calls for a given icao_hex (the UDP
+    listener processes datagrams on a single thread) -- no locking or
+    Lua-script atomicity is used here, since there's exactly one writer.
+    """
+
+    def __init__(self, redis_client, stale_seconds: int, evict_seconds: int) -> None:
+        self._redis = redis_client
+        self._stale_seconds = stale_seconds
+        self._evict_seconds = evict_seconds
+
+    def enable_keyspace_notifications(self) -> None:
+        """Best-effort -- a CONFIG SET, not persisted by this
+        no-persistence Redis instance, so this must be re-applied on every
+        connect/reconnect (see MapService._eviction_loop). 'Ex' = keyevent
+        notifications for expired keys only; that's the only class of
+        event this service needs."""
+        try:
+            self._redis.config_set("notify-keyspace-events", "Ex")
+        except Exception as exc:
+            logger.warning("Could not enable Redis keyspace notifications: %r", exc)
+
+    def apply_update(
+        self, icao_hex: str, msg_type: str, timestamp: float, fields: dict,
+    ) -> Optional[dict]:
+        """Merges `fields` into icao_hex's current-state hash and refreshes
+        both TTLs, unless `timestamp` is at or before -- for `position`
+        packets only, strictly before -- the last-applied timestamp for
+        this aircraft (see the note on equal timestamps below).
+
+        Returns the full merged, decoded current-state dict on success, or
+        None if the packet was dropped as out-of-order.
+
+        Equal timestamps are accepted, not dropped: message-processor's
+        `_publish_map_position`/`_maybe_publish_map_metadata` both stamp
+        their payload from the exact same `received_at` value for one
+        source ADS-B message, so a `position` packet and a same-tick
+        `metadata` packet for a brand-new aircraft legitimately share one
+        timestamp. Rejecting ties (a literal "at or before" reading) would
+        silently drop that metadata packet every time. Only a packet
+        strictly older than the last one applied is treated as
+        out-of-order/reordered.
+
+        A small tolerance (`_TIMESTAMP_EPSILON_SECONDS`) is applied around
+        that comparison rather than a bare `<`: `position`'s `timestamp` is
+        message-processor's raw float `received_at`, while `metadata`'s
+        comparison key is derived by round-tripping that same float through
+        `datetime.fromtimestamp(...).isoformat()` and back (see
+        map/main.py's `_extract_timestamp`) -- a conversion that only keeps
+        microsecond precision. For one source message whose `position` and
+        `metadata` packets legitimately share a timestamp, that round-trip
+        can come back a hair below the original float, which a bare `<`
+        would misread as "older" and silently drop the metadata packet.
+        The tolerance is many orders of magnitude tighter than any real
+        ADS-B message spacing, so a genuinely reordered/stale packet is
+        still rejected.
+        """
+        key = flight_detail_key(icao_hex)
+        last_raw = self._redis.hget(key, _LAST_APPLIED_TIMESTAMP_FIELD)
+        if last_raw is not None:
+            try:
+                if timestamp < float(last_raw) - _TIMESTAMP_EPSILON_SECONDS:
+                    logger.debug(
+                        "Dropping out-of-order %s packet for %s: %s <= last-applied %s",
+                        msg_type, icao_hex, timestamp, last_raw,
+                    )
+                    return None
+            except ValueError:
+                pass  # Corrupt bookkeeping field -- treat as no prior timestamp.
+
+        mapping = {k: json.dumps(v) for k, v in fields.items()}
+        mapping["icao_hex"] = json.dumps(icao_hex)
+        mapping[_LAST_APPLIED_TIMESTAMP_FIELD] = json.dumps(timestamp)
+
+        pipe = self._redis.pipeline()
+        pipe.hset(key, mapping=mapping)
+        pipe.expire(key, self._evict_seconds)
+        pipe.set(flight_live_key(icao_hex), "1", ex=self._stale_seconds)
+        pipe.execute()
+
+        merged = self.get_flight(icao_hex)
+
+        # Trail accumulation: every accepted `position` packet appends the
+        # *merged* (not just this packet's) lat/lon/altitude snapshot, once
+        # a latitude/longitude are actually known -- an aircraft whose only
+        # traffic so far is velocity/heading-only position packets has
+        # nothing meaningful to plot yet.
+        if msg_type == "position" and merged and "latitude" in merged and "longitude" in merged:
+            point = {
+                "latitude": merged["latitude"],
+                "longitude": merged["longitude"],
+                "altitude": merged.get("altitude"),
+            }
+            trail_pipe = self._redis.pipeline()
+            trail_pipe.rpush(flight_trail_key(icao_hex), json.dumps(point))
+            trail_pipe.expire(flight_trail_key(icao_hex), self._evict_seconds)
+            trail_pipe.execute()
+
+        return merged
+
+    def get_flight(self, icao_hex: str) -> Optional[dict]:
+        """Decodes icao_hex's flight:detail hash into a plain dict --
+        every field JSON-decoded uniformly (nested objects like `aircraft`/
+        `operator` round-trip as dicts, lists as lists), with the internal
+        out-of-order bookkeeping field stripped. None if the aircraft isn't
+        currently tracked (hash doesn't exist / already evicted)."""
+        raw = self._redis.hgetall(flight_detail_key(icao_hex))
+        if not raw:
+            return None
+        result: dict = {}
+        for field, value in raw.items():
+            if field == _LAST_APPLIED_TIMESTAMP_FIELD:
+                continue
+            try:
+                result[field] = json.loads(value)
+            except (TypeError, ValueError):
+                result[field] = value
+        return result
+
+    def list_flights(self) -> list[dict]:
+        """One decoded current-state dict per currently-tracked aircraft,
+        i.e. one per flight:detail:{icao_hex} hash that currently exists --
+        matches GET /api/flights exactly (see map/main.py)."""
+        flights: list[dict] = []
+        for key in self._redis.scan_iter(match=f"{_DETAIL_PREFIX}*"):
+            icao_hex = key[len(_DETAIL_PREFIX):]
+            flight = self.get_flight(icao_hex)
+            if flight is not None:
+                flights.append(flight)
+        return flights
+
+    def get_trail(self, icao_hex: str) -> list[dict]:
+        """Every accumulated trail point for icao_hex, oldest first."""
+        raw = self._redis.lrange(flight_trail_key(icao_hex), 0, -1)
+        return [json.loads(p) for p in raw]
+
+    def handle_expired_key(self, key: str) -> Optional[dict]:
+        """Turns a Redis `expired` keyevent's key name into the WebSocket
+        event to broadcast ("stale" for flight:live:*, "remove" for
+        flight:detail:*), or None for a key this service doesn't act on.
+
+        A "remove" (flight:detail:{icao_hex} expired) also proactively
+        deletes flight:trail:{icao_hex} -- it's refreshed onto the same TTL
+        on every update, so it will expire on its own moments later in the
+        normal case, but this guarantees no leftover trail key can survive
+        a detail-key eviction even if the two TTLs ever drift apart."""
+        parsed = parse_expired_key(key)
+        if parsed is None:
+            return None
+        kind, icao_hex = parsed
+        if kind == "live":
+            return {"type": "stale", "icao_hex": icao_hex}
+        # kind == "detail"
+        try:
+            self._redis.delete(flight_trail_key(icao_hex))
+        except Exception as exc:
+            logger.debug("Trail cleanup failed for %s: %r", icao_hex, exc)
+        return {"type": "remove", "icao_hex": icao_hex}
