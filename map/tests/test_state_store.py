@@ -66,7 +66,9 @@ from map.state_store import (  # noqa: E402
     flight_live_key,
     flight_trail_key,
     flight_visible_key,
+    overall_processor_status,
     parse_expired_key,
+    processor_status,
 )
 
 
@@ -452,3 +454,128 @@ def test_update_refreshes_ttl_so_live_aircraft_never_goes_stale(redis_client):
     # clock -- the live key must still exist.
     assert redis_client.exists(flight_live_key(icao_hex))
     assert redis_client.exists(flight_detail_key(icao_hex))
+
+
+# ---------------------------------------------------------------------------
+# Processor status thresholds -- pure functions, no Redis needed. Final
+# thresholds: green <=15s, amber 15-60s, red >60s or never seen (see
+# shared/timing.py's MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS /
+# MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS).
+# ---------------------------------------------------------------------------
+
+def test_processor_status_green_at_or_under_threshold():
+    assert processor_status(last_seen=985.0, now=1000.0) == "green"  # 15s exactly
+    assert processor_status(last_seen=990.0, now=1000.0) == "green"  # 10s
+
+
+def test_processor_status_amber_between_thresholds():
+    assert processor_status(last_seen=970.0, now=1000.0) == "amber"  # 30s
+    assert processor_status(last_seen=940.0, now=1000.0) == "amber"  # 60s exactly
+
+
+def test_processor_status_red_beyond_amber_threshold():
+    assert processor_status(last_seen=939.0, now=1000.0) == "red"  # 61s
+    assert processor_status(last_seen=900.0, now=1000.0) == "red"  # 100s
+
+
+def test_processor_status_red_when_never_seen():
+    assert processor_status(last_seen=None, now=1000.0) == "red"
+
+
+def test_overall_status_green_when_all_processors_green():
+    assert overall_processor_status(["green", "green"]) == "green"
+
+
+def test_overall_status_amber_when_mixed_with_at_least_one_green():
+    assert overall_processor_status(["green", "amber"]) == "amber"
+    assert overall_processor_status(["green", "red"]) == "amber"
+
+
+def test_overall_status_red_when_all_red():
+    assert overall_processor_status(["red", "red"]) == "red"
+
+
+def test_overall_status_red_when_roster_empty():
+    """Nothing has ever been received -- treated the same as "all red",
+    not as some neutral/unknown state."""
+    assert overall_processor_status([]) == "red"
+
+
+# ---------------------------------------------------------------------------
+# Processor roster -- live Redis, same fixtures/pattern as the aircraft
+# state tests above.
+# ---------------------------------------------------------------------------
+
+def test_record_and_get_processor_roster(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    store.record_processor_seen("mp-1", 1000.0)
+    store.record_processor_seen("mp-2", 1005.0)
+
+    assert store.get_processor_roster() == {"mp-1": 1000.0, "mp-2": 1005.0}
+
+
+def test_record_processor_seen_overwrites_last_seen(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    store.record_processor_seen("mp-1", 1000.0)
+    store.record_processor_seen("mp-1", 2000.0)
+
+    assert store.get_processor_roster() == {"mp-1": 2000.0}
+
+
+def test_get_processor_roster_empty_when_nothing_seen(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    assert store.get_processor_roster() == {}
+
+
+def test_get_processor_statuses_reflects_thresholds(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    now = 100000.0
+    store.record_processor_seen("mp-green", now - 5)
+    store.record_processor_seen("mp-amber", now - 30)
+    store.record_processor_seen("mp-red", now - 120)
+
+    statuses = {p["processor_id"]: p["status"] for p in store.get_processor_statuses(now=now)}
+    assert statuses == {"mp-green": "green", "mp-amber": "amber", "mp-red": "red"}
+
+
+def test_get_processor_statuses_sorted_by_processor_id(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    store.record_processor_seen("mp-2", 1.0)
+    store.record_processor_seen("mp-1", 1.0)
+
+    ids = [p["processor_id"] for p in store.get_processor_statuses(now=2.0)]
+    assert ids == ["mp-1", "mp-2"]
+
+
+def test_get_processor_statuses_defaults_now_to_current_time(redis_client):
+    """Calling without an explicit `now` (the real GET /api/processors
+    code path) must use the current wall clock, not treat every entry as
+    infinitely old/new."""
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    store.record_processor_seen("mp-1", time.time())
+
+    statuses = {p["processor_id"]: p["status"] for p in store.get_processor_statuses()}
+    assert statuses["mp-1"] == "green"
+
+
+def test_processor_roster_resets_on_fresh_redis_state():
+    """Simulates a full map + map-redis container restart: this
+    no-persistence Redis instance loses all data on its own restart (see
+    map/README.md), which this module's autouse _clean_db fixture's
+    flushdb() reproduces exactly -- a fresh FlightStateStore against that
+    flushed Redis must report an empty roster, never a stale one."""
+    # _clean_db's autouse flushdb() already ran before this test via the
+    # module-scoped redis_client fixture; asserting against a brand-new
+    # store instance (not just the same one reused) confirms there's no
+    # in-memory roster state anywhere that could survive independently of
+    # Redis.
+    import redis as redis_module
+
+    client = redis_module.Redis(
+        host=_REDIS_HOST, port=_REDIS_PORT, db=_TEST_DB, decode_responses=True,
+    )
+    try:
+        store = FlightStateStore(client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+        assert store.get_processor_roster() == {}
+    finally:
+        client.close()

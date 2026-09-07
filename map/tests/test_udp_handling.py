@@ -10,6 +10,7 @@ store, and did the right WebSocket event get published."
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import map.main as map_main
 
@@ -17,11 +18,15 @@ import map.main as map_main
 class _FakeStore:
     def __init__(self):
         self.calls: list[tuple] = []
+        self.processor_calls: list[tuple] = []
         self.next_result = {}
 
     def apply_update(self, icao_hex, msg_type, timestamp, fields):
         self.calls.append((icao_hex, msg_type, timestamp, dict(fields)))
         return self.next_result
+
+    def record_processor_seen(self, processor_id, timestamp):
+        self.processor_calls.append((processor_id, timestamp))
 
 
 class _FakeConnections:
@@ -194,3 +199,70 @@ def test_handle_packet_unknown_type_is_ignored(monkeypatch):
 
     assert store.calls == []
     assert connections.published == []
+
+
+# ---------------------------------------------------------------------------
+# _handle_packet -- heartbeat / processor roster (any type carrying
+# processor_id updates the roster, not just heartbeat)
+# ---------------------------------------------------------------------------
+
+def test_handle_heartbeat_packet_records_processor_seen_and_nothing_else(monkeypatch):
+    store, connections = _install_fakes(monkeypatch)
+
+    with patch("map.main.time.time", return_value=555.5):
+        map_main._handle_packet({"type": "heartbeat", "processor_id": "mp-1", "timestamp": 500.0})
+
+    assert store.processor_calls == [("mp-1", 555.5)]
+    assert store.calls == []  # no flight-state effect
+    assert connections.published == []  # nothing broadcast for a heartbeat
+
+
+def test_handle_position_packet_with_processor_id_records_roster(monkeypatch):
+    store, connections = _install_fakes(monkeypatch)
+    store.next_result = {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}
+
+    with patch("map.main.time.time", return_value=555.5):
+        map_main._handle_packet({
+            "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
+            "processor_id": "mp-1", "latitude": 1.0, "longitude": 2.0,
+        })
+
+    assert store.processor_calls == [("mp-1", 555.5)]
+    # The position handling itself is unaffected -- still applied and published.
+    assert len(store.calls) == 1
+
+
+def test_handle_metadata_packet_with_processor_id_records_roster_and_excludes_it_from_fields(monkeypatch):
+    store, connections = _install_fakes(monkeypatch)
+    store.next_result = {"icao_hex": "A8AE7F", "ident": "DAL2"}
+
+    with patch("map.main.time.time", return_value=555.5):
+        map_main._handle_packet({
+            "type": "metadata",
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "ident": "DAL2",
+            "processor_id": "mp-1",
+            "last_message": "2026-09-06T00:00:00+00:00",
+        })
+
+    assert store.processor_calls == [("mp-1", 555.5)]
+    _icao_hex, _msg_type, _timestamp, fields = store.calls[0]
+    # processor_id describes the sender, not the aircraft -- must never be
+    # merged into the per-aircraft state (or it would leak into GET
+    # /api/flights and the metadata WebSocket event).
+    assert "processor_id" not in fields
+
+
+def test_handle_packet_without_processor_id_does_not_touch_roster(monkeypatch):
+    """Backward compatibility: a position/metadata packet from a
+    message-processor that predates processor_id must not raise or record
+    a bogus roster entry."""
+    store, connections = _install_fakes(monkeypatch)
+    store.next_result = {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}
+
+    map_main._handle_packet({
+        "type": "position", "icao_hex": "A8AE7F", "timestamp": 500.0,
+        "latitude": 1.0, "longitude": 2.0,
+    })
+
+    assert store.processor_calls == []

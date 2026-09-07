@@ -1,7 +1,15 @@
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
+import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
+import type { ProcessorRoster } from "../api/types";
 
 export interface ControlsPanelProps {
-  connected: boolean;
+  /** The browser's own WebSocket connection to this map backend -- distinct
+   * from `roster`, which is the message-processor liveness roster *that
+   * backend* has derived from UDP traffic. If this is false there is no
+   * live proof of anything, so the indicator renders red regardless of the
+   * last-known roster snapshot. */
+  wsConnected: boolean;
+  roster: ProcessorRoster;
   aircraftCount: number;
   historyAll: boolean;
   onToggleHistoryAll: () => void;
@@ -16,7 +24,8 @@ export interface ControlsPanelProps {
 // separate square control below the status panel) the recenter button. No
 // persistent side panel in v1 -- see the issue's Page layout section.
 export function ControlsPanel({
-  connected,
+  wsConnected,
+  roster,
   aircraftCount,
   historyAll,
   onToggleHistoryAll,
@@ -25,13 +34,15 @@ export function ControlsPanel({
   onRecenter,
   recenterDisabled,
 }: ControlsPanelProps) {
+  const overallStatus = overallConnectionStatus(wsConnected, roster);
+
   return (
     <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
       <div className="pointer-events-auto flex flex-col gap-2 rounded-md bg-white/90 p-3 text-sm text-slate-900 shadow-md dark:bg-slate-900/90 dark:text-slate-100">
         <div className="flex items-center gap-2">
           <span
-            title={connected ? "Connected" : "Disconnected"}
-            className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-green-500" : "bg-red-500"}`}
+            title={connectionTooltip(wsConnected, roster)}
+            className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`}
           />
           <span className="tabular-nums">{aircraftCount} aircraft</span>
         </div>

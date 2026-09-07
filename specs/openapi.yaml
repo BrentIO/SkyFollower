@@ -1269,6 +1269,27 @@ paths:
                   $ref: '#/components/schemas/MapFlight'
                 type: array
                 title: Response Get Flights Api Flights Get
+  /api/processors:
+    get:
+      tags:
+      - flights
+      summary: Get Processor Status
+      description: Served by the map service (map/main.py), not this file's
+        management-ui backend -- included here so the whole system's REST
+        surface has one spec. Per-message-processor liveness roster this map
+        instance has derived from UDP `heartbeat`/`position`/`metadata`
+        traffic carrying `processor_id` since its own dedicated Redis last
+        reset (a full map + map-redis restart -- see map/README.md), plus
+        the aggregated `overall` status the frontend's connection indicator
+        renders.
+      operationId: get_processor_status_api_processors_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessorRosterResponse'
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -2435,6 +2456,64 @@ components:
           title: Type
       type: object
       title: PowerplantInfo
+    ProcessorStatus:
+      properties:
+        processor_id:
+          type: string
+          title: Processor Id
+          description: MESSAGE_PROCESSOR_ID of the rostered instance
+        last_seen:
+          type: number
+          format: float
+          title: Last Seen
+          description: Unix timestamp (seconds) this map instance last received
+            any UDP message carrying this processor_id
+        status:
+          type: string
+          enum:
+          - green
+          - amber
+          - red
+          title: Status
+      type: object
+      required:
+      - processor_id
+      - last_seen
+      - status
+      title: ProcessorStatus
+      description: >-
+        One rostered message processor's liveness. green ("Connected") when
+        last_seen is at most MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS ago (15s,
+        three missed 5s heartbeats); amber ("Reconnecting") up to
+        MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS (60s, twelve missed
+        heartbeats); red ("Disconnected") beyond that -- both thresholds are
+        fixed constants in shared/timing.py.
+    ProcessorRosterResponse:
+      properties:
+        overall:
+          type: string
+          enum:
+          - green
+          - amber
+          - red
+          title: Overall
+        processors:
+          items:
+            $ref: '#/components/schemas/ProcessorStatus'
+          type: array
+          title: Processors
+      type: object
+      required:
+      - overall
+      - processors
+      title: ProcessorRosterResponse
+      description: >-
+        GET /api/processors' response body. `processors` is sorted by
+        processor_id, not recency, for a stable response shape; a processor
+        never seen this session is simply absent (no placeholder entry).
+        `overall` is green only when every rostered processor is green,
+        red only when every rostered processor is red (or the roster is
+        empty -- nothing has ever been received), amber otherwise.
     ReceiverSourceCondition:
       properties:
         type:

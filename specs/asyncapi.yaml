@@ -961,19 +961,25 @@ channels:
       - $ref: '#/servers/udp'
     address: null
     description: >
-      Unicast UDP destination message-processor sends `position`/`metadata`
-      datagrams to (MAP_UDP_HOST:MAP_UDP_PORT on the sender, bound as
-      MAP_LISTEN_HOST:MAP_LISTEN_PORT on the map service). UDP has no
-      notion of a topic/path -- this channel represents the single
-      destination socket both message shapes below share, distinguished
+      Unicast UDP destination message-processor sends `position`/`metadata`/
+      `heartbeat` datagrams to (MAP_UDP_HOST:MAP_UDP_PORT on the sender,
+      bound as MAP_LISTEN_HOST:MAP_LISTEN_PORT on the map service). UDP has
+      no notion of a topic/path -- this channel represents the single
+      destination socket all three message shapes share, distinguished
       from each other by the `type` field on the payload rather than by
-      address. Fire-and-forget: neither message is retained, acknowledged,
-      or guaranteed delivery.
+      address. Fire-and-forget: none of the three is retained, acknowledged,
+      or guaranteed delivery. All three now carry `processor_id`
+      (MESSAGE_PROCESSOR_ID); the map service updates a per-processor
+      liveness roster from whichever of the three arrives, which is why a
+      busy processor's own position/metadata traffic keeps `heartbeat` from
+      firing on most 5s ticks -- see MapUdpHeartbeat below.
     messages:
       MapUdpPositionMessage:
         $ref: '#/components/messages/MapUdpPositionMessage'
       MapUdpMetadataMessage:
         $ref: '#/components/messages/MapUdpMetadataMessage'
+      MapUdpHeartbeatMessage:
+        $ref: '#/components/messages/MapUdpHeartbeatMessage'
 
   mapWebSocket:
     servers:
@@ -1325,7 +1331,7 @@ operations:
     action: send
     channel:
       $ref: '#/channels/mapUdpFeed'
-    summary: Message processor sends map `position`/`metadata` UDP datagrams
+    summary: Message processor sends map `position`/`metadata`/`heartbeat` UDP datagrams
 
   publishMapWebSocket:
     action: send
@@ -1782,6 +1788,14 @@ components:
       contentType: application/json
       payload:
         $ref: '#/components/schemas/MapUdpMetadata'
+
+    MapUdpHeartbeatMessage:
+      name: MapUdpHeartbeatMessage
+      title: Map UDP heartbeat datagram
+      summary: Fixed 5s liveness beacon, skipped whenever position/metadata traffic already covered the window
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MapUdpHeartbeat'
 
     MapWsPositionMessage:
       name: MapWsPositionMessage
@@ -2458,12 +2472,13 @@ components:
         Sent by message-processor on every processed ADS-B message (no
         throttling) once the map UDP feed is enabled (MAP_UDP_HOST
         configured) -- see message-processor/main.py's
-        `_publish_map_position`. icao_hex and timestamp are always present;
-        every MapPositionFields property is independently optional.
+        `_publish_map_position`. icao_hex, timestamp, and processor_id are
+        always present; every MapPositionFields property is independently
+        optional.
       allOf:
         - $ref: '#/components/schemas/MapPositionFields'
         - type: object
-          required: [type, icao_hex, timestamp]
+          required: [type, icao_hex, timestamp, processor_id]
           properties:
             type:
               type: string
@@ -2476,6 +2491,15 @@ components:
               format: float
               description: Unix timestamp (seconds) of the source ADS-B message (message-processor's received_at)
               example: 1757000000.0
+            processor_id:
+              type: string
+              description: >
+                MESSAGE_PROCESSOR_ID of the sending instance -- same value
+                used for the `message_processor:{id}:heartbeat` Redis key
+                and MQTT topics. The map service uses this on every message
+                type (not just MapUdpHeartbeat) to update that processor's
+                liveness roster entry -- see MapUdpHeartbeat's description.
+              example: mp-1
 
     MapUdpMetadata:
       description: >
@@ -2488,17 +2512,54 @@ components:
         total_messages, and receiver_sources always present -- both are
         built by the same _build_flight_notification_payload), minus that
         schema's `rule` object (this message never carries one), plus this
-        message's own `type` key. icao_hex lives nested at aircraft.icao_hex
-        here, not as a top-level key -- unlike the sibling `position`
-        message above, which puts icao_hex at the top level.
+        message's own `type` and `processor_id` keys. icao_hex lives nested
+        at aircraft.icao_hex here, not as a top-level key -- unlike the
+        sibling `position` message above, which puts icao_hex at the top
+        level. The map service excludes `processor_id` from the fields it
+        merges into the aircraft's own state (see MapFlightState) --  it
+        describes the sending processor, not the aircraft.
       allOf:
         - $ref: '#/components/schemas/FlightSnapshot'
         - type: object
-          required: [type, aircraft, first_message, last_message, total_messages, receiver_sources]
+          required: [type, aircraft, first_message, last_message, total_messages, receiver_sources, processor_id]
           properties:
             type:
               type: string
               enum: [metadata]
+            processor_id:
+              type: string
+              description: MESSAGE_PROCESSOR_ID of the sending instance -- see MapUdpPosition.processor_id
+              example: mp-1
+
+    MapUdpHeartbeat:
+      description: >
+        Fixed 5s liveness beacon from message-processor's dedicated
+        `_map_heartbeat_loop`, independent of aircraft traffic -- the only
+        one of the three map UDP message types with no flight-related
+        fields at all. Traffic reduction: `_MapUdpPublisher` tracks the
+        timestamp of the last datagram it sent of *any* type, and the
+        heartbeat loop skips sending on a given 5s tick if a `position` or
+        `metadata` datagram already went out for this processor within that
+        window -- so a busy processor rarely emits a standalone heartbeat;
+        only an idle/low-traffic one sees it fire on (almost) every tick.
+        Not throttled by MAX_MESSAGE_LAG_SECONDS -- unlike `position`/
+        `metadata`, a heartbeat is about the processor being up *now*, not
+        about a source message's recency.
+      type: object
+      required: [type, processor_id, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [heartbeat]
+        processor_id:
+          type: string
+          description: MESSAGE_PROCESSOR_ID of the sending instance -- see MapUdpPosition.processor_id
+          example: mp-1
+        timestamp:
+          type: number
+          format: float
+          description: Unix timestamp (seconds) this heartbeat was sent (message-processor's own clock, not a source ADS-B message's)
+          example: 1725720000.0
 
     MapFlightState:
       description: >

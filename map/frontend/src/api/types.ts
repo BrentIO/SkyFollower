@@ -69,3 +69,21 @@ export interface MapWsRemoveEvent {
 }
 
 export type MapWsEvent = MapWsPositionEvent | MapWsMetadataEvent | MapWsStaleEvent | MapWsHideEvent | MapWsRemoveEvent;
+
+export type ProcessorStatusValue = "green" | "amber" | "red";
+
+// One rostered message processor's liveness -- specs/openapi.yaml's
+// ProcessorStatus, as returned by one GET /api/processors `processors`
+// array element (see map/state_store.py's FlightStateStore.get_processor_statuses).
+export interface ProcessorStatus {
+  processor_id: string;
+  last_seen: number;
+  status: ProcessorStatusValue;
+}
+
+// GET /api/processors' full response body -- specs/openapi.yaml's
+// ProcessorRosterResponse.
+export interface ProcessorRoster {
+  overall: ProcessorStatusValue;
+  processors: ProcessorStatus[];
+}

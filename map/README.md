@@ -3,18 +3,22 @@
 Backend for the live-map frontend (`frontend/`, see [Frontend](#frontend-frontend)
 below). Three jobs in one process:
 
-1. A UDP listener that receives `position`/`metadata` datagrams from any/all
-   `message-processor` instances (see
+1. A UDP listener that receives `position`/`metadata`/`heartbeat` datagrams
+   from any/all `message-processor` instances (see
    [message-processor/README.md](../message-processor/README.md)'s "Map UDP
-   Publisher" section for the wire format) and merges each into per-aircraft
-   current-state held in a dedicated Redis instance.
+   Publisher" section for the wire format), merges `position`/`metadata`
+   into per-aircraft current-state, and records every message's
+   `processor_id` (all three types carry one) into a per-processor
+   liveness roster -- see [Processor Roster](#processor-roster) below --
+   both held in a dedicated Redis instance.
 2. A Redis keyspace-notification listener that turns key expiry into
    `stale`/`hide`/`remove` WebSocket events -- the three-stage lifecycle
    described in [Redis State](#redis-state) below -- driven entirely by
    that signal, with no app-level timer loop scanning for expired aircraft.
-3. A FastAPI app exposing `GET /api/flights` (a snapshot) and `WS /ws` (a
-   live, batched relay of `position`/`metadata`/`stale`/`hide`/`remove`
-   events), and serving the built frontend SPA itself under `/map` (see
+3. A FastAPI app exposing `GET /api/flights` (a snapshot), `GET
+   /api/processors` (the processor roster/status), and `WS /ws` (a live,
+   batched relay of `position`/`metadata`/`stale`/`hide`/`remove` events),
+   and serving the built frontend SPA itself under `/map` (see
    [Frontend](#frontend-frontend) below).
 
 There is exactly one map service instance -- unlike `message-processor`,
@@ -120,14 +124,19 @@ Requiring authentication on it is a deployment choice available via
 
 ## UDP Listener
 
-Receives `position` and `metadata` JSON datagrams -- one object per UDP
-packet, disambiguated by a `"type"` field -- from any/all message-processor
-instances. No subscriber registration, no 1:1 pairing: this service just
-listens on `MAP_LISTEN_HOST:MAP_LISTEN_PORT` and processes whatever arrives
-from whoever sends it. See message-processor/README.md's "Map UDP
-Publisher" section for the exact payload shapes
-(`message-processor/main.py`'s `_publish_map_position`/
-`_maybe_publish_map_metadata`).
+Receives `position`, `metadata`, and `heartbeat` JSON datagrams -- one
+object per UDP packet, disambiguated by a `"type"` field -- from any/all
+message-processor instances. No subscriber registration, no 1:1 pairing:
+this service just listens on `MAP_LISTEN_HOST:MAP_LISTEN_PORT` and
+processes whatever arrives from whoever sends it. See
+message-processor/README.md's "Map UDP Publisher" section for the exact
+payload shapes (`message-processor/main.py`'s `_publish_map_position`/
+`_maybe_publish_map_metadata`/`_map_heartbeat_loop`).
+
+All three message types carry a `processor_id` field (`MESSAGE_PROCESSOR_ID`
+of the sender) -- see [Processor Roster](#processor-roster) below for what
+this service does with it. `heartbeat` carries nothing else: it has no
+`icao_hex` and never touches per-aircraft state at all.
 
 The socket requests a larger-than-default kernel receive buffer
 (`SO_RCVBUF`, best-effort -- the OS caps this at its own configured
@@ -188,7 +197,7 @@ a separate `HGETALL` to build the WebSocket event payload.
 Dedicated Redis instance (`MAP_REDIS_*`), no persistence -- pure in-memory,
 fully reconstructible from live UDP traffic. Four keys per tracked
 aircraft, all TTL'd in seconds and refreshed on every UDP update for that
-aircraft:
+aircraft, plus one untracked-by-aircraft key for the processor roster:
 
 | Key | TTL | Contents |
 |---|---|---|
@@ -196,6 +205,7 @@ aircraft:
 | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
 | `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{latitude, longitude, altitude}` snapshots, one `RPUSH` per accepted `position` update (once latitude/longitude are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above |
+| `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 
 These key families are local to this service and are not part of
 `shared/redis_keys.py`'s schema, which documents *core* Redis's keys --
@@ -246,6 +256,54 @@ same TTL on every update so it would expire on its own moments later
 regardless, but this guarantees no leftover trail key can survive a
 detail-key eviction even if the two TTLs ever drift apart.
 
+## Processor Roster
+
+Which message processors are alive and feeding data, shown as a
+per-processor green/amber/red status and rolled up into the frontend's
+overall connection indicator (see [Frontend](#frontend-frontend) below).
+
+**Derived from any UDP message carrying `processor_id`, not just
+`heartbeat`.** `_handle_packet` records `map:processors[processor_id] =
+now` (this service's own receipt time, never the sender's clock, so
+cross-host clock skew can't distort the thresholds) on *every* incoming
+`heartbeat`/`position`/`metadata` datagram, before any type-specific
+handling. This is why a busy processor's ordinary position/metadata
+traffic almost never needs message-processor's dedicated 5s `heartbeat`
+loop to actually fire -- see message-processor/README.md's "Map UDP
+Publisher" section.
+
+**Roster scope: since this map service's own Redis last reset, not
+since the aircraft started transmitting.** `map:processors` carries no
+TTL, unlike the three aircraft-scoped keys above -- a processor that goes
+silent is meant to sit in the roster as permanently red (so an operator
+notices it), not quietly disappear the way a completed flight does.
+Because the dedicated Redis instance has no persistence (see [Fault
+Tolerance](#fault-tolerance) below), the roster resets to empty exactly
+when the rest of this service's state does: a restart of the map
+service's Redis. This is deliberate, and gives an operator a concrete
+lever: to retire a decommissioned processor's entry, restart the map
+stack (map + its Redis) and it drops off (the connection indicator goes
+back to all-green-by-omission) rather than sticking as a permanent red
+forever. **A processor never seen this session that starts sending
+mid-run joins the roster silently -- no special UI notice.**
+
+**Status thresholds** (`shared/timing.py`'s
+`MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS`/`MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS`,
+not environment variables -- same convention as `MAP_WS_BATCH_INTERVAL_SECONDS`
+above), applied to `now - last_seen`:
+
+| Status | Age | Meaning |
+|---|---|---|
+| green | ≤ 15s | "Connected" -- at most three missed 5s heartbeat ticks |
+| amber | 15-60s | "Reconnecting" |
+| red | > 60s, or never seen | "Disconnected" -- twelve missed heartbeat ticks |
+
+**Overall indicator aggregation** (`map/state_store.py`'s
+`overall_processor_status`): green only when every rostered processor is
+green; red only when every rostered processor is red (an empty roster --
+nothing has ever been received -- counts as red too); amber otherwise (at
+least one green, at least one amber/red).
+
 ## REST API
 
 `GET /api/flights` -- a JSON list, one object per currently-*visible*
@@ -258,6 +316,28 @@ lists. `FlightStateStore.list_flights()` finds the visible aircraft with
 `SCAN` over `flight:visible:*`, then issues every aircraft's `flight:detail`
 `HGETALL` in a single pipeline -- one round trip regardless of aircraft
 count, not one `HGETALL` per aircraft.
+
+`GET /api/processors` -- the message-processor liveness roster (see
+[Processor Roster](#processor-roster) above), computed fresh on every
+request rather than pushed over `WS /ws`: a processor's status can change
+purely from time passing (green ageing into amber/red) with no new packet
+to trigger a push, so the frontend polls this instead (see
+`src/hooks/useProcessorRoster.ts` under [Frontend](#frontend-frontend)
+below).
+
+```json
+{
+  "overall": "amber",
+  "processors": [
+    { "processor_id": "mp-1", "last_seen": 1725720000.0, "status": "green" },
+    { "processor_id": "mp-2", "last_seen": 1725719920.0, "status": "red" }
+  ]
+}
+```
+
+`processors` is sorted by `processor_id`, not recency, for a stable
+response shape; a processor never seen this session is simply absent (no
+placeholder entry).
 
 `GET /api/config` -- runtime configuration the frontend can't otherwise
 get at, since Vite bakes `VITE_*` values into the bundle at `npm run
@@ -379,9 +459,23 @@ button from the backend's `GET /api/config` (see
   first `aircraft` state is ever published -- closing the gap between
   "snapshot fetched" and "WS live" a snapshot-then-connect order would
   leave open.
+- `src/hooks/useProcessorRoster.ts` -- polls `GET /api/processors` every
+  5s (see [Processor Roster](#processor-roster) above for why this must be
+  a poll, not a WS push) for `ControlsPanel`'s connection indicator.
+- `src/lib/processorStatus.ts` -- the connection indicator's presentation
+  logic: overall color (red whenever the WebSocket itself is down,
+  regardless of the last-known roster) and the per-processor hover
+  tooltip text. Kept out of `ControlsPanel.tsx` so it's unit-testable
+  without a DOM-rendering dependency, same convention as
+  `labelStackOrder.ts`/`infoBox.ts`.
 - `src/components/MapView.tsx` -- map construction, aircraft/trail
   sources+layers (via `src/lib/featureCollections.ts`),
   click-to-toggle-trail, and the info-box overlay.
+- `src/components/ControlsPanel.tsx` -- the top-right status
+  panel/toggles/recenter button. The connection dot is green/amber/red
+  (amber = "at least one processor reconnecting/disconnected, but at
+  least one still connected"), and hovering it lists every rostered
+  processor by `processor_id` with its own status label.
 
 ```bash
 cd map/frontend
@@ -391,7 +485,7 @@ npm run dev       # Vite dev server on :5173, serving the app under /map/ (base:
                    # to localhost:80
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- aircraftState/featureCollections lifecycle rules, altitudeColor,
-                   # info-box formatting, and label stack-order unit tests
+                   # info-box formatting, label stack-order, and processor-status unit tests
 ```
 
 ### Frontend Configuration

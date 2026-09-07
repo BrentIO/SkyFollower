@@ -144,19 +144,21 @@ def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """The message processor's live position/metadata feed toward the
-    future map component (not yet built) -- a single unicast
-    UDP destination. Optional everywhere, same convention as mqtt_config()
-    above: host defaults to blank / port to 0, so a component with no
-    MAP_UDP_HOST set simply never creates the socket and never attempts a
-    send, rather than failing to start.
+    """The message processor's live position/metadata/heartbeat feed
+    toward the `map` service -- a single unicast UDP destination. Optional
+    everywhere, same convention as mqtt_config() above: host defaults to
+    blank / port to 0, so a component with no MAP_UDP_HOST set simply
+    never creates the socket and never attempts a send, rather than
+    failing to start.
 
     min_position_interval_seconds throttles only `position` sends (a
     per-icao_hex minimum spacing -- see message-processor's
     _MapUdpPublisher) -- sub-second position updates aren't perceptible on
     a map, and this is the single biggest lever on the map service's UDP
     volume / Redis write rate. `metadata` sends are already change-gated
-    and are never throttled by this value."""
+    and are never throttled by this value; `heartbeat` sends are governed
+    by MAP_HEARTBEAT_INTERVAL_SECONDS instead (shared/timing.py), not this
+    block."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_UDP_HOST", ""),

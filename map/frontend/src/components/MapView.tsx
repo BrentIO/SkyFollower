@@ -5,6 +5,7 @@ import { AIRCRAFT_ICON_ID, buildAircraftIconImageData } from "../lib/aircraftIco
 import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
+import { useProcessorRoster } from "../hooks/useProcessorRoster";
 import {
   aircraftFeatureCollection,
   EMPTY_FEATURE_COLLECTION,
@@ -58,6 +59,7 @@ export function MapView() {
 // needed in here.
 function MapViewInner({ config }: { config: AppConfig }) {
   const { aircraft, connected } = useMapFlights(config.wsUrl, config.restFlightsUrl);
+  const roster = useProcessorRoster(config.restProcessorsUrl);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -249,7 +251,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
         <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
       )}
       <ControlsPanel
-        connected={connected}
+        wsConnected={connected}
+        roster={roster}
         aircraftCount={Object.keys(aircraft).length}
         historyAll={historyAll}
         onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
