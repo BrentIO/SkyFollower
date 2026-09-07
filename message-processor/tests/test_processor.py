@@ -3831,6 +3831,103 @@ class TestMapUdpPublisherConstruction:
             publisher.send({"type": "position"})  # must not raise
         assert "network unreachable" in caplog.text
 
+    def test_logs_info_when_enabled(self, caplog):
+        with caplog.at_level(logging.INFO, logger="message_processor"):
+            publisher = _MapUdpPublisher("127.0.0.1", 9999)
+        publisher.close()
+        assert any(
+            r.levelno == logging.INFO and "127.0.0.1" in r.message and "9999" in r.message
+            for r in caplog.records
+        )
+
+    def test_logs_info_when_disabled(self, caplog):
+        with caplog.at_level(logging.INFO, logger="message_processor"):
+            _MapUdpPublisher("", 0)
+        assert any(
+            r.levelno == logging.INFO and "disabled" in r.message.lower()
+            for r in caplog.records
+        )
+
+    def test_warns_when_host_set_but_port_missing(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            _MapUdpPublisher("map.example.com", 0)
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+        assert "MAP_UDP_PORT" in caplog.text
+
+    def test_warns_when_port_set_but_host_missing(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            _MapUdpPublisher("", 9999)
+        assert any(r.levelno == logging.WARNING for r in caplog.records)
+        assert "MAP_UDP_HOST" in caplog.text
+
+    def test_no_warning_when_both_set(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            publisher = _MapUdpPublisher("127.0.0.1", 9999)
+        publisher.close()
+        assert not any(r.levelno == logging.WARNING for r in caplog.records)
+
+    def test_no_warning_when_neither_set(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            _MapUdpPublisher("", 0)
+        assert not any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+class TestMapUdpSendFailureEscalation:
+    """First send() failure of an outage is a WARNING; repeats of the same
+    outage drop to DEBUG so a persistent outage doesn't flood the log. A
+    successful send in between resets the flag, so a transient outage that
+    recovers and later recurs warns again."""
+
+    def _publisher_with_failing_socket(self) -> tuple[_MapUdpPublisher, MagicMock]:
+        publisher = _MapUdpPublisher("127.0.0.1", 9999)
+        mock_sock = MagicMock()
+        publisher._sock = mock_sock
+        return publisher, mock_sock
+
+    def test_first_failure_is_warning(self, caplog):
+        publisher, mock_sock = self._publisher_with_failing_socket()
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            publisher.send({"type": "position"})
+
+        send_records = [r for r in caplog.records if "Map UDP send failed" in r.message]
+        assert len(send_records) == 1
+        assert send_records[0].levelno == logging.WARNING
+
+    def test_repeated_failures_drop_to_debug(self, caplog):
+        publisher, mock_sock = self._publisher_with_failing_socket()
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            publisher.send({"type": "position"})
+            publisher.send({"type": "position"})
+            publisher.send({"type": "position"})
+
+        send_records = [r for r in caplog.records if "Map UDP send failed" in r.message]
+        assert len(send_records) == 3
+        assert send_records[0].levelno == logging.WARNING
+        assert send_records[1].levelno == logging.DEBUG
+        assert send_records[2].levelno == logging.DEBUG
+
+    def test_recovery_then_new_outage_warns_again(self, caplog):
+        publisher, mock_sock = self._publisher_with_failing_socket()
+
+        with caplog.at_level(logging.DEBUG, logger="message_processor"):
+            mock_sock.sendto.side_effect = OSError("network unreachable")
+            publisher.send({"type": "position"})  # first failure -> WARNING
+
+            mock_sock.sendto.side_effect = None  # recovers
+            publisher.send({"type": "position"})  # success resets the flag
+
+            mock_sock.sendto.side_effect = OSError("network unreachable")
+            publisher.send({"type": "position"})  # new outage -> WARNING again
+
+        send_records = [r for r in caplog.records if "Map UDP send failed" in r.message]
+        assert len(send_records) == 2
+        assert send_records[0].levelno == logging.WARNING
+        assert send_records[1].levelno == logging.WARNING
+
 
 class TestMapUdpDisabledByDefault:
     """MAP_UDP_HOST/MAP_UDP_PORT unset -- _minimal_config() carries no

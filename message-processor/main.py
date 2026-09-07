@@ -240,10 +240,30 @@ class _MapUdpPublisher:
     """
 
     def __init__(self, host: str, port: int) -> None:
+        if host and not port:
+            logger.warning(
+                "MAP_UDP_HOST is set (%s) but MAP_UDP_PORT is not set (or is 0) -- "
+                "map UDP feed is misconfigured.", host,
+            )
+        elif port and not host:
+            logger.warning(
+                "MAP_UDP_PORT is set (%s) but MAP_UDP_HOST is not set -- "
+                "map UDP feed remains disabled.", port,
+            )
         self._addr: Optional[tuple[str, int]] = (host, port) if host else None
         self._sock: Optional[socket.socket] = (
             socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if self._addr else None
         )
+        # Set on the first send() failure and cleared on the next successful
+        # send, so a WARNING fires once per outage rather than once per
+        # message -- but a transient outage that recovers and later recurs
+        # logs again instead of going silent forever.
+        self._logged_failure = False
+
+        if self.enabled:
+            logger.info("Map UDP feed enabled -> %s:%s", host, port)
+        else:
+            logger.info("Map UDP feed disabled (MAP_UDP_HOST not set)")
 
     @property
     def enabled(self) -> bool:
@@ -255,12 +275,20 @@ class _MapUdpPublisher:
         try:
             body = json.dumps(payload, default=str).encode("utf-8")
             self._sock.sendto(body, self._addr)
+            self._logged_failure = False
         except Exception as exc:
             # OSError (unreachable host, refused connection, etc.) is the
             # expected failure mode; caught broadly so nothing about this
             # best-effort feed -- not even an unexpected serialization
-            # issue -- can ever propagate into the caller's hot path.
-            logger.debug("Map UDP send failed: %s", exc)
+            # issue -- can ever propagate into the caller's hot path. The
+            # first failure of an outage is a WARNING so a misconfigured or
+            # unreachable MAP_UDP_HOST is visible at the default log level;
+            # repeats of the same outage drop to DEBUG to avoid flooding.
+            if not self._logged_failure:
+                logger.warning("Map UDP send failed: %s", exc)
+                self._logged_failure = True
+            else:
+                logger.debug("Map UDP send failed: %s", exc)
 
     def close(self) -> None:
         if self._sock is not None:
