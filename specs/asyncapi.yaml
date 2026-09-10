@@ -954,7 +954,86 @@ channels:
       RunnerLastRunStatusMessage:
         $ref: '#/components/messages/RunnerLastRunStatusMessage'
 
+  # ── Management UI ─────────────────────────────────────────────────────────
+  # A minimal MQTT presence only: enough for the backend to appear in Home
+  # Assistant with its running version and start time. No telemetry loop --
+  # these three retained topics are published once per broker connect and
+  # never again. Only present when MQTT_HOST is configured.
+
+  managementUiStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/management-ui/status
+    description: >
+      Management UI backend liveness. Published ONLINE on connect and
+      OFFLINE via LWT. Both messages are retained.
+    messages:
+      StatusMessage:
+        $ref: '#/components/messages/StatusMessage'
+
+  managementUiStartedAt:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/management-ui/statistic/started_at
+    description: >
+      UTC ISO-8601 timestamp of process start; never changes after startup.
+      Published once per broker connect, retained.
+    messages:
+      ManagementUiStartedAtMessage:
+        $ref: '#/components/messages/ManagementUiStartedAtMessage'
+
+  managementUiVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/management-ui/statistic/version
+    description: >
+      Running image version, from the VERSION environment variable ("dev"
+      if unset); never changes after startup. Published once per broker
+      connect, retained.
+    messages:
+      ManagementUiVersionMessage:
+        $ref: '#/components/messages/ManagementUiVersionMessage'
+
   # ── Map service ──────────────────────────────────────────────────────────
+
+  # The map service also publishes a minimal MQTT presence (same shape as
+  # Management UI above: retained status/started_at/version, no telemetry
+  # loop, only when MQTT_HOST is configured), alongside its UDP feed and
+  # WebSocket channels below.
+
+  mapStatus:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/map/status
+    description: >
+      Map service liveness. Published ONLINE on connect and OFFLINE via
+      LWT. Both messages are retained.
+    messages:
+      StatusMessage:
+        $ref: '#/components/messages/StatusMessage'
+
+  mapStartedAt:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/map/statistic/started_at
+    description: >
+      UTC ISO-8601 timestamp of process start; never changes after startup.
+      Published once per broker connect, retained.
+    messages:
+      MapStartedAtMessage:
+        $ref: '#/components/messages/MapStartedAtMessage'
+
+  mapVersion:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/map/statistic/version
+    description: >
+      Running image version, from the VERSION environment variable ("dev"
+      if unset); never changes after startup. Published once per broker
+      connect, retained.
+    messages:
+      MapVersionMessage:
+        $ref: '#/components/messages/MapVersionMessage'
 
   mapUdpFeed:
     servers:
@@ -1326,6 +1405,42 @@ operations:
     channel:
       $ref: '#/channels/ruleNotification'
     summary: Message processor publishes a rule match notification
+
+  publishManagementUiStatus:
+    action: send
+    channel:
+      $ref: '#/channels/managementUiStatus'
+    summary: Management UI backend publishes its online / offline status
+
+  publishManagementUiStartedAt:
+    action: send
+    channel:
+      $ref: '#/channels/managementUiStartedAt'
+    summary: Management UI backend publishes its process start time
+
+  publishManagementUiVersion:
+    action: send
+    channel:
+      $ref: '#/channels/managementUiVersion'
+    summary: Management UI backend publishes its running image version
+
+  publishMapStatus:
+    action: send
+    channel:
+      $ref: '#/channels/mapStatus'
+    summary: Map service publishes its online / offline status
+
+  publishMapStartedAt:
+    action: send
+    channel:
+      $ref: '#/channels/mapStartedAt'
+    summary: Map service publishes its process start time
+
+  publishMapVersion:
+    action: send
+    channel:
+      $ref: '#/channels/mapVersion'
+    summary: Map service publishes its running image version
 
   publishMapUdpFeed:
     action: send
@@ -1773,6 +1888,38 @@ components:
       payload:
         $ref: '#/components/schemas/FlightRuleNotification'
 
+    ManagementUiStartedAtMessage:
+      name: ManagementUiStartedAtMessage
+      title: Management UI backend process start time
+      summary: UTC ISO-8601 timestamp of process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ComponentStartedAt'
+
+    ManagementUiVersionMessage:
+      name: ManagementUiVersionMessage
+      title: Management UI backend running image version
+      summary: Running image version, from the VERSION environment variable
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ComponentVersion'
+
+    MapStartedAtMessage:
+      name: MapStartedAtMessage
+      title: Map service process start time
+      summary: UTC ISO-8601 timestamp of process start
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ComponentStartedAt'
+
+    MapVersionMessage:
+      name: MapVersionMessage
+      title: Map service running image version
+      summary: Running image version, from the VERSION environment variable
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ComponentVersion'
+
     MapUdpPositionMessage:
       name: MapUdpPositionMessage
       title: Map UDP position datagram
@@ -1873,6 +2020,17 @@ components:
       description: >
         Component liveness indicator. ONLINE published on connect (retained);
         OFFLINE sent as LWT when the connection drops (retained).
+
+    ComponentStartedAt:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp of process start; never changes after startup
+      example: "2026-01-15T10:00:00+00:00"
+
+    ComponentVersion:
+      type: string
+      description: Running image version, from the VERSION environment variable ("dev" if unset)
+      example: "2026.08.01"
 
     ReceiverMessagesPerSecond:
       type: number

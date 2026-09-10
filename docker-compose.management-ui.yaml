@@ -32,6 +32,15 @@ services:
       ATHENA_WORKGROUP: ${ATHENA_WORKGROUP:-skyfollower}
       ATHENA_DATABASE: ${ATHENA_DATABASE:-skyfollower}
       ATHENA_TABLE: ${ATHENA_TABLE:-archive_flights}
+      # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When
+      # set, the backend publishes a minimal Home Assistant presence
+      # (discovery + running version + start time) and nothing else; it
+      # has no telemetry loop. See management-ui/README.md's "MQTT / Home
+      # Assistant" section.
+      MQTT_HOST: ${MQTT_HOST:-}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
     volumes:
       # config:rules/config:areas are the only Redis keys holding
       # user-authored state with no automatic regeneration path -- this

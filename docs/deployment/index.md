@@ -149,10 +149,17 @@ reports healthy (see [Architecture](/architecture/) and
 | `ATHENA_WORKGROUP` | ❌ | `skyfollower` |
 | `ATHENA_DATABASE` | ❌ | `skyfollower` |
 | `ATHENA_TABLE` | ❌ | `archive_flights` |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
 
 management-ui is a separate Compose project from core even when
 co-located on the same host, so `REDIS_HOST` is typically `localhost`
-here rather than the `redis` service name core's own components use.
+here rather than the `redis` service name core's own components use. MQTT
+is optional: set `MQTT_HOST` and the backend publishes a minimal Home
+Assistant presence (discovery, running version, start time) and nothing
+else -- no telemetry.
 
 ### Message Processor
 
@@ -239,6 +246,14 @@ Declining falls through to entering those values by hand. See
 | `MAP_EVICT_SECONDS` | ❌ | `300` |
 | `MAP_HOME_LATITUDE` | ❌ | — |
 | `MAP_HOME_LONGITUDE` | ❌ | — |
+| `MQTT_HOST` | ❌ | — |
+| `MQTT_PORT` | ❌ | `1883` |
+| `MQTT_USERNAME` | ❌ | — |
+| `MQTT_PASSWORD` | ❌ | — |
+
+MQTT is optional: set `MQTT_HOST` and the service publishes a minimal Home
+Assistant presence (discovery, running version, start time) and nothing
+else -- no telemetry loop.
 
 `MAP_REDIS_HOST` is this role's own dedicated `map-redis` (bundled in
 `docker-compose.map.yaml`), never core Redis -- `scripts/install.sh`

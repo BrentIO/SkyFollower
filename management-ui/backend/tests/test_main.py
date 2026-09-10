@@ -21,7 +21,7 @@ import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1544,3 +1544,54 @@ class TestSearchIndexBootstrap:
         resp = client.get("/api/aircraft", params={"registration": "N659DL"})
         assert resp.status_code == 500
         assert "connection refused" in resp.json()["detail"]
+
+
+class TestMqttPresence:
+    """The backend's minimal MQTT presence (shared/mqtt_presence.py):
+    Home Assistant discovery + version + start time, published once per
+    broker connect. Optional -- nothing happens without MQTT_HOST."""
+
+    def test_no_client_created_when_mqtt_host_unset(self, client):
+        # The `client` fixture configures no MQTT_* environment.
+        assert ui_main._mqtt_presence is not None
+        assert ui_main._mqtt_presence.enabled is False
+        assert ui_main._mqtt_presence._client is None
+
+    def test_presence_constructed_started_and_stopped_when_configured(
+        self, tmp_path, monkeypatch, fake_redis
+    ):
+        _configure_env(tmp_path, monkeypatch)
+        monkeypatch.setenv("MQTT_HOST", "broker.example")
+        fake_presence = MagicMock()
+        with patch.object(ui_main, "MqttPresence", return_value=fake_presence) as mp:
+            with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+                with TestClient(ui_main.app):
+                    fake_presence.start.assert_called_once()
+        kwargs = mp.call_args.kwargs
+        assert kwargs["component"] == "management-ui"
+        assert kwargs["device_identifier"] == "SkyFollower_management-ui"
+        fake_presence.stop.assert_called_once()
+
+    def test_discovery_started_at_version_published_retained_on_connect(
+        self, tmp_path, monkeypatch, fake_redis
+    ):
+        _configure_env(tmp_path, monkeypatch)
+        monkeypatch.setenv("MQTT_HOST", "broker.example")
+        monkeypatch.setenv("VERSION", "2026.09.09")
+        fake_client = MagicMock()
+        with patch("shared.mqtt_presence.build_mqtt_client", return_value=fake_client) as bmc:
+            with patch.object(ui_main.redis_lib, "Redis", return_value=fake_redis):
+                with TestClient(ui_main.app):
+                    ui_main._mqtt_presence._on_connect(fake_client, None, None, 0, None)
+                    # Capture before the lifespan shutdown publishes OFFLINE.
+                    on_connect_pubs = list(fake_client.publish.call_args_list)
+
+        # LWT registered on the status topic.
+        assert bmc.call_args.kwargs["will_topic"] == "SkyFollower/management-ui/status"
+        retained = {
+            c.args[0]: c.args[1] for c in on_connect_pubs if c.kwargs.get("retain") is True
+        }
+        assert retained["SkyFollower/management-ui/status"] == "ONLINE"
+        assert retained["SkyFollower/management-ui/statistic/version"] == "2026.09.09"
+        assert "SkyFollower/management-ui/statistic/started_at" in retained
+        assert "homeassistant/sensor/SkyFollower_management-ui_started_at/config" in retained

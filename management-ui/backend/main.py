@@ -62,6 +62,7 @@ if _REPO_ROOT not in sys.path:
 from shared.config import RECEIVER_SOURCE_TAGS, load_config  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
+from shared.mqtt_presence import MqttPresence  # noqa: E402
 from shared.flight_path import build_flight_path  # noqa: E402
 from shared.models import AircraftRecord, AirportRecord, OperatorRecord  # noqa: E402
 from shared.glue_projection import YEAR_RANGE as _GLUE_YEAR_RANGE  # noqa: E402
@@ -660,6 +661,11 @@ _s3_bucket: str = ""
 _athena_cfg: dict = {}
 _fernet: Optional[Fernet] = None
 
+# Minimal MQTT presence (Home Assistant discovery + version + started_at),
+# started in lifespan() only when MQTT_HOST is configured. No telemetry
+# loop -- see shared/mqtt_presence.py.
+_mqtt_presence: Optional[MqttPresence] = None
+
 
 # ---------------------------------------------------------------------------
 # config:rules/config:areas are the only two Redis keys in the whole schema
@@ -821,7 +827,8 @@ def _ensure_search_index(r: redis_lib.Redis, index: str, prefix: str, tag_fields
 async def lifespan(app: FastAPI):
     global _redis, _engine, _merge_aircraft_sha, _route_airports_sha
     global _s3_client, _athena_client, _s3_bucket, _athena_cfg, _fernet
-    config = load_config("redis", "s3", "athena")
+    global _mqtt_presence
+    config = load_config("redis", "s3", "athena", "mqtt")
     configure_logging(config.get("log_level"))
 
     redis_config = config.get("redis", {})
@@ -848,9 +855,24 @@ async def lifespan(app: FastAPI):
 
     _reconcile_stuck_archive_searches()
 
+    # Optional MQTT presence -- inert unless MQTT_HOST is set. Same
+    # lifespan-managed lifecycle as the resources above: started here,
+    # cleanly stopped (retained OFFLINE, no last-will) on shutdown.
+    _mqtt_presence = MqttPresence(
+        config.get("mqtt"),
+        component="management-ui",
+        device_identifier="SkyFollower_management-ui",
+        device_name="SkyFollower Management UI",
+        device_model="Management UI",
+        configuration_url="https://brentio.github.io/SkyFollower/components/management-ui.html",
+    )
+    _mqtt_presence.start()
+
     logger.info("Management UI backend started.")
     yield
     logger.info("Management UI backend shutting down.")
+
+    _mqtt_presence.stop()
 
 
 app = FastAPI(

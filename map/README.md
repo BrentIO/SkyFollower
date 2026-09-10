@@ -73,8 +73,8 @@ feed) is unaffected -- UDP has no TLS.
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
-`load_config("map_redis", "map")`, interpolated by Compose from this host's
-`.env`.
+`load_config("map_redis", "map", "mqtt")`, interpolated by Compose from this
+host's `.env`.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -93,6 +93,10 @@ Reads its configuration from environment variables via `shared/config.py`'s
 `shared/config.py`'s `map_config()` rejects a misordered `.env` at startup.
 | `MAP_HOME_LATITUDE` | ❌ | — | Centered reference point ("home") for the frontend's on-map marker, initial camera position, and "Recenter on home" button. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
 | `MAP_HOME_LONGITUDE` | ❌ | — | |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely (see [MQTT and Home Assistant](#mqtt-and-home-assistant) below) |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 The WebSocket batching interval (~250ms) is not an environment variable --
@@ -123,6 +127,35 @@ pure, in-memory, fully reconstructible-from-live-UDP-traffic cache with no
 persistence at all (see [Fault Tolerance](#fault-tolerance) below).
 Requiring authentication on it is a deployment choice available via
 `MAP_REDIS_PASSWORD`, not a hard requirement the way it is for core Redis.
+
+## MQTT and Home Assistant
+
+MQTT is entirely optional -- leave `MQTT_HOST` unset and the service never
+opens a broker connection. When it is set, the service publishes a
+**minimal presence** and nothing else: there is no telemetry loop, no
+periodic publish, and none of the operational stats the receiver, message
+processor, or archive processor emit. The client (its own paho network
+loop, running alongside the UDP/eviction/healthcheck/range-outline
+background threads) connects once and stays connected.
+
+On every connect/reconnect it publishes, all **retained**:
+
+| Topic | Payload | Purpose |
+|---|---|---|
+| `SkyFollower/map/status` | `ONLINE` | Liveness. A Last Will and Testament flips this to `OFFLINE` if the connection drops uncleanly; a clean shutdown publishes `OFFLINE` explicitly. |
+| `SkyFollower/map/statistic/started_at` | UTC ISO-8601 timestamp | Process start time. |
+| `SkyFollower/map/statistic/version` | Version string (`dev` if the image was built without a `VERSION`) | The running image version. |
+| `homeassistant/sensor/SkyFollower_map_started_at/config` | HA MQTT discovery config | Registers a "SkyFollower Map" device (whose `sw_version` carries the running version) with a single Start Time sensor (`device_class: timestamp`). |
+
+The running version is carried both in the discovery `device` block's
+`sw_version` and as the plain `statistic/version` topic, so there is
+deliberately no standalone version sensor entity -- the same choice the
+receiver and archive processor make.
+
+The **"update available"** entity for this service is not published here.
+A separate health component polls GHCR for the latest released image tag,
+compares it against the `statistic/version` value above, and publishes the
+Home Assistant `update` entity on this service's behalf.
 
 ## UDP Listener
 
