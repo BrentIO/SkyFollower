@@ -4,13 +4,15 @@
 // the merge-never-overwrite and trail-accumulation rules are covered by
 // plain unit tests.
 //
-// There is no server-exposed trail/history endpoint (map/main.py only
-// ever returns each aircraft's *current* merged state) -- the live trail
-// this frontend draws is built up client-side, purely from `position`
-// events/fields observed after this page loaded (plus one seed point from
-// the initial snapshot's current position, if known).
+// The live trail this frontend draws is built up client-side, from
+// `position` events/fields observed after this page loaded (plus one seed
+// point from the initial snapshot's current position, if known). When an
+// aircraft is selected, the client also fetches the server's own
+// accumulated trail (GET /api/flights/{icao_hex}) and reseeds from it via
+// applyTrailSeed(), so the drawn trail covers the whole flight rather than
+// only what this browser has seen -- and survives a page reload.
 
-import type { MapFlight, MapWsEvent } from "../api/types";
+import type { MapFlight, MapWsEvent, TrailWirePoint } from "../api/types";
 
 export interface TrailPoint {
   latitude: number;
@@ -58,6 +60,38 @@ function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailP
   }
   const next = [...trail, point];
   return next.length > MAX_TRAIL_POINTS ? next.slice(next.length - MAX_TRAIL_POINTS) : next;
+}
+
+function capTrail(trail: TrailPoint[]): TrailPoint[] {
+  return trail.length > MAX_TRAIL_POINTS ? trail.slice(trail.length - MAX_TRAIL_POINTS) : trail;
+}
+
+// Replaces an aircraft's client-accumulated trail with the server's own
+// accumulated trail (GET /api/flights/{icao_hex}'s `trail`), converting the
+// wire shape (`lat`/`lon`/`alt`) to TrailPoint and dropping any point with
+// no position. No-op if the aircraft isn't currently in state (it was
+// removed between selecting it and the fetch resolving) or the server
+// returned no trail.
+//
+// A straight replace rather than a merge: the server records a point per
+// accepted `position` packet -- the same packets that reach this client as
+// `position` WS events -- so its trail is the authoritative, more complete
+// version of the same history. Any handful of live points this client
+// appended while the fetch was in flight are dropped here and re-appended
+// by the next `position` event a moment later (pushTrailPoint's
+// same-as-last dedupe keeps the seam clean).
+export function applyTrailSeed(
+  state: AircraftMap,
+  icaoHex: string,
+  wireTrail: TrailWirePoint[],
+): AircraftMap {
+  const existing = state[icaoHex];
+  if (!existing || wireTrail.length === 0) return state;
+  const trail: TrailPoint[] = wireTrail
+    .filter((p) => p.lat != null && p.lon != null)
+    .map((p) => ({ latitude: p.lat, longitude: p.lon, altitude: p.alt ?? null }));
+  if (trail.length === 0) return state;
+  return { ...state, [icaoHex]: { ...existing, trail: capTrail(trail) } };
 }
 
 // Builds the initial AircraftMap from GET /api/flights. Seeds each

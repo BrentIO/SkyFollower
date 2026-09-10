@@ -208,7 +208,7 @@ aircraft, plus one untracked-by-aircraft key for the processor roster:
 | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale` |
 | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
-| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), no length/point cap. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above |
+| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 
 These key families are local to this service and are not part of
@@ -320,6 +320,34 @@ lists. `FlightStateStore.list_flights()` finds the visible aircraft with
 `SCAN` over `flight:visible:*`, then issues every aircraft's `flight:detail`
 `HGETALL` in a single pipeline -- one round trip regardless of aircraft
 count, not one `HGETALL` per aircraft.
+
+`GET /api/flights/{icao_hex}` -- one aircraft's merged current-state (same
+per-aircraft shape as `GET /api/flights`) plus a `trail` array: every
+accumulated `{lat, lon, alt}` point for the current flight, oldest first,
+`alt` `null` where it wasn't known when the point was recorded. This is the
+map service's *own* server-side trail (`flight:trail:{icao_hex}`, one point
+per accepted `position` packet, capped at the most recent
+`MAX_TRAIL_POINTS` and lifecycled exactly like `flight:detail` -- see
+[Lifecycle](#lifecycle)). The frontend fetches this when an aircraft is
+selected so the drawn trail covers the whole flight, not just what that
+browser has seen since it connected -- and so it survives a page reload.
+`HTTP 404` when the aircraft isn't currently tracked (never seen, or
+evicted past `MAP_EVICT_SECONDS` of silence); `trail` is `[]` when the
+aircraft is known but has only ever sent velocity/heading-only position
+packets.
+
+```json
+{
+  "icao_hex": "A8AE7F",
+  "lat": 33.94, "lon": -118.41, "alt": 8600, "hdg": 271,
+  "ident": "SWA1234",
+  "trail": [
+    { "lat": 33.90, "lon": -118.30, "alt": 6000 },
+    { "lat": 33.92, "lon": -118.36, "alt": 7300 },
+    { "lat": 33.94, "lon": -118.41, "alt": 8600 }
+  ]
+}
+```
 
 `GET /api/processors` -- the message-processor liveness roster (see
 [Processor Roster](#processor-roster) above), computed fresh on every
@@ -449,12 +477,13 @@ altitude -- ported from `management-ui/frontend/src/lib/flightView.ts`'s
 default, shown for a selected or hovered aircraft, or for every aircraft
 via the "Labels: All" toggle -- boxes overlap freely with no leader lines,
 stacked by altitude so a higher-altitude aircraft's box always draws on
-top of a cluster), a client-accumulated live trail per aircraft (this
-service has no trail/history endpoint -- see REST API above -- so the
-frontend builds each aircraft's trail itself, purely from `position`
-events observed after the page loaded), and a fixed "home" marker/recenter
-button from the backend's `GET /api/config` (see
-[REST API](#rest-api) above).
+top of a cluster), a live trail per aircraft (built client-side from
+`position` events as they arrive; when an aircraft is *selected* the
+frontend also fetches `GET /api/flights/{icao_hex}` and reseeds that
+aircraft's trail from the server's own accumulation, so a selected
+aircraft's trail covers the whole flight and survives a page reload -- see
+[REST API](#rest-api) above), and a fixed "home" marker/recenter button
+from the backend's `GET /api/config` (see [REST API](#rest-api) above).
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
   `altitudeColor()`; used for both the icon fill and the live trail color.

@@ -44,6 +44,22 @@ export interface MapFlight {
   matched_rules?: string[];
 }
 
+// One point of a server-side trail, as returned in GET /api/flights/{icao_hex}'s
+// `trail` array (map/main.py's get_flight / map/state_store.py's get_trail).
+// Wire field names (`lat`/`lon`/`alt`) match the position event; `alt` is null
+// where altitude wasn't known when the point was recorded.
+export interface TrailWirePoint {
+  lat: number;
+  lon: number;
+  alt: number | null;
+}
+
+// GET /api/flights/{icao_hex}: one aircraft's merged current-state (a MapFlight)
+// plus its accumulated server-side trail, oldest first.
+export interface MapFlightHistory extends MapFlight {
+  trail: TrailWirePoint[];
+}
+
 export interface MapWsPositionEvent extends Pick<MapFlight, "lat" | "lon" | "alt" | "velocity" | "hdg" | "vs"> {
   type: "position";
   icao_hex: string;

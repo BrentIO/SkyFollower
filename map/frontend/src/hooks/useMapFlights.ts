@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { fetchFlights } from "../api/flights";
+import { useCallback, useEffect, useState } from "react";
+import { fetchFlights, fetchFlightHistory } from "../api/flights";
 import type { MapWsEvent } from "../api/types";
-import { applySnapshot, applyWsEvents, type AircraftMap } from "../lib/aircraftState";
+import { applySnapshot, applyTrailSeed, applyWsEvents, type AircraftMap } from "../lib/aircraftState";
 
 // Reconnect delay after an unexpected WebSocket close -- fixed, not
 // exponential backoff; this view targets a single always-on backend on a
@@ -11,6 +11,15 @@ const RECONNECT_DELAY_MS = 3000;
 export interface UseMapFlightsResult {
   aircraft: AircraftMap;
   connected: boolean;
+  /**
+   * Fetches the server's accumulated trail for one aircraft
+   * (GET /api/flights/{icao_hex}) and reseeds that aircraft's client trail
+   * from it -- so a selected aircraft's drawn trail reflects the whole
+   * flight, not just what this browser has seen. Safe to call repeatedly;
+   * a 404 (aircraft no longer tracked) or fetch error is swallowed, leaving
+   * the client-accumulated trail in place.
+   */
+  seedTrailFor: (icaoHex: string) => void;
 }
 
 // Owns the WebSocket connection + REST snapshot fetch and their
@@ -24,6 +33,20 @@ export interface UseMapFlightsResult {
 export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlightsResult {
   const [aircraft, setAircraft] = useState<AircraftMap>({});
   const [connected, setConnected] = useState(false);
+
+  const seedTrailFor = useCallback(
+    (icaoHex: string) => {
+      fetchFlightHistory(restFlightsUrl, icaoHex)
+        .then((history) => {
+          if (!history) return; // 404 -- aircraft no longer tracked.
+          setAircraft((prev) => applyTrailSeed(prev, icaoHex, history.trail));
+        })
+        .catch((err) => {
+          console.error(`Failed to fetch flight history for ${icaoHex}:`, err);
+        });
+    },
+    [restFlightsUrl],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -95,5 +118,5 @@ export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlig
     };
   }, [wsUrl, restFlightsUrl]);
 
-  return { aircraft, connected };
+  return { aircraft, connected, seedTrailFor };
 }

@@ -41,7 +41,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -406,6 +406,31 @@ def get_flights() -> list[dict]:
     current-state shape a WebSocket `metadata` message carries (see
     _handle_packet)."""
     return _store.list_flights()
+
+
+@app.get("/api/flights/{icao_hex}", tags=["flights"])
+def get_flight(icao_hex: str) -> dict:
+    """One aircraft's merged current-state (same shape as a GET /api/flights
+    array element) plus a `trail` array: every accumulated
+    `{lat, lon, alt}` point for the current flight, oldest first, `alt`
+    null where unknown.
+
+    This is the map service's own server-side trail (`flight:trail:{icao_hex}`
+    in its dedicated Redis, one point per accepted `position` packet, capped
+    and lifecycled exactly like the aircraft's `flight:detail` record). The
+    frontend fetches it when an aircraft is selected so the drawn trail
+    reflects the whole flight rather than only what this browser has seen
+    since it connected -- and so it survives a page reload.
+
+    404 when the aircraft isn't currently tracked (never seen, or already
+    evicted past MAP_EVICT_SECONDS of silence). `trail` is `[]` when the
+    aircraft is known but has only ever sent velocity/heading-only position
+    packets (no lat/lon yet)."""
+    flight = _store.get_flight(icao_hex)
+    if flight is None:
+        raise HTTPException(status_code=404, detail=f"aircraft {icao_hex} is not currently tracked")
+    flight["trail"] = _store.get_trail(icao_hex)
+    return flight
 
 
 @app.get("/api/processors", tags=["flights"])

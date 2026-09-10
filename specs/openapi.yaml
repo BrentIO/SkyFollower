@@ -1269,6 +1269,38 @@ paths:
                   $ref: '#/components/schemas/MapFlight'
                 type: array
                 title: Response Get Flights Api Flights Get
+  /api/flights/{icao_hex}:
+    get:
+      tags:
+      - flights
+      summary: Get Flight
+      description: Served by the map service (map/main.py), not this file's
+        management-ui backend -- included here so the whole system's REST
+        surface has one spec. One aircraft's merged current-state (same
+        per-aircraft shape as GET /api/flights) plus a `trail` array of
+        every accumulated {lat, lon, alt} point for the current flight,
+        oldest first -- the map service's own server-side trail
+        (flight:trail:{icao_hex}), which the frontend fetches when an
+        aircraft is selected so the drawn trail covers the whole flight and
+        survives a page reload. HTTP 404 when the aircraft isn't currently
+        tracked (never seen, or evicted past MAP_EVICT_SECONDS of silence).
+      operationId: get_flight_api_flights__icao_hex__get
+      parameters:
+      - name: icao_hex
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Icao Hex
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapFlightHistory'
+        '404':
+          description: Aircraft is not currently tracked
   /api/processors:
     get:
       tags:
@@ -2302,6 +2334,50 @@ components:
         `type` key on top of this) -- kept in sync manually between the two
         spec files, since this repo has no cross-file $ref tooling between
         asyncapi.yaml and openapi.yaml.
+    MapTrailPoint:
+      properties:
+        lat:
+          type: number
+          title: Lat
+        lon:
+          type: number
+          title: Lon
+        alt:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Alt
+      type: object
+      required:
+      - lat
+      - lon
+      - alt
+      title: MapTrailPoint
+      description: >-
+        One point of a flight's accumulated trail (map/state_store.py's
+        flight:trail:{icao_hex}). `alt` is null where altitude wasn't known
+        when the point was recorded. Wire field names match the `position`
+        WebSocket event.
+    MapFlightHistory:
+      allOf:
+      - $ref: '#/components/schemas/MapFlight'
+      - properties:
+          trail:
+            items:
+              $ref: '#/components/schemas/MapTrailPoint'
+            type: array
+            title: Trail
+        type: object
+        required:
+        - trail
+      title: MapFlightHistory
+      description: >-
+        GET /api/flights/{icao_hex}'s body: one aircraft's merged
+        current-state (a MapFlight) plus `trail`, every accumulated
+        {lat, lon, alt} point for the current flight, oldest first, capped
+        server-side at the most recent MAX_TRAIL_POINTS. `trail` is [] when
+        the aircraft is known but has only sent velocity/heading-only
+        position packets so far.
     MatchedRulesCondition:
       properties:
         type:

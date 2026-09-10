@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MapFlight, MapWsEvent } from "../api/types";
-import { applySnapshot, applyWsEvent, applyWsEvents, MAX_TRAIL_POINTS } from "./aircraftState";
+import { applySnapshot, applyTrailSeed, applyWsEvent, applyWsEvents, MAX_TRAIL_POINTS } from "./aircraftState";
 
 describe("applySnapshot", () => {
   it("seeds a trail point from each aircraft's current position, when known", () => {
@@ -157,6 +157,59 @@ describe("trail cap", () => {
       state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: i, lon: i });
     }
     expect(state.A1B2C3.trail.length).toBe(MAX_TRAIL_POINTS);
+  });
+});
+
+describe("applyTrailSeed", () => {
+  it("replaces the client trail with the converted server trail", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 9, lon: 9, alt: 500 }]);
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 9.1, lon: 9.1 });
+    expect(state.A1B2C3.trail.length).toBe(2);
+
+    const next = applyTrailSeed(state, "A1B2C3", [
+      { lat: 1, lon: 1, alt: 100 },
+      { lat: 2, lon: 2, alt: null },
+      { lat: 3, lon: 3, alt: 300 },
+    ]);
+
+    expect(next.A1B2C3.trail).toEqual([
+      { latitude: 1, longitude: 1, altitude: 100 },
+      { latitude: 2, longitude: 2, altitude: null },
+      { latitude: 3, longitude: 3, altitude: 300 },
+    ]);
+  });
+
+  it("caps the seeded trail to MAX_TRAIL_POINTS, keeping the newest", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0 }]);
+    const wireTrail = Array.from({ length: MAX_TRAIL_POINTS + 25 }, (_, i) => ({
+      lat: i,
+      lon: i,
+      alt: null,
+    }));
+
+    const next = applyTrailSeed(state, "A1B2C3", wireTrail);
+
+    expect(next.A1B2C3.trail).toHaveLength(MAX_TRAIL_POINTS);
+    expect(next.A1B2C3.trail[next.A1B2C3.trail.length - 1].latitude).toBe(MAX_TRAIL_POINTS + 24);
+  });
+
+  it("is a no-op for an aircraft not currently in state", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const next = applyTrailSeed(state, "UNKNOWN", [{ lat: 1, lon: 1, alt: null }]);
+    expect(next).toBe(state);
+  });
+
+  it("is a no-op for an empty server trail", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2 }]);
+    const next = applyTrailSeed(state, "A1B2C3", []);
+    expect(next).toBe(state);
+  });
+
+  it("leaves other fields on the record untouched", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3", lat: 5, lon: 5, ident: "DAL1" }]);
+    const next = applyTrailSeed(state, "A1B2C3", [{ lat: 1, lon: 1, alt: null }]);
+    expect(next.A1B2C3.ident).toBe("DAL1");
+    expect(next.A1B2C3.lat).toBe(5);
   });
 });
 

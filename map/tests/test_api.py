@@ -33,6 +33,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -138,6 +139,18 @@ class _Server:
     def get_flights(self) -> list[dict]:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/flights", timeout=5) as resp:
             return json.loads(resp.read())
+
+    def get_flight_history(self, icao_hex: str) -> tuple[int, dict]:
+        """(status_code, body) for GET /api/flights/{icao_hex} -- returns
+        the 404 body too rather than raising, so a test can assert on it."""
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.http_port}/api/flights/{icao_hex}"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
 
     def get_processors(self) -> dict:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/processors", timeout=5) as resp:
@@ -312,6 +325,57 @@ def test_get_flights_only_lists_currently_tracked_aircraft(server):
     flights = server.get_flights()
     assert isinstance(flights, list)
     assert _hex() not in {f["icao_hex"] for f in flights}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/flights/{icao_hex} -- one aircraft's state + accumulated trail
+# ---------------------------------------------------------------------------
+
+def test_get_flight_history_returns_current_state_and_full_trail(server):
+    icao_hex = _hex()
+    ts = time.time()
+    for i, (lat, lon) in enumerate([(1.0, 1.0), (1.1, 1.2), (1.2, 1.4)]):
+        server.send_udp({
+            "type": "position", "icao_hex": icao_hex, "ts": ts + i,
+            "lat": lat, "lon": lon, "alt": 5000 + i * 100,
+        })
+    _wait_for_flight(server, icao_hex, predicate=lambda f: f.get("lat") == 1.2)
+
+    # Poll: the third UDP packet may not have been applied at first sighting.
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        status, body = server.get_flight_history(icao_hex)
+        if status == 200 and len(body.get("trail", [])) == 3:
+            break
+        time.sleep(0.05)
+
+    assert status == 200
+    assert body["icao_hex"] == icao_hex
+    assert body["lat"] == 1.2  # current merged state, same shape as GET /api/flights
+    assert body["trail"] == [
+        {"lat": 1.0, "lon": 1.0, "alt": 5000},
+        {"lat": 1.1, "lon": 1.2, "alt": 5100},
+        {"lat": 1.2, "lon": 1.4, "alt": 5200},
+    ]
+
+
+def test_get_flight_history_404_for_unknown_aircraft(server):
+    status, body = server.get_flight_history(_hex())
+    assert status == 404
+    assert "detail" in body
+
+
+def test_get_flight_history_empty_trail_when_only_velocity_seen(server):
+    icao_hex = _hex()
+    server.send_udp({
+        "type": "position", "icao_hex": icao_hex, "ts": time.time(),
+        "velocity": 250.0, "hdg": 90.0,
+    })
+    _wait_for_flight(server, icao_hex, predicate=lambda f: "velocity" in f)
+
+    status, body = server.get_flight_history(icao_hex)
+    assert status == 200
+    assert body["trail"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -59,6 +59,16 @@ _VISIBLE_PREFIX = "flight:visible:"
 _DETAIL_PREFIX = "flight:detail:"
 _TRAIL_PREFIX = "flight:trail:"
 
+# Upper bound on how many points flight:trail:{icao_hex} retains -- the Lua
+# LTRIMs to the most recent MAX_TRAIL_POINTS after every append. Mirrors the
+# frontend's own MAX_TRAIL_POINTS (map/frontend/src/lib/aircraftState.ts):
+# GET /api/flights/{icao_hex} hands this list back as the seed for the
+# client-side trail, so a server cap larger than the client's would just be
+# trimmed again on arrival, and a smaller one would lose history the client
+# would otherwise keep. Kept in sync by hand -- the two can't share a
+# constant across the Python/TypeScript boundary.
+MAX_TRAIL_POINTS = 300
+
 # Single Redis hash (field = processor_id, value = last-seen epoch
 # timestamp) tracking every message processor this map instance has heard
 # from -- see FlightStateStore.record_processor_seen/get_processor_roster.
@@ -226,6 +236,7 @@ class FlightStateStore:
             icao_hex, msg_type, timestamp,
             json.dumps(field_names), json.dumps(field_values),
             self._stale_seconds, self._evict_seconds, self._hide_seconds,
+            MAX_TRAIL_POINTS,
         )
         if raw is None:
             logger.debug(

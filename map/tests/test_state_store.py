@@ -61,6 +61,7 @@ def _hex() -> str:
 
 
 from map.state_store import (  # noqa: E402
+    MAX_TRAIL_POINTS,
     FlightStateStore,
     flight_detail_key,
     flight_live_key,
@@ -236,6 +237,24 @@ def test_metadata_packets_do_not_append_to_trail(redis_client):
     store.apply_update(icao_hex, "metadata", 2.0, {"ident": "TST1"})
 
     assert len(store.get_trail(icao_hex)) == 1
+
+
+def test_trail_is_capped_at_max_trail_points(redis_client):
+    """A long-loitering aircraft can't grow flight:trail without bound --
+    the Lua LTRIMs it to the most recent MAX_TRAIL_POINTS after each append,
+    keeping the newest points and dropping the oldest."""
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    icao_hex = _hex()
+
+    overflow = 20
+    for i in range(1, MAX_TRAIL_POINTS + overflow + 1):
+        store.apply_update(icao_hex, "position", float(i), {"lat": float(i), "lon": float(i)})
+
+    trail = store.get_trail(icao_hex)
+    assert len(trail) == MAX_TRAIL_POINTS
+    # Newest point survives; the oldest `overflow` points were trimmed.
+    assert trail[-1] == {"lat": float(MAX_TRAIL_POINTS + overflow), "lon": float(MAX_TRAIL_POINTS + overflow), "alt": None}
+    assert trail[0] == {"lat": float(overflow + 1), "lon": float(overflow + 1), "alt": None}
 
 
 # ---------------------------------------------------------------------------
