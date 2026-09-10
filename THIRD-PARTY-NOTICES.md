@@ -36,6 +36,24 @@ licensed — MIT, BSD, Apache-2.0, ISC — and impose no notice obligation).
 - **Used by:** registry data runners that parse OpenDocument spreadsheet source files
 - **How:** imported as a library dependency. Not modified; not vendored into this repo.
 
+### AircraftShapesSVG
+
+- **Project:** https://github.com/RexKramer1/AircraftShapesSVG by
+  [RexKramer1](https://github.com/RexKramer1) and amnesica
+- **License:** GPL-3.0 (each SVG's own `dc:rights` metadata; repo `LICENSE`
+  vendored alongside at `map/frontend/src/assets/aircraft-shapes/LICENSE`)
+- **Used by:** the `map` frontend — the top-down aircraft silhouettes on the
+  live map.
+- **How:** the SVG files are **vendored** at
+  `map/frontend/src/assets/aircraft-shapes/*.svg` (181 files; one non-aircraft
+  file — an aircraft-carrier deck — was dropped, and four filenames had a
+  space replaced with a hyphen). A build step
+  (`map/frontend/scripts/generate-aircraft-shapes.mjs`) extracts each
+  silhouette's outline path and bounding box into a generated module; the
+  frontend renders them as MapLibre icons. The paths themselves are
+  unmodified apart from coordinate rounding. Attributed in the map's on-screen
+  MapLibre attribution control.
+
 ## Weak-copyleft dependencies
 
 Bundled into component container images. Each is either dual-licensed with a

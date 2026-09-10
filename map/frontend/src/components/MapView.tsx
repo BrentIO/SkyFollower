@@ -1,7 +1,9 @@
 import * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import { MAP_STYLE } from "../lib/maplibreSetup";
-import { AIRCRAFT_ICON_ID, buildAircraftIconImageData } from "../lib/aircraftIcon";
+import { buildShapeIconImageData, shapeIconId } from "../lib/aircraftIcon";
+import { AIRCRAFT_SHAPES } from "../lib/aircraftShapes.generated";
+import { FALLBACK_SHAPE } from "../lib/aircraftIconResolver";
 import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
@@ -26,6 +28,24 @@ import {
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
+
+// Builds and registers one silhouette's SDF image with MapLibre, once.
+// `shapeKey` is an AIRCRAFT_SHAPES key; an unknown key (a shape the
+// resolver picked but the generated set somehow lacks) falls back to the
+// FALLBACK_SHAPE art. A canvas failure is swallowed -- the layer's
+// `icon-image` then just resolves to nothing for that aircraft rather than
+// crashing the map.
+function registerShapeImage(map: maplibregl.Map, shapeKey: string): void {
+  const id = shapeIconId(shapeKey);
+  if (map.hasImage(id)) return;
+  const shape = AIRCRAFT_SHAPES[shapeKey] ?? AIRCRAFT_SHAPES[FALLBACK_SHAPE];
+  if (!shape) return;
+  try {
+    map.addImage(id, buildShapeIconImageData(shape), { sdf: true });
+  } catch (err) {
+    console.warn(`Could not build aircraft icon for shape ${shapeKey}:`, err);
+  }
+}
 
 // Top-level export: fetches runtime config (GET /api/config -- see
 // map/lib/config.ts's loadConfig) once before the actual map ever mounts,
@@ -111,6 +131,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // MapLibre view in management-ui/frontend.
       pitchWithRotate: false,
       dragRotate: false,
+      // The basemap style carries its own OSM/CARTO/OpenFreeMap attribution;
+      // this adds the aircraft-silhouette credit (GPL-3.0 -- see the repo's
+      // THIRD-PARTY-NOTICES.md).
+      attributionControl: {
+        customAttribution:
+          'Aircraft shapes © <a href="https://github.com/RexKramer1/AircraftShapesSVG" target="_blank" rel="noreferrer">RexKramer1</a> (GPL-3.0)',
+      },
     });
     mapRef.current = map;
     map.touchZoomRotate.disableRotation();
@@ -129,7 +156,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
 
     map.on("load", () => {
-      map.addImage(AIRCRAFT_ICON_ID, buildAircraftIconImageData(), { sdf: true });
+      // The fallback silhouette, so `icon-image` always resolves to a
+      // registered image; every other shape is registered lazily the first
+      // time an aircraft needs it (see ensureShapeImages in the sync effect
+      // below).
+      registerShapeImage(map, FALLBACK_SHAPE);
 
       // Static "home" range rings (100/150/200nmi) -- computed once from
       // config.home, which never changes after this component mounts (see
@@ -184,12 +215,16 @@ function MapViewInner({ config }: { config: AppConfig }) {
         type: "symbol",
         source: AIRCRAFT_SOURCE_ID,
         layout: {
-          "icon-image": AIRCRAFT_ICON_ID,
+          // Per-aircraft silhouette -- feature property `shape` is the
+          // AIRCRAFT_SHAPES key (aircraftIconResolver.ts); its SDF image is
+          // registered under shapeIconId() lazily. `icon_scale` applies the
+          // shape's real relative size on top of the base size.
+          "icon-image": ["concat", "sf-ac-", ["get", "shape"]],
           "icon-rotate": ["get", "heading"],
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
-          "icon-size": 0.4,
+          "icon-size": ["*", 0.42, ["coalesce", ["get", "icon_scale"], 1]],
         },
         paint: {
           // Icon fill is altitude-based; it never changes on selection --
@@ -272,9 +307,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
     const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
 
-    (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-      aircraftFeatureCollection(aircraft, selected),
-    );
+    const fc = aircraftFeatureCollection(aircraft, selected);
+    // Register the SDF image for every silhouette in the current set that
+    // isn't registered yet, *before* the source data references it -- a
+    // typical session touches a few dozen of the ~180 shapes.
+    for (const f of fc.features) {
+      const shape = f.properties?.shape;
+      if (typeof shape === "string") registerShapeImage(map, shape);
+    }
+    (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(fc);
     (map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
       trailFeatureCollection(aircraft, visibleTrailIds),
     );

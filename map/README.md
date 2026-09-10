@@ -531,10 +531,12 @@ Vite's `base: '/map/'` (`vite.config.ts`) keeps the built bundle's own
 asset URLs rooted at that same sub-path.
 
 Full-viewport live map, no persistent side panel: a symbol layer for
-tracked aircraft (icon rotates via `icon-rotate` bound to `heading`; an SDF
-icon so its fill can be recolored per feature via `icon-color`, driven by
-altitude -- ported from `management-ui/frontend/src/lib/flightView.ts`'s
-`altitudeColor()`), an ATC-style floating info box per aircraft (hidden by
+tracked aircraft (a **type-specific top-down silhouette** per aircraft --
+see [Aircraft silhouettes](#aircraft-silhouettes) below; rotates via
+`icon-rotate` bound to `heading`; an SDF icon so its fill can be recolored
+per feature via `icon-color`, driven by altitude -- ported from
+`management-ui/frontend/src/lib/flightView.ts`'s `altitudeColor()`), an
+ATC-style floating info box per aircraft (hidden by
 default, shown for a selected or hovered aircraft, or for every aircraft
 via the "Labels: All" toggle -- boxes overlap freely with no leader lines,
 stacked by altitude so a higher-altitude aircraft's box always draws on
@@ -548,8 +550,16 @@ from the backend's `GET /api/config` (see [REST API](#rest-api) above).
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
   `altitudeColor()`; used for both the icon fill and the live trail color.
-- `src/lib/aircraftIcon.ts` -- the custom-authored top-down dart/chevron
-  aircraft silhouette, rendered as an SDF image.
+- `src/lib/aircraftIcon.ts` -- fills one silhouette path to an SDF
+  `ImageData` for `map.addImage(..., { sdf: true })`.
+- `src/lib/aircraftIconResolver.ts` -- picks a silhouette for an aircraft:
+  exact ICAO type designator, then an alias table for designators with no
+  dedicated art, then the ICAO Doc 8643 `description_code` (± wake
+  turbulence category), then `UNIDENTIFIED`.
+- `src/lib/aircraftShapes.generated.ts` -- **generated** (gitignored) by
+  `scripts/generate-aircraft-shapes.mjs` on every `predev`/`prebuild` from
+  the vendored SVGs; the outline path + bounding box + relative size per
+  shape. See [Aircraft silhouettes](#aircraft-silhouettes).
 - `src/lib/infoBox.ts` -- info-box field formatting/omission rules (ident,
   altitude+trend-arrow+groundspeed, registration+type), each independently
   omitted (never a `?`/`N/A` placeholder) when its underlying field is
@@ -599,8 +609,42 @@ npm run dev       # Vite dev server on :5173, serving the app under /map/ (base:
                    # (plain HTTP, unprivileged), not the production 443 default
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- aircraftState/featureCollections lifecycle rules, altitudeColor,
-                   # info-box formatting, label stack-order, and processor-status unit tests
+                   # info-box formatting, label stack-order, icon-shape resolution, processor status
 ```
+
+Every one of the four scripts above (`dev`, `build`, `typecheck`, `test`)
+first runs `generate:shapes` -- see below.
+
+### Aircraft silhouettes
+
+Each aircraft draws as a top-down silhouette of its actual type rather than
+one generic marker.
+
+- **Source art:** `src/assets/aircraft-shapes/*.svg` -- 181 SVGs vendored
+  from [RexKramer1/AircraftShapesSVG](https://github.com/RexKramer1/AircraftShapesSVG)
+  (GPL-3.0; see that directory's `LICENSE`, the repo's
+  `THIRD-PARTY-NOTICES.md`, and the on-map attribution control). Filenames
+  are ICAO type designators (`A320.svg`, `H60.svg`); four swing-wing
+  variants have a hyphen where the source had a space (`B1-slow.svg`).
+- **Build step:** `scripts/generate-aircraft-shapes.mjs` (run by the
+  `predev`/`prebuild`/`pretypecheck`/`pretest` npm hooks) parses each SVG's
+  outer outline path, rounds its coordinates, computes its bounding box,
+  and derives a clamped relative size from the drawn dimensions (the art is
+  drawn to a consistent real-world scale in an 80-unit box). Output:
+  `src/lib/aircraftShapes.generated.ts` -- gitignored, the vendored SVGs
+  are the source of truth.
+- **Resolver:** `src/lib/aircraftIconResolver.ts` maps an aircraft's
+  `type_designator` / `description_code` / `wake_turbulence_category` (all
+  present in the `metadata` payload) to a shape key, falling back to
+  `UNIDENTIFIED`. Non-enriched aircraft with no type at all get the
+  fallback -- forwarding the raw ADS-B emitter category for a better guess
+  there is a separate enhancement.
+- **Rendering:** `MapView.tsx` registers each shape's SDF image with
+  MapLibre lazily, the first time an aircraft needs it. The symbol layer's
+  `icon-image` is `["concat", "sf-ac-", ["get", "shape"]]`; `icon-color`
+  (altitude), `icon-halo` (selection) and `icon-opacity` (stale) are
+  unchanged from the single-icon version; `icon-size` multiplies a base by
+  the shape's relative size.
 
 ### Frontend Configuration
 

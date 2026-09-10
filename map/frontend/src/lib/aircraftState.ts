@@ -13,6 +13,7 @@
 // only what this browser has seen -- and survives a page reload.
 
 import type { MapFlight, MapWsEvent, TrailWirePoint } from "../api/types";
+import { FALLBACK_SHAPE, resolveAircraftShape, shapeScale } from "./aircraftIconResolver";
 
 export interface TrailPoint {
   latitude: number;
@@ -33,6 +34,15 @@ export interface AircraftRecord extends MapFlight {
   hidden: boolean;
   /** Oldest-first; client-accumulated only, see module docstring. */
   trail: TrailPoint[];
+  /**
+   * The resolved silhouette shape key (aircraftIconResolver.ts) and its
+   * on-map size multiplier. Computed only when the aircraft's `aircraft`
+   * enrichment sub-object changes (a `metadata` event or the snapshot),
+   * not on every position update -- so the icon layer never re-runs the
+   * resolver per render.
+   */
+  shape: string;
+  iconScale: number;
 }
 
 export type AircraftMap = Record<string, AircraftRecord>;
@@ -101,11 +111,14 @@ export function applyTrailSeed(
 export function applySnapshot(snapshot: MapFlight[]): AircraftMap {
   const state: AircraftMap = {};
   for (const flight of snapshot) {
+    const shape = resolveAircraftShape(flight.aircraft);
     state[flight.icao_hex] = {
       ...flight,
       stale: false,
       hidden: false,
       trail: pushTrailPoint([], flight),
+      shape,
+      iconScale: shapeScale(shape),
     };
   }
   return state;
@@ -126,12 +139,22 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
       const existing = state[icao_hex];
       const { type: _type, ...fields } = event;
       const merged: AircraftRecord = {
-        ...(existing ?? { icao_hex, stale: false, hidden: false, trail: [] }),
+        ...(existing ?? {
+          icao_hex, stale: false, hidden: false, trail: [],
+          shape: FALLBACK_SHAPE, iconScale: shapeScale(FALLBACK_SHAPE),
+        }),
         ...fields,
         stale: false, // Any live update un-fades a previously-stale aircraft.
         hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
       };
       merged.trail = event.type === "position" ? pushTrailPoint(existing?.trail ?? [], merged) : (existing?.trail ?? []);
+      // Only a `metadata` event carries the `aircraft` sub-object, so only
+      // then can the resolved silhouette change -- a `position` event just
+      // keeps whatever was resolved last.
+      if ("aircraft" in fields) {
+        merged.shape = resolveAircraftShape(merged.aircraft);
+        merged.iconScale = shapeScale(merged.shape);
+      }
       return { ...state, [icao_hex]: merged };
     }
     case "stale": {

@@ -1,58 +1,53 @@
-// Builds the aircraft symbol-layer icon: an original, custom-authored
-// top-down dart/chevron aircraft silhouette (not an icon-library asset --
-// Tabler/Lucide/Material Symbols were evaluated and rejected in the
-// design phase; none had a top-down, rotation-suited glyph).
+// Renders one vendored aircraft silhouette (aircraftShapes.generated.ts,
+// from src/assets/aircraft-shapes/*.svg -- GPL-3.0) into an ImageData
+// suitable for `map.addImage(id, imageData, { sdf: true })`.
 //
-// Rendered as a single SDF (signed-distance-field) image so MapLibre's
-// `icon-color`/`icon-halo-*` paint properties can recolor it per feature
-// -- required for the altitude-based fill (continuous hsl() values, not a
-// fixed small palette) and for the selection halo, without pre-rendering
-// a distinct bitmap per color.
+// SDF (signed-distance-field), same as the icon this replaced: MapLibre's
+// `icon-color` recolors it per feature (the continuous altitude hsl(), not
+// a fixed palette) and `icon-halo-*` draws the selection ring -- neither
+// works on a plain raster icon. Each shape is filled solid to a canvas
+// (the source path is a closed outline; its thin "Accent" detail layer is
+// dropped at generation time) and every shape is scaled to the same pixel
+// footprint here, so the SDF resolution is uniform; real relative size is
+// applied on the map via `icon-size` and each shape's `scale`.
 //
-// Nose points north (0°) -- `icon-rotate` is bound to each aircraft's
-// `heading` field (see components/MapView.tsx), so the map itself never
-// rotates (locked north-up). Selection is shown via `icon-halo-*`, never
-// by recoloring the icon fill itself.
+// Source paths are drawn nose-up (north), matching `icon-rotate` bound to
+// heading -- no rotation offset.
 
-export const AIRCRAFT_ICON_ID = "sf-aircraft-icon";
-export const AIRCRAFT_ICON_SIZE = 64;
+import type { AircraftShape } from "./aircraftShapes.generated";
 
-// Dart/chevron outline in a 64x64 box: nose at top, two swept wingtips,
-// and a single concave notch pulled forward between them -- the classic
-// 4-point "dart" silhouette. Deliberately just 4 points (a more literal
-// fuselage+wings+tail outline was tried first and turned out to
-// self-intersect once filled -- a non-simple polygon fills with spiky,
-// star-shaped artifacts under canvas's nonzero winding rule). This shape
-// is simple (its boundary never crosses itself) by construction: nose ->
-// right wingtip -> notch -> left wingtip traces the outline in one
-// consistent direction. Reads clearly as a top-down aircraft/direction
-// indicator at any rotation and at small sizes.
-function aircraftPath(ctx: CanvasRenderingContext2D): void {
-  ctx.beginPath();
-  ctx.moveTo(32, 6); // nose
-  ctx.lineTo(56, 50); // right wingtip
-  ctx.lineTo(32, 40); // tail notch (pulled forward, concave)
-  ctx.lineTo(8, 50); // left wingtip
-  ctx.closePath();
+// SDF canvas edge, in pixels. Larger than the old 64 for finer silhouette
+// detail; the shape occupies the central SDF_SHAPE_PX, leaving a margin
+// the distance field / halo needs.
+export const SDF_CANVAS_PX = 96;
+const SDF_SHAPE_PX = 70;
+
+/** MapLibre image id for a shape key (`AIRCRAFT_SHAPES` key). */
+export function shapeIconId(shapeKey: string): string {
+  return `sf-ac-${shapeKey}`;
 }
 
-// Renders the silhouette to ImageData suitable for
-// `map.addImage(AIRCRAFT_ICON_ID, imageData, { sdf: true })`. Split out
-// from any MapLibre call so it's independently testable/inspectable, and
-// so MapView.tsx only needs to call it once (`map.addImage` is a one-time
-// setup call, not per-render).
-export function buildAircraftIconImageData(): ImageData {
-  const size = AIRCRAFT_ICON_SIZE;
+/** Fill one shape's silhouette to an ImageData, centred and scaled to a
+ * uniform footprint. Throws if a 2D canvas context isn't available (jsdom
+ * -- callers in the test suite don't exercise this path). */
+export function buildShapeIconImageData(shape: AircraftShape): ImageData {
   const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = SDF_CANVAS_PX;
+  canvas.height = SDF_CANVAS_PX;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     throw new Error("2D canvas context unavailable -- cannot build the aircraft icon.");
   }
-  ctx.clearRect(0, 0, size, size);
+
+  ctx.clearRect(0, 0, SDF_CANVAS_PX, SDF_CANVAS_PX);
   ctx.fillStyle = "#000000";
-  aircraftPath(ctx);
-  ctx.fill();
-  return ctx.getImageData(0, 0, size, size);
+
+  const k = SDF_SHAPE_PX / shape.span;
+  // Map source-unit space so the path's bbox centre lands on the canvas
+  // centre and `span` source units span SDF_SHAPE_PX pixels.
+  ctx.setTransform(k, 0, 0, k, SDF_CANVAS_PX / 2 - shape.cx * k, SDF_CANVAS_PX / 2 - shape.cy * k);
+  ctx.fill(new Path2D(shape.d));
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  return ctx.getImageData(0, 0, SDF_CANVAS_PX, SDF_CANVAS_PX);
 }

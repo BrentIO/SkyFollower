@@ -5,10 +5,15 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
+    "generate:shapes": "node scripts/generate-aircraft-shapes.mjs",
+    "predev": "npm run generate:shapes",
     "dev": "vite",
+    "prebuild": "npm run generate:shapes",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "pretypecheck": "npm run generate:shapes",
     "typecheck": "tsc -b",
+    "pretest": "npm run generate:shapes",
     "test": "vitest run"
   },
   "dependencies": {
@@ -23,6 +28,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "svg-path-bbox": "^2.1.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
     "vite": "^8.2.2",
