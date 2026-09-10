@@ -90,7 +90,7 @@ class _Server:
     """A real `python -m map.main` subprocess, bound to freshly-chosen
     ports so parallel xdist workers/tests never collide."""
 
-    def __init__(self):
+    def __init__(self, extra_env: dict | None = None):
         self.udp_port = _free_port(socket.SOCK_DGRAM)
         self.http_port = _free_port()
         env = dict(os.environ)
@@ -106,6 +106,8 @@ class _Server:
             "MAP_EVICT_SECONDS": "3",
             "PYTHONPATH": _REPO_ROOT,
         })
+        if extra_env:
+            env.update(extra_env)
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "map.main"], cwd=_REPO_ROOT, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -155,6 +157,21 @@ class _Server:
     def get_processors(self) -> dict:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/processors", timeout=5) as resp:
             return json.loads(resp.read())
+
+    def get_range_outline(self, query: str = "") -> tuple[int, dict]:
+        url = f"http://127.0.0.1:{self.http_port}/api/range-outline{query}"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def delete_range_outline(self) -> int:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.http_port}/api/range-outline", method="DELETE"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status
 
     def close(self) -> None:
         self.proc.terminate()
@@ -468,3 +485,111 @@ def test_processors_endpoint_empty_roster_reports_red_overall(server):
     body = server.get_processors()
     assert body["processors"] == []
     assert body["overall"] == "red"
+
+
+# ---------------------------------------------------------------------------
+# GET/DELETE /api/range-outline -- daily reception range outline
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def outline_server(tmp_path):
+    """A map subprocess with a "home" configured (so the range outline is
+    enabled) and a fresh snapshot directory."""
+    client = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+    try:
+        client.delete("map:range:outline")
+    finally:
+        client.close()
+    srv = _Server(extra_env={
+        "MAP_HOME_LATITUDE": "34.0",
+        "MAP_HOME_LONGITUDE": "-118.0",
+        "MAP_RANGE_OUTLINE_DIR": str(tmp_path),
+    })
+    srv.snapshot_dir = tmp_path
+    yield srv
+    srv.close()
+    client = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+    try:
+        client.delete("map:range:outline")
+    finally:
+        client.close()
+
+
+def _dest(bearing_deg, nm, home=(34.0, -118.0)):
+    import math
+    ang = nm / 3440.065
+    brg, phi1, lam1 = math.radians(bearing_deg), math.radians(home[0]), math.radians(home[1])
+    phi2 = math.asin(math.sin(phi1) * math.cos(ang) + math.cos(phi1) * math.sin(ang) * math.cos(brg))
+    lam2 = lam1 + math.atan2(math.sin(brg) * math.sin(ang) * math.cos(phi1),
+                             math.cos(ang) - math.sin(phi1) * math.sin(phi2))
+    return math.degrees(phi2), math.degrees(lam2)
+
+
+def test_range_outline_accumulates_and_returns_geojson(outline_server):
+    for bearing in (0, 90, 180, 270):
+        lat, lon = _dest(bearing, 120)
+        outline_server.send_udp({
+            "type": "position", "icao_hex": _hex(), "ts": time.time(),
+            "lat": lat, "lon": lon, "alt": 25000,
+        })
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        status, body = outline_server.get_range_outline()
+        if status == 200 and body.get("features"):
+            break
+        time.sleep(0.1)
+
+    assert status == 200
+    assert body["type"] == "FeatureCollection"
+    bands = {f["properties"]["band"] for f in body["features"]}
+    assert "envelope" in bands
+    env = next(f for f in body["features"] if f["properties"]["band"] == "envelope")
+    assert env["geometry"]["type"] == "Polygon"
+    assert env["geometry"]["coordinates"][0][0] == env["geometry"]["coordinates"][0][-1]
+    assert len(env["geometry"]["coordinates"][0][0]) == 3  # [lon, lat, alt]
+    assert body["properties"]["max_range_nm"] > 100
+
+
+def test_range_outline_empty_when_no_home(server):
+    status, body = server.get_range_outline()
+    assert status == 200
+    assert body["features"] == []
+
+
+def test_range_outline_unknown_date_is_404(outline_server):
+    status, _ = outline_server.get_range_outline("?date=2020-01-01")
+    assert status == 404
+
+
+def test_range_outline_bad_date_is_400(outline_server):
+    status, _ = outline_server.get_range_outline("?date=nope")
+    assert status == 400
+
+
+def test_range_outline_dates_lists_today(outline_server):
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{outline_server.http_port}/api/range-outline/dates", timeout=5
+    ) as resp:
+        body = json.loads(resp.read())
+    assert body["dates"][0] == "today"
+
+
+def test_range_outline_delete_resets(outline_server):
+    for bearing in (0, 90, 180, 270):
+        lat, lon = _dest(bearing, 120)
+        outline_server.send_udp({
+            "type": "position", "icao_hex": _hex(), "ts": time.time(),
+            "lat": lat, "lon": lon, "alt": 25000,
+        })
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        status, body = outline_server.get_range_outline()
+        if status == 200 and body.get("features"):
+            break
+        time.sleep(0.1)
+    assert body["features"]
+
+    assert outline_server.delete_range_outline() == 204
+    status, body = outline_server.get_range_outline()
+    assert body["features"] == []

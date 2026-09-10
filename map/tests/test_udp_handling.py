@@ -37,11 +37,20 @@ class _FakeConnections:
         self.published.append(event)
 
 
+class _FakeRangeOutline:
+    def __init__(self):
+        self.positions: list[tuple] = []
+
+    def record_position(self, lat, lon, alt):
+        self.positions.append((lat, lon, alt))
+
+
 def _install_fakes(monkeypatch):
     store = _FakeStore()
     connections = _FakeConnections()
     monkeypatch.setattr(map_main, "_store", store)
     monkeypatch.setattr(map_main, "_connections", connections)
+    monkeypatch.setattr(map_main, "_range_outline", _FakeRangeOutline())
     return store, connections
 
 

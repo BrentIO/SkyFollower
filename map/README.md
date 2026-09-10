@@ -199,9 +199,10 @@ a separate `HGETALL` to build the WebSocket event payload.
 ## Redis State
 
 Dedicated Redis instance (`MAP_REDIS_*`), no persistence -- pure in-memory,
-fully reconstructible from live UDP traffic. Four keys per tracked
-aircraft, all TTL'd in seconds and refreshed on every UDP update for that
-aircraft, plus one untracked-by-aircraft key for the processor roster:
+fully reconstructible from live UDP traffic (the range outline additionally
+persists to disk -- see [Range Outline](#range-outline)). Four keys per
+tracked aircraft, all TTL'd in seconds and refreshed on every UDP update
+for that aircraft, plus two untracked-by-aircraft keys:
 
 | Key | TTL | Contents |
 |---|---|---|
@@ -210,6 +211,7 @@ aircraft, plus one untracked-by-aircraft key for the processor roster:
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
 | `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
+| `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing}:{band}"`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
 
 These key families are local to this service and are not part of
 `shared/redis_keys.py`'s schema, which documents *core* Redis's keys --
@@ -384,6 +386,65 @@ need a breaking shape change:
 or `{ "home": null }` when `MAP_HOME_LATITUDE`/`MAP_HOME_LONGITUDE` are
 unset. See [Configuration](#configuration) above and `src/lib/config.ts`
 under [Frontend](#frontend-frontend) below.
+
+## Range Outline
+
+The map service builds a **daily reception range outline** -- "how far can
+this whole system hear, per compass bearing, per altitude band" -- from
+the same `position` UDP stream the live map runs on. It mirrors readsb's
+actual-range-outline (360 one-degree bearing buckets, per-bucket farthest
+received position), but runs centrally so it aggregates *every* receiver
+and external feed, not one antenna. Requires a configured home
+(`MAP_HOME_LATITUDE`/`LONGITUDE`) -- there's no origin to measure from
+otherwise, and the endpoint returns an empty `FeatureCollection`.
+
+**Accumulation.** For each accepted `position`, the service computes the
+great-circle bearing and distance from home and, if that distance beats
+the farthest yet seen in that `{bearing, altitude-band}` bucket, records
+the actual aircraft coordinate. Buckets live in one Redis hash
+(`map:range:outline`, `map/range_outline.py`). Altitude bands:
+`0-2000`, `2000-5000`, `5000-10000`, `10000-20000`, `20000-30000`,
+`30000-40000`, `40000+` feet. An outlier guard (the map feed carries no
+CPR reliability flags) drops anything past `325` nm, and drops a jump more
+than `50` nm beyond a bucket's current maximum unless a bearing bucket
+within 3° already reaches close to that distance -- the first detection
+into an empty bucket is always taken.
+
+**Daily lifecycle.** The outline accumulates from empty at 00:00 UTC. It
+carries its UTC date; the first `position` after midnight (or a 1/min
+tick, for a quiet midnight) finalises the finished day's snapshot, clears
+the Redis hash, and starts the new day empty.
+
+**Disk snapshots.** `./data/map/range-outline/{YYYY-MM-DD}.json` -- raw
+bucket data as JSON (not GeoJSON; the API builds GeoJSON on read so the
+banding/envelope logic can change without rewriting old files). Written
+once a minute when the outline has changed and once at the rollover.
+Host-persisted (unlike `map-redis` itself), so the 30-day history and the
+in-progress day survive a container restart. On boot the service reloads
+`{today}.json` if present (a mid-day crash); a reboot that spanned
+midnight finds no `{today}.json`, starts the new day empty, and leaves
+`{yesterday}.json` as its record. Files older than
+`MAP_RANGE_OUTLINE_TTL_SECONDS` (30 days) are deleted on each write. If
+`map-redis` restarts while this process stays up, the next 1/min tick
+reloads the current day from disk.
+
+**API.**
+
+`GET /api/range-outline` -- a GeoJSON `FeatureCollection`: one 3-D
+`Polygon` Feature per altitude band that has at least three bearing points
+(vertices `[lon, lat, alt_ft]`, closed ring, ascending bearing), plus an
+`envelope` Feature (farthest per bearing across all bands). Top-level
+`properties`: `date`, `generated_at`, `point_count`, `max_range_nm`,
+`home`. No `date` parameter -> today's live outline; `date=YYYY-MM-DD` ->
+that day's finalised snapshot (`HTTP 404` past the retention window,
+`HTTP 400` for a malformed date). `band=<label>` narrows to one band;
+`band=envelope` returns only the envelope.
+
+`GET /api/range-outline/dates` -- `{"dates": ["today", "2026-09-10", …]}`,
+newest first.
+
+`DELETE /api/range-outline` -- reset the in-progress day (drops the Redis
+hash and today's snapshot file). Finalised past days are untouched.
 
 ## WebSocket API
 

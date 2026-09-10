@@ -1322,6 +1322,89 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProcessorRosterResponse'
+  /api/range-outline:
+    get:
+      tags:
+      - range-outline
+      summary: Get Range Outline
+      description: Served by the map service (map/main.py), not this file's
+        management-ui backend -- included here so the whole system's REST
+        surface has one spec. The daily reception range outline -- the
+        farthest aircraft received per compass bearing, split by altitude
+        band -- as a GeoJSON FeatureCollection with one 3-D `Polygon`
+        Feature per altitude band plus an `envelope` Feature. No `date`
+        parameter returns today's live outline (accumulating from empty
+        since 00:00 UTC); `date=YYYY-MM-DD` returns that day's finalised
+        snapshot from disk (HTTP 404 once past the 30-day retention
+        window). `band=<label>` narrows to one band; `band=envelope`
+        returns only the envelope. An empty FeatureCollection when no
+        MAP_HOME_LATITUDE/LONGITUDE is configured.
+      operationId: get_range_outline_api_range_outline_get
+      parameters:
+      - name: date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Date
+      - name: band
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Band
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RangeOutlineFeatureCollection'
+        '400':
+          description: date is not YYYY-MM-DD
+        '404':
+          description: no snapshot for that date (past the retention window)
+    delete:
+      tags:
+      - range-outline
+      summary: Reset Range Outline
+      description: Served by the map service (map/main.py). Clears the
+        in-progress day's outline -- the Redis hash and today's snapshot
+        file. Finalised past days are untouched.
+      operationId: reset_range_outline_api_range_outline_delete
+      responses:
+        '204':
+          description: Successful Response
+  /api/range-outline/dates:
+    get:
+      tags:
+      - range-outline
+      summary: Get Range Outline Dates
+      description: Served by the map service (map/main.py). Which outlines
+        can be requested via `GET /api/range-outline?date=` -- `"today"`
+        (the live outline) followed by every finalised `YYYY-MM-DD` still
+        on disk, newest first.
+      operationId: get_range_outline_dates_api_range_outline_dates_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dates:
+                    type: array
+                    items:
+                      type: string
+                    title: Dates
+                required:
+                - dates
+                title: RangeOutlineDatesResponse
 components:
   schemas:
     AircraftIcaoHexCondition:
@@ -2378,6 +2461,87 @@ components:
         server-side at the most recent MAX_TRAIL_POINTS. `trail` is [] when
         the aircraft is known but has only sent velocity/heading-only
         position packets so far.
+    RangeOutlineFeatureCollection:
+      type: object
+      properties:
+        type:
+          type: string
+          const: FeatureCollection
+        features:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                const: Feature
+              geometry:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    const: Polygon
+                  coordinates:
+                    type: array
+                    description: >-
+                      GeoJSON Polygon coordinates -- a single closed linear
+                      ring of [longitude, latitude, altitude_ft] positions,
+                      one per bearing bucket, in ascending bearing order,
+                      with the first position repeated at the end.
+                    items:
+                      type: array
+                      items:
+                        type: array
+                        items:
+                          type: number
+              properties:
+                type: object
+                properties:
+                  band:
+                    type: string
+                    description: >-
+                      Altitude band label (e.g. "10000-20000", "40000+") or
+                      "envelope" for the farthest-per-bearing polygon across
+                      all bands.
+                  point_count:
+                    type: integer
+                  max_range_nm:
+                    type: number
+        properties:
+          type: object
+          properties:
+            date:
+              type: string
+              description: YYYY-MM-DD (UTC) this outline is for.
+            generated_at:
+              type: string
+              format: date-time
+            point_count:
+              type: integer
+            max_range_nm:
+              type: number
+            home:
+              anyOf:
+              - type: object
+                properties:
+                  lat:
+                    type: number
+                  lon:
+                    type: number
+              - type: 'null'
+      required:
+      - type
+      - features
+      - properties
+      title: RangeOutlineFeatureCollection
+      description: >-
+        GET /api/range-outline's body. A GeoJSON FeatureCollection: one
+        3-D Polygon Feature per altitude band that has at least three
+        bearing points, plus an `envelope` Feature (the farthest point per
+        bearing across all bands). A band with fewer than three points is
+        omitted; the whole `features` array is empty when no
+        MAP_HOME_LATITUDE/LONGITUDE is configured or nothing has been
+        received yet.
     MatchedRulesCondition:
       properties:
         type:

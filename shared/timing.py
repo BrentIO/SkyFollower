@@ -224,6 +224,20 @@ MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS = 15
 # at all. Twelve missed heartbeat intervals.
 MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS = 60
 
+# How long finalised daily range-outline snapshots
+# (./data/map/range-outline/{YYYY-MM-DD}.json) are kept on disk. Files
+# older than this are deleted on each snapshot write; GET
+# /api/range-outline?date= past this window returns HTTP 404. A fixed
+# policy, not operator-tunable -- same rationale as
+# MAP_WS_BATCH_INTERVAL_SECONDS above.
+MAP_RANGE_OUTLINE_TTL_SECONDS = 30 * 86400
+
+# How often the map service rewrites the in-progress day's range-outline
+# snapshot to disk (only when it has changed since the last write) and
+# checks for the UTC-date rollover. A crash loses at most this much of the
+# current day's far-edge updates.
+MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS = 60
+
 # --- Rule trigger counters --------------------------------------------------
 
 # TTL the message processor sets on each rule_triggers:{identifier}:{date}

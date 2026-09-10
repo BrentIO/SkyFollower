@@ -80,6 +80,12 @@ services:
       # `_uvicorn_tls_kwargs()` checks for; absent entirely (e.g. `map` run
       # standalone outside the installer flow) degrades to plain HTTP.
       - ./data/map/tls:/app/tls:ro
+      # Daily reception range-outline snapshots
+      # (./data/map/range-outline/{YYYY-MM-DD}.json). Host-persisted so the
+      # 30-day history and the in-progress day survive a container
+      # restart -- unlike map-redis itself, which is deliberately
+      # non-persistent. See map/README.md's "Range Outline" section.
+      - ./data/map/range-outline:/app/range-outline
     # RAM-backed, not the container's writable layer -- the healthcheck
     # heartbeat file is rewritten periodically and must never hit host
     # storage. Same convention as every other long-running SkyFollower
@@ -102,9 +108,10 @@ services:
   # Pinned to the 7.x line deliberately -- Redis 8+ bundles the Query
   # Engine / Bloom / JSON / TimeSeries "Stack" modules into the base image
   # with no module-free 8.x tag available, adding image size, threads, and
-  # log noise this service never uses: map/state_store.py only ever issues
-  # plain core commands (HSET/HGETALL/EXPIRE/SET/RPUSH/LRANGE/SCAN/DELETE/
-  # PING, CONFIG SET notify-keyspace-events, and a keyspace-expiry
+  # log noise this service never uses: map/state_store.py and
+  # map/range_outline.py only ever issue plain core commands
+  # (HSET/HGET/HMGET/HGETALL/HLEN/EXPIRE/SET/RPUSH/LRANGE/SCAN/EXISTS/
+  # DELETE/PING, CONFIG SET notify-keyspace-events, and a keyspace-expiry
   # psubscribe) via shared/redis_client.build_redis_client() -- no
   # .json()/.ft() calls anywhere in map/. A future major version bump here
   # must be a deliberate decision, not a routine Dependabot update (see
