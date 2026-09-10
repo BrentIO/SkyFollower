@@ -1,7 +1,8 @@
 // Picks a silhouette shape key for an aircraft, in the style established
 // ADS-B viewers use: an exact ICAO type designator first, then the ICAO
 // Doc 8643 description code (with wake-turbulence category to split the
-// broad classes), then a plain fallback.
+// broad classes), then the raw ADS-B emitter category (the only signal
+// left for an aircraft with no enrichment at all), then a plain fallback.
 //
 // Shape keys index AIRCRAFT_SHAPES (aircraftShapes.generated.ts), which is
 // generated from the vendored SVGs (src/assets/aircraft-shapes/*.svg,
@@ -121,6 +122,30 @@ export const DESCRIPTION_SHAPES: Record<string, string> = {
   "L6J": "A388", "L8J": "A225",
 };
 
+// Raw ADS-B emitter category ("<set><subcategory>", e.g. "A5") -> nearest
+// representative shape. This is the last-resort tier: consulted only after
+// the type designator and the description code, for aircraft broadcasting a
+// category but carrying no enrichment at all (common for military and some
+// GA). Set A is fixed-wing by weight/performance, set B is the "special"
+// classes (glider, balloon, UAV, ...). Exported for the test that asserts
+// every target is a real shape key.
+export const CATEGORY_SHAPES: Record<string, string> = {
+  // Set A -- fixed-wing, by size / performance
+  A1: "C172", // light (< 15,500 lb)
+  A2: "CRJ2", // small (15,500-75,000 lb) -- regional jets / turboprops / bizjets
+  A3: "A320", // large (75,000-300,000 lb)
+  A4: "B752", // high-vortex large (the B757)
+  A5: "B744", // heavy (> 300,000 lb)
+  A6: "F16", // high performance (> 5g, > 400 kt)
+  A7: "H60", // rotorcraft
+  // Set B -- glider / balloon / ultralight / UAV / space
+  B1: "AS21", // glider / sailplane
+  B2: "BALL", // lighter-than-air
+  B4: "C172", // ultralight / hang-glider / paraglider
+  B6: "Q4", // unmanned aerial vehicle
+  B7: "GYRO", // space / transatmospheric vehicle
+};
+
 function normalise(code: string | undefined | null): string {
   return (code ?? "").trim().toUpperCase();
 }
@@ -151,6 +176,14 @@ export function resolveAircraftShape(aircraft?: AircraftInfo | null): string {
     // Fall back on just the category letter (e.g. an unrecognised "L2C").
     const byCategory = DESCRIPTION_SHAPES[desc.charAt(0)];
     if (byCategory && AIRCRAFT_SHAPES[byCategory]) return byCategory;
+  }
+
+  // Last resort before the plain fallback: the raw ADS-B emitter category,
+  // the only shape signal left for an aircraft with no enrichment at all.
+  const category = normalise(aircraft?.emitter_category);
+  if (category) {
+    const byEmitter = CATEGORY_SHAPES[category];
+    if (byEmitter && AIRCRAFT_SHAPES[byEmitter]) return byEmitter;
   }
 
   return FALLBACK_SHAPE;

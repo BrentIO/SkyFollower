@@ -253,6 +253,32 @@ class TestDecode1090:
         data = p._decode_1090(msg)
         assert data["adsb_version"] == 2
 
+    def test_emitter_category(self):
+        # Same TC=4, category=5 frame as test_ident_and_wake_turbulence_category:
+        # identification set A (TC=4), subcategory 5 -> "A5".
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F255054D42166710A1432",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        data = p._decode_1090(msg)
+        assert data["emitter_category"] == "A5"
+
+    def test_emitter_category_absent_for_subcategory_zero(self):
+        # A category-0 identification message ("no category information")
+        # yields no emitter_category, same as its wake_vortex being unset.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="8DA8AE7F255054D42166710A1432",
+            icao_hex="A8AE7F", received_at=1.0, source="1090",
+        )
+        with patch("message_processor.main.pms.decode", return_value={
+            "df": 17, "crc_valid": True, "typecode": 1, "category": 0,
+            "callsign": "TEST1",
+        }):
+            data = p._decode_1090(msg)
+        assert "emitter_category" not in data
+
     def test_corrupted_crc_rejected(self):
         # Same position message as above with the last hex char flipped —
         # pyModeS still returns the (now-untrustworthy) decoded fields with
@@ -569,6 +595,32 @@ class TestDecode978:
         )
         data = p._decode_978(msg)
         assert data["ident"] == "NOCATAC1"
+        assert "wake_turbulence_category" not in data
+        assert "emitter_category" not in data
+
+    def test_emitter_category(self):
+        # Same frame as test_ident_and_wake_turbulence_category: UAT
+        # category 4 -> set A ("ABCD"[4 // 8]), subcategory 4 -> "A4".
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E335818151F32A59C9019432C0E01D96B3912D0A0800000210000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["emitter_category"] == "A4"
+
+    def test_emitter_category_set_b_without_wake_turbulence(self):
+        # Same frame as test_ground_heading: UAT category 9 (glider) -> set
+        # B, subcategory 1 -> "B1". A glider is not one of the mapped
+        # wake-turbulence categories, so the emitter category is populated
+        # even though wake_turbulence_category is not.
+        p, _ = _make_processor()
+        msg = InboundMessage(
+            raw="-08A3D3E300000000000000008042C000003AD755D6B3890000000200000000000000",
+            icao_hex="A3D3E3", received_at=1.0, source="978",
+        )
+        data = p._decode_978(msg)
+        assert data["emitter_category"] == "B1"
         assert "wake_turbulence_category" not in data
 
     def test_ground_heading(self):
@@ -2528,6 +2580,62 @@ class TestWakeTurbulenceCategoryLiveOverwrite:
         f = Flight(p._db)
         f.load(icao_hex)
         assert f.aircraft["wake_turbulence_category"] == "heavy"
+
+
+class TestEmitterCategoryForwarding:
+    """The raw emitter category rides in flight.aircraft like adsb_version --
+    first sighting wins (a stable airframe property), and it reaches the map
+    metadata payload inside the `aircraft` sub-object."""
+
+    def test_first_sighting_wins(self):
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
+
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "emitter_category": "A5"},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
+            )
+            p._update_flight(
+                {"icao_hex": icao_hex, "emitter_category": "A3"},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 1, source="1090"),
+            )
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert f.aircraft["emitter_category"] == "A5"
+
+    def test_not_forwarded_to_completed_flight_when_absent(self):
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": icao_hex, "wake_turbulence_category": "heavy"},
+                InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=1_700_000_000.0, source="1090"),
+            )
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert "emitter_category" not in f.aircraft
+
+    def test_rides_in_map_metadata_aircraft_subobject(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = 1757000000.0
+        f.last_message = 1757000000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.aircraft = {"icao_hex": "A8AE7F", "emitter_category": "A7"}
+        f.ident = "DAL2"
+        f.save()
+
+        p._maybe_publish_map_metadata(f, time.time())
+
+        payload = _sent_payload(mock_sock)
+        assert payload["type"] == "metadata"
+        assert payload["aircraft"]["emitter_category"] == "A7"
 
 
 class TestRulesEngineHwmNanoseconds:
