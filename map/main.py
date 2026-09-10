@@ -58,10 +58,13 @@ from shared.logging_setup import configure_logging  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.timing import (  # noqa: E402
     HEALTHCHECK_INTERVAL_SECONDS,
+    MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS,
+    MAP_RANGE_OUTLINE_TTL_SECONDS,
     RECONNECT_BACKOFF_SECONDS,
 )
 
 from map.broadcaster import ConnectionManager  # noqa: E402
+from map.range_outline import RangeOutlineStore  # noqa: E402
 from map.state_store import (  # noqa: E402
     POSITION_FIELDS,
     FlightStateStore,
@@ -82,6 +85,12 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # container's own layout, not something a deployment ever needs to move.
 _TLS_CERT_PATH = "/app/tls/cert.pem"
 _TLS_KEY_PATH = "/app/tls/key.pem"
+
+# Where the daily range-outline snapshots are written
+# (docker-compose.map.yaml's ./data/map/range-outline bind mount). A fixed
+# part of the container layout like the paths above; MAP_RANGE_OUTLINE_DIR
+# overrides it only so the test suite can point it at a tmp directory.
+_RANGE_OUTLINE_DIR = os.environ.get("MAP_RANGE_OUTLINE_DIR", "/app/range-outline")
 
 # recvfrom() bound so the UDP listener thread wakes periodically to check
 # the shutdown event, rather than blocking forever on a socket with no
@@ -145,6 +154,7 @@ class _SPAStaticFiles(StaticFiles):
 _cfg: dict = {}
 _redis = None
 _store: Optional[FlightStateStore] = None
+_range_outline: Optional[RangeOutlineStore] = None
 _connections = ConnectionManager()
 _shutdown = threading.Event()
 _threads: list[threading.Thread] = []
@@ -230,6 +240,11 @@ def _handle_packet(payload: dict) -> None:
         return  # Dropped as out-of-order.
 
     if msg_type == "position":
+        # Fold the merged current position into the daily range outline --
+        # merged (not the raw packet) so a velocity-only packet still
+        # contributes once lat/lon are known, matching the trail's own
+        # accumulation rule. No-op when no "home" is configured.
+        _range_outline.record_position(merged.get("lat"), merged.get("lon"), merged.get("alt"))
         event = {"type": "position", "icao_hex": icao_hex}
         for field in POSITION_FIELDS:
             if field in merged:
@@ -342,9 +357,23 @@ def _healthcheck_loop() -> None:
         _shutdown.wait(HEALTHCHECK_INTERVAL_SECONDS)
 
 
+def _range_outline_loop() -> None:
+    """Drives the daily range-outline snapshot: writes the in-progress
+    day's file when it has changed, rolls over at UTC midnight even with no
+    traffic, and recovers from a map-redis restart. All the real work is in
+    RangeOutlineStore.tick(); this is just its cadence. No-op cycles when
+    no "home" is configured (RangeOutlineStore.enabled is False)."""
+    while not _shutdown.is_set():
+        try:
+            _range_outline.tick()
+        except Exception:
+            logger.exception("Range outline tick failed")
+        _shutdown.wait(MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cfg, _redis, _store, _connections
+    global _cfg, _redis, _store, _range_outline, _connections
 
     _cfg = load_config("map_redis", "map")
     configure_logging(_cfg.get("log_level"))
@@ -357,6 +386,16 @@ async def lifespan(app: FastAPI):
         evict_seconds=_cfg["map_evict_seconds"],
     )
     _store.enable_keyspace_notifications()
+
+    _range_outline = RangeOutlineStore(
+        _redis,
+        home_latitude=_cfg.get("map_home_latitude"),
+        home_longitude=_cfg.get("map_home_longitude"),
+        snapshot_dir=_RANGE_OUTLINE_DIR,
+        retention_seconds=MAP_RANGE_OUTLINE_TTL_SECONDS,
+    )
+    _range_outline.load_from_disk()
+
     # Fresh every startup -- see the module-level comment on _connections
     # above for why this must never be reused across lifespan cycles.
     _connections = ConnectionManager()
@@ -367,6 +406,7 @@ async def lifespan(app: FastAPI):
         (_udp_loop, "udp-listener"),
         (_eviction_loop, "eviction-listener"),
         (_healthcheck_loop, "healthcheck"),
+        (_range_outline_loop, "range-outline"),
     ):
         thread = threading.Thread(target=target, daemon=True, name=name)
         thread.start()
@@ -387,14 +427,23 @@ async def lifespan(app: FastAPI):
     for thread in _threads:
         thread.join(timeout=5)
 
+    # Persist the in-progress day so a restart resumes it rather than
+    # losing everything since the last periodic snapshot.
+    if _range_outline is not None:
+        try:
+            _range_outline.snapshot_now()
+        except Exception:
+            logger.exception("Final range-outline snapshot failed")
+
 
 app = FastAPI(
     title="SkyFollower Map",
     description="Live aircraft position/metadata feed for the map "
     "frontend: a UDP listener fed by message-processor instances, a "
     "dedicated Redis instance holding current per-aircraft state, a "
-    "GET /api/flights snapshot, and a batched WS /ws live relay. Also "
-    "serves the built frontend SPA itself, mounted at /map.",
+    "GET /api/flights snapshot, a batched WS /ws live relay, and a daily "
+    "reception range outline at GET /api/range-outline. Also serves the "
+    "built frontend SPA itself, mounted at /map.",
     version="9999.99.99",
     lifespan=lifespan,
 )
@@ -450,6 +499,41 @@ def get_processor_status() -> dict:
         "overall": overall_processor_status([p["status"] for p in processors]),
         "processors": processors,
     }
+
+
+@app.get("/api/range-outline", tags=["range-outline"])
+def get_range_outline(date: Optional[str] = None, band: Optional[str] = None) -> dict:
+    """The reception range outline as a GeoJSON FeatureCollection: one 3-D
+    `Polygon` per altitude band (vertices `[lon, lat, alt]`, the farthest
+    aircraft received per compass bearing), plus an `envelope` polygon
+    (farthest per bearing across all bands).
+
+    No `date` -> today's live outline, accumulating from empty since 00:00
+    UTC. `date=YYYY-MM-DD` -> that day's finalised snapshot from disk
+    (HTTP 404 once it's past the retention window). `band=<label>` narrows
+    to one band; `band=envelope` returns just the envelope. Empty
+    FeatureCollection when no `MAP_HOME_LATITUDE`/`LONGITUDE` is set."""
+    try:
+        return _range_outline.get_outline(date=date, band=band)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"no range outline snapshot for {date}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/range-outline/dates", tags=["range-outline"])
+def get_range_outline_dates() -> dict:
+    """Which range-outline snapshots can be requested: `"today"` (the live
+    outline) plus every finalised `YYYY-MM-DD` still on disk, newest
+    first."""
+    return {"dates": _range_outline.available_dates()}
+
+
+@app.delete("/api/range-outline", tags=["range-outline"], status_code=204)
+def reset_range_outline() -> None:
+    """Reset the in-progress day -- drops today's live outline and its
+    snapshot file. Finalised past days are untouched."""
+    _range_outline.clear_today()
 
 
 @app.get("/api/config", tags=["config"])

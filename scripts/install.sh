@@ -774,11 +774,11 @@ role_data_dirs() {
       ;;
     map)
       # map-redis is deliberately ephemeral (no persistence, by design --
-      # see its comments in docker-compose.map.yaml) and the map service
-      # itself holds no other on-disk state -- the TLS directory below
-      # (populated by collect_map_env()'s generate_self_signed_cert() call)
-      # is the one exception.
-      echo "data/map/tls"
+      # see its comments in docker-compose.map.yaml). The map service keeps
+      # two things on disk: the TLS directory (populated by
+      # collect_map_env()'s generate_self_signed_cert() call) and the daily
+      # range-outline snapshots (./data/map/range-outline/{YYYY-MM-DD}.json).
+      echo "data/map/tls data/map/range-outline"
       ;;
   esac
 }
