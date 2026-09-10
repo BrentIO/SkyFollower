@@ -37,8 +37,13 @@ export function aircraftFeatureCollection(
         color: altitudeColor(a.alt ?? null),
         selected: selected.has(a.icao_hex),
         stale: a.stale,
+        // Silhouette + on-map size, resolved once per metadata event in
+        // aircraftState.ts (not per render). MapView registers each shape's
+        // SDF image lazily, keyed by this `shape` value.
+        shape: a.shape,
+        icon_scale: a.iconScale,
       },
-    }));
+    } satisfies Feature));
   return { type: "FeatureCollection", features };
 }
 

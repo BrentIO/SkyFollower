@@ -237,3 +237,36 @@ describe("applyWsEvents", () => {
     expect("A1B2C3" in next).toBe(false);
   });
 });
+
+describe("icon shape resolution", () => {
+  it("resolves the shape from the snapshot's aircraft enrichment", () => {
+    const state = applySnapshot([
+      { icao_hex: "A1B2C3", lat: 1, lon: 2, aircraft: { icao_hex: "A1B2C3", type_designator: "B738" } },
+    ]);
+    expect(state.A1B2C3.shape).toBe("B738");
+    expect(state.A1B2C3.iconScale).toBeGreaterThan(0);
+  });
+
+  it("defaults to the fallback shape before any enrichment arrives", () => {
+    const state = applyWsEvent({}, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 });
+    expect(state.A1B2C3.shape).toBe("UNIDENTIFIED");
+  });
+
+  it("re-resolves on a metadata event and then persists through position events", () => {
+    let state = applyWsEvent({}, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 });
+    expect(state.A1B2C3.shape).toBe("UNIDENTIFIED");
+
+    state = applyWsEvent(state, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      aircraft: { icao_hex: "A1B2C3", type_designator: "A320" },
+    });
+    expect(state.A1B2C3.shape).toBe("A320");
+    const scaleAfterMetadata = state.A1B2C3.iconScale;
+
+    // A later position event carries no `aircraft` -- shape must not change.
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    expect(state.A1B2C3.shape).toBe("A320");
+    expect(state.A1B2C3.iconScale).toBe(scaleAfterMetadata);
+  });
+});

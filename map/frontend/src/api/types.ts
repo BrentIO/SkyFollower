@@ -14,6 +14,11 @@ export interface AircraftInfo {
   manufacturer?: string;
   model?: string;
   manufacturer_model?: string;
+  /** ICAO Doc 8643 description code, e.g. "L2J" (sourced from Mictronics
+   * types.json, carried through the map metadata payload) -- char 1 =
+   * category, digit = engine count, char 3 = engine type. Drives the
+   * icon-shape resolver (aircraftIconResolver.ts). */
+  description_code?: string;
   seats?: number;
   wake_turbulence_category?: string;
   military?: boolean;
