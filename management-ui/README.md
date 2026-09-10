@@ -4,7 +4,7 @@
 |---|---|
 | **Purpose** | REST API and React frontend for rules/areas configuration and archive search history. The backend is the sole write path for `config:rules` / `config:areas` in Redis — every message processor polls the corresponding `:version` key every 30 seconds and hot-reloads on change |
 | **Auth** | None (single-instance, trusted-network deployment) |
-| **Reads/writes** | Redis only |
+| **Reads/writes** | Redis; optionally publishes a minimal MQTT presence for Home Assistant (see [MQTT and Home Assistant](#mqtt-and-home-assistant)) |
 
 Named "management" to leave room for a future, separate UI focused on
 viewing live aircraft movement rather than editing configuration.
@@ -235,8 +235,8 @@ npm run build  # type-checks (tsc -b) then builds the static bundle to dist/
 ## Configuration
 
 Reads its configuration from environment variables via `shared/config.py`'s
-`load_config("redis", "s3", "athena")`, interpolated by Compose from this
-host's `.env` (written by `scripts/install.sh`). management-ui is a
+`load_config("redis", "s3", "athena", "mqtt")`, interpolated by Compose from
+this host's `.env` (written by `scripts/install.sh`). management-ui is a
 separate compose file/project from core even when co-located on the same
 host (see `docker-compose.management-ui.yaml`), so its `REDIS_HOST`
 typically points at `localhost` rather than the `redis` service name core's
@@ -254,7 +254,41 @@ own components use.
 | `ATHENA_WORKGROUP` | ❌ | `skyfollower` | Athena workgroup to run queries against (see [Archive Search](#archive-search)) |
 | `ATHENA_DATABASE` | ❌ | `skyfollower` | Glue database name |
 | `ATHENA_TABLE` | ❌ | `archive_flights` | Glue table name, matching `specs/aws/cloudformation.yaml`'s `GlueTableName` default |
+| `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely (see [MQTT and Home Assistant](#mqtt-and-home-assistant)) |
+| `MQTT_PORT` | ❌ | `1883` | |
+| `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
+| `MQTT_PASSWORD` | ❌ | — | |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
+
+## MQTT and Home Assistant
+
+MQTT is entirely optional -- leave `MQTT_HOST` unset and the backend never
+opens a broker connection. When it is set, the backend publishes a
+**minimal presence** and nothing else: there is no telemetry loop, no
+periodic publish, and no operational stats. The client connects once and
+stays connected.
+
+On every connect/reconnect it publishes, all **retained**:
+
+| Topic | Payload | Purpose |
+|---|---|---|
+| `SkyFollower/management-ui/status` | `ONLINE` | Liveness. A Last Will and Testament flips this to `OFFLINE` if the connection drops uncleanly; a clean shutdown publishes `OFFLINE` explicitly. |
+| `SkyFollower/management-ui/statistic/started_at` | UTC ISO-8601 timestamp | Process start time. |
+| `SkyFollower/management-ui/statistic/version` | Version string (`dev` if the image was built without a `VERSION`) | The running image version. |
+| `homeassistant/sensor/SkyFollower_management-ui_started_at/config` | HA MQTT discovery config | Registers a "SkyFollower Management UI" device (whose `sw_version` carries the running version) with a single Start Time sensor (`device_class: timestamp`). |
+
+The running version is carried in the discovery `device` block's
+`sw_version` and as the plain `statistic/version` topic, so there is
+deliberately no standalone version sensor entity -- the same choice the
+receiver and archive processor make.
+
+The **"update available"** entity for this component is not published here.
+A separate health component polls GHCR for the latest released image tag,
+compares it against the `statistic/version` value above, and publishes the
+HA `update` entity on this component's behalf.
+
+The client is started and cleanly stopped as part of the FastAPI
+application lifespan, alongside the Redis/S3/Athena clients.
 
 ## Archive Search
 

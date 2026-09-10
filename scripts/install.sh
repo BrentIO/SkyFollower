@@ -1178,7 +1178,21 @@ collect_management_ui_env() {
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "${AWS_PROV_REGION:-$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)}")"
   AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "${AWS_PROV_MANAGEMENT_UI_KEY_ID:-$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)}")"
   AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "${AWS_PROV_MANAGEMENT_UI_SECRET:-$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)}")"
+  # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When set,
+  # the backend publishes a minimal Home Assistant presence (discovery +
+  # running version + start time) and nothing else. Same optional/
+  # empty-default pattern every other role uses for MQTT.
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host (blank to disable Home Assistant presence)" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)" 0)"
+  MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
+  MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
+  MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
+  probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
+
+  SHARED_CONN_MQTT_HOST="$MQTT_HOST"
+  SHARED_CONN_MQTT_PORT="$MQTT_PORT"
+  SHARED_CONN_MQTT_USERNAME="$MQTT_USERNAME"
+  SHARED_CONN_MQTT_PASSWORD="$MQTT_PASSWORD"
 
   generate_self_signed_cert "${role_dir}/data/management-ui/tls" "management-ui" MANAGEMENT_UI_TLS_EXTRA_SAN
 
@@ -1200,6 +1214,14 @@ ATHENA_WORKGROUP=skyfollower
 ATHENA_DATABASE=skyfollower
 ATHENA_TABLE=archive_flights
 
+# Optional -- leave MQTT_HOST blank to disable the Home Assistant presence
+# (discovery + running version + start time). No telemetry is published
+# either way.
+MQTT_HOST=${MQTT_HOST}
+MQTT_PORT=${MQTT_PORT}
+MQTT_USERNAME=${MQTT_USERNAME}
+MQTT_PASSWORD=${MQTT_PASSWORD}
+
 # "info" or "debug".
 LOG_LEVEL=info
 ENV_EOF
@@ -1213,9 +1235,10 @@ collect_map_env() {
   # per-instance service blocks to generate (map/README.md: "unlike
   # message-processor, this is not horizontally scaled"). Same
   # existing-.env-only default precedence as collect_management_ui_env()
-  # -- map has nothing in common with the RabbitMQ/Redis/MQTT values
-  # SHARED_CONN_* caches for the other roles, so it isn't a participant
-  # there.
+  # for map's own settings -- map has nothing in common with the
+  # RabbitMQ/Redis values SHARED_CONN_* caches for the other roles. The
+  # one exception is MQTT (below), which every role that talks to the
+  # broker shares.
   MAP_LISTEN_HOST="$(prompt_string MAP_LISTEN_HOST "UDP listener bind address" "$(existing_env_value_or "$env_file" MAP_LISTEN_HOST 0.0.0.0)")"
   MAP_LISTEN_PORT="$(prompt_int_range MAP_LISTEN_PORT "UDP listener bind port (message-processor's MAP_UDP_PORT must point here)" "$(existing_env_value_or "$env_file" MAP_LISTEN_PORT 30500)" 1 65535)"
   MAP_HTTP_HOST="$(prompt_string MAP_HTTP_HOST "REST/WebSocket bind address" "$(existing_env_value_or "$env_file" MAP_HTTP_HOST 0.0.0.0)")"
@@ -1249,6 +1272,20 @@ collect_map_env() {
   MAP_HOME_LATITUDE="$(prompt_number_range MAP_HOME_LATITUDE "Home reference latitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LATITUDE)" -90 90 0)"
   MAP_HOME_LONGITUDE="$(prompt_number_range MAP_HOME_LONGITUDE "Home reference longitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LONGITUDE)" -180 180 0)"
 
+  # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When set,
+  # this service publishes a minimal Home Assistant presence (discovery +
+  # running version + start time) and nothing else -- no telemetry loop.
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host (blank to disable Home Assistant presence)" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)" 0)"
+  MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
+  MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
+  MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
+  probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
+
+  SHARED_CONN_MQTT_HOST="$MQTT_HOST"
+  SHARED_CONN_MQTT_PORT="$MQTT_PORT"
+  SHARED_CONN_MQTT_USERNAME="$MQTT_USERNAME"
+  SHARED_CONN_MQTT_PASSWORD="$MQTT_PASSWORD"
+
   generate_self_signed_cert "${role_dir}/data/map/tls" "map" MAP_TLS_EXTRA_SAN
 
   write_env_header "$env_file" "$role_dir"
@@ -1281,6 +1318,14 @@ MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
 # "Recenter on home"). Leave both blank to disable.
 MAP_HOME_LATITUDE=${MAP_HOME_LATITUDE}
 MAP_HOME_LONGITUDE=${MAP_HOME_LONGITUDE}
+
+# Optional -- leave MQTT_HOST blank to disable the Home Assistant presence
+# (discovery + running version + start time). No telemetry is published
+# either way.
+MQTT_HOST=${MQTT_HOST}
+MQTT_PORT=${MQTT_PORT}
+MQTT_USERNAME=${MQTT_USERNAME}
+MQTT_PASSWORD=${MQTT_PASSWORD}
 
 # "info" or "debug".
 LOG_LEVEL=info

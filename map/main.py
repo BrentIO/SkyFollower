@@ -55,6 +55,7 @@ if _REPO_ROOT not in sys.path:
 
 from shared.config import load_config  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
+from shared.mqtt_presence import MqttPresence  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.timing import (  # noqa: E402
     HEALTHCHECK_INTERVAL_SECONDS,
@@ -158,6 +159,10 @@ _range_outline: Optional[RangeOutlineStore] = None
 _connections = ConnectionManager()
 _shutdown = threading.Event()
 _threads: list[threading.Thread] = []
+# Minimal MQTT presence (Home Assistant discovery + version + started_at),
+# only when MQTT_HOST is configured. No telemetry loop -- see
+# shared/mqtt_presence.py.
+_mqtt_presence: Optional[MqttPresence] = None
 
 
 def _extract_timestamp(payload: dict) -> Optional[float]:
@@ -373,9 +378,9 @@ def _range_outline_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cfg, _redis, _store, _range_outline, _connections
+    global _cfg, _redis, _store, _range_outline, _connections, _mqtt_presence
 
-    _cfg = load_config("map_redis", "map")
+    _cfg = load_config("map_redis", "map", "mqtt")
     configure_logging(_cfg.get("log_level"))
 
     _redis = build_redis_client(_cfg["map_redis"])
@@ -414,9 +419,24 @@ async def lifespan(app: FastAPI):
 
     flush_task = asyncio.ensure_future(_connections.flush_loop())
 
+    # Optional MQTT presence -- inert unless MQTT_HOST is set. Its own paho
+    # network loop runs alongside the background threads above; there is no
+    # periodic publish, so it isn't one of them.
+    _mqtt_presence = MqttPresence(
+        _cfg.get("mqtt"),
+        component="map",
+        device_identifier="SkyFollower_map",
+        device_name="SkyFollower Map",
+        device_model="Map",
+        configuration_url="https://brentio.github.io/SkyFollower/components/map.html",
+    )
+    _mqtt_presence.start()
+
     logger.info("Map service started.")
     yield
     logger.info("Map service shutting down.")
+
+    _mqtt_presence.stop()
 
     flush_task.cancel()
     try:
