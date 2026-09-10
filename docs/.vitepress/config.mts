@@ -97,6 +97,7 @@ export default defineConfig({
             ],
           },
           { text: sharedComponent.title, link: `/components/${sharedComponent.name}` },
+          { text: "Third-Party Notices", link: "/third-party-notices" },
         ],
       },
     ],

@@ -1,6 +1,7 @@
 # Third-Party Notices
 
-SkyFollower itself is licensed under `GPL-3.0-or-later` (see [`LICENSE`](LICENSE)).
+SkyFollower itself is licensed under `GPL-3.0-or-later` (see
+[`LICENSE`](https://github.com/BrentIO/SkyFollower/blob/main/LICENSE)).
 It depends on and, in some cases, redistributes third-party components that
 carry their own licenses. This file records the ones that are copyleft or
 otherwise noteworthy; it is not an exhaustive inventory of every transitive
@@ -30,7 +31,8 @@ ISC).
 ### pyModeS978
 
 - **Project:** https://github.com/BrentIO/pyModeS978
-- **License:** MIT
+- **License:** MIT (a relicense to `GPL-3.0-or-later` is planned to align with
+  this project; this entry moves up to *Copyleft components* when that lands)
 - Authored by the same maintainer as SkyFollower; a standalone, pure-Python UAT
   (978 MHz) decoder with no `pyModeS` dependency. Listed here only to disambiguate
   it from `pyModeS` above.
