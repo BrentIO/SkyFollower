@@ -97,6 +97,7 @@ export default defineConfig({
             ],
           },
           { text: sharedComponent.title, link: `/components/${sharedComponent.name}` },
+          { text: "Third-Party Notices", link: "/third-party-notices" },
         ],
       },
     ],
@@ -104,5 +105,10 @@ export default defineConfig({
     socialLinks: [
       { icon: "github", link: "https://github.com/BrentIO/SkyFollower" },
     ],
+
+    footer: {
+      message:
+        'Licensed under <a href="https://github.com/BrentIO/SkyFollower/blob/main/LICENSE">GPL-3.0-or-later</a>.',
+    },
   },
 });

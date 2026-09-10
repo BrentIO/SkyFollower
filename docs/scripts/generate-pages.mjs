@@ -101,7 +101,14 @@ for (const tool of tools) {
   writePage(`tools/${tool.name}.md`, tool.readmePath, `${tool.title} (${tool.name})`);
 }
 
+// Root-level reference docs that also render on GitHub as plain files, copied
+// in the same way as the component READMEs so the repo-root copy stays the
+// single source of truth. Links to other root files (LICENSE, CONTRIBUTING.md)
+// in these are written as absolute github.com URLs at the source so they
+// resolve both on GitHub and here.
+writePage("third-party-notices.md", join(REPO_ROOT, "THIRD-PARTY-NOTICES.md"));
+
 console.log(
   `docs: generated ${components.length} component page(s), ${runners.length} runner page(s), ` +
-    `and ${tools.length} tool page(s)`,
+    `${tools.length} tool page(s), and 1 reference page`,
 );
