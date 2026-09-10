@@ -65,7 +65,7 @@ export function MapView() {
 // read below is a plain, already-loaded value -- no further async handling
 // needed in here.
 function MapViewInner({ config }: { config: AppConfig }) {
-  const { aircraft, connected } = useMapFlights(config.wsUrl, config.restFlightsUrl);
+  const { aircraft, connected, seedTrailFor } = useMapFlights(config.wsUrl, config.restFlightsUrl);
   const roster = useProcessorRoster(config.restProcessorsUrl);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -83,6 +83,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // stale snapshot from whenever that listener was attached.
   const aircraftRef = useRef(aircraft);
   aircraftRef.current = aircraft;
+
+  // When an aircraft is newly selected, pull the server's accumulated trail
+  // for it (GET /api/flights/{icao_hex}) so the drawn trail covers the whole
+  // flight -- not just what this browser has seen since it connected, and
+  // regardless of a page reload. Fires only on the unselected -> selected
+  // edge; deselecting and reselecting re-fetches (cheap, gets fresher data).
+  const prevSelectedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const icaoHex of selected) {
+      if (!prevSelectedRef.current.has(icaoHex)) seedTrailFor(icaoHex);
+    }
+    prevSelectedRef.current = selected;
+  }, [selected, seedTrailFor]);
 
   // --- Map construction (once) ---------------------------------------
   useEffect(() => {

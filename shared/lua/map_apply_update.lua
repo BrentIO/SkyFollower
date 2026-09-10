@@ -25,6 +25,10 @@
 -- ARGV[6] : stale_seconds (flight:live:{icao_hex} TTL)
 -- ARGV[7] : evict_seconds (flight:detail:{icao_hex} / flight:trail:{icao_hex} TTL)
 -- ARGV[8] : hide_seconds (flight:visible:{icao_hex} TTL)
+-- ARGV[9] : max_trail_points -- flight:trail:{icao_hex} is LTRIMmed to the
+--           most recent this-many points after each append, so a
+--           long-loitering aircraft can't grow the list without bound
+--           (see map/state_store.py's MAX_TRAIL_POINTS)
 --
 -- Returns nil if the packet is dropped as out-of-order; otherwise a JSON
 -- object string matching map/state_store.py's get_flight() shape exactly
@@ -47,6 +51,7 @@ local field_values = cjson.decode(ARGV[5])
 local stale_seconds = tonumber(ARGV[6])
 local evict_seconds = tonumber(ARGV[7])
 local hide_seconds = tonumber(ARGV[8])
+local max_trail_points = tonumber(ARGV[9])
 
 local TIMESTAMP_EPSILON_SECONDS = 0.001
 local LAST_APPLIED_TIMESTAMP_FIELD = '_last_applied_timestamp'
@@ -115,6 +120,9 @@ if msg_type == 'position' and latitude_value and longitude_value then
         ',"lon":' .. longitude_value ..
         ',"alt":' .. (altitude_value or 'null') .. '}'
     redis.call('RPUSH', trail_key, point)
+    if max_trail_points and max_trail_points > 0 then
+        redis.call('LTRIM', trail_key, -max_trail_points, -1)
+    end
     redis.call('EXPIRE', trail_key, evict_seconds)
 end
 

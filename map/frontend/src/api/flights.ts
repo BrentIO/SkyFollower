@@ -1,4 +1,4 @@
-import type { MapFlight, ProcessorRoster } from "./types";
+import type { MapFlight, MapFlightHistory, ProcessorRoster } from "./types";
 
 export class FlightsApiError extends Error {}
 
@@ -11,6 +11,25 @@ export async function fetchFlights(restFlightsUrl: string): Promise<MapFlight[]>
     throw new FlightsApiError(`GET ${restFlightsUrl} failed: HTTP ${response.status}`);
   }
   return (await response.json()) as MapFlight[];
+}
+
+// GET /api/flights/{icao_hex} -- one aircraft's current state plus its
+// accumulated server-side trail (map/main.py's get_flight). Fetched when an
+// aircraft is selected so the drawn trail reflects the whole flight, not just
+// what this browser saw since it connected. Returns null on HTTP 404 (the
+// aircraft is no longer tracked -- evicted, or never seen), which callers
+// treat as "no server history to seed, keep the client-accumulated trail".
+export async function fetchFlightHistory(
+  restFlightsUrl: string,
+  icaoHex: string,
+): Promise<MapFlightHistory | null> {
+  const url = `${restFlightsUrl}/${encodeURIComponent(icaoHex)}`;
+  const response = await fetch(url);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new FlightsApiError(`GET ${url} failed: HTTP ${response.status}`);
+  }
+  return (await response.json()) as MapFlightHistory;
 }
 
 // GET /api/processors -- the message-processor liveness roster/status. See
