@@ -269,4 +269,13 @@ describe("icon shape resolution", () => {
     expect(state.A1B2C3.shape).toBe("A320");
     expect(state.A1B2C3.iconScale).toBe(scaleAfterMetadata);
   });
+
+  it("resolves the shape from the emitter category alone when there is no enrichment", () => {
+    const state = applyWsEvent({}, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      aircraft: { icao_hex: "A1B2C3", emitter_category: "A7" },
+    });
+    expect(state.A1B2C3.shape).toBe("H60");
+  });
 });

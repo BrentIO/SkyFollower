@@ -21,6 +21,11 @@ export interface AircraftInfo {
   description_code?: string;
   seats?: number;
   wake_turbulence_category?: string;
+  /** Raw ADS-B emitter category the aircraft broadcasts, e.g. "A5", "B2"
+   * (set letter A/B/C/D + 1-7 subcategory). Receiver-decoded, carried
+   * through the map metadata payload. Last-resort input to the icon-shape
+   * resolver (aircraftIconResolver.ts), below description_code. */
+  emitter_category?: string;
   military?: boolean;
   serial_number?: string;
   manufactured_date?: string;

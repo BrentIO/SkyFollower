@@ -2274,6 +2274,18 @@ components:
         wake_turbulence_category:
           type: string
           example: Heavy
+        emitter_category:
+          type: string
+          description: >
+            Raw ADS-B emitter category code the aircraft broadcasts in its
+            identification message (1090 DO-260B / UAT DO-282B) -- set letter
+            A/B/C/D plus a 1-7 subcategory. Receiver-decoded (like the
+            derived wake_turbulence_category), not enrichment; carried in the
+            aircraft dict alongside adsb_version, so it is present wherever
+            this sub-object is (rule notification, archive object) but its
+            only consumer is the map, where it is the last-resort icon-shape
+            hint for aircraft with no type enrichment at all.
+          example: A5
         military:
           type: boolean
           description: Present and true when the aircraft is military; omitted when false

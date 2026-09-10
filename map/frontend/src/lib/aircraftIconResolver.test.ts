@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AIRCRAFT_SHAPES } from "./aircraftShapes.generated";
 import {
+  CATEGORY_SHAPES,
   DESCRIPTION_SHAPES,
   FALLBACK_SHAPE,
   TYPE_ALIASES,
@@ -45,6 +46,30 @@ describe("resolveAircraftShape", () => {
     expect(resolveAircraftShape({ icao_hex: "A", description_code: "H2T" })).toBe("H60");
   });
 
+  it("falls back on the raw emitter category when type and description are absent", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A7" })).toBe("H60");
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "b2" })).toBe("BALL");
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A5" })).toBe("B744");
+    // Subcategory with no mapping (e.g. "A0"/"C3") -> plain fallback.
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A0" })).toBe(FALLBACK_SHAPE);
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "C3" })).toBe(FALLBACK_SHAPE);
+  });
+
+  it("prefers the type designator and the description code over the emitter category", () => {
+    // Type designator wins.
+    expect(
+      resolveAircraftShape({ icao_hex: "A", type_designator: "A320", emitter_category: "A7" }),
+    ).toBe("A320");
+    // Description code wins.
+    expect(
+      resolveAircraftShape({ icao_hex: "A", description_code: "H", emitter_category: "A5" }),
+    ).toBe("H60");
+    // Description-code category letter alone still wins over the emitter category.
+    expect(
+      resolveAircraftShape({ icao_hex: "A", description_code: "G7X", emitter_category: "A5" }),
+    ).toBe("GYRO");
+  });
+
   it("prefers the exact type over the description code", () => {
     expect(
       resolveAircraftShape({
@@ -70,6 +95,9 @@ describe("resolveAircraftShape", () => {
     }
     for (const [code, target] of Object.entries(DESCRIPTION_SHAPES)) {
       expect(AIRCRAFT_SHAPES[target], `DESCRIPTION_SHAPES[${code}] -> ${target}`).toBeDefined();
+    }
+    for (const [category, target] of Object.entries(CATEGORY_SHAPES)) {
+      expect(AIRCRAFT_SHAPES[target], `CATEGORY_SHAPES[${category}] -> ${target}`).toBeDefined();
     }
   });
 });

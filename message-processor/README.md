@@ -161,6 +161,16 @@ weight class, so they're intentionally left unset rather than mapped to
 anything; the remaining 5 collapse to `light`/`medium`/`heavy` by weight
 band.
 
+The same source field is *also* forwarded verbatim, as the raw
+`<set><subcategory>` code the aircraft broadcasts (`A1`–`A7`, `B1`/`B2`/
+`B4`/`B6`/`B7`, `C1`…, `_emitter_category_code`). It rides in the flight's
+`aircraft` dict as `emitter_category` — first-sighting-wins, like
+`adsb_version`, and likewise not part of the `AircraftRecord` enrichment
+model. Its only consumer is the map service, which uses it as a
+last-resort icon-shape hint for aircraft that carry no type enrichment at
+all (no `type_designator`, no Mictronics hit); `wake_turbulence_category`
+derivation is unaffected by it.
+
 ## Redis Key Dependencies
 
 ### Keys read

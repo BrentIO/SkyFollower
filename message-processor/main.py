@@ -141,6 +141,32 @@ _WAKE_TURBULENCE_MAP: dict[str, str] = {
 }
 
 
+# Raw ADS-B emitter category as the "<set><subcategory>" code broadcast in
+# the identification message (1090 DO-260B Table A-2-8 / UAT DO-282B): the
+# set letter is A/B/C/D (from the 1090 identification type code TC 4/3/2/1,
+# or the top bits of the UAT category byte) and the subcategory is 1-7.
+# Subcategory 0 ("A0"/"B0"/...) means "no category information" and is
+# treated as absent, same as the wake-turbulence map above. This is the
+# same source field _WAKE_TURBULENCE_MAP already collapses to a weight
+# class; the raw code is additionally forwarded to the map service, where
+# it is the last-resort icon-shape hint for aircraft carrying no type
+# enrichment at all. It rides in the flight's aircraft dict exactly like
+# adsb_version -- a receiver-decoded value, not registry/Mictronics
+# enrichment, so it is deliberately not part of the AircraftRecord model.
+_EMITTER_CATEGORY_SETS = "ABCD"
+
+
+def _emitter_category_code(set_index: int, subcategory: int) -> Optional[str]:
+    """Assemble the "<set><subcategory>" emitter-category string (e.g. "A5",
+    "B2"), or None when it carries no information (subcategory 0) or falls
+    outside sets A-D."""
+    if not 0 <= set_index < len(_EMITTER_CATEGORY_SETS):
+        return None
+    if not 1 <= subcategory <= 7:
+        return None
+    return f"{_EMITTER_CATEGORY_SETS[set_index]}{subcategory}"
+
+
 def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
     """True when the broadcast ident is just the aircraft's own tail number
     (registration) rather than a route-bearing flight identifier/callsign —
@@ -1256,6 +1282,15 @@ class MessageProcessor:
         if canonical_wtc:
             data["wake_turbulence_category"] = canonical_wtc
 
+        # Raw emitter category (see _emitter_category_code): identification
+        # messages are TC 1-4 -> set D/C/B/A, so set_index = 4 - typecode.
+        typecode = result.get("typecode")
+        category = result.get("category")
+        if isinstance(typecode, int) and 1 <= typecode <= 4 and isinstance(category, int):
+            emitter_category = _emitter_category_code(4 - typecode, category)
+            if emitter_category:
+                data["emitter_category"] = emitter_category
+
         # Position/altitude are only trusted from a genuinely CRC-verified
         # message (DF17/18). DF5/20/21 (crc_valid=None) can fabricate an
         # in-range-looking position/altitude from corrupted bits just as
@@ -1334,6 +1369,12 @@ class MessageProcessor:
             canonical_wtc = _WAKE_TURBULENCE_MAP.get(category.name)
             if canonical_wtc:
                 data["wake_turbulence_category"] = canonical_wtc
+
+            # Raw emitter category (see _emitter_category_code): the UAT
+            # category byte is 8 values per set -> set A/B/C/D.
+            emitter_category = _emitter_category_code(int(category) // 8, int(category) % 8)
+            if emitter_category:
+                data["emitter_category"] = emitter_category
 
         if result.get("latitude") is not None:
             lat, lon = result["latitude"], result["longitude"]
@@ -1467,6 +1508,14 @@ class MessageProcessor:
 
         if "adsb_version" in data:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
+
+        if "emitter_category" in data:
+            # Receiver-decoded, like adsb_version above -- a stable airframe
+            # property, so first sighting wins. Carried in the aircraft dict
+            # so it reaches the map UDP `metadata` payload inside the
+            # `aircraft` sub-object (keeping the map frontend's resolve-on-
+            # `aircraft`-change gate working unchanged).
+            flight.aircraft.setdefault("emitter_category", data["emitter_category"])
 
         self._maybe_resolve_route(flight)
 
