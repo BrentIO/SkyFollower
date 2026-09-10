@@ -1,7 +1,7 @@
 import os
 from unittest.mock import patch
 
-from shared.ha_discovery import build_ha_device
+from shared.ha_discovery import build_ha_device, build_ha_update_entity
 
 
 class TestBuildHaDevice:
@@ -57,3 +57,80 @@ class TestBuildHaDevice:
         ):
             device = build_ha_device(identifier="x", name="x", model="x")
             assert device["sw_version"] == "2026.08.03"
+
+
+class TestBuildHaUpdateEntity:
+    def _device(self):
+        return build_ha_device(
+            identifier="SkyFollower_receiver_pi_north",
+            name="SkyFollower Receiver Pi North",
+            model="Receiver",
+        )
+
+    def test_core_shape(self):
+        device = self._device()
+        entity = build_ha_update_entity(
+            device=device,
+            name="Update",
+            state_topic="SkyFollower/core-health/statistic/receiver_pi_north_update",
+        )
+        assert entity["name"] == "Update"
+        assert entity["state_topic"].endswith("receiver_pi_north_update")
+        assert entity["entity_category"] == "diagnostic"
+
+    def test_device_block_passed_through_unchanged(self):
+        device = self._device()
+        entity = build_ha_update_entity(
+            device=device, name="Update", state_topic="t"
+        )
+        assert entity["device"] is device
+        assert entity["device"]["ids"] == "SkyFollower_receiver_pi_north"
+
+    def test_unique_id_and_object_id_derived_from_device_ids(self):
+        entity = build_ha_update_entity(
+            device=self._device(), name="Update", state_topic="t"
+        )
+        assert entity["unique_id"] == "SkyFollower_receiver_pi_north_update"
+        assert entity["object_id"] == "SkyFollower_receiver_pi_north_update"
+
+    def test_no_install_or_command_keys(self):
+        entity = build_ha_update_entity(
+            device=self._device(), name="Update", state_topic="t"
+        )
+        for forbidden in (
+            "command_topic",
+            "payload_install",
+            "supported_features",
+            "device_class",
+        ):
+            assert forbidden not in entity
+        assert "INSTALL" not in str(entity)
+
+    def test_no_value_templates_json_state_is_native(self):
+        entity = build_ha_update_entity(
+            device=self._device(), name="Update", state_topic="t"
+        )
+        assert "value_template" not in entity
+        assert "latest_version_template" not in entity
+
+    def test_availability_merged_when_given(self):
+        availability = {
+            "availability_topic": "SkyFollower/receiver/pi_north/status",
+            "payload_available": "ONLINE",
+            "payload_not_available": "OFFLINE",
+        }
+        entity = build_ha_update_entity(
+            device=self._device(),
+            name="Update",
+            state_topic="t",
+            availability=availability,
+        )
+        assert entity["availability_topic"] == "SkyFollower/receiver/pi_north/status"
+        assert entity["payload_available"] == "ONLINE"
+        assert entity["payload_not_available"] == "OFFLINE"
+
+    def test_availability_absent_by_default(self):
+        entity = build_ha_update_entity(
+            device=self._device(), name="Update", state_topic="t"
+        )
+        assert "availability_topic" not in entity

@@ -45,6 +45,32 @@ time via a relative path reference in their `requirements.txt`.
   back from local disk instead of re-downloading it from S3 days later.
   See each component's own README for how it's wired in.
 
+- **`ha_discovery.py`** — Builders for the Home Assistant MQTT discovery
+  payloads every component publishes. `build_ha_device()` returns the
+  shared `device` block (`manufacturer`, `sw_version` from the build-time
+  `VERSION`/`GIT_COMMIT` env vars, etc.) so it stays identical across
+  every call site. `build_ha_update_entity()` returns the discovery config
+  for an `update` entity — running image version versus the latest tag
+  published to the registry — nested under a component's existing device
+  by passing that device block through. It is an indicator only: no
+  `command_topic`, no `payload_install`, no `INSTALL` supported feature,
+  so Home Assistant shows a newer version but offers no upgrade button.
+  Its `state_topic` carries a JSON payload with `installed_version` and
+  `latest_version`, which Home Assistant reads natively without a value
+  template.
+
+- **`version_check.py`** — `get_latest_ghcr_tag(image)`, which returns the
+  newest calendar-versioned (`YYYY.MM.BB`) tag of `ghcr.io/BrentIO/<image>`
+  or `None`. Handles GHCR's Registry v2 bearer-token requirement (an
+  anonymous pull token is fetched first and memoised in-process with a
+  short TTL, so one poll pass over every component's image reuses a single
+  token), compares tags as integer `(year, month, build)` tuples rather
+  than strings (a single-digit month or build sorts wrong lexically), and
+  degrades to `None` on any network error, non-200, malformed JSON, or
+  rate-limit response without ever raising. `core-health` calls it on a
+  slow loop (`GHCR_VERSION_CHECK_INTERVAL_SECONDS` in `timing.py`) to feed
+  the `update` entities above.
+
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.
