@@ -132,14 +132,14 @@ export const DESCRIPTION_SHAPES: Record<string, string> = {
 export const CATEGORY_SHAPES: Record<string, string> = {
   // Set A -- fixed-wing, by size / performance
   A1: "C172", // light (< 15,500 lb)
-  A2: "F16", // small (15,500-75,000 lb)
+  A2: "CRJ2", // small (15,500-75,000 lb) -- regional jets / turboprops / bizjets
   A3: "A320", // large (75,000-300,000 lb)
-  A4: "B722", // high-vortex large (e.g. B757)
+  A4: "B752", // high-vortex large (the B757)
   A5: "B744", // heavy (> 300,000 lb)
   A6: "F16", // high performance (> 5g, > 400 kt)
   A7: "H60", // rotorcraft
   // Set B -- glider / balloon / ultralight / UAV / space
-  B1: "GYRO", // glider / sailplane
+  B1: "AS21", // glider / sailplane
   B2: "BALL", // lighter-than-air
   B4: "C172", // ultralight / hang-glider / paraglider
   B6: "Q4", // unmanned aerial vehicle
