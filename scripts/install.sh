@@ -1219,7 +1219,7 @@ collect_map_env() {
   MAP_LISTEN_HOST="$(prompt_string MAP_LISTEN_HOST "UDP listener bind address" "$(existing_env_value_or "$env_file" MAP_LISTEN_HOST 0.0.0.0)")"
   MAP_LISTEN_PORT="$(prompt_int_range MAP_LISTEN_PORT "UDP listener bind port (message-processor's MAP_UDP_PORT must point here)" "$(existing_env_value_or "$env_file" MAP_LISTEN_PORT 30500)" 1 65535)"
   MAP_HTTP_HOST="$(prompt_string MAP_HTTP_HOST "REST/WebSocket bind address" "$(existing_env_value_or "$env_file" MAP_HTTP_HOST 0.0.0.0)")"
-  MAP_HTTP_PORT="$(prompt_int_range MAP_HTTP_PORT "REST/WebSocket bind port" "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 80)" 1 65535)"
+  MAP_HTTP_PORT="$(prompt_int_range MAP_HTTP_PORT "REST/WebSocket bind port (HTTPS by default)" "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 443)" 1 65535)"
   # Dedicated map-redis (bundled in docker-compose.map.yaml) -- never core
   # Redis (see map/README.md's "Data boundary" section). Defaults to the
   # map-redis service name since both containers live in that same

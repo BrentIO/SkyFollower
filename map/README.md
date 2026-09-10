@@ -34,11 +34,13 @@ for display (registration, operator, aircraft type) arrives pre-resolved in
 ## TLS
 
 `GET /api/flights`, `WS /ws`, and the served frontend SPA are all HTTPS on
-`MAP_HTTP_PORT` by default, terminated directly by uvicorn -- unlike
-`management-ui`, there's no nginx in front of this service, so
+`MAP_HTTP_PORT` (default `443`) by default, terminated directly by uvicorn --
+unlike `management-ui`, there's no nginx in front of this service, so
 `uvicorn.run()` itself is handed `ssl_certfile`/`ssl_keyfile`
 (`map/main.py`'s `_uvicorn_tls_kwargs()`) rather than a reverse proxy doing
-TLS termination. There is no authentication either way (see the top of
+TLS termination. The service binds this one port only -- there is no
+separate plain-HTTP listener redirecting to it, unlike `management-ui`'s
+`80 -> 443` nginx redirect. There is no authentication either way (see the top of
 this README) -- TLS here is about encrypting traffic on the LAN, not
 access control. The UDP listener (message-processor's position/metadata
 feed) is unaffected -- UDP has no TLS.
@@ -79,7 +81,7 @@ Reads its configuration from environment variables via `shared/config.py`'s
 | `MAP_LISTEN_HOST` | ❌ | `0.0.0.0` | Bind address for the UDP listener |
 | `MAP_LISTEN_PORT` | ✅ | — | Bind port for the UDP listener. Must match whatever port a message processor's `MAP_UDP_PORT` sends datagrams to -- see [Deliberately distinct variable names](#deliberately-distinct-variable-names) below |
 | `MAP_HTTP_HOST` | ❌ | `0.0.0.0` | Bind address for the REST/WebSocket API |
-| `MAP_HTTP_PORT` | ❌ | `80` | Bind port for the REST/WebSocket API. HTTPS when a TLS cert/key pair is present (see [TLS](#tls) above), plain HTTP otherwise |
+| `MAP_HTTP_PORT` | ❌ | `443` | Bind port for the REST/WebSocket API. HTTPS when a TLS cert/key pair is present (see [TLS](#tls) above) — the normal case, hence the `443` default — plain HTTP otherwise. There is no separate plain-HTTP redirect listener; the service binds this one port only |
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
@@ -503,7 +505,8 @@ cd map/frontend
 npm install
 npm run dev       # Vite dev server on :5173, serving the app under /map/ (base: '/map/'
                    # in vite.config.ts, matching production) and proxying /api and /ws
-                   # to localhost:80
+                   # to localhost:8080 -- run the dev backend with MAP_HTTP_PORT=8080
+                   # (plain HTTP, unprivileged), not the production 443 default
 npm run build     # type-checks (tsc -b) then builds the static bundle to dist/
 npm test          # vitest -- aircraftState/featureCollections lifecycle rules, altitudeColor,
                    # info-box formatting, label stack-order, and processor-status unit tests
