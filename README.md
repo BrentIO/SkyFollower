@@ -29,3 +29,13 @@ python -m pytest
 ```
 
 This runs every component's test suite, discovered from the repo root.
+
+## License
+
+SkyFollower is licensed under the **GNU General Public License v3.0 or later**
+(`GPL-3.0-or-later`) — see [`LICENSE`](LICENSE). Contributions are accepted
+under the same license; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Third-party components carry their own licenses, several of them also
+copyleft (for example `pyModeS`, GPL-3.0) — see
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

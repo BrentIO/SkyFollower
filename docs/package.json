@@ -1,6 +1,7 @@
 {
   "name": "skyfollower-docs",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "docs:generate": "node scripts/generate-pages.mjs && node scripts/bundle-specs.mjs && node scripts/generate-diagrams.mjs",
