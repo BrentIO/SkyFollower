@@ -148,6 +148,13 @@ HTTP_TIMEOUT_SECONDS = 10
 # daily.
 GHCR_VERSION_CHECK_INTERVAL_SECONDS = 86400
 
+# Delay before core-health's first container-registry poll after startup.
+# Long enough for the retained Home Assistant discovery configs already on
+# the broker to arrive and populate the component registry, short enough
+# that the "update available" entities are not blank for long after a
+# restart.
+GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS = 30
+
 # --- Receiver source sockets ----------------------------------------------
 
 # TCP keepalive timers on every readsb source socket. The receiver only

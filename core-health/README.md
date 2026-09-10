@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Purpose** | Standalone, always-on RabbitMQ + Redis monitor. Polls RabbitMQ's Management HTTP API and Redis's `INFO`/`MEMORY STATS` on its own connections and publishes curated MQTT/Home Assistant telemetry for both, replacing per-component RabbitMQ queue-depth self-polling |
-| **Run frequency** | Always-on, two independent poll loops (RabbitMQ every 10s, Redis every 60s) |
-| **Reads/writes** | RabbitMQ Management API (read-only), Redis (`INFO`/`MEMORY STATS` plus plain key reads, both via the same default-user credential every other component uses) — no direct RabbitMQ AMQP connection, no S3 |
+| **Run frequency** | Always-on, three independent poll loops (RabbitMQ, Redis, and a once-daily container-registry check for the per-component "update available" entities) |
+| **Reads/writes** | RabbitMQ Management API (read-only), Redis (`INFO`/`MEMORY STATS` plus plain key reads, both via the same default-user credential every other component uses), the container registry's public tags API (read-only, anonymous) — no direct RabbitMQ AMQP connection, no S3 |
 
 ## How it works
 
@@ -111,6 +111,53 @@ distinct from core-health's own Redis connectivity failing outright, which
 is a real "skip this tick, let the entity age out" case (see
 `_redis_counter_or_none()` in `main.py`).
 
+### Update-available entities
+
+core-health also publishes one Home Assistant `update` entity per
+SkyFollower component — its running image version versus the newest
+release published to the container registry — nested under that
+component's own existing Home Assistant device. It is an availability
+indicator only: the discovery config carries no `command_topic`, no
+`payload_install`, and no `INSTALL` supported feature, so Home Assistant
+shows that a newer version exists but offers no in-place upgrade button.
+Applying it stays a manual `docker compose pull`.
+
+**Which components are running** is learned entirely off the broker.
+core-health subscribes to the retained `homeassistant/+/+/config`
+discovery topics; every component already publishes its own discovery
+there, and each config's `device` block carries the component's
+identifiers and its running version (`sw_version`, minus the
+`(<commit>)` suffix). A component that clears all of its own discovery
+(empty retained payloads) drops out of the registry, and its `update`
+entity is cleared too. A registry image that never announced itself is
+ignored — there is nothing running to compare against. The component's
+container-registry image name is derived from its device identifier and
+mirrors the container-image build workflow's `discover-images` step: one
+image per component/runner directory, published as
+`skyfollower-<directory>` — with the archive processor the sole
+exception (directory `archive-processor`, image `skyfollower-archive`).
+
+**The registry poll is deliberately slow** — once a day
+(`shared/timing.py`'s `GHCR_VERSION_CHECK_INTERVAL_SECONDS`), plus one
+pass `GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS` after startup so the
+entities aren't blank until the following day. Published release tags
+only move on a release, and a single pass fetches an anonymous bearer
+token plus a tags list for every distinct image. The token is memoised
+inside `shared/version_check.py` and reused across the whole pass; tag
+ordering is a `YYYY.MM.BB` integer-tuple comparison (`"2026.9.9"` sorts
+before `"2026.9.10"`, which a string compare gets wrong) — see
+`shared/version_check.py`. Every lookup failure — a network error, a
+rate-limit answer, an image with no release tags yet — is turned into
+"keep the last-known latest version" rather than blanking the entity,
+matching core-health's best-effort telemetry everywhere else.
+
+State is a single retained JSON blob per component
+(`{"installed_version": ..., "latest_version": ...}`) that Home Assistant
+parses natively, re-published on change, on every core-health MQTT
+(re)connect, and on each daily poll. `management-ui` and `map` are
+covered the same as everything else now that they publish a minimal Home
+Assistant presence of their own.
+
 ### Redis keys
 
 message-processor's counter-*writing* side (`operator_misses`,
@@ -198,13 +245,15 @@ passthrough fields described above:
 | `SkyFollower/core-health/queue/{queue}/statistic/{field}` | Any other SkyFollower-owned queue's stats (e.g. `skyfollower-adsb-unroutable`) |
 | `SkyFollower/message-processor/{id}/statistic/{field}` | Mimicked message-processor counters (exact existing topic) |
 | `SkyFollower/receiver/{name}/statistic/{field}` | Mimicked receiver counters (exact existing topic) |
+| `SkyFollower/{component-namespace}/update` | Per-component "update available" state blob (`{installed_version, latest_version}`) — see [Update-available entities](#update-available-entities) |
+| `homeassistant/update/{component-device-id}_update/config` | Per-component `update` entity discovery config (empty retained payload clears it) |
 
 Home Assistant autodiscovery configs are published on every MQTT
 (re)connect for the static broker-wide/Redis/general entities, and
-opportunistically the first time a given queue/counter/receiver is seen
-during this process's lifetime (dynamic entities aren't known in advance —
-a message processor or receiver can appear or disappear while core-health
-keeps running).
+opportunistically the first time a given queue/counter/receiver/component
+is seen during this process's lifetime (dynamic entities aren't known in
+advance — a message processor, receiver, or whole component can appear or
+disappear while core-health keeps running).
 
 ## Deployment
 

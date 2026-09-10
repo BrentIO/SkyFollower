@@ -27,6 +27,16 @@ both components are write-only for their own counters (see their
 respective READMEs), this component is the only one that ever publishes
 them over MQTT/HA. Reads defensively either way: a missing key means the
 count is genuinely zero, never an error.
+
+Also publishes one Home Assistant `update` entity per SkyFollower
+component -- its running image version (read off the broker from each
+component's own discovery `device` block) against the newest
+calendar-versioned tag published to the container registry. core-health
+subscribes to the retained homeassistant/+/+/config discovery topics to
+learn which components exist and at what version, and polls the registry
+once a day (see _version_poll_loop / _ingest_discovery). This grants no
+component any new privilege -- it is an availability indicator only, with
+no install command on the wire.
 """
 
 from __future__ import annotations
@@ -52,15 +62,18 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import ConfigError, load_config
-from shared.ha_discovery import build_ha_device
+from shared.ha_discovery import build_ha_device, build_ha_update_entity
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
 from shared.timing import (
+    GHCR_VERSION_CHECK_INTERVAL_SECONDS,
+    GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     HTTP_TIMEOUT_SECONDS,
     RABBITMQ_POLL_INTERVAL_SECONDS,
     REDIS_POLL_INTERVAL_SECONDS,
 )
+from shared.version_check import get_latest_ghcr_tag
 from shared.rabbitmq_topology import (
     ADSB_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
@@ -81,8 +94,17 @@ from shared.redis_keys import (
 
 logger = logging.getLogger("core-health")
 
-MQTT_ROOT = "SkyFollower/core-health"
+SKYFOLLOWER_ROOT = "SkyFollower"
+MQTT_ROOT = f"{SKYFOLLOWER_ROOT}/core-health"
 CORE_DEVICE_IDENTIFIER = "SkyFollower_Core"
+
+# Every retained Home Assistant discovery config is a four-segment topic:
+# homeassistant/<platform>/<object_id>/config. Subscribing to this lets
+# core-health build a live picture of which components are running (and at
+# what version, from each config's `device` block) without importing or
+# calling into any of them.
+HA_DISCOVERY_CONFIG_TOPIC = "homeassistant/+/+/config"
+HA_UPDATE_PLATFORM_PREFIX = "homeassistant/update/"
 
 # RabbitMQ/Redis poll cadences and the HTTP deadline are named constants in
 # shared/timing.py (re-exported here so this module's existing references
@@ -274,6 +296,118 @@ def _mp_counter_key(pid: str, kind: str, period: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Component "update available" tracking
+# ---------------------------------------------------------------------------
+
+# Fixed device-identifier stem -> (component label, GHCR image, MQTT
+# namespace). The GHCR image name mirrors the container-image build
+# workflow's discover-images step -- one image per component directory,
+# published as skyfollower-<directory> -- with the archive processor the
+# sole exception: its directory is archive-processor but its image is
+# skyfollower-archive. Multi-instance components (message processor,
+# receiver) and the data runners are matched by prefix just below.
+_FIXED_COMPONENTS = {
+    "core": ("core-health", "skyfollower-core-health", f"{SKYFOLLOWER_ROOT}/core-health"),
+    "archive": ("archive-processor", "skyfollower-archive", f"{SKYFOLLOWER_ROOT}/archive"),
+    "archive_compaction": (
+        "archive-compaction",
+        "skyfollower-archive-compaction",
+        f"{SKYFOLLOWER_ROOT}/archive-compaction",
+    ),
+    "map": ("map", "skyfollower-map", f"{SKYFOLLOWER_ROOT}/map"),
+    "management-ui": (
+        "management-ui",
+        "skyfollower-management-ui",
+        f"{SKYFOLLOWER_ROOT}/management-ui",
+    ),
+}
+
+# (identifier prefix, component label, image, namespace root). The segment
+# after the prefix is the instance id (message processor / receiver id) or,
+# for a runner, its directory name with underscores restored to hyphens.
+_PREFIXED_COMPONENTS = (
+    (
+        "message_processor_",
+        "message-processor",
+        "skyfollower-message-processor",
+        f"{SKYFOLLOWER_ROOT}/message-processor",
+    ),
+    ("receiver_", "receiver", "skyfollower-receiver", f"{SKYFOLLOWER_ROOT}/receiver"),
+    ("runner_", None, None, f"{SKYFOLLOWER_ROOT}/runner"),
+)
+
+
+def _resolve_component(device_ids) -> Optional[tuple[str, str, str]]:
+    """Map a Home Assistant discovery `device` identifier to
+    ``(component_label, ghcr_image, mqtt_namespace)`` -- or None when it is
+    not a recognised SkyFollower component.
+
+    ``device_ids`` is the discovery `device` block's ``ids`` value (e.g.
+    ``"SkyFollower_message_processor_mp-1"``). ``mqtt_namespace`` is that
+    instance's own topic root, so the update entity's state lands beside
+    the component's own status topic and shares its availability.
+    """
+    if not isinstance(device_ids, str) or not device_ids:
+        return None
+    stem = device_ids
+    for prefix in ("SkyFollower_", "SkyFollower"):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix):]
+            break
+    stem = stem.strip("_").lower()
+    if not stem:
+        return None
+
+    if stem in _FIXED_COMPONENTS:
+        return _FIXED_COMPONENTS[stem]
+
+    for prefix, label, image, namespace_root in _PREFIXED_COMPONENTS:
+        if not stem.startswith(prefix) or len(stem) <= len(prefix):
+            continue
+        suffix = stem[len(prefix):]
+        if label is None:  # a data runner: skyfollower-runner-<dir name>
+            runner = suffix.replace("_", "-")
+            return (f"runner-{runner}", f"skyfollower-runner-{runner}", f"{namespace_root}/{runner}")
+        return (label, image, f"{namespace_root}/{suffix}")
+    return None
+
+
+def _installed_version(device: dict) -> Optional[str]:
+    """The running image version from a discovery `device` block's
+    ``sw_version``, with build_ha_device()'s ``" (<commit>)"`` suffix
+    stripped so it compares cleanly against a bare ``YYYY.MM.BB`` registry
+    tag. None when absent."""
+    raw = device.get("sw_version")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.split(" (", 1)[0].strip()
+
+
+def _availability_from_config(config: dict) -> Optional[dict]:
+    """The availability block of a discovery config, reused verbatim on the
+    update entity so it goes unavailable with the rest of the component's
+    entities. None when the config carries no ``availability_topic`` (a
+    one-shot job such as a data runner)."""
+    topic = config.get("availability_topic")
+    if not isinstance(topic, str) or not topic:
+        return None
+    block = {"availability_topic": topic}
+    for key in ("payload_available", "payload_not_available"):
+        if key in config:
+            block[key] = config[key]
+    return block
+
+
+class _TrackedComponent(NamedTuple):
+    component: str
+    image: str
+    installed_version: str
+    device: dict
+    availability: Optional[dict]
+    state_topic: str
+
+
+# ---------------------------------------------------------------------------
 # Core Health
 # ---------------------------------------------------------------------------
 
@@ -321,6 +455,20 @@ class CoreHealth:
         self._known_receiver_fields: set[tuple[str, str]] = set()
         self._core_discovery_published = False
 
+        # "Update available" tracking. The registry is keyed by discovery
+        # `device` identifier (unique per running instance); _discovery_topics
+        # records which retained config topics announced each one, so a
+        # component clearing all of its discovery drops out. _latest_versions
+        # is the last-known newest registry tag per image -- kept across a
+        # failed poll so a transient GHCR outage never blanks an entity.
+        # Touched from both the MQTT callback thread and the version-poll
+        # thread, hence the lock.
+        self._component_registry: dict[str, _TrackedComponent] = {}
+        self._discovery_topics: dict[str, set[str]] = {}
+        self._latest_versions: dict[str, str] = {}
+        self._known_update_entities: set[str] = set()
+        self._registry_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
@@ -333,6 +481,7 @@ class CoreHealth:
         threading.Thread(target=self._rabbitmq_poll_loop, daemon=True, name="rabbitmq-poll").start()
         threading.Thread(target=self._redis_poll_loop, daemon=True, name="redis-poll").start()
         threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
+        threading.Thread(target=self._version_poll_loop, daemon=True, name="version-poll").start()
 
         self._shutdown.wait()
 
@@ -344,6 +493,7 @@ class CoreHealth:
         self._mqtt = build_mqtt_client(mc, will_topic=f"{MQTT_ROOT}/status")
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
+        self._mqtt.on_message = self._on_mqtt_message
         try:
             self._mqtt.connect_async(mc["host"], port=mc.get("port", 1883), keepalive=60)
             self._mqtt.loop_start()
@@ -356,12 +506,34 @@ class CoreHealth:
         self._known_queues.clear()
         self._known_mp_counters.clear()
         self._known_receiver_fields.clear()
+        self._known_update_entities.clear()
         self._core_discovery_published = False
         self._publish_core_discovery()
+        # Retained discovery configs are re-delivered on every re-subscribe,
+        # rebuilding the registry; also re-publish the update entities for
+        # anything already tracked so their state is refreshed on the new
+        # connection without waiting for the next daily poll.
+        client.subscribe(HA_DISCOVERY_CONFIG_TOPIC)
+        self._republish_update_entities()
         logger.info("MQTT connected.")
 
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
+
+    def _on_mqtt_message(self, client, userdata, message) -> None:
+        topic = message.topic
+        if not topic.startswith("homeassistant/") or not topic.endswith("/config"):
+            return
+        # core-health publishes the `update` entities itself; ignoring that
+        # echo keeps an update entity from ever being mistaken for a
+        # component to track.
+        if topic.startswith(HA_UPDATE_PLATFORM_PREFIX):
+            return
+        payload = message.payload.decode("utf-8", "replace").strip() if message.payload else ""
+        try:
+            self._ingest_discovery(topic, payload)
+        except Exception as exc:  # noqa: BLE001 -- a bad retained message must not kill the loop
+            logger.debug("Discovery ingest failed for %s: %s", topic, exc)
 
     # ------------------------------------------------------------------
     # Publish helpers
@@ -766,6 +938,134 @@ class CoreHealth:
             retain=True,
         )
         self._known_receiver_fields.add(dedup)
+
+    # ------------------------------------------------------------------
+    # Component "update available" entities
+    # ------------------------------------------------------------------
+
+    def _ingest_discovery(self, topic: str, payload: str) -> None:
+        """Fold one retained homeassistant/.../config message into the
+        component registry. An empty payload is a cleared retained config:
+        once every config topic for a device has been cleared, that device
+        drops out and its update entity is cleared too."""
+        if not payload:
+            self._forget_discovery_topic(topic)
+            return
+        config = json.loads(payload)
+        if not isinstance(config, dict):
+            return
+        device = config.get("device")
+        if not isinstance(device, dict):
+            return
+        device_ids = device.get("ids") or device.get("identifiers")
+        if isinstance(device_ids, (list, tuple)):
+            device_ids = device_ids[0] if device_ids else None
+        resolved = _resolve_component(device_ids)
+        if resolved is None:
+            return
+        component, image, namespace = resolved
+        installed = _installed_version(device)
+        if not installed:
+            return
+
+        entry = _TrackedComponent(
+            component=component,
+            image=image,
+            installed_version=installed,
+            device=device,
+            availability=_availability_from_config(config),
+            state_topic=f"{namespace}/update",
+        )
+        with self._registry_lock:
+            self._component_registry[device_ids] = entry
+            self._discovery_topics.setdefault(device_ids, set()).add(topic)
+        self._publish_update_entity(device_ids, entry)
+
+    def _forget_discovery_topic(self, topic: str) -> None:
+        dropped: Optional[tuple[str, _TrackedComponent]] = None
+        with self._registry_lock:
+            for device_ids, topics in list(self._discovery_topics.items()):
+                topics.discard(topic)
+                if topics:
+                    continue
+                self._discovery_topics.pop(device_ids, None)
+                entry = self._component_registry.pop(device_ids, None)
+                if entry is not None:
+                    dropped = (device_ids, entry)
+        if dropped is not None:
+            self._clear_update_entity(*dropped)
+
+    def _version_poll_loop(self) -> None:
+        """Slow loop -- interval GHCR_VERSION_CHECK_INTERVAL_SECONDS. The
+        published registry tags only move on a release, so a daily check is
+        ample; the first pass runs GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS
+        after startup so the entities aren't blank until the following day."""
+        if self._shutdown.wait(GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS):
+            return
+        while not self._shutdown.is_set():
+            self._poll_component_versions_once()
+            self._shutdown.wait(GHCR_VERSION_CHECK_INTERVAL_SECONDS)
+
+    def _poll_component_versions_once(self) -> None:
+        with self._registry_lock:
+            entries = list(self._component_registry.items())
+        for image in sorted({entry.image for _, entry in entries}):
+            try:
+                latest = get_latest_ghcr_tag(image)
+            except Exception as exc:  # noqa: BLE001 -- best-effort, never crash the loop
+                logger.debug("GHCR lookup failed for %s: %s", image, exc)
+                latest = None
+            # A None result (network error, rate limit, no release tags yet)
+            # leaves the last-known latest_version in place rather than
+            # blanking the entity.
+            if latest is not None:
+                self._latest_versions[image] = latest
+        for device_ids, entry in entries:
+            self._publish_update_entity(device_ids, entry)
+
+    def _republish_update_entities(self) -> None:
+        with self._registry_lock:
+            entries = list(self._component_registry.items())
+        for device_ids, entry in entries:
+            self._publish_update_entity(device_ids, entry)
+
+    def _publish_update_entity(self, device_ids: str, entry: _TrackedComponent) -> None:
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        self._ensure_update_discovery(device_ids, entry)
+        latest = self._latest_versions.get(entry.image)
+        state = {
+            "installed_version": entry.installed_version,
+            # Until the first successful registry poll the newest tag is
+            # unknown; reporting the running version as latest reads as
+            # "up to date" rather than asserting a spurious update.
+            "latest_version": latest or entry.installed_version,
+        }
+        self._mqtt.publish(entry.state_topic, json.dumps(state), retain=True)
+
+    def _ensure_update_discovery(self, device_ids: str, entry: _TrackedComponent) -> None:
+        if device_ids in self._known_update_entities or not (self._mqtt and self._mqtt_connected):
+            return
+        config = build_ha_update_entity(
+            device=entry.device,
+            name=f"{entry.device.get('name', entry.component)} Update",
+            state_topic=entry.state_topic,
+            availability=entry.availability,
+        )
+        self._mqtt.publish(
+            f"{HA_UPDATE_PLATFORM_PREFIX}{entry.device['ids']}_update/config",
+            json.dumps(config),
+            retain=True,
+        )
+        self._known_update_entities.add(device_ids)
+
+    def _clear_update_entity(self, device_ids: str, entry: _TrackedComponent) -> None:
+        self._known_update_entities.discard(device_ids)
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        self._mqtt.publish(
+            f"{HA_UPDATE_PLATFORM_PREFIX}{entry.device['ids']}_update/config", "", retain=True
+        )
 
     # ------------------------------------------------------------------
     # Redis polling
