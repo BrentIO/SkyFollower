@@ -18,6 +18,16 @@ ISC).
 - **How:** imported as a library dependency (`pyModeS==3.6.0`) for Mode-S / ADS-B
   (1090 MHz) frame decoding. Not modified; not vendored into this repo.
 
+### pyModeS978
+
+- **Project:** https://github.com/BrentIO/pyModeS978
+- **License:** GPL-3.0-or-later
+- **Used by:** `message-processor`
+- **How:** imported as a library dependency (`pyModeS978==2026.7.1`) for UAT
+  (978 MHz) frame decoding — a standalone, pure-Python decoder with no `pyModeS`
+  dependency. Authored by the same maintainer as SkyFollower. Not modified; not
+  vendored into this repo.
+
 ### odfpy
 
 - **Project:** https://github.com/eea/odfpy
@@ -25,17 +35,6 @@ ISC).
   GPL-2.0-or-later options are both compatible with `GPL-3.0-or-later`)
 - **Used by:** registry data runners that parse OpenDocument spreadsheet source files
 - **How:** imported as a library dependency. Not modified; not vendored into this repo.
-
-## Not third-party
-
-### pyModeS978
-
-- **Project:** https://github.com/BrentIO/pyModeS978
-- **License:** MIT (a relicense to `GPL-3.0-or-later` is planned to align with
-  this project; this entry moves up to *Copyleft components* when that lands)
-- Authored by the same maintainer as SkyFollower; a standalone, pure-Python UAT
-  (978 MHz) decoder with no `pyModeS` dependency. Listed here only to disambiguate
-  it from `pyModeS` above.
 
 ## Adding a component
 
