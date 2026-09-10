@@ -140,6 +140,14 @@ REDIS_POLL_INTERVAL_SECONDS = 30
 # Deadline on each core-health HTTP request to the RabbitMQ management API.
 HTTP_TIMEOUT_SECONDS = 10
 
+# How often core-health polls the container registry for the latest
+# published image tag of every component, to drive the Home Assistant
+# "update available" entities. Deliberately slow -- one pass fetches a
+# token plus a tags list for roughly fifty images, the published tags
+# only move on a release, and nothing downstream needs it fresher than
+# daily.
+GHCR_VERSION_CHECK_INTERVAL_SECONDS = 86400
+
 # --- Receiver source sockets ----------------------------------------------
 
 # TCP keepalive timers on every readsb source socket. The receiver only
