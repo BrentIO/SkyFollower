@@ -23,10 +23,10 @@ ISC).
 - **Project:** https://github.com/BrentIO/pyModeS978
 - **License:** GPL-3.0-or-later
 - **Used by:** `message-processor`
-- **How:** imported as a library dependency (`pyModeS978==2026.7.1`) for UAT
-  (978 MHz) frame decoding — a standalone, pure-Python decoder with no `pyModeS`
-  dependency. Authored by the same maintainer as SkyFollower. Not modified; not
-  vendored into this repo.
+- **How:** imported as a library dependency (`pyModeS978==2026.9.1` — the first
+  GPL-3.0-or-later release) for UAT (978 MHz) frame decoding — a standalone,
+  pure-Python decoder with no `pyModeS` dependency. Authored by the same
+  maintainer as SkyFollower. Not modified; not vendored into this repo.
 
 ### odfpy
 
