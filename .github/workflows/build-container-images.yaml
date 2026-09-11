@@ -198,6 +198,7 @@ jobs:
           build-args: |
             VERSION=${{ (inputs.dev_mode || inputs.test_mode) && '9999.99.99' || github.ref_name }}
             COMMIT=${{ env.COMMIT }}
+            IMAGE=skyfollower-${{ matrix.name }}
           # In test_mode, nothing is pushed to GHCR — the tags below are
           # still computed but unused, since push is the gate that matters.
           # dev_mode always pushes (that's the point); validate-version

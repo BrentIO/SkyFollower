@@ -71,6 +71,25 @@ time via a relative path reference in their `requirements.txt`.
   slow loop (`GHCR_VERSION_CHECK_INTERVAL_SECONDS` in `timing.py`) to feed
   the `update` entities above.
 
+- **`mqtt_register.py`** — `publish_register(client, device)`, called by
+  every MQTT-enabled component right after it builds its own `device`
+  block via `build_ha_device()`. Publishes one retained
+  `SkyFollower/register/{device['ids']}` message — a SkyFollower-native
+  topic, not part of the `homeassistant/` discovery namespace — carrying
+  the component's bare GHCR image name (read from the `COMPONENT_IMAGE`
+  environment variable, baked in at build time exactly the way
+  `VERSION`/`GIT_COMMIT` already are: every Dockerfile declares
+  `ARG IMAGE=unknown` / `ENV COMPONENT_IMAGE=$IMAGE`, and
+  `build-container-images.yaml` passes
+  `IMAGE=skyfollower-${{ matrix.name }}`, the exact name its own
+  `discover-images` job already computed) and the `device` block itself,
+  verbatim. This is what lets `core-health` build its "update available"
+  registry (see `ha_discovery.py` above) by reading two fields straight
+  off the wire, with no table anywhere mapping a component's identity to
+  its image name. A no-op when `COMPONENT_IMAGE` is unset or still the
+  Dockerfile default of `"unknown"` (a local/manual build with no
+  `--build-arg IMAGE=...`).
+
 - **`redis_keys.py`** — Functions (not string constants) for every Redis key
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.

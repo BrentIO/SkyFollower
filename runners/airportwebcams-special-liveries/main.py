@@ -63,6 +63,7 @@ from shared.redis_keys import (
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 
 logger = logging.getLogger("airportwebcams-special-liveries")
@@ -339,6 +340,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model="🎨 Airport Webcams Special Liveries Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/airportwebcams-special-liveries.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Airport Webcams Special Liveries Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Airport Webcams Special Liveries Last Run At", "mdi:clock", None, None),

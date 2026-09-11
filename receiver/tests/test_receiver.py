@@ -1968,6 +1968,20 @@ class TestTelemetryPayload:
             not in topics
         )
 
+    def test_self_registers_with_its_own_image_name(self):
+        # shared/mqtt_register.py's publish_register() call added alongside
+        # this component's own _publish_ha_autodiscovery().
+        r = self._make_receiver()
+        mock_mqtt = MagicMock()
+        r._mqtt = mock_mqtt
+        r._mqtt_connected = True
+        with patch.dict(os.environ, {"COMPONENT_IMAGE": "skyfollower-receiver"}, clear=True):
+            r._publish_ha_autodiscovery()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        register = json.loads(calls[f"SkyFollower/register/SkyFollower_receiver_{r._id}"])
+        assert register["image"] == "skyfollower-receiver"
+        assert register["device"]["ids"] == f"SkyFollower_receiver_{r._id}"
+
     def test_connected_sensor_has_json_attributes_topic(self):
         r = self._make_receiver()
         mock_mqtt = MagicMock()

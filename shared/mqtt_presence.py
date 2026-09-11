@@ -5,15 +5,18 @@ telemetry of their own -- management-ui and map.
 The receiver, message processor, and archive processor each run a periodic
 telemetry loop. management-ui and map have nothing equivalent to report:
 they just need to (a) appear in Home Assistant with their running image
-version and (b) let core-health read that version off the broker to drive
-an "update available" entity. So this helper connects, publishes the
+version and (b) self-register so core-health can drive an "update
+available" entity for them. So this helper connects, publishes the
 retained discovery + started_at + version topics once per connect, and
 then simply stays connected -- no periodic publish, no stats.
 
-It is built on the same two primitives every other component's MQTT code
-uses: shared/mqtt.py's build_mqtt_client() (connection + optional auth +
-last-will) and shared/ha_discovery.py's build_ha_device() (the discovery
-`device` block, whose sw_version carries the running version).
+It is built on three primitives every other component's MQTT code uses:
+shared/mqtt.py's build_mqtt_client() (connection + optional auth +
+last-will), shared/ha_discovery.py's build_ha_device() (the discovery
+`device` block, whose sw_version carries the running version), and
+shared/mqtt_register.py's publish_register() (the self-registration
+message core-health reads to learn this component exists and which GHCR
+image to check for updates).
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from typing import Optional
 
 from shared.ha_discovery import build_ha_device
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 
 logger = logging.getLogger("mqtt-presence")
 
@@ -131,6 +135,7 @@ class MqttPresence:
             model=self._device_model,
             **device_kwargs,
         )
+        publish_register(self._client, device)
         availability = {
             "availability_topic": self._status_topic,
             "payload_available": ONLINE,

@@ -56,6 +56,7 @@ from shared.redis_keys import (
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 
@@ -335,6 +336,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model=f"Togo {country_flag('TG')} ANAC Registry Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/tg-anac-registry.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Togo ANAC Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Togo ANAC Last Run At", "mdi:clock", None, None),

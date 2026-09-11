@@ -122,20 +122,26 @@ indicator only: the discovery config carries no `command_topic`, no
 shows that a newer version exists but offers no in-place upgrade button.
 Applying it stays a manual `docker compose pull`.
 
-**Which components are running** is learned entirely off the broker.
-core-health subscribes to the retained `homeassistant/+/+/config`
-discovery topics; every component already publishes its own discovery
-there, and each config's `device` block carries the component's
-identifiers and its running version (`sw_version`, minus the
-`(<commit>)` suffix). A component that clears all of its own discovery
-(empty retained payloads) drops out of the registry, and its `update`
-entity is cleared too. A registry image that never announced itself is
-ignored — there is nothing running to compare against. The component's
-container-registry image name is derived from its device identifier and
-mirrors the container-image build workflow's `discover-images` step: one
-image per component/runner directory, published as
-`skyfollower-<directory>` — with the archive processor the sole
-exception (directory `archive-processor`, image `skyfollower-archive`).
+**Which components are running, and what image to check, is learned
+entirely from self-registration** — never inferred or pattern-matched.
+Every MQTT-enabled component publishes one retained
+`SkyFollower/register/{id}` message (`shared/mqtt_register.py`'s
+`publish_register()`, called right alongside its own Home Assistant
+discovery publish) carrying its GHCR image name and its discovery
+`device` block verbatim. The image name is baked into the image at build
+time exactly the way `VERSION`/`GIT_COMMIT` already are: every
+Dockerfile declares `ARG IMAGE=unknown` / `ENV COMPONENT_IMAGE=$IMAGE`,
+and `build-container-images.yaml` passes
+`IMAGE=skyfollower-${{ matrix.name }}` — the same bare name its own
+`discover-images` job already computed as the single source of truth for
+what each component's published image is called, so there is no second,
+hand-maintained mapping of component identity to image name anywhere in
+this component's own code to drift out of sync with that workflow.
+core-health subscribes to `SkyFollower/register/+` and reads `image` and
+`device` straight out of each payload. A component that clears its
+retained registration drops out of the registry and its `update` entity
+is cleared with it; an image that never registered itself is ignored —
+there is nothing running to compare against.
 
 **The registry poll is deliberately slow** — once a day
 (`shared/timing.py`'s `GHCR_VERSION_CHECK_INTERVAL_SECONDS`), plus one
@@ -153,10 +159,16 @@ matching core-health's best-effort telemetry everywhere else.
 
 State is a single retained JSON blob per component
 (`{"installed_version": ..., "latest_version": ...}`) that Home Assistant
-parses natively, re-published on change, on every core-health MQTT
-(re)connect, and on each daily poll. `management-ui` and `map` are
-covered the same as everything else now that they publish a minimal Home
-Assistant presence of their own.
+parses natively, published at `SkyFollower/register/{id}/update` —
+right alongside the registration that drives it — re-published on change,
+on every core-health MQTT (re)connect, and on each daily poll. The
+`update` entity's own availability is core-health's, not the owning
+component's (the registration payload carries no availability topic of
+its own), the same choice already made for the message-processor/receiver
+counter mimicry above. `management-ui` and `map` are covered the same as
+everything else now that they publish a minimal Home Assistant presence
+of their own (`shared/mqtt_presence.py`, which self-registers on their
+behalf in the same call).
 
 ### Redis keys
 
@@ -245,8 +257,9 @@ passthrough fields described above:
 | `SkyFollower/core-health/queue/{queue}/statistic/{field}` | Any other SkyFollower-owned queue's stats (e.g. `skyfollower-adsb-unroutable`) |
 | `SkyFollower/message-processor/{id}/statistic/{field}` | Mimicked message-processor counters (exact existing topic) |
 | `SkyFollower/receiver/{name}/statistic/{field}` | Mimicked receiver counters (exact existing topic) |
-| `SkyFollower/{component-namespace}/update` | Per-component "update available" state blob (`{installed_version, latest_version}`) — see [Update-available entities](#update-available-entities) |
-| `homeassistant/update/{component-device-id}_update/config` | Per-component `update` entity discovery config (empty retained payload clears it) |
+| `SkyFollower/register/{id}/update` | Per-component "update available" state blob (`{installed_version, latest_version}`), published by core-health — see [Update-available entities](#update-available-entities) |
+| `homeassistant/update/{id}_update/config` | Per-component `update` entity discovery config, published by core-health (empty retained payload clears it) |
+| `SkyFollower/register/{id}` | Self-registration — subscribed here, **published by every other MQTT-enabled component itself**, not core-health (`shared/mqtt_register.py`) |
 
 Home Assistant autodiscovery configs are published on every MQTT
 (re)connect for the static broker-wide/Redis/general entities, and

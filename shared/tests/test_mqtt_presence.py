@@ -125,3 +125,34 @@ class TestConnect:
         fake_client.connect_async.side_effect = OSError("no route to host")
         with patch("shared.mqtt_presence.build_mqtt_client", return_value=fake_client):
             p.start()  # must not raise
+
+
+class TestSelfRegistration:
+    """management-ui and map both self-register (shared/mqtt_register.py's
+    publish_register()) through this shared connect path, rather than each
+    calling it at their own call site."""
+
+    def test_publish_register_called_with_this_components_device_on_connect(self):
+        with patch.dict("os.environ", {"COMPONENT_IMAGE": "skyfollower-widget"}, clear=True), \
+             patch("shared.mqtt_presence.publish_register") as register:
+            p = _presence({"host": "broker", "port": 1883})
+            fake_client = MagicMock()
+            with patch("shared.mqtt_presence.build_mqtt_client", return_value=fake_client):
+                p.start()
+            p._on_connect(fake_client, None, None, 0, None)
+
+        register.assert_called_once()
+        client_arg, device_arg = register.call_args[0]
+        assert client_arg is fake_client
+        assert device_arg["ids"] == "SkyFollower_widget"
+
+    def test_register_published_again_on_every_reconnect(self):
+        with patch("shared.mqtt_presence.publish_register") as register:
+            p = _presence({"host": "broker", "port": 1883})
+            fake_client = MagicMock()
+            with patch("shared.mqtt_presence.build_mqtt_client", return_value=fake_client):
+                p.start()
+            p._on_connect(fake_client, None, None, 0, None)
+            p._on_connect(fake_client, None, None, 0, None)
+
+        assert register.call_count == 2

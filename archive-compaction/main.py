@@ -58,6 +58,7 @@ from shared.ha_discovery import build_ha_device
 from shared.index_cache import INDEX_CACHE_DIR, delete_local_index, local_index_path
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 
 logger = logging.getLogger("archive-compaction")
 
@@ -591,6 +592,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         name="SkyFollower Archive Compaction",
         model="Archive Compaction",
     )
+    publish_register(client, device)
     stats = [
         ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None),
         ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None),

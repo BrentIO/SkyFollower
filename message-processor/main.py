@@ -55,6 +55,7 @@ from shared.models import (
     generate_flight_id,
 )
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.rabbitmq_topology import (
     ARCHIVE_QUEUE_NAME,
     bind_adsb_queue,
@@ -2270,6 +2271,7 @@ class MessageProcessor:
             name=f"SkyFollower Message Processor {pid}",
             model="Message Processor",
         )
+        publish_register(self._mqtt, device)
         availability = {
             "availability_topic": f"SkyFollower/message-processor/{pid}/status",
             "payload_available": "ONLINE",
