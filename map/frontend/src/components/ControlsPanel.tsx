@@ -1,5 +1,6 @@
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
+import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import type { ProcessorRoster } from "../api/types";
 
 export interface ControlsPanelProps {
@@ -50,11 +51,7 @@ export function ControlsPanel({
           type="button"
           onClick={onToggleHistoryAll}
           aria-pressed={historyAll}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${
-            historyAll
-              ? "border-sky-500 bg-sky-500 text-white"
-              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          }`}
+          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(historyAll)}`}
         >
           History: All
         </button>
@@ -62,11 +59,7 @@ export function ControlsPanel({
           type="button"
           onClick={onToggleLabelsAll}
           aria-pressed={labelsAll}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${
-            labelsAll
-              ? "border-sky-500 bg-sky-500 text-white"
-              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          }`}
+          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(labelsAll)}`}
         >
           Labels: All
         </button>

@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import type { MapFlight } from "../api/types";
+import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON, type IconSpec } from "../lib/actionIcons";
 import { buildAircraftDetail, type AircraftDetailData, type AirportBlockData } from "../lib/aircraftDetail";
 import type { HomePoint } from "../lib/config";
+import { toggleButtonClass } from "../lib/toggleButtonStyle";
 
 // Copied verbatim (Tailwind class strings, not just visually similar hex
 // values) from management-ui/frontend/src/views/LookupView.tsx's
@@ -43,18 +45,39 @@ export interface AircraftDetailPanelProps {
   aircraft: MapFlight;
   home: HomePoint | null;
   onClose: () => void;
+  /** Isolate/Follow/Trace Points are real toggles; Zoom To is one-shot and
+   * never shows an "active" state, so it has no *Active prop. All of the
+   * on/off decisions (re-targeting Isolate on reselect, resetting Follow/
+   * Trace Points on reselect vs. close, deferred eviction) live in
+   * MapView.tsx -- this component is just the controlled button row. */
+  isolateActive: boolean;
+  onToggleIsolate: () => void;
+  onZoomTo: () => void;
+  followActive: boolean;
+  onToggleFollow: () => void;
+  tracePointsActive: boolean;
+  onToggleTracePoints: () => void;
 }
 
 // Persistent left-docked side panel for the single currently-selected
 // aircraft (see lib/selection.ts's single-select nextSelection) -- a
 // different, additional surface from the floating per-aircraft
-// InfoBoxLayer boxes, not a replacement for them. No action buttons yet
-// (Isolate/Zoom To/Follow/Trace Points land separately); only the header's
-// close button. Same visual language as ControlsPanel (rounded-md,
-// bg-white/90 dark:bg-slate-900/90, shadow-md), docked left with the
-// matching top-4/left-4 margin so it never collides with that top-right
-// panel.
-export function AircraftDetailPanel({ aircraft, home, onClose }: AircraftDetailPanelProps) {
+// InfoBoxLayer boxes, not a replacement for them. Same visual language as
+// ControlsPanel (rounded-md, bg-white/90 dark:bg-slate-900/90, shadow-md),
+// docked left with the matching top-4/left-4 margin so it never collides
+// with that top-right panel.
+export function AircraftDetailPanel({
+  aircraft,
+  home,
+  onClose,
+  isolateActive,
+  onToggleIsolate,
+  onZoomTo,
+  followActive,
+  onToggleFollow,
+  tracePointsActive,
+  onToggleTracePoints,
+}: AircraftDetailPanelProps) {
   const data = useMemo(() => buildAircraftDetail(aircraft, home), [aircraft, home]);
 
   const hasHeaderSubline = data.registration != null || data.icaoHex != null;
@@ -147,7 +170,74 @@ export function AircraftDetailPanel({ aircraft, home, onClose }: AircraftDetailP
         <div className={SECTION_BAR}>Flight</div>
         <FlightRows data={data} />
       </div>
+
+      <div className={`${DIVIDER} flex items-center justify-center gap-2 px-4 py-2.5`}>
+        <ActionButton label="Isolate" icon={ISOLATE_ICON} active={isolateActive} onClick={onToggleIsolate} />
+        <ActionButton label="Zoom To" icon={ZOOM_TO_ICON} active={false} onClick={onZoomTo} />
+        <ActionButton label="Follow" icon={FOLLOW_ICON} active={followActive} onClick={onToggleFollow} />
+        <ActionButton
+          label="Trace Points"
+          icon={TRACE_POINTS_ICON}
+          active={tracePointsActive}
+          onClick={onToggleTracePoints}
+        />
+      </div>
     </div>
+  );
+}
+
+// One icon-only action-row button. `active` drives the same toggle
+// coloring as ControlsPanel's "History: All"/"Labels: All" buttons (see
+// lib/toggleButtonStyle.ts) -- Zoom To is one-shot and always passes
+// `active={false}` (see its call site above), so it never shows the
+// pressed/"on" look. `title` doubles as the accessible name (no visible
+// text label at this icon-only size).
+function ActionButton({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: IconSpec;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={`flex h-8 w-8 items-center justify-center rounded border transition-colors ${toggleButtonClass(active)}`}
+    >
+      <ActionIcon spec={icon} />
+    </button>
+  );
+}
+
+// Renders one IconSpec (lib/actionIcons.ts) as an 18x18 stroke icon.
+// `stroke="currentColor"` means the button's own active/inactive text
+// color drives the icon color for free -- no separate icon-color logic.
+function ActionIcon({ spec }: { spec: IconSpec }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {spec.circles?.map((c, i) => <circle key={`c${i}`} cx={c.cx} cy={c.cy} r={c.r} />)}
+      {spec.lines?.map((l, i) => <line key={`l${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />)}
+      {spec.paths?.map((p, i) => <path key={`p${i}`} d={p.d} />)}
+      {spec.polygons?.map((pg, i) => <polygon key={`pg${i}`} points={pg.points} />)}
+    </svg>
   );
 }
 

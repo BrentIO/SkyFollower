@@ -16,6 +16,13 @@ export const RANGE_RING_SOURCE_ID = "sf-range-rings";
 export const RANGE_RING_LAYER_ID = "sf-range-rings-line";
 export const RANGE_RING_LABEL_SOURCE_ID = "sf-range-ring-labels";
 export const RANGE_RING_LABEL_LAYER_ID = "sf-range-ring-labels-text";
+// Aircraft detail panel's Trace Points action (see lib/tracePoints.ts) --
+// always present with the map's other sources/layers, driven to empty
+// data rather than layout-visibility-toggled when off, matching this
+// file's other always-on sources (AIRCRAFT_SOURCE_ID/TRAIL_SOURCE_ID).
+export const TRACE_POINTS_SOURCE_ID = "sf-trace-points";
+export const TRACE_POINTS_CIRCLE_LAYER_ID = "sf-trace-points-circle";
+export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings and their labels are deliberately excluded --

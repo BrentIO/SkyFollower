@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchFlights, fetchFlightHistory } from "../api/flights";
 import type { MapWsEvent } from "../api/types";
-import { applySnapshot, applyTrailSeed, applyWsEvents, type AircraftMap } from "../lib/aircraftState";
+import {
+  applySnapshot,
+  applyTrailSeed,
+  applyWsEvents,
+  releasePendingRemoval,
+  type AircraftMap,
+} from "../lib/aircraftState";
 
 // Reconnect delay after an unexpected WebSocket close -- fixed, not
 // exponential backoff; this view targets a single always-on backend on a
@@ -20,6 +26,15 @@ export interface UseMapFlightsResult {
    * the client-accumulated trail in place.
    */
   seedTrailFor: (icaoHex: string) => void;
+  /**
+   * Applies a `remove` that was deferred because `protectedIcaoHex`
+   * matched at the time it arrived (see aircraftState.ts's
+   * ApplyWsEventsOptions/releasePendingRemoval) -- call this once the
+   * aircraft detail panel closes or the selection moves elsewhere, for
+   * whichever icao_hex was protected just before that. A no-op if nothing
+   * was actually deferred for it.
+   */
+  releaseHold: (icaoHex: string) => void;
 }
 
 // Owns the WebSocket connection + REST snapshot fetch and their
@@ -30,9 +45,27 @@ export interface UseMapFlightsResult {
 // fetched" and "WS live" that a snapshot-then-connect order would leave
 // open. See map/README.md's WebSocket API section and the issue this
 // implements for why this order matters.
-export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlightsResult {
+//
+// `protectedIcaoHex` is the aircraft detail panel's currently-open/selected
+// icao_hex, if any -- threaded into every applyWsEvents call as the
+// eviction-deferral hold (see aircraftState.ts's module docstring). Kept
+// in a ref rather than the effect's dependency array: a selection change
+// must not tear down and reconnect the WebSocket, it just needs the very
+// next processed batch to see the new value.
+export function useMapFlights(
+  wsUrl: string,
+  restFlightsUrl: string,
+  protectedIcaoHex: string | null = null,
+): UseMapFlightsResult {
   const [aircraft, setAircraft] = useState<AircraftMap>({});
   const [connected, setConnected] = useState(false);
+
+  const protectedIcaoHexRef = useRef(protectedIcaoHex);
+  protectedIcaoHexRef.current = protectedIcaoHex;
+
+  const releaseHold = useCallback((icaoHex: string) => {
+    setAircraft((prev) => releasePendingRemoval(prev, icaoHex));
+  }, []);
 
   const seedTrailFor = useCallback(
     (icaoHex: string) => {
@@ -79,7 +112,7 @@ export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlig
           buffer.push(...batch);
           return;
         }
-        setAircraft((prev) => applyWsEvents(prev, batch));
+        setAircraft((prev) => applyWsEvents(prev, batch, { protectedIcaoHex: protectedIcaoHexRef.current }));
       };
 
       ws.onclose = () => {
@@ -99,7 +132,9 @@ export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlig
       fetchFlights(restFlightsUrl)
         .then((snapshot) => {
           if (cancelled) return;
-          const merged = applyWsEvents(applySnapshot(snapshot), buffer);
+          const merged = applyWsEvents(applySnapshot(snapshot), buffer, {
+            protectedIcaoHex: protectedIcaoHexRef.current,
+          });
           buffer.length = 0;
           hasSnapshot = true;
           setAircraft(merged);
@@ -118,5 +153,5 @@ export function useMapFlights(wsUrl: string, restFlightsUrl: string): UseMapFlig
     };
   }, [wsUrl, restFlightsUrl]);
 
-  return { aircraft, connected, seedTrailFor };
+  return { aircraft, connected, seedTrailFor, releaseHold };
 }

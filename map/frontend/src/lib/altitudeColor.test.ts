@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { altitudeColor } from "./altitudeColor";
+import { altitudeColor, darkenColor } from "./altitudeColor";
 
 // Reference values mirrored from
 // management-ui/frontend/src/lib/flightView.test.ts's altitudeColor
@@ -34,5 +34,22 @@ describe("altitudeColor", () => {
     // Both altitudes fall on/after the last h-breakpoint (51000ft, val
     // 360 -> wraps to hue 0), so the color no longer changes past there.
     expect(altitudeColor(51000)).toBe(altitudeColor(100000));
+  });
+});
+
+// Reference values mirrored from management-ui/frontend/src/lib/
+// flightView.test.ts's darkenColor suite -- verbatim port of the same
+// function.
+describe("darkenColor", () => {
+  it("subtracts 10 lightness points, same hue/saturation", () => {
+    expect(darkenColor("hsl(167.6, 88.0%, 40.0%)")).toBe("hsl(167.6, 88.0%, 30.0%)");
+  });
+
+  it("clamps lightness at 0 rather than going negative", () => {
+    expect(darkenColor("hsl(0, 0%, 5.0%)")).toBe("hsl(0, 0%, 0.0%)");
+  });
+
+  it("passes through a string that isn't an hsl(...) color unchanged", () => {
+    expect(darkenColor("not-a-color")).toBe("not-a-color");
   });
 });

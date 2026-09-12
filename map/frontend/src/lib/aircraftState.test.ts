@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MapFlight, MapWsEvent } from "../api/types";
-import { applySnapshot, applyTrailSeed, applyWsEvent, applyWsEvents, MAX_TRAIL_POINTS } from "./aircraftState";
+import {
+  applySnapshot,
+  applyTrailSeed,
+  applyWsEvent,
+  applyWsEvents,
+  MAX_TRAIL_POINTS,
+  releasePendingRemoval,
+} from "./aircraftState";
 
 describe("applySnapshot", () => {
   it("seeds a trail point from each aircraft's current position, when known", () => {
@@ -277,5 +284,110 @@ describe("icon shape resolution", () => {
       aircraft: { icao_hex: "A1B2C3", emitter_category: "A7" },
     });
     expect(state.A1B2C3.shape).toBe("H60");
+  });
+});
+
+describe("eviction deferral -- ApplyWsEventsOptions.protectedIcaoHex / releasePendingRemoval", () => {
+  it("removes an aircraft normally when it isn't the protected one", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const next = applyWsEvent(base, { type: "remove", icao_hex: "A1B2C3" }, { protectedIcaoHex: "OTHER" });
+    expect("A1B2C3" in next).toBe(false);
+  });
+
+  it("defers (does not delete) a remove for the protected aircraft, flagging pendingRemoval instead", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const next = applyWsEvent(base, { type: "remove", icao_hex: "A1B2C3" }, { protectedIcaoHex: "A1B2C3" });
+    expect(next.A1B2C3).toBeDefined();
+    expect(next.A1B2C3.pendingRemoval).toBe(true);
+  });
+
+  it("is idempotent -- a second deferred remove for the same aircraft is a no-op (same reference)", () => {
+    const base = applyWsEvent(applySnapshot([{ icao_hex: "A1B2C3" }]), { type: "remove", icao_hex: "A1B2C3" }, {
+      protectedIcaoHex: "A1B2C3",
+    });
+    const next = applyWsEvent(base, { type: "remove", icao_hex: "A1B2C3" }, { protectedIcaoHex: "A1B2C3" });
+    expect(next).toBe(base);
+  });
+
+  it("a later live update cancels a deferred removal (contact resumed before the panel closed)", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    state = applyWsEvent(state, { type: "remove", icao_hex: "A1B2C3" }, { protectedIcaoHex: "A1B2C3" });
+    expect(state.A1B2C3.pendingRemoval).toBe(true);
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 }, { protectedIcaoHex: "A1B2C3" });
+    expect(state.A1B2C3.pendingRemoval).toBe(false);
+  });
+
+  it("applyWsEvents threads protectedIcaoHex through every event in the batch", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const events: MapWsEvent[] = [{ type: "remove", icao_hex: "A1B2C3" }];
+    const next = applyWsEvents(base, events, { protectedIcaoHex: "A1B2C3" });
+    expect(next.A1B2C3.pendingRemoval).toBe(true);
+  });
+
+  it("releasePendingRemoval applies a deferred removal", () => {
+    const base = applyWsEvent(applySnapshot([{ icao_hex: "A1B2C3" }]), { type: "remove", icao_hex: "A1B2C3" }, {
+      protectedIcaoHex: "A1B2C3",
+    });
+    const next = releasePendingRemoval(base, "A1B2C3");
+    expect("A1B2C3" in next).toBe(false);
+  });
+
+  it("releasePendingRemoval is a no-op (same reference) when nothing was deferred", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const next = releasePendingRemoval(base, "A1B2C3");
+    expect(next).toBe(base);
+  });
+
+  it("releasePendingRemoval is a no-op (same reference) for an untracked aircraft", () => {
+    const base = applySnapshot([]);
+    const next = releasePendingRemoval(base, "UNKNOWN");
+    expect(next).toBe(base);
+  });
+});
+
+describe("Trace Points sample accumulation (AircraftRecord.tracePoints)", () => {
+  const now = 1785499200000; // 2026-07-31T12:00:00Z
+
+  it("seeds a trace point from the snapshot's current position/velocity, when known", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3", lat: 33.94, lon: -118.4, alt: 1000.4, velocity: 415.6 }], now);
+    expect(state.A1B2C3.tracePoints).toEqual([
+      { latitude: 33.94, longitude: -118.4, altitude: 1000, velocity: 416, epochSeconds: now / 1000 },
+    ]);
+  });
+
+  it("leaves tracePoints empty when position is unknown", () => {
+    const state = applySnapshot([{ icao_hex: "A1B2C3", ident: "DAL659" }], now);
+    expect(state.A1B2C3.tracePoints).toEqual([]);
+  });
+
+  it("appends a trace point on a position event, not on a metadata event", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2 }], now);
+    state = applyWsEvent(state, { type: "metadata", icao_hex: "A1B2C3", lat: 5, lon: 6, ident: "DAL1" }, { now });
+    expect(state.A1B2C3.tracePoints).toHaveLength(1); // unchanged
+
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 5.1, lon: 6.1, velocity: 300 }, { now });
+    expect(state.A1B2C3.tracePoints).toHaveLength(2);
+    expect(state.A1B2C3.tracePoints[1]).toEqual({
+      latitude: 5.1,
+      longitude: 6.1,
+      altitude: null,
+      velocity: 300,
+      epochSeconds: now / 1000,
+    });
+  });
+
+  it("does not duplicate a trace point when the position hasn't actually changed", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2 }], now);
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2, velocity: 300 }, { now });
+    expect(state.A1B2C3.tracePoints).toHaveLength(1);
+  });
+
+  it("caps accumulated trace points at MAX_TRAIL_POINTS, keeping the newest", () => {
+    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0 }], now);
+    for (let i = 1; i <= MAX_TRAIL_POINTS + 10; i++) {
+      state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: i, lon: i }, { now });
+    }
+    expect(state.A1B2C3.tracePoints).toHaveLength(MAX_TRAIL_POINTS);
+    expect(state.A1B2C3.tracePoints[state.A1B2C3.tracePoints.length - 1].latitude).toBe(MAX_TRAIL_POINTS + 10);
   });
 });

@@ -21,6 +21,26 @@ export interface TrailPoint {
   altitude: number | null;
 }
 
+// One live sample for the aircraft detail panel's Trace Points action (see
+// components/AircraftDetailPanel.tsx / lib/tracePoints.ts). A parallel,
+// richer accumulation alongside `trail` above rather than an extension of
+// it: `trail` is an established, tested shape consumed by
+// featureCollections.ts/trailSegments.ts, and Trace Points additionally
+// needs velocity and a timestamp per sample (for the "{speed} kt
+// {altitude} ft" + local-time label) that the plain map trail has never
+// needed. Client-accumulated only, same as `trail` -- Trace Points draws
+// this frontend's own live trail, not a server/archive-fetched one (see
+// the issue this implements).
+export interface TracePoint {
+  latitude: number;
+  longitude: number;
+  altitude: number | null;
+  velocity: number | null;
+  /** Unix epoch seconds when this sample was captured (wall-clock read at
+   * push time, not a value carried on the wire -- see pushTracePoint). */
+  epochSeconds: number;
+}
+
 export interface AircraftRecord extends MapFlight {
   /** True after a `stale` event and before the next position/metadata event or a `remove`. */
   stale: boolean;
@@ -32,8 +52,18 @@ export interface AircraftRecord extends MapFlight {
    * trail intact.
    */
   hidden: boolean;
+  /**
+   * True once a `remove` event for this aircraft has been deferred because
+   * its detail panel was open (see ApplyWsEventsOptions.protectedIcaoHex
+   * and releasePendingRemoval below) -- the aircraft stays in state, not
+   * actually evicted, until the panel closes/deselects. Never set outside
+   * that deferral path.
+   */
+  pendingRemoval?: boolean;
   /** Oldest-first; client-accumulated only, see module docstring. */
   trail: TrailPoint[];
+  /** Oldest-first; see TracePoint's own docstring. */
+  tracePoints: TracePoint[];
   /**
    * The resolved silhouette shape key (aircraftIconResolver.ts) and its
    * on-map size multiplier. Computed only when the aircraft's `aircraft`
@@ -76,6 +106,28 @@ function capTrail(trail: TrailPoint[]): TrailPoint[] {
   return trail.length > MAX_TRAIL_POINTS ? trail.slice(trail.length - MAX_TRAIL_POINTS) : trail;
 }
 
+// Same push/dedupe/cap rules as pushTrailPoint, plus velocity and a
+// wall-clock timestamp for Trace Points' label (see TracePoint's
+// docstring). `now` is an injectable epoch-milliseconds reading (default
+// Date.now()) purely so callers/tests can pin it -- there is no per-sample
+// timestamp on the wire to use instead.
+function pushTracePoint(points: TracePoint[], flight: Partial<MapFlight>, now: number): TracePoint[] {
+  if (flight.lat == null || flight.lon == null) return points;
+  const point: TracePoint = {
+    latitude: flight.lat,
+    longitude: flight.lon,
+    altitude: flight.alt != null ? Math.round(flight.alt) : null,
+    velocity: flight.velocity != null ? Math.round(flight.velocity) : null,
+    epochSeconds: Math.floor(now / 1000),
+  };
+  const last = points[points.length - 1];
+  if (last && last.latitude === point.latitude && last.longitude === point.longitude) {
+    return points; // Same position as the last sample -- nothing new to plot.
+  }
+  const next = [...points, point];
+  return next.length > MAX_TRAIL_POINTS ? next.slice(next.length - MAX_TRAIL_POINTS) : next;
+}
+
 // Replaces an aircraft's client-accumulated trail with the server's own
 // accumulated trail (GET /api/flights/{icao_hex}'s `trail`), converting the
 // wire shape (`lat`/`lon`/`alt`) to TrailPoint and dropping any point with
@@ -107,8 +159,9 @@ export function applyTrailSeed(
 // Builds the initial AircraftMap from GET /api/flights. Seeds each
 // aircraft's trail with one point from its current position, if known,
 // so a trail already has a starting dot before any live position event
-// arrives.
-export function applySnapshot(snapshot: MapFlight[]): AircraftMap {
+// arrives. `now` (default Date.now()) is only relevant to the Trace
+// Points seed point's timestamp -- see pushTracePoint.
+export function applySnapshot(snapshot: MapFlight[], now: number = Date.now()): AircraftMap {
   const state: AircraftMap = {};
   for (const flight of snapshot) {
     const shape = resolveAircraftShape(flight.aircraft);
@@ -117,11 +170,31 @@ export function applySnapshot(snapshot: MapFlight[]): AircraftMap {
       stale: false,
       hidden: false,
       trail: pushTrailPoint([], flight),
+      tracePoints: pushTracePoint([], flight, now),
       shape,
       iconScale: shapeScale(shape),
     };
   }
   return state;
+}
+
+export interface ApplyWsEventsOptions {
+  /**
+   * The icao_hex the aircraft detail panel currently has open, if any (see
+   * components/MapView.tsx / the panel's close-button eviction contract).
+   * A `remove` event for this icao_hex is deferred (the record stays in
+   * state, flagged `pendingRemoval`) rather than deleting it -- an
+   * aircraft the operator is actively looking at must never disappear out
+   * from under the open panel. Every other event type (including `hide`)
+   * is applied normally regardless of this option; only final eviction is
+   * deferred. Call releasePendingRemoval() once the panel closes/deselects
+   * to apply the deferred removal. See this module's docstring and the
+   * issue this implements for the frontend-vs-backend design discussion.
+   */
+  protectedIcaoHex?: string | null;
+  /** Injectable wall-clock reading (epoch milliseconds) for Trace Points
+   * sample timestamps -- see pushTracePoint. Defaults to Date.now(). */
+  now?: number;
 }
 
 // Applies one WebSocket event on top of existing state. Never mutates
@@ -131,7 +204,8 @@ export function applySnapshot(snapshot: MapFlight[]): AircraftMap {
 // backend's own merge-never-overwrite semantics (map/state_store.py's
 // apply_update): a field absent from this event leaves the existing
 // value untouched.
-export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap {
+export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: ApplyWsEventsOptions): AircraftMap {
+  const now = options?.now ?? Date.now();
   switch (event.type) {
     case "position":
     case "metadata": {
@@ -140,14 +214,17 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
       const { type: _type, ...fields } = event;
       const merged: AircraftRecord = {
         ...(existing ?? {
-          icao_hex, stale: false, hidden: false, trail: [],
+          icao_hex, stale: false, hidden: false, trail: [], tracePoints: [],
           shape: FALLBACK_SHAPE, iconScale: shapeScale(FALLBACK_SHAPE),
         }),
         ...fields,
         stale: false, // Any live update un-fades a previously-stale aircraft.
         hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
+        pendingRemoval: false, // ...and cancels a deferred eviction (contact resumed).
       };
       merged.trail = event.type === "position" ? pushTrailPoint(existing?.trail ?? [], merged) : (existing?.trail ?? []);
+      merged.tracePoints =
+        event.type === "position" ? pushTracePoint(existing?.tracePoints ?? [], merged, now) : (existing?.tracePoints ?? []);
       // Only a `metadata` event carries the `aircraft` sub-object, so only
       // then can the resolved silhouette change -- a `position` event just
       // keeps whatever was resolved last.
@@ -170,7 +247,13 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
       return { ...state, [event.icao_hex]: { ...existing, hidden: true } };
     }
     case "remove": {
-      if (!(event.icao_hex in state)) return state;
+      const existing = state[event.icao_hex];
+      if (!existing) return state;
+      if (options?.protectedIcaoHex === event.icao_hex) {
+        // Deferred eviction -- see ApplyWsEventsOptions.protectedIcaoHex.
+        if (existing.pendingRemoval) return state;
+        return { ...state, [event.icao_hex]: { ...existing, pendingRemoval: true } };
+      }
       const next = { ...state };
       delete next[event.icao_hex];
       return next;
@@ -180,6 +263,19 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent): AircraftMap
   }
 }
 
-export function applyWsEvents(state: AircraftMap, events: MapWsEvent[]): AircraftMap {
-  return events.reduce(applyWsEvent, state);
+export function applyWsEvents(state: AircraftMap, events: MapWsEvent[], options?: ApplyWsEventsOptions): AircraftMap {
+  return events.reduce((acc, event) => applyWsEvent(acc, event, options), state);
+}
+
+// Applies a `remove` that was previously deferred by protectedIcaoHex (see
+// ApplyWsEventsOptions) -- called once the aircraft detail panel closes or
+// deselects. A no-op (same reference) if the aircraft was never flagged
+// pendingRemoval (nothing was ever deferred, so there's nothing to apply)
+// or is no longer tracked at all.
+export function releasePendingRemoval(state: AircraftMap, icaoHex: string): AircraftMap {
+  const existing = state[icaoHex];
+  if (!existing || !existing.pendingRemoval) return state;
+  const next = { ...state };
+  delete next[icaoHex];
+  return next;
 }
