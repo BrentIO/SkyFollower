@@ -26,6 +26,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
+import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
@@ -116,6 +117,22 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
     prevSelectedRef.current = selected;
   }, [selected, seedTrailFor]);
+
+  // "History: All" should show every tracked aircraft's full server trail,
+  // not just whatever it's accumulated client-side since page load, and not
+  // just the aircraft that happen to be individually selected. Seeds every
+  // aircraft not yet seeded whenever the toggle is on -- covering both the
+  // initial flip and any aircraft that newly appears while it's already on.
+  // `historySeededRef` only grows, so toggling off/on or a later WS tick for
+  // an already-seeded aircraft never re-fetches it.
+  const historySeededRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const needed = aircraftNeedingHistorySeed(historyAll, Object.keys(aircraft), historySeededRef.current);
+    for (const icaoHex of needed) {
+      historySeededRef.current.add(icaoHex);
+      seedTrailFor(icaoHex);
+    }
+  }, [historyAll, aircraft, seedTrailFor]);
 
   // --- Map construction (once) ---------------------------------------
   useEffect(() => {
