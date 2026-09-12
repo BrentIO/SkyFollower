@@ -947,7 +947,7 @@ class ArchiveProcessor:
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, None),
             ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None, None),
             ("dead_letter_index_queue_depth", "Dead Letter Index Queue Depth", "mdi:skull-crossbones", "measurement", None, None),
-            ("started_at", "Start Time", "mdi:clock", None, None, "timestamp"),
+            ("started_at", "Start Time", "mdi:clock-start", None, None, "timestamp"),
         ]
         for name, desc, icon, state_class, unit, device_class in sensors:
             payload: dict = {
