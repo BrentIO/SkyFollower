@@ -316,7 +316,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     mapRef.current = map;
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
 
     function syncScreenPositions() {
       const current = aircraftRef.current;
