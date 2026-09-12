@@ -531,6 +531,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
         el.style.alignItems = "center";
         el.style.gap = "2px";
         el.style.pointerEvents = "none";
+        // MapLibre appends this element directly as a sibling of its WebGL
+        // canvas (no wrapper div), so a negative z-index here is what keeps
+        // it behind aircraft icons drawn on the canvas -- otherwise DOM
+        // insertion order would put this marker on top.
+        el.style.zIndex = "-1";
         el.innerHTML =
           `<div style="width:12px;height:12px;border-radius:50%;background:#000000;"></div>` +
           `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">HOME</span>`;
