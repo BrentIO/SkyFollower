@@ -23,10 +23,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("loadConfig -- home, fetched from GET /api/config", () => {
-  it("resolves home from a successful /api/config response", async () => {
+describe("loadConfig -- center, fetched from GET /api/config", () => {
+  it("resolves center from a successful /api/config response", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ home: { latitude: 33.9425, longitude: -118.4081 } }), {
+      new Response(JSON.stringify({ center: { latitude: 33.9425, longitude: -118.4081 } }), {
         status: 200,
       }),
     );
@@ -34,41 +34,41 @@ describe("loadConfig -- home, fetched from GET /api/config", () => {
     const config = await loadConfig();
 
     expect(fetch).toHaveBeenCalledWith("/api/config");
-    expect(config.home).toEqual({ latitude: 33.9425, longitude: -118.4081 });
+    expect(config.center).toEqual({ latitude: 33.9425, longitude: -118.4081 });
   });
 
-  it("resolves home to null when the backend reports no home configured", async () => {
+  it("resolves center to null when the backend reports no center configured", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ home: null }), { status: 200 }),
+      new Response(JSON.stringify({ center: null }), { status: 200 }),
     );
 
     const config = await loadConfig();
 
-    expect(config.home).toBeNull();
+    expect(config.center).toBeNull();
   });
 
-  it("resolves home to null (without throwing) on an HTTP error status", async () => {
+  it("resolves center to null (without throwing) on an HTTP error status", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response("boom", { status: 500 }));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const config = await loadConfig();
 
-    expect(config.home).toBeNull();
+    expect(config.center).toBeNull();
     expect(warnSpy).toHaveBeenCalled();
   });
 
-  it("resolves home to null (without throwing) when the fetch itself rejects", async () => {
+  it("resolves center to null (without throwing) when the fetch itself rejects", async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("network error"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const config = await loadConfig();
 
-    expect(config.home).toBeNull();
+    expect(config.center).toBeNull();
   });
 
-  it("treats a home with a non-finite coordinate as absent", async () => {
+  it("treats a center with a non-finite coordinate as absent", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ home: { latitude: "not-a-number", longitude: -118.4 } }), {
+      new Response(JSON.stringify({ center: { latitude: "not-a-number", longitude: -118.4 } }), {
         status: 200,
       }),
     );
@@ -76,25 +76,25 @@ describe("loadConfig -- home, fetched from GET /api/config", () => {
 
     const config = await loadConfig();
 
-    expect(config.home).toBeNull();
+    expect(config.center).toBeNull();
   });
 });
 
-describe("loadConfig -- dev-only VITE_HOME_LATITUDE/LONGITUDE fallback", () => {
+describe("loadConfig -- dev-only VITE_CENTER_LATITUDE/LONGITUDE fallback", () => {
   it("prefers the dev env override over the network fetch when both are set", async () => {
-    vi.stubEnv("VITE_HOME_LATITUDE", "1.5");
-    vi.stubEnv("VITE_HOME_LONGITUDE", "2.5");
+    vi.stubEnv("VITE_CENTER_LATITUDE", "1.5");
+    vi.stubEnv("VITE_CENTER_LONGITUDE", "2.5");
 
     const config = await loadConfig();
 
-    expect(config.home).toEqual({ latitude: 1.5, longitude: 2.5 });
+    expect(config.center).toEqual({ latitude: 1.5, longitude: 2.5 });
     expect(fetch).not.toHaveBeenCalled();
   });
 });
 
 describe("loadConfig -- apiBaseUrl/restFlightsUrl/wsUrl", () => {
   beforeEach(() => {
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ home: null }), { status: 200 }));
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ center: null }), { status: 200 }));
   });
 
   it("defaults to same-origin (empty apiBaseUrl) when VITE_MAP_API_BASE_URL is unset", async () => {

@@ -1338,7 +1338,7 @@ paths:
         snapshot from disk (HTTP 404 once past the 30-day retention
         window). `band=<label>` narrows to one band; `band=envelope`
         returns only the envelope. An empty FeatureCollection when no
-        MAP_HOME_LATITUDE/LONGITUDE is configured.
+        MAP_CENTER_LATITUDE/LONGITUDE is configured.
       operationId: get_range_outline_api_range_outline_get
       parameters:
       - name: date
@@ -2520,7 +2520,7 @@ components:
               type: integer
             max_range_nm:
               type: number
-            home:
+            center:
               anyOf:
               - type: object
                 properties:
@@ -2540,7 +2540,7 @@ components:
         bearing points, plus an `envelope` Feature (the farthest point per
         bearing across all bands). A band with fewer than three points is
         omitted; the whole `features` array is empty when no
-        MAP_HOME_LATITUDE/LONGITUDE is configured or nothing has been
+        MAP_CENTER_LATITUDE/LONGITUDE is configured or nothing has been
         received yet.
     MatchedRulesCondition:
       properties:

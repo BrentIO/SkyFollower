@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { MapFlight } from "../api/types";
 import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON } from "../lib/actionIcons";
 import { buildAircraftDetail, type AircraftDetailData, type AirportBlockData } from "../lib/aircraftDetail";
-import type { HomePoint } from "../lib/config";
+import type { CenterPoint } from "../lib/config";
 import { IconButton } from "./IconButton";
 
 // Copied verbatim (Tailwind class strings, not just visually similar hex
@@ -43,7 +43,7 @@ const ROW_VALUE = "text-sm text-slate-900 dark:text-slate-100";
 
 export interface AircraftDetailPanelProps {
   aircraft: MapFlight;
-  home: HomePoint | null;
+  center: CenterPoint | null;
   onClose: () => void;
   /** Isolate/Follow/Trace Points are real toggles; Zoom To is one-shot and
    * never shows an "active" state, so it has no *Active prop. All of the
@@ -68,7 +68,7 @@ export interface AircraftDetailPanelProps {
 // with that top-right panel.
 export function AircraftDetailPanel({
   aircraft,
-  home,
+  center,
   onClose,
   isolateActive,
   onToggleIsolate,
@@ -78,7 +78,7 @@ export function AircraftDetailPanel({
   tracePointsActive,
   onToggleTracePoints,
 }: AircraftDetailPanelProps) {
-  const data = useMemo(() => buildAircraftDetail(aircraft, home), [aircraft, home]);
+  const data = useMemo(() => buildAircraftDetail(aircraft, center), [aircraft, center]);
 
   const hasHeaderSubline = data.registration != null || data.icaoHex != null;
   const hasBadges = data.military || data.specialLivery != null;

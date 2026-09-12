@@ -21,7 +21,7 @@ describe("status box -- connection dot + aircraft count only", () => {
 
 describe("icon-button row -- History, Labels, Map Labels, Range Outline", () => {
   it("renders all four buttons in order below the recenter button", () => {
-    const recenterIndex = controlsPanelSource.indexOf('title="Recenter on home"');
+    const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const labels = ["History: All", "Labels: All", "Map Labels", "Range Outline"];
     const indices = labels.map((label) => controlsPanelSource.indexOf(`label="${label}"`));
     for (const index of indices) expect(index).toBeGreaterThan(recenterIndex);
@@ -49,7 +49,7 @@ describe("icon-button row -- History, Labels, Map Labels, Range Outline", () => 
     expect(controlsPanelSource).toContain("onClick={onToggleRangeOutline}");
   });
 
-  it("Range Outline keeps its existing disabled-when-no-home/center logic", () => {
+  it("Range Outline keeps its existing disabled-when-no-center logic", () => {
     const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
     const callSite = controlsPanelSource.slice(rangeOutlineIndex, rangeOutlineIndex + 200);
     expect(callSite).toContain("disabled={rangeOutlineDisabled}");

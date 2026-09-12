@@ -493,7 +493,7 @@ def test_processors_endpoint_empty_roster_reports_red_overall(server):
 
 @pytest.fixture
 def outline_server(tmp_path):
-    """A map subprocess with a "home" configured (so the range outline is
+    """A map subprocess with a "center" configured (so the range outline is
     enabled) and a fresh snapshot directory."""
     client = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
     try:
@@ -501,8 +501,8 @@ def outline_server(tmp_path):
     finally:
         client.close()
     srv = _Server(extra_env={
-        "MAP_HOME_LATITUDE": "34.0",
-        "MAP_HOME_LONGITUDE": "-118.0",
+        "MAP_CENTER_LATITUDE": "34.0",
+        "MAP_CENTER_LONGITUDE": "-118.0",
         "MAP_RANGE_OUTLINE_DIR": str(tmp_path),
     })
     srv.snapshot_dir = tmp_path
@@ -515,10 +515,10 @@ def outline_server(tmp_path):
         client.close()
 
 
-def _dest(bearing_deg, nm, home=(34.0, -118.0)):
+def _dest(bearing_deg, nm, center=(34.0, -118.0)):
     import math
     ang = nm / 3440.065
-    brg, phi1, lam1 = math.radians(bearing_deg), math.radians(home[0]), math.radians(home[1])
+    brg, phi1, lam1 = math.radians(bearing_deg), math.radians(center[0]), math.radians(center[1])
     phi2 = math.asin(math.sin(phi1) * math.cos(ang) + math.cos(phi1) * math.sin(ang) * math.cos(brg))
     lam2 = lam1 + math.atan2(math.sin(brg) * math.sin(ang) * math.cos(phi1),
                              math.cos(ang) - math.sin(phi1) * math.sin(phi2))
@@ -551,7 +551,7 @@ def test_range_outline_accumulates_and_returns_geojson(outline_server):
     assert body["properties"]["max_range_nm"] > 100
 
 
-def test_range_outline_empty_when_no_home(server):
+def test_range_outline_empty_when_no_center(server):
     status, body = server.get_range_outline()
     assert status == 200
     assert body["features"] == []

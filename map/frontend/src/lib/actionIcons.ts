@@ -18,8 +18,8 @@
 // no prior precedent anywhere in this codebase; picked per the issue's
 // suggested icon set (Focus = "focus on this one", LocateFixed = "center/
 // target this position" and visually distinct from lib/crosshairIcon.ts's
-// recenter-on-home glyph, Navigation = the conventional map-app "follow
-// me" compass-arrow).
+// recenter glyph, Navigation = the conventional map-app "follow me"
+// compass-arrow).
 //
 // ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON are Lucide's "Route"/"Tags"/
 // "Type"/"Radar" glyphs (fetched byte-for-byte from lucide-icons/lucide,

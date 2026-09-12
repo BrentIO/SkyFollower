@@ -68,7 +68,7 @@ function registerShapeImage(map: maplibregl.Map, shapeKey: string): void {
 
 // Top-level export: fetches runtime config (GET /api/config -- see
 // map/lib/config.ts's loadConfig) once before the actual map ever mounts,
-// since the map's initial center/zoom and home marker depend on it. A
+// since the map's initial center/zoom and center marker depend on it. A
 // brief loading state is expected and fine here; the fetch is one small
 // same-origin round-trip made once per page load.
 export function MapView() {
@@ -98,9 +98,9 @@ export function MapView() {
 // Full-viewport MapLibre live map: aircraft icon layer (heading rotation,
 // altitude-colored fill), live trails, floating info boxes shown only for
 // selected/hovered aircraft (or every aircraft via "Labels: All"),
-// floating top-right controls, and a "home" reference-point marker/recenter.
+// floating top-right controls, and a "center" reference-point marker/recenter.
 // See the issue this implements for the full design spec. Only ever mounted
-// once `config` has resolved (see MapView above), so every `config.home`
+// once `config` has resolved (see MapView above), so every `config.center`
 // read below is a plain, already-loaded value -- no further async handling
 // needed in here.
 function MapViewInner({ config }: { config: AppConfig }) {
@@ -136,7 +136,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const [rangeOutlineVisible, setRangeOutlineVisible] = useState(
     () => loadPersistedControls().rangeOutlineVisible,
   );
-  const rangeOutline = useRangeOutline(config.apiBaseUrl, rangeOutlineVisible && !!config.home);
+  const rangeOutline = useRangeOutline(config.apiBaseUrl, rangeOutlineVisible && !!config.center);
   // Basemap's own text labels (place names, road names/shields, water
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
@@ -330,8 +330,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
       style: MAP_STYLE,
-      center: config.home ? [config.home.longitude, config.home.latitude] : [0, 0],
-      zoom: config.home ? 9 : 1,
+      center: config.center ? [config.center.longitude, config.center.latitude] : [0, 0],
+      zoom: config.center ? 9 : 1,
       // Locked north-up -- the aircraft icon rotates via icon-rotate,
       // never the map itself. Same lock pattern as every existing
       // MapLibre view in management-ui/frontend.
@@ -385,14 +385,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // below).
       registerShapeImage(map, FALLBACK_SHAPE);
 
-      // Static "home" range rings (100/150/200nmi) -- computed once from
-      // config.home, which never changes after this component mounts (see
+      // Static "center" range rings (100/150/200nmi) -- computed once from
+      // config.center, which never changes after this component mounts (see
       // MapView above). Added before the trail/aircraft layers so they
       // render beneath live traffic. Not part of SELECTABLE_LAYER_IDS, so
       // clicking a ring or its label never triggers aircraft selection.
       map.addSource(RANGE_RING_SOURCE_ID, {
         type: "geojson",
-        data: rangeRingsFeatureCollection(config.home),
+        data: rangeRingsFeatureCollection(config.center),
       });
       map.addLayer({
         id: RANGE_RING_LAYER_ID,
@@ -403,7 +403,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
       map.addSource(RANGE_RING_LABEL_SOURCE_ID, {
         type: "geojson",
-        data: rangeRingLabelsFeatureCollection(config.home),
+        data: rangeRingLabelsFeatureCollection(config.center),
       });
       map.addLayer({
         id: RANGE_RING_LABEL_LAYER_ID,
@@ -608,9 +608,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         setHoveredId(icaoHex ?? null);
       });
 
-      // Home / centered reference point -- a fixed marker from config,
-      // never derived from received data.
-      if (config.home) {
+      // Centered reference point -- a fixed marker from config, never
+      // derived from received data.
+      if (config.center) {
         const el = document.createElement("div");
         el.style.display = "flex";
         el.style.flexDirection = "column";
@@ -624,9 +624,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         el.style.zIndex = "-1";
         el.innerHTML =
           `<div style="width:12px;height:12px;border-radius:50%;background:#000000;"></div>` +
-          `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">HOME</span>`;
+          `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">CENTER</span>`;
         new maplibregl.Marker({ element: el, anchor: "center" })
-          .setLngLat([config.home.longitude, config.home.latitude])
+          .setLngLat([config.center.longitude, config.center.latitude])
           .addTo(map);
       }
 
@@ -661,7 +661,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   // "Range Outline" toggle -- pushes the polled envelope (useRangeOutline
   // above, which itself stops polling and reports an empty
-  // FeatureCollection whenever this is off/no home configured) into the
+  // FeatureCollection whenever this is off/no center configured) into the
   // source. Keyed on `rangeOutline` so a poll result while it's on updates
   // the map on arrival, and on the toggle so switching off clears the
   // overlay immediately rather than waiting for the hook's own reset to
@@ -740,7 +740,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   function handleRecenter() {
     const map = mapRef.current;
-    if (!map || !config.home) return;
+    if (!map || !config.center) return;
     // Recentering is an explicit navigation action, same as a manual drag --
     // it should win outright rather than race Follow's own recenter effect,
     // which would otherwise re-fire on the very next `aircraft` update and
@@ -748,7 +748,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     cancelFollow();
     // Preserves whatever zoom level the user is already at -- only the
     // center changes.
-    map.easeTo({ center: [config.home.longitude, config.home.latitude] });
+    map.easeTo({ center: [config.center.longitude, config.center.latitude] });
   }
 
   // Zoom To: one-shot recenter on the selected aircraft's current
@@ -793,7 +793,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
       {selectedAircraft && (
         <AircraftDetailPanel
           aircraft={selectedAircraft}
-          home={config.home}
+          center={config.center}
           onClose={() => setSelected(new Set())}
           isolateActive={isolateEnabled}
           onToggleIsolate={() => setIsolateEnabled((prev) => !prev)}
@@ -816,9 +816,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         onToggleMapLabels={() => setMapLabelsOn((prev) => !prev)}
         rangeOutlineVisible={rangeOutlineVisible}
         onToggleRangeOutline={() => setRangeOutlineVisible((prev) => !prev)}
-        rangeOutlineDisabled={!config.home}
+        rangeOutlineDisabled={!config.center}
         onRecenter={handleRecenter}
-        recenterDisabled={!config.home}
+        recenterDisabled={!config.center}
       />
     </div>
   );

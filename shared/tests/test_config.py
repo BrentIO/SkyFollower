@@ -572,15 +572,15 @@ class TestBlockHelpers:
         }
 
     def test_map_config_requires_listen_port_only(self, monkeypatch):
-        """MAP_LISTEN_PORT has no default; MAP_HOME_LATITUDE/LONGITUDE are
+        """MAP_LISTEN_PORT has no default; MAP_CENTER_LATITUDE/LONGITUDE are
         optional and must not be required just because the block itself
         is being validated."""
-        monkeypatch.delenv("MAP_HOME_LATITUDE", raising=False)
-        monkeypatch.delenv("MAP_HOME_LONGITUDE", raising=False)
+        monkeypatch.delenv("MAP_CENTER_LATITUDE", raising=False)
+        monkeypatch.delenv("MAP_CENTER_LONGITUDE", raising=False)
         monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
         cfg = map_config()
-        assert cfg["map_home_latitude"] is None
-        assert cfg["map_home_longitude"] is None
+        assert cfg["map_center_latitude"] is None
+        assert cfg["map_center_longitude"] is None
 
     def test_map_config_defaults_lifecycle_ttls_in_order(self, monkeypatch):
         monkeypatch.delenv("MAP_STALE_SECONDS", raising=False)
@@ -617,25 +617,25 @@ class TestBlockHelpers:
         cfg = map_config()
         assert (cfg["map_stale_seconds"], cfg["map_hide_seconds"], cfg["map_evict_seconds"]) == (30, 60, 300)
 
-    def test_map_config_reads_home_lat_long(self):
+    def test_map_config_reads_center_lat_long(self):
         cfg = map_config(ConfigLoader({
             "MAP_LISTEN_PORT": "30500",
-            "MAP_HOME_LATITUDE": "33.9425",
-            "MAP_HOME_LONGITUDE": "-118.4081",
+            "MAP_CENTER_LATITUDE": "33.9425",
+            "MAP_CENTER_LONGITUDE": "-118.4081",
         }))
-        assert cfg["map_home_latitude"] == 33.9425
-        assert cfg["map_home_longitude"] == -118.4081
+        assert cfg["map_center_latitude"] == 33.9425
+        assert cfg["map_center_longitude"] == -118.4081
 
     @pytest.mark.parametrize(
         "name,value",
         [
-            ("MAP_HOME_LATITUDE", "91"),
-            ("MAP_HOME_LATITUDE", "-91"),
-            ("MAP_HOME_LONGITUDE", "181"),
-            ("MAP_HOME_LONGITUDE", "-181"),
+            ("MAP_CENTER_LATITUDE", "91"),
+            ("MAP_CENTER_LATITUDE", "-91"),
+            ("MAP_CENTER_LONGITUDE", "181"),
+            ("MAP_CENTER_LONGITUDE", "-181"),
         ],
     )
-    def test_map_config_rejects_out_of_range_home_coordinates(self, name, value, monkeypatch):
+    def test_map_config_rejects_out_of_range_center_coordinates(self, name, value, monkeypatch):
         monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
         monkeypatch.setenv(name, value)
         with pytest.raises(ConfigError):

@@ -6,7 +6,7 @@ calculation -- a destination point given a start, bearing and distance --
 for drawing the fixed range rings. This module is the *inverse*: the
 bearing and great-circle distance *between* two points, used by
 `map/range_outline.py` to bucket every received position by its compass
-direction and distance from the configured "home" reference point.
+direction and distance from the configured "center" reference point.
 
 Both use a spherical earth (mean radius). At the ranges an ADS-B receiver
 covers (a few hundred nautical miles) the error versus an ellipsoidal

@@ -91,8 +91,8 @@ host's `.env`.
 
 `MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS` must hold --
 `shared/config.py`'s `map_config()` rejects a misordered `.env` at startup.
-| `MAP_HOME_LATITUDE` | ❌ | — | Centered reference point ("home") for the frontend's on-map marker, initial camera position, and "Recenter on home" button. Both required together, or neither -- without them the map still renders, just without a home marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
-| `MAP_HOME_LONGITUDE` | ❌ | — | |
+| `MAP_CENTER_LATITUDE` | ❌ | — | Centered reference point ("center") for the frontend's on-map marker, initial camera position, and "Return to center" button. Both required together, or neither -- without them the map still renders, just without a center marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
+| `MAP_CENTER_LONGITUDE` | ❌ | — | |
 | `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely (see [MQTT and Home Assistant](#mqtt-and-home-assistant) below) |
 | `MQTT_PORT` | ❌ | `1883` | |
 | `MQTT_USERNAME` | ❌ | — | Optional MQTT auth; leave unset for an anonymous broker |
@@ -482,10 +482,10 @@ flat top-level object with named sub-keys, so a later addition doesn't
 need a breaking shape change:
 
 ```json
-{ "home": { "latitude": 33.9425, "longitude": -118.4081 } }
+{ "center": { "latitude": 33.9425, "longitude": -118.4081 } }
 ```
 
-or `{ "home": null }` when `MAP_HOME_LATITUDE`/`MAP_HOME_LONGITUDE` are
+or `{ "center": null }` when `MAP_CENTER_LATITUDE`/`MAP_CENTER_LONGITUDE` are
 unset. See [Configuration](#configuration) above and `src/lib/config.ts`
 under [Frontend](#frontend-frontend) below.
 
@@ -498,11 +498,11 @@ half-degree bearing resolution -- finer than readsb's own
 actual-range-outline (360 one-degree bearing buckets, per-bucket farthest
 received position), deliberately, since this runs centrally and aggregates
 *every* receiver and external feed, not one antenna. Requires a configured
-home (`MAP_HOME_LATITUDE`/`LONGITUDE`) -- there's no origin to measure from
-otherwise, and the endpoint returns an empty `FeatureCollection`.
+center (`MAP_CENTER_LATITUDE`/`LONGITUDE`) -- there's no origin to measure
+from otherwise, and the endpoint returns an empty `FeatureCollection`.
 
 **Accumulation.** For each accepted `position`, the service computes the
-great-circle bearing and distance from home and, if that distance beats
+great-circle bearing and distance from center and, if that distance beats
 the farthest yet seen in that `{bearing, altitude-band}` bucket, records
 the actual aircraft coordinate. Buckets live in one Redis hash
 (`map:range:outline`, `map/range_outline.py`). Altitude bands:
@@ -549,7 +549,7 @@ it clears and rebuilds fresh at every UTC rollover regardless.
 (vertices `[lon, lat, alt_ft]`, closed ring, ascending bearing), plus an
 `envelope` Feature (farthest per bearing across all bands). Top-level
 `properties`: `date`, `generated_at`, `point_count`, `max_range_nm`,
-`home`. No `date` parameter -> today's live outline; `date=YYYY-MM-DD` ->
+`center`. No `date` parameter -> today's live outline; `date=YYYY-MM-DD` ->
 that day's finalised snapshot (`HTTP 404` past the retention window,
 `HTTP 400` for a malformed date). `band=<label>` narrows to one band;
 `band=envelope` returns only the envelope.
@@ -661,12 +661,12 @@ aircraft's trail from the server's own accumulation, so a selected
 aircraft's trail covers the whole flight and survives a page reload -- see
 [REST API](#rest-api) above; both the trail line and the Aircraft Detail
 Panel's separate Trace Points buffer are capped independently, see [Trail
-History Caps](#trail-history-caps) above), a fixed "home" marker/recenter button from
+History Caps](#trail-history-caps) above), a fixed "center" marker/recenter button from
 the backend's `GET /api/config` (see [REST API](#rest-api) above), and a
 "Range Outline" toggle that draws today's reception range outline (the
 `envelope` band from `GET /api/range-outline`, see [Range
 Outline](#range-outline) above) as a `#196363` line, twice the width of the
-static range rings -- disabled when no home is configured, since the
+static range rings -- disabled when no center is configured, since the
 backend has no origin to measure from in that case either.
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
@@ -725,8 +725,8 @@ backend has no origin to measure from in that case either.
   (amber = "at least one processor reconnecting/disconnected, but at
   least one still connected"), and hovering it lists every rostered
   processor by `processor_id` with its own status label. Its "Range
-  Outline" toggle is disabled whenever no home is configured, matching the
-  recenter button's own disabled state.
+  Outline" toggle is disabled whenever no center is configured, matching
+  the recenter button's own disabled state.
 
 ```bash
 cd map/frontend
@@ -777,9 +777,9 @@ one generic marker.
 ### Frontend Configuration
 
 `src/lib/config.ts`'s `loadConfig()` fetches `GET /api/config` (see
-[REST API](#rest-api) above) once at page load for the "home" reference
-point -- a runtime value read from this service's own `MAP_HOME_LATITUDE`/
-`MAP_HOME_LONGITUDE` (see [Configuration](#configuration) above), not a
+[REST API](#rest-api) above) once at page load for the "center" reference
+point -- a runtime value read from this service's own `MAP_CENTER_LATITUDE`/
+`MAP_CENTER_LONGITUDE` (see [Configuration](#configuration) above), not a
 Vite build-time value. Changing it on the backend takes effect on the next
 page load; no frontend rebuild required.
 
@@ -790,7 +790,7 @@ bundle at `npm run build` time -- see `.env.example`):
 |---|---|---|---|
 | `VITE_MAP_API_BASE_URL` | ❌ | same-origin | Base URL of this service's REST/WebSocket API. Leave unset when the built frontend is served from the same host:port as this service |
 
-`VITE_HOME_LATITUDE`/`VITE_HOME_LONGITUDE` still exist, but only as an
+`VITE_CENTER_LATITUDE`/`VITE_CENTER_LONGITUDE` still exist, but only as an
 `npm run dev` fallback (Vite's dev server has no backend at the same
 origin to serve `GET /api/config` unless a proxy is set up) -- see
 `.env.example`. They have no effect on a production build or the

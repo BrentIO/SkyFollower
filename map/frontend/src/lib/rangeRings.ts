@@ -1,14 +1,14 @@
-// Pure geodesic math + GeoJSON builders for the "home" range-ring overlay.
+// Pure geodesic math + GeoJSON builders for the "center" range-ring overlay.
 // MapLibre has no native fixed-real-world-radius circle layer -- its
 // `circle` layer type is a fixed pixel radius that doesn't correspond to a
 // real distance and warps with zoom/latitude. Each ring is instead built
 // here as a many-vertex closed LineString whose points are geodesic
-// destination points around the home coordinate (a spherical "reckon"
+// destination points around the center coordinate (a spherical "reckon"
 // calculation), not a flat-projected circle -- at 100-200nmi, a naive
 // circle would visibly warp away from the equator.
 
 import type { Feature, FeatureCollection } from "geojson";
-import type { HomePoint } from "./config";
+import type { CenterPoint } from "./config";
 
 // Mean earth radius (IUGG), expressed in nautical miles. Exported so
 // geo.ts's greatCircleNm() -- the inverse of this file's destinationPoint(),
@@ -36,7 +36,7 @@ function toDegrees(rad: number): number {
  * coordinate order.
  */
 export function destinationPoint(
-  center: HomePoint,
+  center: CenterPoint,
   bearingDegrees: number,
   distanceNm: number,
 ): [number, number] {
@@ -65,7 +65,7 @@ export function destinationPoint(
  * Closed ring of geodesic points at `radiusNm` around `center`, suitable as
  * a GeoJSON LineString's coordinates (first and last point identical).
  */
-export function ringCoordinates(center: HomePoint, radiusNm: number): [number, number][] {
+export function ringCoordinates(center: CenterPoint, radiusNm: number): [number, number][] {
   const coordinates: [number, number][] = [];
   for (let i = 0; i <= RING_VERTEX_COUNT; i++) {
     const bearing = (360 * i) / RING_VERTEX_COUNT;
@@ -74,18 +74,18 @@ export function ringCoordinates(center: HomePoint, radiusNm: number): [number, n
   return coordinates;
 }
 
-// Returns an empty FeatureCollection when there's no home point -- same
-// "no home configured -> nothing drawn, no error" behavior as the existing
-// home marker/recenter button (see config.ts).
+// Returns an empty FeatureCollection when there's no center point -- same
+// "no center configured -> nothing drawn, no error" behavior as the
+// existing center marker/recenter button (see config.ts).
 
 export function rangeRingsFeatureCollection(
-  home: HomePoint | null,
+  center: CenterPoint | null,
   radiiNm: readonly number[] = RANGE_RING_RADII_NM,
 ): FeatureCollection {
-  if (!home) return { type: "FeatureCollection", features: [] };
+  if (!center) return { type: "FeatureCollection", features: [] };
   const features: Feature[] = radiiNm.map((radiusNm) => ({
     type: "Feature",
-    geometry: { type: "LineString", coordinates: ringCoordinates(home, radiusNm) },
+    geometry: { type: "LineString", coordinates: ringCoordinates(center, radiusNm) },
     properties: { radiusNm },
   }));
   return { type: "FeatureCollection", features };
@@ -93,16 +93,16 @@ export function rangeRingsFeatureCollection(
 
 /**
  * One label point per ring, at its southernmost point (bearing 180 from
- * home) -- e.g. `{ label: "100 nmi" }` 100nmi due south of home.
+ * center) -- e.g. `{ label: "100 nmi" }` 100nmi due south of center.
  */
 export function rangeRingLabelsFeatureCollection(
-  home: HomePoint | null,
+  center: CenterPoint | null,
   radiiNm: readonly number[] = RANGE_RING_RADII_NM,
 ): FeatureCollection {
-  if (!home) return { type: "FeatureCollection", features: [] };
+  if (!center) return { type: "FeatureCollection", features: [] };
   const features: Feature[] = radiiNm.map((radiusNm) => ({
     type: "Feature",
-    geometry: { type: "Point", coordinates: destinationPoint(home, 180, radiusNm) },
+    geometry: { type: "Point", coordinates: destinationPoint(center, 180, radiusNm) },
     properties: { radiusNm, label: `${radiusNm} nmi` },
   }));
   return { type: "FeatureCollection", features };

@@ -2,14 +2,14 @@
 // startup (see map/main.py's get_config) -- Vite's build-time
 // import.meta.env.VITE_* mechanism only ever produces one baked-in bundle,
 // and the published ghcr.io/brentio/skyfollower-map image is built with
-// none of these set, so a per-deployment value (the "home" reference
+// none of these set, so a per-deployment value (the "center" reference
 // point) has to come from the network instead. VITE_MAP_API_BASE_URL is
 // still resolved at build time -- see resolveApiBaseUrl() below -- since
 // same-origin is the correct default for this project's bundled
 // single-container deployment and there's no bootstrapping problem there
-// (unlike home, which has no sane build-time default at all).
+// (unlike center, which has no sane build-time default at all).
 
-export interface HomePoint {
+export interface CenterPoint {
   latitude: number;
   longitude: number;
 }
@@ -20,14 +20,15 @@ export interface AppConfig {
   restFlightsUrl: string;
   restProcessorsUrl: string;
   wsUrl: string;
-  /** null when no home reference point is configured on the backend (or,
-   * in `npm run dev`, when VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE are also
-   * unset/invalid) -- home marker and recenter are simply not shown. */
-  home: HomePoint | null;
+  /** null when no center reference point is configured on the backend (or,
+   * in `npm run dev`, when VITE_CENTER_LATITUDE/VITE_CENTER_LONGITUDE are
+   * also unset/invalid) -- center marker and recenter are simply not
+   * shown. */
+  center: CenterPoint | null;
 }
 
 interface ApiConfigResponse {
-  home: HomePoint | null;
+  center: CenterPoint | null;
 }
 
 function resolveApiBaseUrl(): string {
@@ -44,31 +45,31 @@ function resolveWsUrl(apiBaseUrl: string): string {
   return `${apiBaseUrl.replace(/^http/, "ws")}/ws`;
 }
 
-function isValidHome(home: HomePoint | null | undefined): home is HomePoint {
+function isValidCenter(center: CenterPoint | null | undefined): center is CenterPoint {
   return (
-    !!home &&
-    Number.isFinite(home.latitude) &&
-    Number.isFinite(home.longitude)
+    !!center &&
+    Number.isFinite(center.latitude) &&
+    Number.isFinite(center.longitude)
   );
 }
 
 // Dev-only fallback: `npm run dev` runs Vite's own dev server, which has
 // no backend at the same origin to serve GET /api/config unless a proxy is
-// set up -- VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE (map/frontend/.env.example)
+// set up -- VITE_CENTER_LATITUDE/VITE_CENTER_LONGITUDE (map/frontend/.env.example)
 // still work as a local override there. Gated on import.meta.env.DEV so a
 // production build can never fall back to a value baked in at build time.
-function resolveDevHome(): HomePoint | null {
+function resolveDevCenter(): CenterPoint | null {
   if (!import.meta.env.DEV) return null;
-  const latRaw = import.meta.env.VITE_HOME_LATITUDE;
-  const lonRaw = import.meta.env.VITE_HOME_LONGITUDE;
+  const latRaw = import.meta.env.VITE_CENTER_LATITUDE;
+  const lonRaw = import.meta.env.VITE_CENTER_LONGITUDE;
   if (latRaw === undefined || lonRaw === undefined) return null;
-  const home = { latitude: Number(latRaw), longitude: Number(lonRaw) };
-  return isValidHome(home) ? home : null;
+  const center = { latitude: Number(latRaw), longitude: Number(lonRaw) };
+  return isValidCenter(center) ? center : null;
 }
 
-async function resolveHome(apiBaseUrl: string): Promise<HomePoint | null> {
-  const devHome = resolveDevHome();
-  if (devHome) return devHome;
+async function resolveCenter(apiBaseUrl: string): Promise<CenterPoint | null> {
+  const devCenter = resolveDevCenter();
+  if (devCenter) return devCenter;
 
   try {
     const response = await fetch(`${apiBaseUrl}/api/config`);
@@ -76,9 +77,9 @@ async function resolveHome(apiBaseUrl: string): Promise<HomePoint | null> {
       throw new Error(`GET /api/config -> HTTP ${response.status}`);
     }
     const data = (await response.json()) as ApiConfigResponse;
-    return isValidHome(data.home) ? data.home : null;
+    return isValidCenter(data.center) ? data.center : null;
   } catch (err) {
-    console.warn("Failed to load /api/config -- home marker/recenter will be unavailable:", err);
+    console.warn("Failed to load /api/config -- center marker/recenter will be unavailable:", err);
     return null;
   }
 }
@@ -89,15 +90,15 @@ async function resolveHome(apiBaseUrl: string): Promise<HomePoint | null> {
 // page load with no frontend rebuild required.
 export async function loadConfig(): Promise<AppConfig> {
   const apiBaseUrl = resolveApiBaseUrl();
-  const home = await resolveHome(apiBaseUrl);
-  if (!home) {
+  const center = await resolveCenter(apiBaseUrl);
+  if (!center) {
     // eslint has no presence in this project; a plain console.warn is the
     // simplest way to surface a misconfigured deployment without
     // crashing the map itself.
     console.warn(
-      "No home reference point configured (MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE unset on the " +
-        "backend, or -- in `npm run dev` only -- VITE_HOME_LATITUDE/VITE_HOME_LONGITUDE unset/" +
-        "invalid) -- the home marker and recenter button will be unavailable.",
+      "No center reference point configured (MAP_CENTER_LATITUDE/MAP_CENTER_LONGITUDE unset on the " +
+        "backend, or -- in `npm run dev` only -- VITE_CENTER_LATITUDE/VITE_CENTER_LONGITUDE unset/" +
+        "invalid) -- the center marker and recenter button will be unavailable.",
     );
   }
   return {
@@ -105,6 +106,6 @@ export async function loadConfig(): Promise<AppConfig> {
     restFlightsUrl: `${apiBaseUrl}/api/flights`,
     restProcessorsUrl: `${apiBaseUrl}/api/processors`,
     wsUrl: resolveWsUrl(apiBaseUrl),
-    home,
+    center,
   };
 }

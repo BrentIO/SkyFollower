@@ -57,7 +57,7 @@ describe("ISOLATE_ICON / ZOOM_TO_ICON / FOLLOW_ICON", () => {
     expect(FOLLOW_ICON.polygons).toEqual([{ points: "3 11 22 2 13 21 11 13 3 11" }]);
   });
 
-  it("is visually distinct from the existing recenter-on-home crosshair icon (different geometry)", () => {
+  it("is visually distinct from the existing recenter crosshair icon (different geometry)", () => {
     // lib/crosshairIcon.ts's crosshairSvgMarkup draws a dashed circle with
     // four short outward ticks -- ZOOM_TO_ICON's LocateFixed instead uses
     // two concentric solid circles, which is a different enough
