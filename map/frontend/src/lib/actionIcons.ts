@@ -1,9 +1,11 @@
-// Path/shape data for the aircraft detail panel's action-row icons
-// (components/AircraftDetailPanel.tsx: Isolate/Zoom To/Follow/Trace
-// Points). Kept as plain data -- rendered into an <svg> by the
-// component's ActionIcon -- rather than as JSX directly, so the exact
-// geometry is a plain, unit-testable value (this project has no jsdom/
-// component-render test setup -- see lib/config.test.ts's own note).
+// Path/shape data for this map view's icon-only buttons: both
+// components/AircraftDetailPanel.tsx's action row (Isolate/Zoom To/Follow/
+// Trace Points) and components/ControlsPanel.tsx's toggle row (History/
+// Labels/Map Labels/Range Outline). Kept as plain data -- rendered into an
+// <svg> by components/IconButton.tsx's shared ActionIcon -- rather than as
+// JSX directly, so the exact geometry is a plain, unit-testable value
+// (this project has no jsdom/component-render test setup -- see
+// lib/config.test.ts's own note).
 //
 // TRACE_POINTS_ICON is Lucide's "Waypoints" glyph, copied byte-for-byte
 // (identical path `d` and circle cx/cy/r values) from management-ui/
@@ -18,6 +20,16 @@
 // target this position" and visually distinct from lib/crosshairIcon.ts's
 // recenter-on-home glyph, Navigation = the conventional map-app "follow
 // me" compass-arrow).
+//
+// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON are Lucide's "Route"/"Tags"/
+// "Type"/"Radar" glyphs (fetched byte-for-byte from lucide-icons/lucide,
+// same convention as above) -- also no prior precedent in this codebase;
+// picked per the issue's suggested set for ControlsPanel's toggle row
+// (Route = two endpoints joined by a winding path, reading as "every
+// flight's path"; Tags = the generic label/tag glyph for aircraft info-box
+// labels; Type = a stylized "A", deliberately distinct from Tags so the
+// two label toggles don't look identical; Radar = concentric arcs + sweep
+// needle, reading directly as reception range/coverage).
 
 export interface IconPath {
   d: string;
@@ -26,6 +38,10 @@ export interface IconCircle {
   cx: number;
   cy: number;
   r: number;
+  /** True for a circle Lucide renders solid (`fill="currentColor"`) rather
+   * than as an outline -- e.g. TAGS_ICON's small punch-hole dot. Absent/
+   * false preserves every existing icon's outline-only rendering. */
+  filled?: boolean;
 }
 export interface IconLine {
   x1: number;
@@ -84,4 +100,39 @@ export const TRACE_POINTS_ICON: IconSpec = {
     { cx: 20, cy: 12, r: 2 },
     { cx: 4, cy: 12, r: 2 },
   ],
+};
+
+export const ROUTE_ICON: IconSpec = {
+  circles: [
+    { cx: 6, cy: 19, r: 3 },
+    { cx: 18, cy: 5, r: 3 },
+  ],
+  paths: [{ d: "M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" }],
+};
+
+export const TAGS_ICON: IconSpec = {
+  paths: [
+    {
+      d: "M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z",
+    },
+    { d: "M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193" },
+  ],
+  circles: [{ cx: 10.5, cy: 6.5, r: 0.5, filled: true }],
+};
+
+export const TYPE_ICON: IconSpec = {
+  paths: [{ d: "M12 4v16" }, { d: "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" }, { d: "M9 20h6" }],
+};
+
+export const RADAR_ICON: IconSpec = {
+  paths: [
+    { d: "M19.07 4.93A10 10 0 0 0 6.99 3.34" },
+    { d: "M4 6h.01" },
+    { d: "M2.29 9.62A10 10 0 1 0 21.31 8.35" },
+    { d: "M16.24 7.76A6 6 0 1 0 8.23 16.67" },
+    { d: "M12 18h.01" },
+    { d: "M17.99 11.66A6 6 0 0 1 15.77 16.67" },
+    { d: "m13.41 10.59 5.66-5.66" },
+  ],
+  circles: [{ cx: 12, cy: 12, r: 2 }],
 };
