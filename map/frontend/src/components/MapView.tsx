@@ -655,6 +655,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
     .filter((a) => !a.hidden)
+    .filter((a) => !isolateId || a.icao_hex === isolateId)
     .filter((a) => screenPositions[a.icao_hex] !== undefined)
     .map((a) => ({
       id: a.icao_hex,
