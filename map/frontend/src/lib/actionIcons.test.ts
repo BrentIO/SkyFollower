@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON } from "./actionIcons";
+import {
+  FOLLOW_ICON,
+  ISOLATE_ICON,
+  RADAR_ICON,
+  ROUTE_ICON,
+  TAGS_ICON,
+  TRACE_POINTS_ICON,
+  TYPE_ICON,
+  ZOOM_TO_ICON,
+} from "./actionIcons";
 
 // Verbatim path/circle data copied out of management-ui/frontend/src/
 // components/FlightViewModal.tsx's TRACE_POINTS_ICON_SVG template literal
@@ -54,5 +63,49 @@ describe("ISOLATE_ICON / ZOOM_TO_ICON / FOLLOW_ICON", () => {
     // two concentric solid circles, which is a different enough
     // silhouette that the two are not confusable at a glance.
     expect(ZOOM_TO_ICON.circles?.length).toBe(2);
+  });
+});
+
+// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON path/circle data copied
+// byte-for-byte from lucide-icons/lucide's icons/route.svg, icons/tags.svg,
+// icons/type.svg, and icons/radar.svg (as of this writing) -- same
+// fetch-don't-guess convention ISOLATE_ICON/ZOOM_TO_ICON/FOLLOW_ICON
+// already used above.
+describe("ROUTE_ICON / TAGS_ICON / TYPE_ICON / RADAR_ICON", () => {
+  it("ROUTE_ICON is Lucide's Route glyph (two endpoint circles joined by a winding path)", () => {
+    expect(ROUTE_ICON.circles).toEqual([
+      { cx: 6, cy: 19, r: 3 },
+      { cx: 18, cy: 5, r: 3 },
+    ]);
+    expect(ROUTE_ICON.paths).toEqual([{ d: "M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" }]);
+  });
+
+  it("TAGS_ICON is Lucide's Tags glyph (two tag paths + a filled punch-hole dot)", () => {
+    expect(TAGS_ICON.paths).toEqual([
+      {
+        d: "M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z",
+      },
+      { d: "M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193" },
+    ]);
+    expect(TAGS_ICON.circles).toEqual([{ cx: 10.5, cy: 6.5, r: 0.5, filled: true }]);
+  });
+
+  it("TYPE_ICON is Lucide's Type glyph (a stylized capital A: three plain strokes)", () => {
+    expect(TYPE_ICON.paths).toEqual([
+      { d: "M12 4v16" },
+      { d: "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" },
+      { d: "M9 20h6" },
+    ]);
+  });
+
+  it("TYPE_ICON is deliberately distinct from TAGS_ICON so the two label toggles don't look identical", () => {
+    expect(TYPE_ICON.circles).toBeUndefined();
+    expect(TAGS_ICON.circles).not.toBeUndefined();
+  });
+
+  it("RADAR_ICON is Lucide's Radar glyph (concentric arcs, a center dot, and a sweep needle)", () => {
+    expect(RADAR_ICON.circles).toEqual([{ cx: 12, cy: 12, r: 2 }]);
+    expect(RADAR_ICON.paths).toHaveLength(7);
+    expect(RADAR_ICON.paths?.map((p) => p.d)).toContain("m13.41 10.59 5.66-5.66");
   });
 });

@@ -79,20 +79,13 @@ describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
     expect(callSite).toContain("active={false}");
   });
 
-  it("every action button's icon is stroke-based, 18x18, viewBox 0 0 24 24, stroke-width 2, round caps/joins", () => {
-    const svgOpenIndex = panelSource.indexOf("<svg", panelSource.indexOf("function ActionIcon"));
-    const svgTag = panelSource.slice(svgOpenIndex, panelSource.indexOf(">", svgOpenIndex) + 1);
-    expect(svgTag).toContain('width="18"');
-    expect(svgTag).toContain('height="18"');
-    expect(svgTag).toContain('viewBox="0 0 24 24"');
-    expect(svgTag).toContain('fill="none"');
-    expect(svgTag).toContain('stroke="currentColor"');
-    expect(svgTag).toContain('strokeWidth="2"');
-    expect(svgTag).toContain('strokeLinecap="round"');
-    expect(svgTag).toContain('strokeLinejoin="round"');
-  });
-
-  it("uses the same toggle-button coloring helper as ControlsPanel's toggles", () => {
-    expect(panelSource).toContain("toggleButtonClass(active)");
+  it("renders each button via the shared IconButton component", () => {
+    expect(panelSource).toContain('import { IconButton } from "./IconButton"');
+    expect(panelSource).toContain("<IconButton");
   });
 });
+
+// The icon-rendering mechanism itself (ActionIcon's svg shape, the
+// toggleButtonClass coloring) is shared with ControlsPanel's toggle row
+// and lives in, and is tested by, IconButton.test.ts -- see that file's
+// own note.

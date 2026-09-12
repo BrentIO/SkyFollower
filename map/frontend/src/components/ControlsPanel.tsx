@@ -1,7 +1,8 @@
+import { RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
-import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import type { ProcessorRoster } from "../api/types";
+import { IconButton } from "./IconButton";
 
 export interface ControlsPanelProps {
   /** The browser's own WebSocket connection to this map backend -- distinct
@@ -34,11 +35,13 @@ export interface ControlsPanelProps {
   recenterDisabled: boolean;
 }
 
-// Top-right floating controls: connection-status dot, aircraft-tracked
-// count, the "History: All", "Labels: All", "Map Labels", and "Range
-// Outline" toggles, and (as its own separate square control below the
-// status panel) the recenter button. No persistent side panel in v1 -- see
-// the issue's Page layout section.
+// Top-right floating controls: connection-status dot + aircraft-tracked
+// count (status box), the recenter button below it (its own separate
+// square control), and -- below that -- an icon-button row for the
+// "History: All", "Labels: All", "Map Labels", and "Range Outline"
+// toggles. Icon buttons share the exact rendering mechanism (IconButton,
+// toggleButtonClass coloring) as AircraftDetailPanel's action row. No
+// persistent side panel in v1 -- see the issue's Page layout section.
 export function ControlsPanel({
   wsConnected,
   roster,
@@ -67,39 +70,6 @@ export function ControlsPanel({
           />
           <span className="tabular-nums">{aircraftCount} aircraft</span>
         </div>
-        <button
-          type="button"
-          onClick={onToggleHistoryAll}
-          aria-pressed={historyAll}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(historyAll)}`}
-        >
-          History: All
-        </button>
-        <button
-          type="button"
-          onClick={onToggleLabelsAll}
-          aria-pressed={labelsAll}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(labelsAll)}`}
-        >
-          Labels: All
-        </button>
-        <button
-          type="button"
-          onClick={onToggleMapLabels}
-          aria-pressed={mapLabelsOn}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(mapLabelsOn)}`}
-        >
-          Map Labels
-        </button>
-        <button
-          type="button"
-          onClick={onToggleRangeOutline}
-          disabled={rangeOutlineDisabled}
-          aria-pressed={rangeOutlineVisible}
-          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(rangeOutlineVisible)}`}
-        >
-          Range Outline
-        </button>
       </div>
 
       <button
@@ -116,6 +86,19 @@ export function ControlsPanel({
         // the home marker which passes a fixed color of its own.
         dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
       />
+
+      <div className="pointer-events-auto flex gap-2">
+        <IconButton label="History: All" icon={ROUTE_ICON} active={historyAll} onClick={onToggleHistoryAll} />
+        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} />
+        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} />
+        <IconButton
+          label="Range Outline"
+          icon={RADAR_ICON}
+          active={rangeOutlineVisible}
+          onClick={onToggleRangeOutline}
+          disabled={rangeOutlineDisabled}
+        />
+      </div>
     </div>
   );
 }
