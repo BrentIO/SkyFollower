@@ -16,14 +16,21 @@ export interface ControlsPanelProps {
   onToggleHistoryAll: () => void;
   labelsAll: boolean;
   onToggleLabelsAll: () => void;
+  /** Basemap's own text labels (place names, road names/shields, water
+   * names, airport labels) -- distinct from `labelsAll`, which is about
+   * aircraft info boxes. Defaults on (basemap unchanged out of the box);
+   * turning it off is what hides the basemap's text. */
+  mapLabelsOn: boolean;
+  onToggleMapLabels: () => void;
   onRecenter: () => void;
   recenterDisabled: boolean;
 }
 
 // Top-right floating controls: connection-status dot, aircraft-tracked
-// count, the "History: All" and "Labels: All" toggles, and (as its own
-// separate square control below the status panel) the recenter button. No
-// persistent side panel in v1 -- see the issue's Page layout section.
+// count, the "History: All", "Labels: All", and "Map Labels" toggles, and
+// (as its own separate square control below the status panel) the recenter
+// button. No persistent side panel in v1 -- see the issue's Page layout
+// section.
 export function ControlsPanel({
   wsConnected,
   roster,
@@ -32,6 +39,8 @@ export function ControlsPanel({
   onToggleHistoryAll,
   labelsAll,
   onToggleLabelsAll,
+  mapLabelsOn,
+  onToggleMapLabels,
   onRecenter,
   recenterDisabled,
 }: ControlsPanelProps) {
@@ -62,6 +71,14 @@ export function ControlsPanel({
           className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(labelsAll)}`}
         >
           Labels: All
+        </button>
+        <button
+          type="button"
+          onClick={onToggleMapLabels}
+          aria-pressed={mapLabelsOn}
+          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(mapLabelsOn)}`}
+        >
+          Map Labels
         </button>
       </div>
 
