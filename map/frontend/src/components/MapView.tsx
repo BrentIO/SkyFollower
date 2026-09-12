@@ -7,6 +7,7 @@ import { basemapLabelLayerIds } from "../lib/basemapLabels";
 import { FALLBACK_SHAPE } from "../lib/aircraftIconResolver";
 import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
+import { loadPersistedControls, savePersistedControls } from "../lib/controlsPersistence";
 import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
 import { useRangeOutline } from "../hooks/useRangeOutline";
@@ -120,18 +121,33 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
 
-  const [historyAll, setHistoryAll] = useState(false);
-  const [labelsAll, setLabelsAll] = useState(false);
+  // Initial values come from this browser's localStorage (per-browser only
+  // -- never synced across devices/accounts), falling back to today's
+  // hardcoded defaults for a fresh browser or blocked storage -- see
+  // lib/controlsPersistence.ts. The save effect below is what keeps
+  // storage in sync with these as the operator toggles them.
+  const [historyAll, setHistoryAll] = useState(() => loadPersistedControls().historyAll);
+  const [labelsAll, setLabelsAll] = useState(() => loadPersistedControls().labelsAll);
   // Daily reception range outline overlay -- defaults off, matching
   // historyAll/labelsAll's convention. Polling (see useRangeOutline below)
   // only happens while this is true, so leaving it off costs nothing.
-  const [rangeOutlineVisible, setRangeOutlineVisible] = useState(false);
+  const [rangeOutlineVisible, setRangeOutlineVisible] = useState(
+    () => loadPersistedControls().rangeOutlineVisible,
+  );
   const rangeOutline = useRangeOutline(config.apiBaseUrl, rangeOutlineVisible && !!config.home);
   // Basemap's own text labels (place names, road names/shields, water
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
   // from labelsAll above, which is about aircraft info boxes.
-  const [mapLabelsOn, setMapLabelsOn] = useState(false);
+  const [mapLabelsOn, setMapLabelsOn] = useState(() => loadPersistedControls().mapLabelsOn);
+
+  // Persists the four control toggles above to localStorage on every
+  // change, so a reload restores them via the lazy initializers above
+  // instead of resetting to today's hardcoded defaults.
+  useEffect(() => {
+    savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible });
+  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible]);
+
   // The basemap's own text-bearing layer ids, computed once on "load" (see
   // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
   // runtime, so there's no need to recompute this on every toggle.
