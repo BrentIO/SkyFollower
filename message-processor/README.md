@@ -439,15 +439,27 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   existing convention.
 - **`metadata`** -- sent the first time a flight's ident/aircraft
   enrichment/operator/registrant/squawk/origin/destination are known, and
-  again only when one of those changes. Never throttled by
-  `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` -- this change-gating is already
-  its own throttle. Reuses the exact same
+  again whenever one of those changes (`_maybe_publish_map_metadata`).
+  Never throttled by `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` -- this
+  change-gating is already its own throttle. Reuses the exact same
   `CompletedFlight`-shape payload the `SkyFollower/rule/{IDENTIFIER}` MQTT
   notification publishes (positions/velocities/`_id` popped, empty
   operator/registrant/origin/destination/force_archive omitted) minus the
   `rule` key, via a shared `_build_flight_notification_payload()` helper —
   see `Flight.map_metadata_hash`, persisted across messages, for how a
-  change is detected -- plus `processor_id`.
+  change is detected -- plus `processor_id`. Independently of that
+  change-gated path, a dedicated `_map_metadata_resend_loop` also resends
+  every currently-active flight's `metadata` datagram unconditionally
+  every `MAP_METADATA_RESEND_INTERVAL_SECONDS` (60s, `shared/timing.py`),
+  via `_resend_all_map_metadata` (enumeration pattern mirrors
+  `_force_evict_all`) -- this does *not* update `map_metadata_hash`, so it
+  never masks a genuine later change. Without this, a flight whose
+  metadata never changes again after its first send would get exactly one
+  `metadata` datagram for its entire duration; since UDP delivery isn't
+  confirmed and the map service's own Redis has no persistence, this
+  periodic resend is what actually lets a map-service restart recover a
+  still-active flight's full metadata within one `MAP_EVICT_SECONDS`
+  window, not just its position.
 - **`heartbeat`** -- `{"type": "heartbeat", "processor_id": "mp-1",
   "ts": 1725720000.0}`. A fixed-interval liveness beacon from a
   dedicated `_map_heartbeat_loop`, independent of aircraft traffic

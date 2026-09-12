@@ -84,6 +84,7 @@ from shared.timing import (
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
     MAP_HEARTBEAT_INTERVAL_SECONDS,
+    MAP_METADATA_RESEND_INTERVAL_SECONDS,
     MAX_MESSAGE_LAG_SECONDS,
     MQTT_PUBLISH_INTERVAL_SECONDS,
     PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
@@ -1023,6 +1024,7 @@ class MessageProcessor:
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telemetry").start()
         threading.Thread(target=self._config_poll_loop, daemon=True, name="config-poll").start()
         threading.Thread(target=self._map_heartbeat_loop, daemon=True, name="map-heartbeat").start()
+        threading.Thread(target=self._map_metadata_resend_loop, daemon=True, name="map-metadata-resend").start()
 
         self._consume_loop()
 
@@ -2053,6 +2055,59 @@ class MessageProcessor:
                 "processor_id": self._id,
                 "ts": time.time(),
             })
+
+    def _resend_all_map_metadata(self) -> None:
+        """Unconditional counterpart to _maybe_publish_map_metadata: resends
+        every active flight's `metadata` datagram regardless of whether any
+        field changed since the last send. Enumeration pattern mirrors
+        _force_evict_all() -- snapshot the active icao_hex list under
+        _db_lock, then reload/process each individually.
+
+        Deliberately does NOT touch flight.map_metadata_hash: that field is
+        owned entirely by the change-gated path in
+        _maybe_publish_map_metadata, which stays independent of this sweep
+        -- a real change still goes out immediately on the message that
+        caused it, not just on the next periodic tick here."""
+        if not self._map_udp.enabled:
+            return
+        with self._db_lock:
+            cur = self._db.cursor()
+            cur.execute("SELECT icao_hex FROM flights")
+            active = [row[0] for row in cur.fetchall()]
+
+        for icao_hex in active:
+            with self._db_lock:
+                flight = Flight(self._db)
+                if not flight.load(icao_hex):
+                    continue
+                payload = self._build_flight_notification_payload(flight)
+            payload["type"] = "metadata"
+            payload["processor_id"] = self._id
+            self._map_udp.send(payload)
+
+    def _map_metadata_resend_loop(self) -> None:
+        """Dedicated thread, mirroring _map_heartbeat_loop's shape, that
+        drives _resend_all_map_metadata() every
+        MAP_METADATA_RESEND_INTERVAL_SECONDS.
+
+        Kept as its own loop rather than folded into _telemetry_loop: even
+        though MQTT_PUBLISH_INTERVAL_SECONDS (30s) already sits comfortably
+        under the 60s ceiling here, riding it would couple this map-facing
+        concern to an unrelated MQTT-publish/fallback-drain cadence that
+        happens to qualify today but isn't defined in terms of this
+        requirement -- a future change to one cadence should never have to
+        reason about the other. A dedicated loop keeps the two independent,
+        at the cost of one more daemon thread, which this class already
+        starts several of.
+
+        Not gated by MAX_MESSAGE_LAG_SECONDS or self._map_udp.enabled here
+        in the loop itself -- _resend_all_map_metadata() applies the
+        enabled-guard, and, like _map_heartbeat_loop, this isn't reacting
+        to any particular message's recency, so there is no lag to gate
+        on."""
+        while not self._shutdown.is_set():
+            time.sleep(MAP_METADATA_RESEND_INTERVAL_SECONDS)
+            self._resend_all_map_metadata()
 
     # ------------------------------------------------------------------
     # Telemetry

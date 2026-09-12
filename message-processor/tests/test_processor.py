@@ -81,6 +81,7 @@ from shared.redis_keys import (
 )
 from shared.timing import (  # noqa: E402
     MAP_HEARTBEAT_INTERVAL_SECONDS,
+    MAP_METADATA_RESEND_INTERVAL_SECONDS,
     MAX_MESSAGE_LAG_SECONDS,
     RULE_TRIGGER_DAY_TTL_SECONDS,
 )
@@ -4755,6 +4756,162 @@ class TestMapHeartbeatLoop:
 
         # Must not raise.
         self._run_one_heartbeat_tick(p)
+
+
+class TestMapMetadataResendLoop:
+    """_map_metadata_resend_loop / _resend_all_map_metadata -- the
+    unconditional periodic counterpart to the change-gated
+    _maybe_publish_map_metadata. See
+    message_processor.main.MAP_METADATA_RESEND_INTERVAL_SECONDS."""
+
+    def _make_flight(self, p, icao_hex: str) -> Flight:
+        f = Flight(p._db)
+        f.icao_hex = icao_hex
+        f.flight_id = f"fid-{icao_hex}"
+        f.first_message = 1757000000.0
+        f.last_message = 1757000000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.aircraft = {"icao_hex": icao_hex, "registration": "N12345"}
+        f.ident = "DAL2"
+        f.save()
+        return f
+
+    def _run_one_resend_tick(self, p) -> MagicMock:
+        """Same pattern as TestMapHeartbeatLoop._run_one_heartbeat_tick:
+        the mocked time.sleep sets _shutdown so the loop body runs exactly
+        once and then the while loop exits, actually exercising the real
+        method rather than re-implementing its conditional here."""
+        def fake_sleep(_seconds):
+            p._shutdown.set()
+
+        with patch("message_processor.main.time.sleep", side_effect=fake_sleep) as mock_sleep:
+            p._map_metadata_resend_loop()
+        return mock_sleep
+
+    def test_ticks_at_the_configured_interval(self):
+        p, _ = _make_processor()
+        mock_sleep = self._run_one_resend_tick(p)
+        mock_sleep.assert_called_once_with(MAP_METADATA_RESEND_INTERVAL_SECONDS)
+
+    def test_no_op_when_map_udp_disabled(self):
+        p, _ = _make_processor()
+        assert p._map_udp.enabled is False
+        self._make_flight(p, "A8AE7F")
+
+        # Must not raise even though there's no socket at all, and must not
+        # attempt a send.
+        self._run_one_resend_tick(p)
+
+    def test_resends_metadata_for_every_active_flight(self):
+        """Acceptance criterion: every currently-active flight gets a
+        `metadata` datagram on the periodic sweep, not just the one that
+        most recently changed."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        self._make_flight(p, "A8AE7F")
+        self._make_flight(p, "B00000")
+
+        self._run_one_resend_tick(p)
+
+        sent = [json.loads(c.args[0].decode("utf-8")) for c in mock_sock.sendto.call_args_list]
+        assert len(sent) == 2
+        assert {s["type"] for s in sent} == {"metadata"}
+        assert {s["aircraft"]["icao_hex"] for s in sent} == {"A8AE7F", "B00000"}
+        for s in sent:
+            assert s["processor_id"] == "0"
+
+    def test_fires_even_when_nothing_changed_since_the_last_send(self):
+        """The whole point of the periodic sweep: a flight whose metadata
+        already went out once, and never changes again, still gets resent
+        on every tick -- unlike _maybe_publish_map_metadata, which stays
+        silent forever after the first send once nothing changes."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p, "A8AE7F")
+        p._maybe_publish_map_metadata(f, time.time())
+        f.save()
+        mock_sock.reset_mock()
+
+        self._run_one_resend_tick(p)
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload["type"] == "metadata"
+
+    def test_does_not_update_map_metadata_hash(self):
+        """Unconditional resend must not touch flight.map_metadata_hash --
+        that field belongs solely to the change-gated path, and stamping it
+        here would risk masking a real change that arrives later."""
+        p, _ = _make_processor()
+        _enable_map_udp(p)
+        self._make_flight(p, "A8AE7F")
+
+        self._run_one_resend_tick(p)
+
+        reloaded = Flight(p._db)
+        reloaded.load("A8AE7F")
+        assert reloaded.map_metadata_hash is None
+
+    def test_change_triggered_send_still_fires_immediately_not_just_on_the_next_tick(self):
+        """The ordinary change-gated path must remain fully independent of
+        this periodic sweep: a real metadata change is sent right away by
+        _maybe_publish_map_metadata, not deferred to the next resend tick."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p, "A8AE7F")
+        p._maybe_publish_map_metadata(f, time.time())
+        f.save()
+        mock_sock.reset_mock()
+
+        f.squawk = "1200"
+        p._maybe_publish_map_metadata(f, time.time())
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload["type"] == "metadata"
+        assert payload["squawk"] == "1200"
+
+    def test_periodic_resend_does_not_suppress_a_later_real_change(self):
+        """A periodic resend running in between two real messages must not
+        corrupt change-detection such that a genuine subsequent change goes
+        unnoticed by _maybe_publish_map_metadata."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p, "A8AE7F")
+        p._maybe_publish_map_metadata(f, time.time())
+        f.save()
+
+        self._run_one_resend_tick(p)  # periodic sweep runs in between
+        mock_sock.reset_mock()
+
+        f.squawk = "1200"
+        p._maybe_publish_map_metadata(f, time.time())
+
+        mock_sock.sendto.assert_called_once()
+        payload = _sent_payload(mock_sock)
+        assert payload["squawk"] == "1200"
+
+    def test_send_failure_does_not_propagate(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_sock.sendto.side_effect = OSError("network unreachable")
+        self._make_flight(p, "A8AE7F")
+
+        # Must not raise.
+        self._run_one_resend_tick(p)
+
+    def test_start_launches_the_map_metadata_resend_thread(self):
+        p, _ = _make_processor()
+        with patch.object(p, "_connect_mqtt"), \
+             patch.object(p, "_load_flight_ttl_seconds"), \
+             patch("message_processor.main.threading.Thread") as mock_thread, \
+             patch.object(p, "_consume_loop"):
+            p._rules_engine.reload_if_changed.return_value = None
+            p.start()
+
+        names = {c.kwargs.get("name") for c in mock_thread.call_args_list}
+        assert "map-metadata-resend" in names
 
 
 class TestFlightMetadataSnapshot:
