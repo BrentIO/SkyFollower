@@ -34,7 +34,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
-import { followTargetPosition } from "../lib/followTarget";
+import { followTargetPosition, shouldCancelFollowOnDrag } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { nextSelection } from "../lib/selection";
@@ -158,6 +158,20 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // stale snapshot from whenever that listener was attached.
   const aircraftRef = useRef(aircraft);
   aircraftRef.current = aircraft;
+
+  // Same reason as aircraftRef above: the map's 'dragstart' listener
+  // (mount effect below) is attached once and must read the *current*
+  // Follow target, not whatever it was when the listener was attached.
+  const followIdRef = useRef(followId);
+  followIdRef.current = followId;
+
+  // Shared by every place a user's manual navigation should cancel Follow
+  // -- currently just the mount effect's dragstart handler below; a future
+  // Center/recenter action reuses this same function rather than repeating
+  // `setFollowId(null)` inline.
+  function cancelFollow() {
+    setFollowId(null);
+  }
 
   // Fires whenever the selection moves away from an aircraft -- either to
   // a different one (reselect) or to none (the panel's close button /
@@ -317,6 +331,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+
+    // A genuine pointer/touch-driven drag should cancel Follow -- fighting
+    // the operator's own input is exactly the bug this fixes. Follow's own
+    // recenter, Zoom To, and the recenter button all move the camera via
+    // `easeTo`, which never carries `originalEvent`, so those never reach
+    // this as a cancel (see shouldCancelFollowOnDrag).
+    map.on("dragstart", (e) => {
+      if (shouldCancelFollowOnDrag(e, followIdRef.current)) cancelFollow();
+    });
 
     function syncScreenPositions() {
       const current = aircraftRef.current;
