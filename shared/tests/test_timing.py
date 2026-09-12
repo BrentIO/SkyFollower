@@ -97,6 +97,9 @@ class TestInvariants:
     def test_mqtt_publish_cadence_is_thirty_seconds(self):
         assert timing.MQTT_PUBLISH_INTERVAL_SECONDS == 30
 
+    def test_map_metadata_resend_cadence_is_at_most_sixty_seconds(self):
+        assert timing.MAP_METADATA_RESEND_INTERVAL_SECONDS == 60
+
     def test_ghcr_version_check_is_once_daily(self):
         assert timing.GHCR_VERSION_CHECK_INTERVAL_SECONDS == 86400
 

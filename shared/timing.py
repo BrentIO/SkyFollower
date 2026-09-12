@@ -226,6 +226,18 @@ DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS = 1
 # green without a standalone heartbeat ever being needed.
 MAP_HEARTBEAT_INTERVAL_SECONDS = 5
 
+# How often the message processor unconditionally resends every active
+# flight's `metadata` datagram toward the map service, regardless of
+# whether any of its fields changed since the last send. The ordinary
+# change-gated path (_maybe_publish_map_metadata) can, in the worst case,
+# send `metadata` for a flight exactly once for its entire duration --
+# fine for the map's live state, but a UDP datagram is fire-and-forget
+# with no delivery confirmation, and the map service's own Redis carries
+# no persistence (see map/README.md's Fault Tolerance section). This
+# periodic sweep is what lets a map-service restart actually recover
+# within one MAP_EVICT_SECONDS window, matching that documented guarantee.
+MAP_METADATA_RESEND_INTERVAL_SECONDS = 60
+
 # Per-processor status thresholds the map service applies to
 # now - last_seen, where last_seen is updated by *any* map UDP message
 # type carrying processor_id (heartbeat, position, or metadata alike --
