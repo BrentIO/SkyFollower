@@ -22,6 +22,7 @@ import {
   RANGE_RING_LAYER_ID,
   RANGE_RING_SOURCE_ID,
   SELECTABLE_LAYER_IDS,
+  TRAIL_HIT_AREA_LAYER_ID,
   TRAIL_LAYER_ID,
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
@@ -224,6 +225,16 @@ function MapViewInner({ config }: { config: AppConfig }) {
         source: TRAIL_SOURCE_ID,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": ["get", "color"], "line-width": 2.5, "line-opacity": 0.85 },
+      });
+      // Invisible, much wider line over the same geometry -- this is the
+      // layer in SELECTABLE_LAYER_IDS, so click/hover get a generous target
+      // while the rendered trail above stays exactly as thin as it looks.
+      map.addLayer({
+        id: TRAIL_HIT_AREA_LAYER_ID,
+        type: "line",
+        source: TRAIL_SOURCE_ID,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#000000", "line-width": 14, "line-opacity": 0 },
       });
 
       map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
