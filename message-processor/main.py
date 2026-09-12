@@ -937,7 +937,7 @@ class MessageProcessor:
         # that case is instead bounded by a ring-buffer cap on the retryable
         # table itself, reusing the same 100MB ceiling the dead-letter
         # directory uses; the oldest completed flights are evicted first
-        # once an archiver-less deployment accumulates past it.
+        # once a deployment running no archive processor accumulates past it.
         self._fallback = FallbackQueue(
             os.path.join(DATA_DIR, "completed_flights.db"),
             non_poison_exceptions=(pika.exceptions.UnroutableError,),

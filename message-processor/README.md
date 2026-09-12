@@ -549,16 +549,16 @@ time — not just a burst of rapid reconnect attempts.
 `_drain_fallback()` publish completed flights with `mandatory=True`
 against the well-known `skyfollower-archive` queue, which only exists once an
 archive-processor has connected and declared it. A deployment that
-deliberately runs no archiver never has that queue, so every publish
+deliberately runs no archive processor never has that queue, so every publish
 returns `pika.exceptions.UnroutableError` — a healthy-connection
 condition, not a per-flight fault and not a recoverable outage. The
 fallback queue is constructed with that exception type classified as
 non-poison: those rows retry forever and are **never** dead-lettered, so
 turning on an archive-processor later drains the entire accumulated
-backlog automatically. Disk growth for the archiver-less case is instead
-bounded by a ring-buffer cap on the retryable table itself (100MB, the
-same ceiling the dead-letter directory uses); once an archiver-less
-deployment accumulates past it, the oldest completed flights are evicted
+backlog automatically. Disk growth for a deployment running no archive
+processor is instead bounded by a ring-buffer cap on the retryable table
+itself (100MB, the same ceiling the dead-letter directory uses); once such
+a deployment accumulates past it, the oldest completed flights are evicted
 first, logged as a capacity eviction. Any *other* publish failure (a real
 connection loss, or an archive-processor rejecting a specific payload for
 content reasons) still dead-letters at the threshold exactly as above.

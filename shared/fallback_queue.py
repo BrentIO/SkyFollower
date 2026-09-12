@@ -33,7 +33,7 @@ Some failures aren't poison and aren't a recoverable outage either: the
 dependency is simply not present in this environment on purpose (e.g. a
 message processor publishing completed flights with `mandatory=True`
 against an `archive` queue that no operator ever declared because this
-deployment runs no archiver). Retrying such a row forever is correct --
+deployment runs no archive processor). Retrying such a row forever is correct --
 dead-lettering it throws away legitimate primary data. A caller passes
 the exception type(s) that mean "environmental, not poison" via
 `non_poison_exceptions`; a row failing only with those types behaves like
