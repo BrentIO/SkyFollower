@@ -224,7 +224,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
-          "icon-size": ["*", 0.42, ["coalesce", ["get", "icon_scale"], 1]],
+          "icon-size": ["*", 0.55, ["coalesce", ["get", "icon_scale"], 1]],
         },
         paint: {
           // Icon fill is altitude-based; it never changes on selection --
