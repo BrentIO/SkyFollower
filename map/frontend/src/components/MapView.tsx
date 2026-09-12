@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { MAP_STYLE } from "../lib/maplibreSetup";
 import { buildShapeIconImageData, shapeIconId } from "../lib/aircraftIcon";
 import { AIRCRAFT_SHAPES } from "../lib/aircraftShapes.generated";
+import { basemapLabelLayerIds } from "../lib/basemapLabels";
 import { FALLBACK_SHAPE } from "../lib/aircraftIconResolver";
 import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
@@ -116,6 +117,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   const [historyAll, setHistoryAll] = useState(false);
   const [labelsAll, setLabelsAll] = useState(false);
+  // Basemap's own text labels (place names, road names/shields, water
+  // names, airport labels) -- defaults on so the basemap is unchanged out
+  // of the box; turning it off is what hides the basemap's text. Distinct
+  // from labelsAll above, which is about aircraft info boxes.
+  const [mapLabelsOn, setMapLabelsOn] = useState(true);
+  // The basemap's own text-bearing layer ids, computed once on "load" (see
+  // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
+  // runtime, so there's no need to recompute this on every toggle.
+  const basemapLabelLayerIdsRef = useRef<string[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [screenPositions, setScreenPositions] = useState<
     Record<string, { x: number; y: number; offset: number }>
@@ -246,6 +256,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
 
     map.on("load", () => {
+      // Discover the basemap's own text-bearing layers once, before any of
+      // SkyFollower's own overlay layers are added below -- so this list is
+      // purely the remote style's own place-name/road/water/POI text
+      // layers, whatever it happens to call them (see basemapLabelLayerIds'
+      // own docstring for why this isn't a hardcoded ID list).
+      basemapLabelLayerIdsRef.current = basemapLabelLayerIds(map.getStyle().layers);
+
       // The fallback silhouette, so `icon-image` always resolves to a
       // registered image; every other shape is registered lazily the first
       // time an aircraft needs it (see ensureShapeImages in the sync effect
@@ -446,6 +463,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
     // build-time constant), but never while this component is mounted.
   }, []);
 
+  // "Map Labels" toggle -- shows/hides the basemap's own text layers
+  // (computed once on load, see basemapLabelLayerIdsRef above). Runs
+  // whenever the toggle flips; the layer-id list itself never changes
+  // after load, so there's no need to recompute it here.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const visibility = mapLabelsOn ? "visible" : "none";
+    for (const layerId of basemapLabelLayerIdsRef.current) {
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }, [mapLabelsOn, mapLoaded]);
+
   // --- Keep the aircraft/trail sources and screen positions in sync ---
   useEffect(() => {
     const map = mapRef.current;
@@ -555,6 +585,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
         onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
         labelsAll={labelsAll}
         onToggleLabelsAll={() => setLabelsAll((prev) => !prev)}
+        mapLabelsOn={mapLabelsOn}
+        onToggleMapLabels={() => setMapLabelsOn((prev) => !prev)}
         onRecenter={handleRecenter}
         recenterDisabled={!config.home}
       />
