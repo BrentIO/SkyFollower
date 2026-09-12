@@ -131,7 +131,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
   // from labelsAll above, which is about aircraft info boxes.
-  const [mapLabelsOn, setMapLabelsOn] = useState(true);
+  const [mapLabelsOn, setMapLabelsOn] = useState(false);
   // The basemap's own text-bearing layer ids, computed once on "load" (see
   // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
   // runtime, so there's no need to recompute this on every toggle.
