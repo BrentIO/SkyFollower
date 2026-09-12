@@ -26,21 +26,24 @@ export function followTargetPosition(
   return { lat: a.lat, lon: a.lon };
 }
 
-// True when `a` is the aircraft currently being Followed but has been lost
+// True when `a` is the aircraft currently being Followed, or the aircraft
+// the detail panel currently has open (`protectedId`), but has been lost
 // -- evicted (pendingRemoval, deferred while the panel is open), or gone
-// stale/hidden from a signal gap. This is Follow's deliberate exception to
-// the panel's normal eviction-defer rule: instead of simply disappearing
-// (the plain hidden/pendingRemoval behavior every other aircraft gets),
-// the followed aircraft and its trail stay visible, dimmed, until the
-// panel closes or the aircraft is deselected -- see
+// stale/hidden from a signal gap. This is the deliberate exception to the
+// panel's normal eviction-defer rule: instead of simply disappearing (the
+// plain hidden/pendingRemoval behavior every other aircraft gets), a
+// Followed or merely-selected aircraft and its trail stay visible, dimmed,
+// until the panel closes or the aircraft is deselected -- see
 // featureCollections.ts's aircraftFeatureCollection/trailFeatureCollection,
 // which use this to both bypass their normal hidden-filter and force the
-// dimmed visual for this one aircraft.
+// dimmed visual for this one aircraft. `protectedId` is optional so
+// call sites that only care about Follow (none currently) can omit it.
 export function isFollowLost(
   a: Pick<AircraftRecord, "icao_hex" | "hidden" | "pendingRemoval">,
   followId: string | null,
+  protectedId: string | null = null,
 ): boolean {
-  return a.icao_hex === followId && (a.hidden || !!a.pendingRemoval);
+  return (a.icao_hex === followId || a.icao_hex === protectedId) && (a.hidden || !!a.pendingRemoval);
 }
 
 // Whether a map `dragstart` event should cancel Follow. MapLibre carries

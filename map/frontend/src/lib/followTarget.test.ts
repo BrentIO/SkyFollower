@@ -64,6 +64,26 @@ describe("isFollowLost", () => {
   it("is true for the followed aircraft once its eviction is deferred (pendingRemoval)", () => {
     expect(isFollowLost({ ...followed, pendingRemoval: true }, "A1B2C3")).toBe(true);
   });
+
+  it("is false for a merely-selected (protectedId) aircraft while it's still live", () => {
+    expect(isFollowLost(followed, null, "A1B2C3")).toBe(false);
+  });
+
+  it("is true for a merely-selected (protectedId, not followed) aircraft once hidden", () => {
+    expect(isFollowLost({ ...followed, hidden: true }, null, "A1B2C3")).toBe(true);
+  });
+
+  it("is true for a merely-selected (protectedId) aircraft once its eviction is deferred", () => {
+    expect(isFollowLost({ ...followed, pendingRemoval: true }, null, "A1B2C3")).toBe(true);
+  });
+
+  it("is false for an aircraft other than either the followed or protected one, even if lost", () => {
+    expect(isFollowLost({ icao_hex: "OTHER", hidden: true, pendingRemoval: false }, "A1B2C3", "D4E5F6")).toBe(false);
+  });
+
+  it("is true when the aircraft is both the followed and the protected (selected) one", () => {
+    expect(isFollowLost({ ...followed, hidden: true }, "A1B2C3", "A1B2C3")).toBe(true);
+  });
 });
 
 describe("shouldCancelFollowOnDrag", () => {

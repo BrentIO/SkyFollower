@@ -112,6 +112,33 @@ describe("aircraftFeatureCollection -- Follow-lost dimming", () => {
   });
 });
 
+describe("aircraftFeatureCollection -- selected (protectedId, not Followed) lost dimming", () => {
+  it("keeps a hidden selected-but-not-followed aircraft visible, marked stale (dimmed)", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { protectedId: "A1B2C3" });
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].properties?.stale).toBe(true);
+  });
+
+  it("does not affect a hidden aircraft that isn't selected", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { protectedId: "OTHER" });
+    expect(fc.features).toHaveLength(0);
+  });
+
+  it("toggling Follow on an already-lost selected aircraft causes no visibility change", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const beforeFollow = aircraftFeatureCollection(aircraft, new Set(), { protectedId: "A1B2C3" });
+    const afterFollow = aircraftFeatureCollection(aircraft, new Set(), { protectedId: "A1B2C3", followId: "A1B2C3" });
+    expect(beforeFollow.features).toHaveLength(1);
+    expect(afterFollow.features).toHaveLength(1);
+    expect(beforeFollow.features[0].properties?.stale).toBe(afterFollow.features[0].properties?.stale);
+  });
+});
+
 describe("trailFeatureCollection -- Isolate (isolateId)", () => {
   it("hides every other aircraft's trail even if it's in the visible-ids set", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
@@ -141,5 +168,26 @@ describe("trailFeatureCollection -- Follow-lost dimming", () => {
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]));
     expect(fc.features.every((f) => f.properties?.dimmed === false)).toBe(true);
+  });
+});
+
+describe("trailFeatureCollection -- selected (protectedId, not Followed) lost dimming", () => {
+  it("keeps a hidden selected-but-not-followed aircraft's trail visible and flags it dimmed", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+
+    const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]), { protectedId: "A1B2C3" });
+    expect(fc.features.length).toBeGreaterThan(0);
+    expect(fc.features.every((f) => f.properties?.dimmed === true)).toBe(true);
+  });
+
+  it("does not affect a hidden aircraft's trail that isn't selected", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+
+    const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]), { protectedId: "OTHER" });
+    expect(fc.features).toHaveLength(0);
   });
 });
