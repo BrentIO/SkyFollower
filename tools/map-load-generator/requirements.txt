@@ -1,0 +1,4 @@
+# No third-party runtime dependencies -- socket/json/argparse/threading are
+# all stdlib. This file exists (even empty of real pins) so run-tests.yaml's
+# per-component discovery (one job per requirements.txt found via `find`)
+# picks up this tool's tests automatically.
