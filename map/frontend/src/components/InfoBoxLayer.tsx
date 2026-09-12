@@ -2,16 +2,19 @@ import { useMemo } from "react";
 import { buildInfoBoxLines, type InfoBoxAircraft } from "../lib/infoBox";
 import { altitudeZIndex, sortByLabelStackOrder } from "../lib/labelStackOrder";
 
-// Gap between the aircraft icon's screen position and the info box's
-// near (top-left) corner. Fixed -- boxes are never nudged to avoid a
-// collision, so this is the box's only position, not just a default.
-export const DEFAULT_INFO_BOX_OFFSET = 34;
-
 export interface InfoBoxLayerItem {
   id: string;
   /** Aircraft icon's current screen-space position (px), from maplibregl.Map.project(). */
   x: number;
   y: number;
+  /**
+   * Gap (px) from `x`/`y` to the box's near (top-left) corner, from
+   * lib/infoBoxOffset.ts's zoom-scaled offset -- smaller at a zoomed-out
+   * view so the box still reads as anchored to its icon. Fixed per render,
+   * not nudged -- see lib/labelStackOrder.ts for how overlapping boxes are
+   * stacked instead.
+   */
+  offset: number;
   aircraft: InfoBoxAircraft;
 }
 
@@ -28,12 +31,12 @@ export interface InfoBoxLayerProps {
 // Renders one floating ATC-style info box per labeled aircraft, directly
 // on the map (no side panel). Hidden by default: a box only renders for a
 // selected or hovered aircraft, unless the "Labels: All" toggle
-// (ControlsPanel) is on. Each box sits at a fixed offset from its
-// aircraft's icon -- no leader line, no collision-avoidance nudging -- so
-// boxes are free to overlap when aircraft are close together. Where boxes
-// overlap, the higher-altitude aircraft's box draws on top (see
-// lib/labelStackOrder.ts); unknown-altitude aircraft sit at the bottom of
-// the stack.
+// (ControlsPanel) is on. Each box sits at a zoom-scaled offset from its
+// aircraft's icon (lib/infoBoxOffset.ts) -- no leader line, no
+// collision-avoidance nudging -- so boxes are free to overlap when
+// aircraft are close together. Where boxes overlap, the higher-altitude
+// aircraft's box draws on top (see lib/labelStackOrder.ts); unknown-altitude
+// aircraft sit at the bottom of the stack.
 export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLayerProps) {
   const boxes = useMemo(() => {
     const labeled = items.filter((item) => showAll || selected.has(item.id) || item.id === hoveredId);
@@ -54,8 +57,8 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
           key={b.id}
           className="absolute rounded bg-black/40 px-1.5 py-1 font-mono leading-tight text-white"
           style={{
-            left: b.item.x + DEFAULT_INFO_BOX_OFFSET,
-            top: b.item.y + DEFAULT_INFO_BOX_OFFSET,
+            left: b.item.x + b.item.offset,
+            top: b.item.y + b.item.offset,
             zIndex: altitudeZIndex(b.item.aircraft.alt),
           }}
         >

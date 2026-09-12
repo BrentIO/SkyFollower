@@ -27,6 +27,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
+import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { nextSelection } from "../lib/selection";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { ControlsPanel } from "./ControlsPanel";
@@ -99,7 +100,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const [historyAll, setHistoryAll] = useState(false);
   const [labelsAll, setLabelsAll] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [screenPositions, setScreenPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [screenPositions, setScreenPositions] = useState<
+    Record<string, { x: number; y: number; offset: number }>
+  >({});
 
   // Kept in a ref so the map's 'move' listener (attached once, on mount)
   // always reads current aircraft positions rather than closing over a
@@ -165,11 +168,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
     function syncScreenPositions() {
       const current = aircraftRef.current;
-      const positions: Record<string, { x: number; y: number }> = {};
+      const offset = infoBoxOffsetForZoom(map.getZoom());
+      const positions: Record<string, { x: number; y: number; offset: number }> = {};
       for (const a of Object.values(current)) {
         if (!hasPosition(a)) continue;
         const p = map.project([a.lon, a.lat]);
-        positions[a.icao_hex] = { x: p.x, y: p.y };
+        positions[a.icao_hex] = { x: p.x, y: p.y, offset };
       }
       setScreenPositions(positions);
     }
@@ -344,11 +348,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
       trailFeatureCollection(aircraft, visibleTrailIds),
     );
 
-    const positions: Record<string, { x: number; y: number }> = {};
+    const offset = infoBoxOffsetForZoom(map.getZoom());
+    const positions: Record<string, { x: number; y: number; offset: number }> = {};
     for (const a of Object.values(aircraft)) {
       if (!hasPosition(a)) continue;
       const p = map.project([a.lon, a.lat]);
-      positions[a.icao_hex] = { x: p.x, y: p.y };
+      positions[a.icao_hex] = { x: p.x, y: p.y, offset };
     }
     setScreenPositions(positions);
   }, [aircraft, selected, historyAll, mapLoaded]);
@@ -369,6 +374,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
       id: a.icao_hex,
       x: screenPositions[a.icao_hex].x,
       y: screenPositions[a.icao_hex].y,
+      offset: screenPositions[a.icao_hex].offset,
       aircraft: a,
     }));
 
