@@ -503,6 +503,179 @@ class TestExternalOnlySkip:
 
 
 # ---------------------------------------------------------------------------
+# In-memory lifetime counters (flights_archived_lifetime / flights_skipped_lifetime)
+# ---------------------------------------------------------------------------
+
+class TestLifetimeCounters:
+    """Pure in-memory, device-local counters mirroring the receiver's
+    _RateTracker.lifetime_count -- never touch Redis, reset to 0 on
+    restart by design. See TestIncrPeriodCounters.
+    test_no_lifetime_period_used_for_archive_processor_counters for the
+    (unrelated, unchanged) Redis-period-counter guarantee these are
+    additive to."""
+
+    def test_flights_archived_lifetime_increments_on_successful_write(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            flight = _make_flight()
+
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._post_write_success(flight, "flights/2024/05/31/key.json.gz")
+
+            assert processor._flights_archived_lifetime == 1
+
+    def test_flights_archived_lifetime_not_incremented_on_skip(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
+
+            processor._process_flight(flight)
+
+            assert processor._flights_archived_lifetime == 0
+
+    def test_flights_skipped_lifetime_increments_on_external_only_skip(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
+
+            processor._process_flight(flight)
+
+            assert processor._flights_skipped_lifetime == 1
+
+    def test_flights_skipped_lifetime_not_incremented_when_archived(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["1090"], force_archive=False)
+
+            with patch.object(processor, "_archive_flight_to_s3"):
+                processor._process_flight(flight)
+
+            assert processor._flights_skipped_lifetime == 0
+
+    def test_flights_archived_lifetime_increment_never_touches_redis(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            flight = _make_flight()
+
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._post_write_success(flight, "flights/2024/05/31/key.json.gz")
+
+            # Every evalsha call made here is one of the existing hour/today
+            # period counters -- the in-memory lifetime increment itself
+            # never calls into Redis at all.
+            for c in mock_redis.evalsha.call_args_list:
+                assert "lifetime" not in c.args[2]
+
+    def test_flights_skipped_lifetime_increment_never_touches_redis(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            flight = _make_flight(receiver_sources=["EXTERNAL"], force_archive=False)
+
+            processor._process_flight(flight)
+
+            for c in mock_redis.evalsha.call_args_list:
+                assert "lifetime" not in c.args[2]
+
+    def test_thread_safety_across_concurrent_archive_worker_threads(self):
+        # _post_write_success runs on the S3 worker threads (multiple
+        # concurrent) in the real system, unlike the receiver's already-
+        # locked _RateTracker.record() -- this is exactly the race
+        # _lifetime_lock exists to prevent.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+
+            def archive_one(n: int) -> None:
+                flight = _make_flight(_id=f"018f1234-5678-7abc-def0-12345678{n:04d}")
+                with patch.object(processor, "_write_index_to_s3"):
+                    processor._post_write_success(flight, f"flights/2024/05/31/key{n}.json.gz")
+
+            threads = [threading.Thread(target=archive_one, args=(i,)) for i in range(50)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            assert processor._flights_archived_lifetime == 50
+
+    def test_thread_safety_across_concurrent_skip_worker_threads(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+
+            def skip_one(n: int) -> None:
+                flight = _make_flight(
+                    _id=f"018f1234-5678-7abc-def0-12345678{n:04d}",
+                    receiver_sources=["EXTERNAL"], force_archive=False,
+                )
+                processor._process_flight(flight)
+
+            threads = [threading.Thread(target=skip_one, args=(i,)) for i in range(50)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            assert processor._flights_skipped_lifetime == 50
+
+    def test_lifetime_counters_published_retained_in_telemetry(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._flights_archived_lifetime = 7
+            processor._flights_skipped_lifetime = 3
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c for c in mock_mqtt.publish.call_args_list}
+            archived_call = calls["SkyFollower/archive/statistic/flights_archived_lifetime"]
+            skipped_call = calls["SkyFollower/archive/statistic/flights_skipped_lifetime"]
+            assert archived_call.args[1] == "7"
+            assert archived_call.kwargs.get("retain") is True
+            assert skipped_call.args[1] == "3"
+            assert skipped_call.kwargs.get("retain") is True
+
+    def test_lifetime_counters_never_read_from_redis_in_telemetry(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._flights_archived_lifetime = 4
+            processor._flights_skipped_lifetime = 2
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            for c in mock_redis.get.call_args_list:
+                assert "lifetime" not in c.args[0]
+
+    def test_ha_discovery_includes_both_lifetime_sensors(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            archived_cfg = configs[
+                "homeassistant/sensor/SkyFollower_archive_flights_archived_lifetime/config"
+            ]
+            skipped_cfg = configs[
+                "homeassistant/sensor/SkyFollower_archive_flights_skipped_lifetime/config"
+            ]
+            assert archived_cfg["name"] == "Flights Archived (Lifetime)"
+            assert archived_cfg["state_class"] == "total_increasing"
+            assert skipped_cfg["name"] == "Flights Skipped External-Only (Lifetime)"
+            assert skipped_cfg["state_class"] == "total_increasing"
+
+
+# ---------------------------------------------------------------------------
 # Split-flight stitching
 # ---------------------------------------------------------------------------
 
