@@ -85,7 +85,7 @@ host's `.env`.
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
-| `MAP_STALE_SECONDS` | ❌ | `30` | TTL on `flight:live:{icao_hex}`; expiry fades an aircraft client-side (a `stale` WebSocket event) without removing it |
+| `MAP_STALE_SECONDS` | ❌ | `15` | TTL on `flight:live:{icao_hex}`; expiry fades an aircraft client-side (a `stale` WebSocket event) without removing it |
 | `MAP_HIDE_SECONDS` | ❌ | `60` | TTL on `flight:visible:{icao_hex}`; expiry drops the aircraft from view (a `hide` WebSocket event) while leaving its `flight:detail:{icao_hex}`/`flight:trail:{icao_hex}` untouched -- see [Lifecycle](#lifecycle) below |
 | `MAP_EVICT_SECONDS` | ❌ | `300` | TTL on `flight:detail:{icao_hex}` (and its `flight:trail:{icao_hex}`); expiry hard-removes the aircraft (a `remove` WebSocket event). Should equal the deployment's `flight_ttl_seconds` (core Redis's `config:flight_ttl_seconds`, default 300) -- this service never queries core Redis (see [Data boundary](#map-service) above), so keeping the two in agreement is an operator responsibility, not something enforced across services |
 

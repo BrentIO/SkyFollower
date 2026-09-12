@@ -588,7 +588,7 @@ class TestBlockHelpers:
         monkeypatch.delenv("MAP_EVICT_SECONDS", raising=False)
         monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
         cfg = map_config()
-        assert cfg["map_stale_seconds"] == 30
+        assert cfg["map_stale_seconds"] == 15
         assert cfg["map_hide_seconds"] == 60
         assert cfg["map_evict_seconds"] == 300
 
