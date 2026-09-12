@@ -29,6 +29,7 @@ import {
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { nextSelection } from "../lib/selection";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
+import { AircraftDetailPanel } from "./AircraftDetailPanel";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
@@ -361,6 +362,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.easeTo({ center: [config.home.longitude, config.home.latitude] });
   }
 
+  // `selected` is always max-one-element (see lib/selection.ts's
+  // nextSelection), so this is simply "the selected aircraft, if any and
+  // if still tracked" -- no further reduction needed.
+  const selectedIcaoHex = selected.values().next().value;
+  const selectedAircraft = selectedIcaoHex ? aircraft[selectedIcaoHex] : undefined;
+
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
     .filter((a) => !a.hidden)
@@ -377,6 +384,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
       <div ref={mapContainerRef} className="h-full w-full" />
       {mapLoaded && (
         <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
+      )}
+      {selectedAircraft && (
+        <AircraftDetailPanel
+          aircraft={selectedAircraft}
+          home={config.home}
+          onClose={() => setSelected(new Set())}
+        />
       )}
       <ControlsPanel
         wsConnected={connected}
