@@ -636,6 +636,20 @@ channels:
       MessageProcessorAreasVersionMessage:
         $ref: '#/components/messages/MessageProcessorAreasVersionMessage'
 
+  messageProcessorRabbitmqConnected:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: 'SkyFollower/message-processor/{message_processor_id}/statistic/rabbitmq_connected'
+    description: >
+      Whether the message processor currently has an active RabbitMQ
+      connection. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    parameters:
+      message_processor_id:
+        $ref: '#/components/parameters/MessageProcessorId'
+    messages:
+      MessageProcessorRabbitmqConnectedMessage:
+        $ref: '#/components/messages/MessageProcessorRabbitmqConnectedMessage'
+
   # ── Core Health ──────────────────────────────────────────────────────────
   # core-health runs no telemetry loop for its own broker-wide RabbitMQ /
   # Redis stats (those retained SkyFollower/core-health/... topics are
@@ -831,6 +845,17 @@ channels:
     messages:
       ArchiveS3ConnectedMessage:
         $ref: '#/components/messages/ArchiveS3ConnectedMessage'
+
+  archiveRabbitmqConnected:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/rabbitmq_connected
+    description: >
+      Whether the archive processor currently has an active RabbitMQ
+      connection. Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveRabbitmqConnectedMessage:
+        $ref: '#/components/messages/ArchiveRabbitmqConnectedMessage'
 
   archiveLocalQueueDepth:
     servers:
@@ -1394,6 +1419,12 @@ operations:
       $ref: '#/channels/messageProcessorAreasVersion'
     summary: Message processor publishes the short hash of the areas config it has actually loaded
 
+  publishMessageProcessorRabbitmqConnected:
+    action: send
+    channel:
+      $ref: '#/channels/messageProcessorRabbitmqConnected'
+    summary: Message processor publishes its RabbitMQ connectivity state
+
   publishComponentRegister:
     action: send
     channel:
@@ -1459,6 +1490,12 @@ operations:
     channel:
       $ref: '#/channels/archiveS3Connected'
     summary: Archive processor publishes its S3 connectivity state
+
+  publishArchiveRabbitmqConnected:
+    action: send
+    channel:
+      $ref: '#/channels/archiveRabbitmqConnected'
+    summary: Archive processor publishes its RabbitMQ connectivity state
 
   publishArchiveLocalQueueDepth:
     action: send
@@ -1866,6 +1903,14 @@ components:
       payload:
         $ref: '#/components/schemas/MessageProcessorConfigVersion'
 
+    MessageProcessorRabbitmqConnectedMessage:
+      name: MessageProcessorRabbitmqConnectedMessage
+      title: Message Processor RabbitMQ connectivity
+      summary: Whether the message processor has an active RabbitMQ connection
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/MessageProcessorRabbitmqConnected'
+
     ComponentRegisterMessage:
       name: ComponentRegisterMessage
       title: Component self-registration
@@ -1945,6 +1990,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveS3Connected'
+
+    ArchiveRabbitmqConnectedMessage:
+      name: ArchiveRabbitmqConnectedMessage
+      title: Archive RabbitMQ connectivity
+      summary: Whether the archive processor has an active RabbitMQ connection
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveRabbitmqConnected'
 
     ArchiveLocalQueueDepthMessage:
       name: ArchiveLocalQueueDepthMessage
@@ -2371,6 +2424,11 @@ components:
         this instance is up to date.
       example: "deadbeef"
 
+    MessageProcessorRabbitmqConnected:
+      type: boolean
+      description: True when the message processor has an active RabbitMQ connection
+      example: true
+
     ComponentRegister:
       description: >
         A component's self-registration, published by
@@ -2499,6 +2557,11 @@ components:
     ArchiveS3Connected:
       type: boolean
       description: True when the last S3 write attempt succeeded
+      example: true
+
+    ArchiveRabbitmqConnected:
+      type: boolean
+      description: True when the archive processor has an active RabbitMQ connection
       example: true
 
     ArchiveLocalQueueDepth:

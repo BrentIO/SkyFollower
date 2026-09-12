@@ -2171,6 +2171,9 @@ class MessageProcessor:
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )
         self._mqtt.publish(f"{base}/active_flights", str(active), retain=True)
+        self._mqtt.publish(
+            f"{base}/rabbitmq_connected", str(self._rmq_connected), retain=True
+        )
 
         # The rules/areas config hash this instance has actually loaded --
         # last 8 chars only, short-hash style, for a compact read in Home
@@ -2312,6 +2315,7 @@ class MessageProcessor:
             # whether this processor is up to date.
             _Sensor("rules_version", "Rules Version", "mdi:file-document-check", None),
             _Sensor("areas_version", "Areas Version", "mdi:map-check", None),
+            _Sensor("rabbitmq_connected", "RabbitMQ Connected", "mdi:rabbit", None),
             # registration_misses/operator_misses/total_messages_processed
             # have no entry here -- core-health publishes their HA discovery
             # config on this component's behalf, using this exact device
