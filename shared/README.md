@@ -80,9 +80,10 @@ time via a relative path reference in their `requirements.txt`.
   environment variable, baked in at build time exactly the way
   `VERSION`/`GIT_COMMIT` already are: every Dockerfile declares
   `ARG IMAGE=unknown` / `ENV COMPONENT_IMAGE=$IMAGE`, and
-  `build-container-images.yaml` passes
-  `IMAGE=skyfollower-${{ matrix.name }}`, the exact name its own
-  `discover-images` job already computed) and the `device` block itself,
+  `build-container-images.yaml` passes an `IMAGE` build-arg of
+  `skyfollower-` followed by that workflow's own `matrix.name` value —
+  the exact name its own `discover-images` job already computed) and the
+  `device` block itself,
   verbatim. This is what lets `core-health` build its "update available"
   registry (see `ha_discovery.py` above) by reading two fields straight
   off the wire, with no table anywhere mapping a component's identity to
