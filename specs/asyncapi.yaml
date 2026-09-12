@@ -943,8 +943,9 @@ channels:
     address: SkyFollower/archive-compaction/statistic/last_compacted_date
     description: >
       The watermark after this run: the most recent UTC date (YYYY-MM-DD)
-      whose partition has been fully compacted. Published once per run,
-      retained.
+      whose partition has been fully compacted. Literal string "None" only
+      on a fresh deployment before the first successful compaction.
+      Published once per run, retained.
     messages:
       ArchiveCompactionLastCompactedDateMessage:
         $ref: '#/components/messages/ArchiveCompactionLastCompactedDateMessage'
@@ -955,8 +956,8 @@ channels:
     address: SkyFollower/archive-compaction/statistic/mismatch_date
     description: >
       UTC date (YYYY-MM-DD) this run stopped at due to a flight/index
-      parity mismatch. Empty string when the run wasn't stopped by one.
-      Published once per run, retained.
+      parity mismatch. Literal string "None" when the run wasn't stopped
+      by one. Published once per run, retained.
     messages:
       ArchiveCompactionMismatchDateMessage:
         $ref: '#/components/messages/ArchiveCompactionMismatchDateMessage'
@@ -966,13 +967,27 @@ channels:
       - $ref: '#/servers/mqtt'
     address: SkyFollower/archive-compaction/statistic/mismatch_uuids
     description: >
-      Comma-separated flight UUIDs missing their Parquet index row on
-      mismatch_date -- a starting point for manual investigation. Empty
-      string when the run wasn't stopped by a mismatch. Published once per
-      run, retained.
+      JSON object listing the flight UUIDs missing their Parquet index row
+      on mismatch_date -- a starting point for manual investigation. Empty
+      list when the run wasn't stopped by a mismatch. Not a standalone
+      Home Assistant sensor; consumed only as the
+      archiveCompactionMismatchUuidCount sensor's json_attributes_topic.
+      Published once per run, retained.
     messages:
       ArchiveCompactionMismatchUuidsMessage:
         $ref: '#/components/messages/ArchiveCompactionMismatchUuidsMessage'
+
+  archiveCompactionMismatchUuidCount:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive-compaction/statistic/mismatch_uuid_count
+    description: >
+      Count of flight UUIDs missing their Parquet index row on
+      mismatch_date. Always numeric; 0 when the run wasn't stopped by a
+      mismatch. Published once per run, retained.
+    messages:
+      ArchiveCompactionMismatchUuidCountMessage:
+        $ref: '#/components/messages/ArchiveCompactionMismatchUuidCountMessage'
 
   archiveCompactionLastRunAt:
     servers:
@@ -1526,6 +1541,12 @@ operations:
       $ref: '#/channels/archiveCompactionMismatchUuids'
     summary: Archive compaction publishes the flight UUIDs missing their index row, if a parity mismatch occurred
 
+  publishArchiveCompactionMismatchUuidCount:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionMismatchUuidCount'
+    summary: Archive compaction publishes the count of flight UUIDs missing their index row
+
   publishArchiveCompactionLastRunAt:
     action: send
     channel:
@@ -2030,9 +2051,17 @@ components:
       name: ArchiveCompactionMismatchUuidsMessage
       title: Archive compaction mismatch flight UUIDs
       summary: Flight UUIDs missing their Parquet index row on mismatch_date
-      contentType: text/plain
+      contentType: application/json
       payload:
         $ref: '#/components/schemas/ArchiveCompactionMismatchUuids'
+
+    ArchiveCompactionMismatchUuidCountMessage:
+      name: ArchiveCompactionMismatchUuidCountMessage
+      title: Archive compaction mismatch flight count
+      summary: Count of flight UUIDs missing their Parquet index row on mismatch_date
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionMismatchUuidCount'
 
     ArchiveCompactionLastRunAtMessage:
       name: ArchiveCompactionLastRunAtMessage
@@ -2546,25 +2575,41 @@ components:
 
     ArchiveCompactionLastCompactedDate:
       type: string
-      format: date
-      description: The watermark after this run -- the most recent UTC date whose partition has been fully compacted
+      description: >
+        The watermark after this run -- the most recent UTC date
+        (YYYY-MM-DD) whose partition has been fully compacted. Literal
+        string "None" only on a fresh deployment before the first
+        successful compaction
       example: "2026-07-23"
 
     ArchiveCompactionMismatchDate:
       type: string
-      format: date
       description: >
-        UTC date this run stopped at due to a flight/index parity mismatch.
-        Empty string when the run wasn't stopped by one
-      example: ""
+        UTC date (YYYY-MM-DD) this run stopped at due to a flight/index
+        parity mismatch. Literal string "None" when the run wasn't stopped
+        by one
+      example: "None"
 
     ArchiveCompactionMismatchUuids:
-      type: string
+      type: object
       description: >
-        Comma-separated flight UUIDs missing their Parquet index row on
-        mismatch_date. Empty string when the run wasn't stopped by a
+        Flight UUIDs missing their Parquet index row on mismatch_date.
+        Empty list when the run wasn't stopped by a mismatch
+      properties:
+        uuids:
+          type: array
+          items:
+            type: string
+            format: uuid
+      example: { "uuids": [] }
+
+    ArchiveCompactionMismatchUuidCount:
+      type: integer
+      description: >
+        Count of flight UUIDs missing their Parquet index row on
+        mismatch_date. Always numeric; 0 when the run wasn't stopped by a
         mismatch
-      example: ""
+      example: 0
 
     ArchiveCompactionLastRunAt:
       type: string

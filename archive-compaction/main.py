@@ -550,19 +550,20 @@ def publish_completion_stats(
         client.publish(f"{base}/days_compacted", str(days_compacted), retain=True)
         client.publish(
             f"{base}/last_compacted_date",
-            last_compacted_date.strftime("%Y-%m-%d") if last_compacted_date else "",
+            last_compacted_date.strftime("%Y-%m-%d") if last_compacted_date else "None",
             retain=True,
         )
         client.publish(
             f"{base}/mismatch_date",
-            mismatch_date.strftime("%Y-%m-%d") if mismatch_date else "",
+            mismatch_date.strftime("%Y-%m-%d") if mismatch_date else "None",
             retain=True,
         )
         client.publish(
             f"{base}/mismatch_uuids",
-            ",".join(sorted(mismatch_uuids)),
+            json.dumps({"uuids": sorted(mismatch_uuids)}),
             retain=True,
         )
+        client.publish(f"{base}/mismatch_uuid_count", str(len(mismatch_uuids)), retain=True)
         client.publish(f"{base}/mismatch_runs", str(mismatch_runs), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
@@ -593,17 +594,18 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     )
     publish_register(client, device)
     stats = [
-        ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None),
-        ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None),
-        ("days_compacted", "Archive Compaction Days Compacted", "mdi:calendar-check", "measurement", None),
-        ("last_compacted_date", "Archive Compaction Last Compacted Date", "mdi:calendar", None, None),
-        ("mismatch_date", "Archive Compaction Mismatch Date", "mdi:calendar-alert", None, None),
-        ("mismatch_uuids", "Archive Compaction Mismatch Flight UUIDs", "mdi:alert-circle", None, None),
-        ("mismatch_runs", "Archive Compaction Mismatch Consecutive Runs", "mdi:counter", "measurement", None),
-        ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None),
-        ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None),
+        ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None, None),
+        ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None, None),
+        ("days_compacted", "Archive Compaction Days Compacted", "mdi:calendar-check", "measurement", None, None),
+        ("last_compacted_date", "Archive Compaction Last Compacted Date", "mdi:calendar", None, None, None),
+        ("mismatch_date", "Archive Compaction Mismatch Date", "mdi:calendar-alert", None, None, None),
+        ("mismatch_uuid_count", "Archive Compaction Mismatch Flight Count", "mdi:alert-circle", "measurement", None,
+         f"{MQTT_ROOT}/statistic/mismatch_uuids"),
+        ("mismatch_runs", "Archive Compaction Mismatch Consecutive Runs", "mdi:counter", "measurement", None, None),
+        ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None, None),
+        ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None, None),
     ]
-    for name, friendly_name, icon, state_class, unit in stats:
+    for name, friendly_name, icon, state_class, unit, json_attributes_topic in stats:
         payload: dict = {
             "state_topic": f"{MQTT_ROOT}/statistic/{name}",
             "name": friendly_name,
@@ -616,6 +618,8 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             payload["state_class"] = state_class
         if unit:
             payload["unit_of_measurement"] = unit
+        if json_attributes_topic:
+            payload["json_attributes_topic"] = json_attributes_topic
         if name == "last_run_at":
             payload["device_class"] = "timestamp"
         client.publish(
