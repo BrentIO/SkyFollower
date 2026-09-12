@@ -1,14 +1,7 @@
-// Shared crosshair/target glyph markup -- used both by the on-map "home"
-// marker (components/MapView.tsx, via a DOM element's innerHTML) and by
-// the recenter button (components/ControlsPanel.tsx, inline JSX), so the
-// two are visually identical (a deliberate design requirement -- the
-// recenter button's icon should read as "the same thing as the marker
-// this button snaps back to").
-//
-// A single exported markup-builder (rather than a React component)
-// avoids maintaining the geometry twice; the recenter button renders it
-// via dangerouslySetInnerHTML with the exact same string this module
-// hands the marker.
+// Crosshair/target glyph markup for the recenter button
+// (components/ControlsPanel.tsx, rendered via dangerouslySetInnerHTML).
+// The on-map "home" marker (components/MapView.tsx) renders as a plain
+// solid dot instead and does not use this module.
 
 const MUTED_GRAY = "#6b7280"; // Tailwind slate-500 -- small, muted, doesn't compete with aircraft icons.
 
