@@ -812,29 +812,6 @@ class TestPublishCompletionStats:
         assert calls[f"{self._base_topic}/last_run_status"] == "Success"
         assert f"{self._base_topic}/last_run_at" in calls
 
-    def test_publishes_version(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch.dict(os.environ, {"VERSION": "2026.08.01"}):
-            with patch("archive_compaction_main.mqtt.Client", return_value=mc):
-                with patch("time.sleep"):
-                    publish_completion_stats(cfg, self._make_result(), "success")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
-                 if not c.args[0].startswith("homeassistant/")}
-        assert calls[f"{self._base_topic}/version"] == "2026.08.01"
-
-    def test_publishes_version_dev_fallback_when_unset(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("VERSION", None)
-            with patch("archive_compaction_main.mqtt.Client", return_value=mc):
-                with patch("time.sleep"):
-                    publish_completion_stats(cfg, self._make_result(), "success")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
-                 if not c.args[0].startswith("homeassistant/")}
-        assert calls[f"{self._base_topic}/version"] == "dev"
-
     def test_publishes_mismatch_fields(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
         mc = self._setup_mock_client()
@@ -876,7 +853,7 @@ class TestPublishCompletionStats:
                 publish_completion_stats(cfg, self._make_result(files_compacted=5), "success")
         stat_calls = [c for c in mc.publish.call_args_list
                       if c.args[0].startswith(self._base_topic)]
-        assert len(stat_calls) == 10
+        assert len(stat_calls) == 9
         for call in stat_calls:
             assert call.kwargs.get("retain") is True
 
@@ -890,13 +867,25 @@ class TestPublishCompletionStats:
                  if not c.args[0].startswith("homeassistant/")}
         assert calls[f"{self._base_topic}/last_run_status"] == "Failure"
 
+    def test_no_version_telemetry_published(self):
+        # Version is already carried in every discovery payload's device
+        # block via sw_version -- no other component also publishes it as
+        # a plain statistic topic, and archive-compaction shouldn't either.
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch("archive_compaction_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, self._make_result(), "success")
+        topics = {c.args[0] for c in mc.publish.call_args_list}
+        assert f"{self._base_topic}/version" not in topics
+
 
 # ---------------------------------------------------------------------------
 # _publish_ha_autodiscovery
 # ---------------------------------------------------------------------------
 
 class TestPublishHaAutodiscovery:
-    def test_sensor_count_and_version_entry(self):
+    def test_sensor_count(self):
         mc = MagicMock()
         _publish_ha_autodiscovery(mc)
         configs = {
@@ -904,14 +893,11 @@ class TestPublishHaAutodiscovery:
             for c in mc.publish.call_args_list
             if c.args[0].startswith("homeassistant/sensor/")
         }
-        assert len(configs) == 10
-        version_topic = "homeassistant/sensor/SkyFollower_archive_compaction_version/config"
-        assert version_topic in configs
-        version_config = configs[version_topic]
-        assert version_config["name"] == "Archive Compaction Version"
-        assert version_config["state_topic"] == f"{MQTT_ROOT}/statistic/version"
-        assert version_config["icon"] == "mdi:tag"
-        assert version_config["unique_id"] == "SkyFollower_archive_compaction_version"
+        assert len(configs) == 9
+        # Version is already carried in the device block's sw_version --
+        # no other component also publishes it as its own sensor entity,
+        # and archive-compaction shouldn't either.
+        assert "homeassistant/sensor/SkyFollower_archive_compaction_version/config" not in configs
 
     def test_mismatch_runs_entry(self):
         mc = MagicMock()
