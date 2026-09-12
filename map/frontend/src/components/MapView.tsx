@@ -258,8 +258,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
           // Icon fill is altitude-based; it never changes on selection --
           // selection is shown only via the halo below.
           "icon-color": ["get", "color"],
-          "icon-halo-color": "#ffffff",
-          "icon-halo-width": ["case", ["boolean", ["get", "selected"], false], 3, 0],
+          "icon-halo-color": ["case", ["boolean", ["get", "selected"], false], "#ffffff", "#000000"],
+          "icon-halo-width": ["case", ["boolean", ["get", "selected"], false], 3, 1],
           "icon-halo-blur": ["case", ["boolean", ["get", "selected"], false], 0.5, 0],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
         },
