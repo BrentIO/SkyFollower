@@ -1254,7 +1254,7 @@ collect_map_env() {
   # points at an external, already-secured Redis instead of the bundled
   # one.
   MAP_REDIS_PASSWORD="$(prompt_password_value MAP_REDIS_PASSWORD "map-redis password (blank for none)" "$(existing_env_value "$env_file" MAP_REDIS_PASSWORD)" 0)"
-  MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 30)" 1 86400)"
+  MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 15)" 1 86400)"
   MAP_HIDE_SECONDS="$(prompt_int_range MAP_HIDE_SECONDS "Hide TTL, seconds (aircraft drops from view but trail data is kept)" "$(existing_env_value_or "$env_file" MAP_HIDE_SECONDS 60)" 1 86400)"
   # Should equal core Redis's config:flight_ttl_seconds for this
   # deployment (default 300, matching MAP_EVICT_SECONDS's own default) --

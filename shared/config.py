@@ -426,7 +426,7 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
             f"MAP_HOME_LONGITUDE must be between -180 and 180 (got {home_longitude!r})"
         )
         home_longitude = None
-    map_stale_seconds = loader.integer("MAP_STALE_SECONDS", 30)
+    map_stale_seconds = loader.integer("MAP_STALE_SECONDS", 15)
     map_hide_seconds = loader.integer("MAP_HIDE_SECONDS", 60)
     map_evict_seconds = loader.integer("MAP_EVICT_SECONDS", 300)
     # The three-stage lifecycle (see map/README.md) only makes sense in this

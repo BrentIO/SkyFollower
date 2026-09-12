@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
+import { hasPosition } from "../lib/featureCollections";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
 // callback that also constructs a real maplibregl.Map and reads several hooks --
@@ -99,6 +100,86 @@ function evaluateExpr(expr: Expr, properties: Record<string, unknown>): unknown 
   }
 }
 
+// The infoBoxItems computation is a plain expression assigned to a `const`
+// inside the component body (no map/hooks involved beyond reading `aircraft`,
+// `screenPositions`, and `isolateId` from the surrounding scope), so it's
+// extracted and evaluated the same way as the paint objects above -- this
+// exercises the real filter chain, including the isolate check, rather than
+// a hand-copied duplicate that could drift from the source.
+function extractInfoBoxItemsExpression(): string {
+  const marker = "const infoBoxItems: InfoBoxLayerItem[] = ";
+  const startIndex = mapViewSource.indexOf(marker);
+  if (startIndex === -1) throw new Error("Could not find infoBoxItems declaration");
+
+  const exprStart = startIndex + marker.length;
+  const endIndex = mapViewSource.indexOf(";", exprStart);
+  if (endIndex === -1) throw new Error("Could not find end of infoBoxItems computation");
+
+  return mapViewSource.slice(exprStart, endIndex);
+}
+
+interface FakeAircraft {
+  icao_hex: string;
+  lat: number | null;
+  lon: number | null;
+  hidden: boolean;
+}
+
+interface FakeScreenPosition {
+  x: number;
+  y: number;
+  offset: "above" | "below";
+}
+
+function computeInfoBoxItems(
+  aircraft: Record<string, FakeAircraft>,
+  screenPositions: Record<string, FakeScreenPosition>,
+  isolateId: string | null,
+): Array<{ id: string }> {
+  const expression = extractInfoBoxItemsExpression();
+  // eslint-disable-next-line no-new-func -- evaluating a plain expression
+  // extracted from our own source, not user input.
+  const fn = new Function(
+    "aircraft",
+    "screenPositions",
+    "isolateId",
+    "hasPosition",
+    `return (${expression});`,
+  );
+  return fn(aircraft, screenPositions, isolateId, hasPosition);
+}
+
+describe("infoBoxItems -- isolate filtering", () => {
+  function fakeAircraft(icao_hex: string): FakeAircraft {
+    return { icao_hex, lat: 1, lon: 1, hidden: false };
+  }
+
+  function fakeScreenPosition(): FakeScreenPosition {
+    return { x: 0, y: 0, offset: "above" };
+  }
+
+  const aircraft: Record<string, FakeAircraft> = {
+    AAAAAA: fakeAircraft("AAAAAA"),
+    BBBBBB: fakeAircraft("BBBBBB"),
+    CCCCCC: fakeAircraft("CCCCCC"),
+  };
+  const screenPositions: Record<string, FakeScreenPosition> = {
+    AAAAAA: fakeScreenPosition(),
+    BBBBBB: fakeScreenPosition(),
+    CCCCCC: fakeScreenPosition(),
+  };
+
+  it("with Isolate on, only the isolated aircraft's info box item appears", () => {
+    const items = computeInfoBoxItems(aircraft, screenPositions, "BBBBBB");
+    expect(items.map((item) => item.id)).toEqual(["BBBBBB"]);
+  });
+
+  it("with Isolate off (isolateId null), every aircraft's info box item appears", () => {
+    const items = computeInfoBoxItems(aircraft, screenPositions, null);
+    expect(items.map((item) => item.id).sort()).toEqual(["AAAAAA", "BBBBBB", "CCCCCC"]);
+  });
+});
+
 describe("aircraft layer paint -- icon-halo-*", () => {
   const paint = aircraftLayerPaint();
 
@@ -192,6 +273,33 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   it("leaves icon-color and icon-opacity untouched by the outline change", () => {
     expect(paint["icon-color"]).toEqual(["get", "color"]);
     expect(paint["icon-opacity"]).toEqual(["case", ["boolean", ["get", "stale"], false], 0.4, 1]);
+  });
+});
+
+describe("home marker stacking order", () => {
+  // No jsdom in this project's test setup (see the file-level comment above),
+  // and DOM z-index stacking can't be asserted meaningfully without a real
+  // browser render anyway -- so this checks the one thing that is testable:
+  // the marker's element has its z-index set below the map canvas's default
+  // stacking, and that it's set on the same `el` passed into `new
+  // maplibregl.Marker(...)` (MapLibre appends that element directly, with no
+  // wrapper, when a custom `element` option is given -- see marker.ts).
+  const markerCallIndex = mapViewSource.indexOf("new maplibregl.Marker(");
+  if (markerCallIndex === -1) throw new Error("Could not find maplibregl.Marker construction");
+
+  const homeBlockStart = mapViewSource.lastIndexOf("const el = document.createElement", markerCallIndex);
+  if (homeBlockStart === -1) throw new Error("Could not find home marker element creation");
+
+  const homeBlock = mapViewSource.slice(homeBlockStart, markerCallIndex);
+
+  it("sets a negative z-index on the marker's own element before constructing the Marker", () => {
+    expect(homeBlock).toMatch(/el\.style\.zIndex\s*=\s*["']-1["']/);
+  });
+
+  it("passes that same element into the Marker constructor", () => {
+    const markerCallEnd = mapViewSource.indexOf(")", markerCallIndex);
+    const markerCall = mapViewSource.slice(markerCallIndex, markerCallEnd);
+    expect(markerCall).toContain("element: el");
   });
 });
 

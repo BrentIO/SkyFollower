@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applySnapshot, applyWsEvent } from "./aircraftState";
-import { followTargetPosition, isFollowLost } from "./followTarget";
+import { followTargetPosition, isFollowLost, shouldCancelFollowOnDrag } from "./followTarget";
 
 describe("followTargetPosition", () => {
   it("returns null when nothing is being followed", () => {
@@ -63,5 +63,19 @@ describe("isFollowLost", () => {
 
   it("is true for the followed aircraft once its eviction is deferred (pendingRemoval)", () => {
     expect(isFollowLost({ ...followed, pendingRemoval: true }, "A1B2C3")).toBe(true);
+  });
+});
+
+describe("shouldCancelFollowOnDrag", () => {
+  it("is true for a genuine user-driven drag while Follow is active", () => {
+    expect(shouldCancelFollowOnDrag({ originalEvent: {} }, "A1B2C3")).toBe(true);
+  });
+
+  it("is false for a programmatic camera move (no originalEvent) -- Follow's own easeTo, Zoom To, and the recenter button", () => {
+    expect(shouldCancelFollowOnDrag({ originalEvent: undefined }, "A1B2C3")).toBe(false);
+  });
+
+  it("is false when nothing is being followed, even for a genuine drag", () => {
+    expect(shouldCancelFollowOnDrag({ originalEvent: {} }, null)).toBe(false);
   });
 });

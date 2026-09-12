@@ -34,7 +34,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
-import { followTargetPosition } from "../lib/followTarget";
+import { followTargetPosition, shouldCancelFollowOnDrag } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { nextSelection } from "../lib/selection";
@@ -131,7 +131,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
   // from labelsAll above, which is about aircraft info boxes.
-  const [mapLabelsOn, setMapLabelsOn] = useState(true);
+  const [mapLabelsOn, setMapLabelsOn] = useState(false);
   // The basemap's own text-bearing layer ids, computed once on "load" (see
   // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
   // runtime, so there's no need to recompute this on every toggle.
@@ -158,6 +158,20 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // stale snapshot from whenever that listener was attached.
   const aircraftRef = useRef(aircraft);
   aircraftRef.current = aircraft;
+
+  // Same reason as aircraftRef above: the map's 'dragstart' listener
+  // (mount effect below) is attached once and must read the *current*
+  // Follow target, not whatever it was when the listener was attached.
+  const followIdRef = useRef(followId);
+  followIdRef.current = followId;
+
+  // Shared by every place a user's manual navigation should cancel Follow
+  // -- currently just the mount effect's dragstart handler below; a future
+  // Center/recenter action reuses this same function rather than repeating
+  // `setFollowId(null)` inline.
+  function cancelFollow() {
+    setFollowId(null);
+  }
 
   // Fires whenever the selection moves away from an aircraft -- either to
   // a different one (reselect) or to none (the panel's close button /
@@ -316,7 +330,16 @@ function MapViewInner({ config }: { config: AppConfig }) {
     mapRef.current = map;
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
+
+    // A genuine pointer/touch-driven drag should cancel Follow -- fighting
+    // the operator's own input is exactly the bug this fixes. Follow's own
+    // recenter, Zoom To, and the recenter button all move the camera via
+    // `easeTo`, which never carries `originalEvent`, so those never reach
+    // this as a cancel (see shouldCancelFollowOnDrag).
+    map.on("dragstart", (e) => {
+      if (shouldCancelFollowOnDrag(e, followIdRef.current)) cancelFollow();
+    });
 
     function syncScreenPositions() {
       const current = aircraftRef.current;
@@ -562,6 +585,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
         el.style.alignItems = "center";
         el.style.gap = "2px";
         el.style.pointerEvents = "none";
+        // MapLibre appends this element directly as a sibling of its WebGL
+        // canvas (no wrapper div), so a negative z-index here is what keeps
+        // it behind aircraft icons drawn on the canvas -- otherwise DOM
+        // insertion order would put this marker on top.
+        el.style.zIndex = "-1";
         el.innerHTML =
           `<div style="width:12px;height:12px;border-radius:50%;background:#000000;"></div>` +
           `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">HOME</span>`;
@@ -686,6 +714,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
     .filter((a) => !a.hidden)
+    .filter((a) => !isolateId || a.icao_hex === isolateId)
     .filter((a) => screenPositions[a.icao_hex] !== undefined)
     .map((a) => ({
       id: a.icao_hex,
