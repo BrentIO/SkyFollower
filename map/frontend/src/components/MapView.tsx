@@ -38,6 +38,7 @@ import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink"
 import { followTargetPosition, shouldCancelFollowOnDrag } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
+import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
@@ -567,30 +568,44 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
       });
 
-      // Only SELECTABLE_LAYER_IDS ever gets click/hover handlers -- range
+      // Only SELECTABLE_LAYER_IDS ever drives selection/hover -- range
       // rings and their labels are intentionally not in that list, so they
       // can never be selected or hovered (see #1587).
-      for (const layerId of SELECTABLE_LAYER_IDS) {
-        map.on("click", layerId, (e) => {
-          const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
-          if (!icaoHex) return;
-          setSelected((prev) => nextSelection(prev, icaoHex));
-        });
-        map.on("mouseenter", layerId, () => {
-          map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", layerId, () => {
-          map.getCanvas().style.cursor = "";
-          setHoveredId(null);
-        });
-        // Transient label-on-hover -- tracked separately from click-select
-        // so a hovered box disappears again on mouseleave rather than
-        // sticking around like a selection does.
-        map.on("mousemove", layerId, (e) => {
-          const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
-          setHoveredId(icaoHex ?? null);
-        });
-      }
+      //
+      // Both handlers query all of SELECTABLE_LAYER_IDS at once (via
+      // queryRenderedFeatures) rather than registering one delegated
+      // `map.on(event, layerId, ...)` per layer. AIRCRAFT_LAYER_ID and
+      // TRAIL_HIT_AREA_LAYER_ID overlap by design (a trail's most recent
+      // segment terminates exactly at the aircraft's own icon), and
+      // MapLibre's delegated per-layer registration does its own
+      // independent hit test per layer -- so the previous per-layer loop
+      // invoked the click handler twice for a single physical click on an
+      // icon, toggling selection on and immediately back off (see
+      // mapHitTest.ts's topIcaoHex for the full writeup). Querying once
+      // and taking the first hit guarantees exactly one decision per
+      // physical event, regardless of how many layers the point
+      // intersects.
+      map.on("click", (e) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
+        const icaoHex = topIcaoHex(features);
+        if (!icaoHex) return;
+        setSelected((prev) => nextSelection(prev, icaoHex));
+      });
+      // Hover cursor + transient label-on-hover, consolidated the same
+      // way for consistency (double-firing here was harmless -- both
+      // per-layer registrations always agreed on the same icao_hex/cursor
+      // -- but this avoids the same bug class if hover ever becomes
+      // state-toggling). A single `mousemove` over the whole map, rather
+      // than delegated `mouseenter`/`mouseleave`/`mousemove` per layer,
+      // covers all three: cursor and hoveredId both reset to their "not
+      // hovering" value the moment the query stops matching, which is
+      // what mouseleave did explicitly before.
+      map.on("mousemove", (e) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
+        const icaoHex = topIcaoHex(features);
+        map.getCanvas().style.cursor = icaoHex ? "pointer" : "";
+        setHoveredId(icaoHex ?? null);
+      });
 
       // Home / centered reference point -- a fixed marker from config,
       // never derived from received data.
