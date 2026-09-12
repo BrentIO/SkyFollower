@@ -578,8 +578,13 @@ top of a cluster), a live trail per aircraft (built client-side from
 frontend also fetches `GET /api/flights/{icao_hex}` and reseeds that
 aircraft's trail from the server's own accumulation, so a selected
 aircraft's trail covers the whole flight and survives a page reload -- see
-[REST API](#rest-api) above), and a fixed "home" marker/recenter button
-from the backend's `GET /api/config` (see [REST API](#rest-api) above).
+[REST API](#rest-api) above), a fixed "home" marker/recenter button from
+the backend's `GET /api/config` (see [REST API](#rest-api) above), and a
+"Range Outline" toggle that draws today's reception range outline (the
+`envelope` band from `GET /api/range-outline`, see [Range
+Outline](#range-outline) above) as a `#196363` line, twice the width of the
+static range rings -- disabled when no home is configured, since the
+backend has no origin to measure from in that case either.
 
 - `src/lib/altitudeColor.ts` -- verbatim port of `flightView.ts`'s
   `altitudeColor()`; used for both the icon fill and the live trail color.
@@ -618,6 +623,11 @@ from the backend's `GET /api/config` (see [REST API](#rest-api) above).
 - `src/hooks/useProcessorRoster.ts` -- polls `GET /api/processors` every
   5s (see [Processor Roster](#processor-roster) above for why this must be
   a poll, not a WS push) for `ControlsPanel`'s connection indicator.
+- `src/api/rangeOutline.ts` / `src/hooks/useRangeOutline.ts` -- fetches
+  `GET /api/range-outline?band=envelope`; the hook polls every 60s (matching
+  the backend's own `MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS`,
+  `shared/timing.py`) only while the "Range Outline" toggle is on, and
+  reports an empty `FeatureCollection` (no polling) while it's off.
 - `src/lib/processorStatus.ts` -- the connection indicator's presentation
   logic: overall color (red whenever the WebSocket itself is down,
   regardless of the last-known roster) and the per-processor hover
@@ -631,7 +641,9 @@ from the backend's `GET /api/config` (see [REST API](#rest-api) above).
   panel/toggles/recenter button. The connection dot is green/amber/red
   (amber = "at least one processor reconnecting/disconnected, but at
   least one still connected"), and hovering it lists every rostered
-  processor by `processor_id` with its own status label.
+  processor by `processor_id` with its own status label. Its "Range
+  Outline" toggle is disabled whenever no home is configured, matching the
+  recenter button's own disabled state.
 
 ```bash
 cd map/frontend
