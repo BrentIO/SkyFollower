@@ -4609,6 +4609,24 @@ class TestMapUdpMetadata:
         payload = _sent_payload(mock_sock)
         assert payload["squawk"] == "1200"
 
+    def test_resent_when_a_rule_match_alone_changes(self):
+        """A rule match with no other metadata-relevant field changing must
+        still trigger a resend -- matched_rules is part of the hashed
+        snapshot."""
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        f = self._make_flight(p)
+
+        p._maybe_publish_map_metadata(f, time.time())
+        assert mock_sock.sendto.call_count == 1
+
+        f.matched_rules.append("rule_a")
+        p._maybe_publish_map_metadata(f, time.time())
+        assert mock_sock.sendto.call_count == 2
+
+        payload = _sent_payload(mock_sock)
+        assert payload["matched_rules"] == ["rule_a"]
+
     def test_suppressed_when_message_older_than_max_lag(self, caplog):
         p, _ = _make_processor()
         mock_sock = _enable_map_udp(p)
@@ -4936,13 +4954,23 @@ class TestFlightMetadataSnapshot:
         assert before != after
 
     def test_unaffected_by_untracked_fields(self):
-        """positions/velocities/matched_rules/route_resolution_attempted
+        """positions/velocities/route_resolution_attempted/total_messages
         etc. are not part of the map UDP metadata payload, so they must not
         affect the snapshot."""
         p, _ = _make_processor()
         f = self._make_flight(p)
         before = _flight_metadata_snapshot(f)
-        f.matched_rules.append("rule_a")
         f.total_messages += 1
         after = _flight_metadata_snapshot(f)
         assert before == after
+
+    def test_changes_when_matched_rules_changes(self):
+        """matched_rules IS part of the map UDP metadata payload -- a rule
+        match alone, with no other metadata-relevant field changing, must
+        change the snapshot so _maybe_publish_map_metadata resends."""
+        p, _ = _make_processor()
+        f = self._make_flight(p)
+        before = _flight_metadata_snapshot(f)
+        f.matched_rules.append("rule_a")
+        after = _flight_metadata_snapshot(f)
+        assert before != after

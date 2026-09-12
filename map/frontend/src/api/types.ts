@@ -29,6 +29,37 @@ export interface AircraftInfo {
   military?: boolean;
   serial_number?: string;
   manufactured_date?: string;
+  /** Cleaned, TTS-ready livery name if the aircraft is wearing one (see
+   * shared/models.py's AircraftRecord.special_livery) -- a name string,
+   * not a boolean; absent when not wearing one. */
+  special_livery?: string;
+}
+
+// Operator/registrant/airport shapes below are the subset of
+// shared/models.py's OperatorRecord/AirportRecord (and CompletedFlight's
+// untyped registrant dict) this frontend actually reads -- same
+// intentionally-narrow convention as AircraftInfo above.
+
+export interface OperatorInfo {
+  name?: string;
+  callsign?: string;
+  country?: string;
+}
+
+export interface RegistrantInfo {
+  names?: string[];
+}
+
+// shared/models.py's AirportRecord, narrowed to the fields the aircraft
+// detail panel's Route section reads (name/location line, plus the
+// ICAO/IATA pill).
+export interface AirportRef {
+  icao_code?: string;
+  iata_code?: string;
+  name?: string;
+  city?: string;
+  region?: string;
+  country?: string;
 }
 
 // One aircraft's full merged current-state, as returned by one
@@ -46,6 +77,10 @@ export interface MapFlight {
   vs?: number;
   ident?: string;
   aircraft?: AircraftInfo;
+  operator?: OperatorInfo;
+  registrant?: RegistrantInfo;
+  origin?: AirportRef;
+  destination?: AirportRef;
   squawk?: string;
   first_message?: string;
   last_message?: string;
