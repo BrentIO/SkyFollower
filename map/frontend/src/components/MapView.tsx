@@ -166,9 +166,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
   followIdRef.current = followId;
 
   // Shared by every place a user's manual navigation should cancel Follow
-  // -- currently just the mount effect's dragstart handler below; a future
-  // Center/recenter action reuses this same function rather than repeating
-  // `setFollowId(null)` inline.
+  // -- the mount effect's dragstart handler below, and the Center/recenter
+  // button (handleRecenter below), rather than repeating `setFollowId(null)`
+  // inline at each call site.
   function cancelFollow() {
     setFollowId(null);
   }
@@ -690,6 +690,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
   function handleRecenter() {
     const map = mapRef.current;
     if (!map || !config.home) return;
+    // Recentering is an explicit navigation action, same as a manual drag --
+    // it should win outright rather than race Follow's own recenter effect,
+    // which would otherwise re-fire on the very next `aircraft` update and
+    // snap the view right back toward the followed aircraft.
+    cancelFollow();
     // Preserves whatever zoom level the user is already at -- only the
     // center changes.
     map.easeTo({ center: [config.home.longitude, config.home.latitude] });
