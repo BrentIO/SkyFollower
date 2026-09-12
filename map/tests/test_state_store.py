@@ -15,6 +15,7 @@ of the same live server.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -239,20 +240,40 @@ def test_metadata_packets_do_not_append_to_trail(redis_client):
     assert len(store.get_trail(icao_hex)) == 1
 
 
+def test_max_trail_points_value():
+    """Pins the current trail-line cap so a future accidental change (in
+    either direction) is caught -- see MAX_TRAIL_POINTS's docstring in
+    map/state_store.py for the memory/rendering reasoning behind 25,000."""
+    assert MAX_TRAIL_POINTS == 25000
+
+
 def test_trail_is_capped_at_max_trail_points(redis_client):
     """A long-loitering aircraft can't grow flight:trail without bound --
     the Lua LTRIMs it to the most recent MAX_TRAIL_POINTS after each append,
-    keeping the newest points and dropping the oldest."""
+    keeping the newest points and dropping the oldest.
+
+    Most of the trail is pre-seeded directly (bypassing apply_update) so
+    this test isn't paying MAX_TRAIL_POINTS separate round trips to a live
+    Redis just to reach the cap boundary -- only the handful of points
+    that actually straddle the boundary go through the real apply_update/
+    Lua path being tested.
+    """
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
     overflow = 20
-    for i in range(1, MAX_TRAIL_POINTS + overflow + 1):
+    seeded = MAX_TRAIL_POINTS - 5
+    pipe = redis_client.pipeline()
+    for i in range(1, seeded + 1):
+        pipe.rpush(flight_trail_key(icao_hex), json.dumps({"lat": float(i), "lon": float(i), "alt": None}))
+    pipe.execute()
+
+    for i in range(seeded + 1, MAX_TRAIL_POINTS + overflow + 1):
         store.apply_update(icao_hex, "position", float(i), {"lat": float(i), "lon": float(i)})
 
     trail = store.get_trail(icao_hex)
     assert len(trail) == MAX_TRAIL_POINTS
-    # Newest point survives; the oldest `overflow` points were trimmed.
+    # Newest point survives; the oldest points (up through `overflow`) were trimmed.
     assert trail[-1] == {"lat": float(MAX_TRAIL_POINTS + overflow), "lon": float(MAX_TRAIL_POINTS + overflow), "alt": None}
     assert trail[0] == {"lat": float(overflow + 1), "lon": float(overflow + 1), "alt": None}
 

@@ -61,13 +61,48 @@ _TRAIL_PREFIX = "flight:trail:"
 
 # Upper bound on how many points flight:trail:{icao_hex} retains -- the Lua
 # LTRIMs to the most recent MAX_TRAIL_POINTS after every append. Mirrors the
-# frontend's own MAX_TRAIL_POINTS (map/frontend/src/lib/aircraftState.ts):
-# GET /api/flights/{icao_hex} hands this list back as the seed for the
+# frontend's own trail-line cap (map/frontend/src/lib/aircraftState.ts's
+# MAX_TRAIL_POINTS -- a distinct constant from that module's own
+# MAX_TRACE_POINTS, which caps the independent Aircraft Detail Panel Trace
+# Points buffer and has no server-side equivalent at all): GET
+# /api/flights/{icao_hex} hands this list back as the seed for the
 # client-side trail, so a server cap larger than the client's would just be
 # trimmed again on arrival, and a smaller one would lose history the client
 # would otherwise keep. Kept in sync by hand -- the two can't share a
 # constant across the Python/TypeScript boundary.
-MAX_TRAIL_POINTS = 300
+#
+# Raised from a former 300 (~5 minutes of history at this cap's own worst
+# case below) to cover, without truncation, the overwhelming majority of
+# flights this map would ever hold continuous contact with. The message
+# processor enforces a floor of one `position` UDP packet per aircraft per
+# second (shared/timing.py's DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS),
+# so 25,000 is a worst-case ~7 hours of uninterrupted max-rate tracking --
+# comfortably past a typical domestic flight, and past most international
+# ones too, given a ground-based ADS-B/EXTERNAL-feed network rarely holds
+# uninterrupted contact with one aircraft much longer than that (unlike a
+# satellite-fed source, coverage gaps are the norm over open ocean/remote
+# terrain). A true ultra-long-haul flight tracked gapless the whole way is
+# the one case that still truncates -- accepted rather than removing the
+# cap outright, for two reasons:
+#
+# - Memory: each trail point is a small JSON object (`{"lat", "lon",
+#   "alt"}`), well under 100 bytes as a Redis list element even accounting
+#   for per-entry list overhead. 25,000 of them is on the order of 2-3MB
+#   for a single aircraft that actually reaches this ceiling -- trivial for
+#   map-redis's no-persistence, in-memory-only footprint (see
+#   docker-compose.map.yaml) even with several such aircraft airborne at
+#   once, at this service's documented "a few dozen aircraft" scale.
+# - Rendering: the frontend draws one LineString feature per consecutive
+#   trail-point pair (map/frontend/src/lib/featureCollections.ts), rebuilt
+#   for the whole tracked-aircraft set on every update and coalesced to at
+#   most once per 200ms by lib/syncThrottle.ts -- coalescing bounds *how
+#   often* that rebuild runs, not its size. A single aircraft's worst case
+#   at this cap (24,999 segments) is the same order of magnitude as the
+#   full-fleet worst case already reasoned tolerable under that throttle
+#   (50 aircraft x the old 300-point cap =~ 14,950 segments) -- a
+#   genuinely unbounded per-aircraft trail would let one long-haul flight
+#   alone exceed that by an arbitrary, unbounded factor.
+MAX_TRAIL_POINTS = 25000
 
 # Single Redis hash (field = processor_id, value = last-seen epoch
 # timestamp) tracking every message processor this map instance has heard
