@@ -77,15 +77,44 @@ export interface AircraftRecord extends MapFlight {
 
 export type AircraftMap = Record<string, AircraftRecord>;
 
-// Caps how many points a client-accumulated trail can hold. Since #1567
-// the trail is rendered as one two-point LineString feature per
-// consecutive pair of points, so an unbounded trail means unbounded
-// features per aircraft on a long-lived page session. A point-count cap
-// is used rather than a time-window cap because TrailPoint carries no
-// timestamp -- adding one purely to support capping would be a bigger
-// change than the cap itself needs. 300 deduplicated position samples is
-// generous history for "a few dozen aircraft" at this map's scale.
-export const MAX_TRAIL_POINTS = 300;
+// Caps how many points a client-accumulated trail can hold. The trail is
+// rendered as one two-point LineString feature per consecutive pair of
+// points, so an unbounded trail means unbounded features per aircraft on
+// a long-lived page session. A point-count cap is used rather than a
+// time-window cap because TrailPoint carries no timestamp -- adding one
+// purely to support capping would be a bigger change than the cap itself
+// needs.
+//
+// Mirrors the server's own trail-line cap (map/state_store.py's
+// MAX_TRAIL_POINTS -- see that constant's docstring for the full memory/
+// rendering reasoning behind 25,000): GET /api/flights/{icao_hex}'s
+// server-accumulated trail (applyTrailSeed below) is already capped to
+// this same value server-side, so a larger client cap here would never
+// actually see more points from that source, and a smaller one would
+// discard server history this client could otherwise keep. Kept in sync
+// by hand -- the two can't share a constant across the Python/TypeScript
+// boundary.
+//
+// Independent from MAX_TRACE_POINTS below: this cap governs the drawn
+// trail line only, not the Aircraft Detail Panel's Trace Points sample
+// buffer (see TracePoint's own docstring for why that stays separately,
+// and much more tightly, capped).
+export const MAX_TRAIL_POINTS = 25000;
+
+// Caps the Aircraft Detail Panel's Trace Points sample buffer (see
+// TracePoint's docstring). Deliberately independent of, and far smaller
+// than, MAX_TRAIL_POINTS above: Trace Points renders one labeled dot per
+// sample (plus a "{speed} kt {altitude} ft" + local-time label), not a
+// thin line segment, so it's far more visually and computationally
+// expensive per point than the trail line -- an uncapped or even
+// trail-line-sized buffer here would mean thousands of overlapping
+// labeled dots for a single long-tracked aircraft. Left at the same 300
+// the combined constant used to carry: that number was never the
+// bottleneck this issue was about, and 300 labeled samples is still
+// generous for what Trace Points is actually for (spot-checking a
+// flight's recent history), independent of however long the drawn trail
+// line itself now reaches back.
+export const MAX_TRACE_POINTS = 300;
 
 function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailPoint[] {
   if (flight.lat == null || flight.lon == null) return trail;
@@ -125,7 +154,7 @@ function pushTracePoint(points: TracePoint[], flight: Partial<MapFlight>, now: n
     return points; // Same position as the last sample -- nothing new to plot.
   }
   const next = [...points, point];
-  return next.length > MAX_TRAIL_POINTS ? next.slice(next.length - MAX_TRAIL_POINTS) : next;
+  return next.length > MAX_TRACE_POINTS ? next.slice(next.length - MAX_TRACE_POINTS) : next;
 }
 
 // Replaces an aircraft's client-accumulated trail with the server's own
