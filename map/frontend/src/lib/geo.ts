@@ -4,13 +4,13 @@
 // mean earth radius); see that module's own header comment, which
 // explicitly cross-references this frontend's rangeRings.ts as its pair.
 //
-// Used for the aircraft detail panel's "Distance from Home" row:
-// greatCircleNm(config.home, { latitude: flight.lat, longitude: flight.lon }).
-// config.home is HomePoint | null -- when null, callers simply omit the
+// Used for the aircraft detail panel's Distance row:
+// greatCircleNm(config.center, { latitude: flight.lat, longitude: flight.lon }).
+// config.center is CenterPoint | null -- when null, callers simply omit the
 // distance row; it is not this function's job to handle a missing point,
 // only to compute a distance when given two real ones.
 
-import type { HomePoint } from "./config";
+import type { CenterPoint } from "./config";
 import { EARTH_RADIUS_NM } from "./rangeRings";
 
 function toRadians(deg: number): number {
@@ -21,7 +21,7 @@ function toRadians(deg: number): number {
  * Great-circle (haversine) distance between two lat/lon points, in
  * nautical miles.
  */
-export function greatCircleNm(from: HomePoint, to: HomePoint): number {
+export function greatCircleNm(from: CenterPoint, to: CenterPoint): number {
   const phi1 = toRadians(from.latitude);
   const phi2 = toRadians(to.latitude);
   const dPhi = toRadians(to.latitude - from.latitude);

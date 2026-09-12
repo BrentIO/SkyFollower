@@ -251,18 +251,18 @@ describe("buildAircraftDetail -- Track", () => {
 });
 
 describe("buildAircraftDetail -- Distance", () => {
-  const home = { latitude: 33.9425, longitude: -118.4081 };
+  const center = { latitude: 33.9425, longitude: -118.4081 };
 
-  it("omits when config.home is null", () => {
+  it("omits when config.center is null", () => {
     expect(buildAircraftDetail(baseFlight({ lat: 34, lon: -118 }), null).distance).toBeNull();
   });
 
   it("omits when the aircraft's own position is unknown", () => {
-    expect(buildAircraftDetail(baseFlight(), home).distance).toBeNull();
+    expect(buildAircraftDetail(baseFlight(), center).distance).toBeNull();
   });
 
   it("computes great-circle distance (nmi, one decimal) when both are known", () => {
-    const data = buildAircraftDetail(baseFlight({ lat: 33.9425, lon: -118.4081 }), home);
+    const data = buildAircraftDetail(baseFlight({ lat: 33.9425, lon: -118.4081 }), center);
     expect(data.distance).toBe("0.0");
   });
 });
@@ -287,7 +287,7 @@ describe("buildAircraftDetail -- Sources / Matched Rules", () => {
 
 describe("buildAircraftDetail -- representative full-data case", () => {
   it("resolves every field for a complete flight record", () => {
-    const home = { latitude: 33.9425, longitude: -118.4081 };
+    const center = { latitude: 33.9425, longitude: -118.4081 };
     const flight: MapFlight = {
       icao_hex: "A2C9E4",
       ident: "JFA727",
@@ -314,7 +314,7 @@ describe("buildAircraftDetail -- representative full-data case", () => {
       matched_rules: ["high-altitude-transit", "restricted-zone"],
     };
 
-    const data = buildAircraftDetail(flight, home);
+    const data = buildAircraftDetail(flight, center);
 
     expect(data.title).toBe("JFA727");
     expect(data.registration).toBe("N727JF");

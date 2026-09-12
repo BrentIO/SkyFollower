@@ -1,6 +1,6 @@
 // Crosshair/target glyph markup for the recenter button
 // (components/ControlsPanel.tsx, rendered via dangerouslySetInnerHTML).
-// The on-map "home" marker (components/MapView.tsx) renders as a plain
+// The on-map "center" marker (components/MapView.tsx) renders as a plain
 // solid dot instead and does not use this module.
 
 const MUTED_GRAY = "#6b7280"; // Tailwind slate-500 -- small, muted, doesn't compete with aircraft icons.

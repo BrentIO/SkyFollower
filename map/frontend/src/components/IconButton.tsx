@@ -14,7 +14,7 @@ export interface IconButtonProps {
   icon: IconSpec;
   active: boolean;
   onClick: () => void;
-  /** Zoom To (one-shot) and Range Outline (no home/center configured) are
+  /** Zoom To (one-shot) and Range Outline (no center configured) are
    * the two existing callers that need this; every other button omits it
    * and behaves exactly as before. */
   disabled?: boolean;

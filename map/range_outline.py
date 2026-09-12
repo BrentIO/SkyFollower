@@ -33,8 +33,8 @@ The Redis hash carries a short safety TTL so a dead process can't leave
 stale data in this no-persistence Redis forever; the disk files are the
 real 30-day store, and a live process refreshes the TTL on every write.
 
-Disabled entirely when no "home" reference point is configured
-(MAP_HOME_LATITUDE/LONGITUDE) -- there is no origin to measure bearing and
+Disabled entirely when no "center" reference point is configured
+(MAP_CENTER_LATITUDE/LONGITUDE) -- there is no origin to measure bearing and
 distance from, same as the frontend's range rings.
 """
 
@@ -63,7 +63,7 @@ OUTLINE_KEY = "map:range:outline"
 _SAFETY_TTL_SECONDS = 2 * 86400
 
 # readsb rejects positions beyond --max-range (default 300 nm) for decoding;
-# anything past this from home is a bad decode or a relayed position from a
+# anything past this from center is a bad decode or a relayed position from a
 # far-away feed that doesn't belong in *this* system's range outline.
 MAX_RANGE_NM = 325.0
 
@@ -136,15 +136,15 @@ class RangeOutlineStore:
     def __init__(
         self,
         redis_client,
-        home_latitude: Optional[float],
-        home_longitude: Optional[float],
+        center_latitude: Optional[float],
+        center_longitude: Optional[float],
         snapshot_dir,
         retention_seconds: int,
     ) -> None:
         self._redis = redis_client
-        self._home = (
-            (home_latitude, home_longitude)
-            if home_latitude is not None and home_longitude is not None
+        self._center = (
+            (center_latitude, center_longitude)
+            if center_latitude is not None and center_longitude is not None
             else None
         )
         self._dir = pathlib.Path(snapshot_dir)
@@ -155,7 +155,7 @@ class RangeOutlineStore:
 
     @property
     def enabled(self) -> bool:
-        return self._home is not None
+        return self._center is not None
 
     # -- boot ------------------------------------------------------------
 
@@ -183,7 +183,7 @@ class RangeOutlineStore:
 
     def record_position(self, lat: Optional[float], lon: Optional[float], alt: Optional[float]) -> None:
         """Fold one received position into the outline. No-op when the
-        outline is disabled (no home) or the position has no lat/lon."""
+        outline is disabled (no center) or the position has no lat/lon."""
         if not self.enabled or lat is None or lon is None:
             return
 
@@ -191,13 +191,13 @@ class RangeOutlineStore:
         if today != self._date:
             self._rollover(today)
 
-        home_lat, home_lon = self._home
-        nm = great_circle_nm(home_lat, home_lon, lat, lon)
+        center_lat, center_lon = self._center
+        nm = great_circle_nm(center_lat, center_lon, lat, lon)
         if nm > MAX_RANGE_NM:
             return
 
         # Half-degree index, 0-719 (real bearing = bearing_index / 2).
-        bearing_index = round(initial_bearing(home_lat, home_lon, lat, lon) * 2) % 720
+        bearing_index = round(initial_bearing(center_lat, center_lon, lat, lon) * 2) % 720
         band = altitude_band(alt)
         field = f"{bearing_index}:{band}"
 
@@ -277,7 +277,7 @@ class RangeOutlineStore:
         today's live outline from Redis; otherwise that day's finalised
         snapshot from disk (raises FileNotFoundError if it's gone)."""
         if not self.enabled:
-            return self._feature_collection([], date or self._date, home=None)
+            return self._feature_collection([], date or self._date, center=None)
 
         if date is None:
             date = self._date
@@ -372,7 +372,7 @@ class RangeOutlineStore:
         buckets = self._read_buckets_from_redis()
         payload = {
             "date": date,
-            "home": {"lat": self._home[0], "lon": self._home[1]} if self._home else None,
+            "center": {"lat": self._center[0], "lon": self._center[1]} if self._center else None,
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "buckets": buckets,
         }
@@ -448,7 +448,7 @@ class RangeOutlineStore:
         bearings_seen = {int(f.split(":", 1)[0]) for f in buckets if ":" in f and f.split(":", 1)[0].isdigit()}
         return self._feature_collection(
             features, date, bearing_count=len(bearings_seen),
-            home={"lat": self._home[0], "lon": self._home[1]} if self._home else None,
+            center={"lat": self._center[0], "lon": self._center[1]} if self._center else None,
         )
 
     @staticmethod
@@ -469,7 +469,7 @@ class RangeOutlineStore:
         }
 
     def _feature_collection(
-        self, features: list, date: str, bearing_count: int = 0, home: Optional[dict] = None
+        self, features: list, date: str, bearing_count: int = 0, center: Optional[dict] = None
     ) -> dict:
         max_range = max((f["properties"]["max_range_nm"] for f in features), default=0.0)
         return {
@@ -480,7 +480,7 @@ class RangeOutlineStore:
                 "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "point_count": bearing_count,
                 "max_range_nm": max_range,
-                "home": home,
+                "center": center,
             },
         }
 

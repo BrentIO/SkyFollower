@@ -29,13 +29,13 @@ describe("destinationPoint", () => {
   });
 
   it("is geodesically correct at mid-latitude, not a naive flat-projection circle", () => {
-    const home = { latitude: 40.0, longitude: -75.0 };
+    const center = { latitude: 40.0, longitude: -75.0 };
 
-    const [southLon, southLat] = destinationPoint(home, 180, 150);
+    const [southLon, southLat] = destinationPoint(center, 180, 150);
     expect(southLon).toBeCloseTo(-75.0, 9);
     expect(southLat).toBeCloseTo(37.501684727770446, 9);
 
-    const [northLon, northLat] = destinationPoint(home, 0, 150);
+    const [northLon, northLat] = destinationPoint(center, 0, 150);
     expect(northLon).toBeCloseTo(-75.0, 9);
     expect(northLat).toBeCloseTo(42.49831527222954, 9);
 
@@ -43,10 +43,10 @@ describe("destinationPoint", () => {
     // would at the equator (~1.665deg/100nm scaled to 150nm = ~2.498deg) --
     // a flat/naive circle would get this wrong, since it ignores the
     // cos(latitude) compression of longitude away from the equator.
-    const [eastLon, eastLat] = destinationPoint(home, 90, 150);
+    const [eastLon, eastLat] = destinationPoint(center, 90, 150);
     expect(eastLon).toBeCloseTo(-71.74013459841028, 9);
     expect(eastLat).toBeCloseTo(39.95431839299283, 9);
-    expect(Math.abs(eastLon - home.longitude)).toBeGreaterThan(2.498);
+    expect(Math.abs(eastLon - center.longitude)).toBeGreaterThan(2.498);
   });
 });
 
@@ -59,17 +59,17 @@ describe("ringCoordinates", () => {
   });
 
   it("its southernmost vertex matches the bearing-180 destination point", () => {
-    const home = { latitude: 40, longitude: -75 };
+    const center = { latitude: 40, longitude: -75 };
     const radiusNm = 150;
-    const coords = ringCoordinates(home, radiusNm);
+    const coords = ringCoordinates(center, radiusNm);
     const minLat = Math.min(...coords.map(([, lat]) => lat));
-    const [, expectedLat] = destinationPoint(home, 180, radiusNm);
+    const [, expectedLat] = destinationPoint(center, 180, radiusNm);
     expect(minLat).toBeCloseTo(expectedLat, 6);
   });
 });
 
 describe("rangeRingsFeatureCollection", () => {
-  it("returns no features when there's no home point", () => {
+  it("returns no features when there's no center point", () => {
     expect(rangeRingsFeatureCollection(null).features).toHaveLength(0);
   });
 
@@ -84,20 +84,20 @@ describe("rangeRingsFeatureCollection", () => {
 });
 
 describe("rangeRingLabelsFeatureCollection", () => {
-  it("returns no features when there's no home point", () => {
+  it("returns no features when there's no center point", () => {
     expect(rangeRingLabelsFeatureCollection(null).features).toHaveLength(0);
   });
 
   it("places one labeled point per radius at its southernmost point", () => {
-    const home = { latitude: 40, longitude: -75 };
-    const fc = rangeRingLabelsFeatureCollection(home, [100, 150, 200]);
+    const center = { latitude: 40, longitude: -75 };
+    const fc = rangeRingLabelsFeatureCollection(center, [100, 150, 200]);
     expect(fc.features).toHaveLength(3);
     expect(fc.features.map((f) => f.properties?.label)).toEqual(["100 nmi", "150 nmi", "200 nmi"]);
     for (const feature of fc.features) {
       expect(feature.geometry.type).toBe("Point");
       const [lon, lat] = (feature.geometry as GeoJSON.Point).coordinates;
-      expect(lon).toBeCloseTo(home.longitude, 6);
-      expect(lat).toBeLessThan(home.latitude);
+      expect(lon).toBeCloseTo(center.longitude, 6);
+      expect(lat).toBeLessThan(center.latitude);
     }
   });
 });

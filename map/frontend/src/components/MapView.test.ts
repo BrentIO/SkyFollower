@@ -276,7 +276,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   });
 });
 
-describe("home marker stacking order", () => {
+describe("center marker stacking order", () => {
   // No jsdom in this project's test setup (see the file-level comment above),
   // and DOM z-index stacking can't be asserted meaningfully without a real
   // browser render anyway -- so this checks the one thing that is testable:
@@ -287,13 +287,13 @@ describe("home marker stacking order", () => {
   const markerCallIndex = mapViewSource.indexOf("new maplibregl.Marker(");
   if (markerCallIndex === -1) throw new Error("Could not find maplibregl.Marker construction");
 
-  const homeBlockStart = mapViewSource.lastIndexOf("const el = document.createElement", markerCallIndex);
-  if (homeBlockStart === -1) throw new Error("Could not find home marker element creation");
+  const centerBlockStart = mapViewSource.lastIndexOf("const el = document.createElement", markerCallIndex);
+  if (centerBlockStart === -1) throw new Error("Could not find center marker element creation");
 
-  const homeBlock = mapViewSource.slice(homeBlockStart, markerCallIndex);
+  const centerBlock = mapViewSource.slice(centerBlockStart, markerCallIndex);
 
   it("sets a negative z-index on the marker's own element before constructing the Marker", () => {
-    expect(homeBlock).toMatch(/el\.style\.zIndex\s*=\s*["']-1["']/);
+    expect(centerBlock).toMatch(/el\.style\.zIndex\s*=\s*["']-1["']/);
   });
 
   it("passes that same element into the Marker constructor", () => {
@@ -336,8 +336,8 @@ describe("handleRecenter -- cancels Follow before recentering", () => {
     expect(cancelIndex).toBeLessThan(easeToIndex);
   });
 
-  it("still guards on a missing map/home reference, unchanged from before", () => {
-    expect(body).toContain("if (!map || !config.home) return;");
+  it("still guards on a missing map/center reference, unchanged from before", () => {
+    expect(body).toContain("if (!map || !config.center) return;");
   });
 });
 

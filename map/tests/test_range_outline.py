@@ -25,20 +25,20 @@ _REDIS_HOST = os.environ.get("REDIS_TEST_HOST", "localhost")
 _REDIS_PORT = int(os.environ.get("REDIS_TEST_PORT", "6379"))
 _TEST_DB = 14
 
-# Home: 34.0N, 118.0W. One degree of latitude north is ~60 nm; going north
+# Center: 34.0N, 118.0W. One degree of latitude north is ~60 nm; going north
 # is bearing 0.
-_HOME_LAT = 34.0
-_HOME_LON = -118.0
+_CENTER_LAT = 34.0
+_CENTER_LON = -118.0
 _EARTH_RADIUS_NM = 3440.065
 
 
 def _dest(bearing_deg: float, nm: float) -> tuple[float, float]:
-    """Destination lat/lon `nm` from home along `bearing_deg` -- the
+    """Destination lat/lon `nm` from center along `bearing_deg` -- the
     forward calc, so a test can place a point in an exact bearing bucket."""
     ang = nm / _EARTH_RADIUS_NM
     brg = math.radians(bearing_deg)
-    phi1 = math.radians(_HOME_LAT)
-    lam1 = math.radians(_HOME_LON)
+    phi1 = math.radians(_CENTER_LAT)
+    lam1 = math.radians(_CENTER_LON)
     phi2 = math.asin(math.sin(phi1) * math.cos(ang) + math.cos(phi1) * math.sin(ang) * math.cos(brg))
     lam2 = lam1 + math.atan2(
         math.sin(brg) * math.sin(ang) * math.cos(phi1),
@@ -76,11 +76,11 @@ def frozen_date(monkeypatch):
     return holder
 
 
-def _store(redis_client, tmp_path, home=(_HOME_LAT, _HOME_LON)):
+def _store(redis_client, tmp_path, center=(_CENTER_LAT, _CENTER_LON)):
     return RangeOutlineStore(
         redis_client,
-        home_latitude=home[0] if home else None,
-        home_longitude=home[1] if home else None,
+        center_latitude=center[0] if center else None,
+        center_longitude=center[1] if center else None,
         snapshot_dir=tmp_path,
         retention_seconds=30 * 86400,
     )
@@ -88,8 +88,8 @@ def _store(redis_client, tmp_path, home=(_HOME_LAT, _HOME_LON)):
 
 # -- accumulation -----------------------------------------------------------
 
-def test_disabled_without_home(redis_client, tmp_path):
-    store = _store(redis_client, tmp_path, home=None)
+def test_disabled_without_center(redis_client, tmp_path):
+    store = _store(redis_client, tmp_path, center=None)
     assert not store.enabled
     store.record_position(35.0, -118.0, 30000)
     assert redis_client.exists(OUTLINE_KEY) == 0
@@ -270,7 +270,7 @@ def test_reload_after_redis_emptied(redis_client, tmp_path, frozen_date):
 # -- GeoJSON API ----------------------------------------------------------
 
 def _fan(store, bearings_deg, band_alt=25000, nm=80.0):
-    """Record one point at each given bearing, `nm` from home."""
+    """Record one point at each given bearing, `nm` from center."""
     for brg in bearings_deg:
         lat, lon = _dest(brg, nm)
         store.record_position(lat, lon, band_alt)

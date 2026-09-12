@@ -248,7 +248,7 @@ def _handle_packet(payload: dict) -> None:
         # Fold the merged current position into the daily range outline --
         # merged (not the raw packet) so a velocity-only packet still
         # contributes once lat/lon are known, matching the trail's own
-        # accumulation rule. No-op when no "home" is configured.
+        # accumulation rule. No-op when no "center" is configured.
         _range_outline.record_position(merged.get("lat"), merged.get("lon"), merged.get("alt"))
         event = {"type": "position", "icao_hex": icao_hex}
         for field in POSITION_FIELDS:
@@ -367,7 +367,7 @@ def _range_outline_loop() -> None:
     day's file when it has changed, rolls over at UTC midnight even with no
     traffic, and recovers from a map-redis restart. All the real work is in
     RangeOutlineStore.tick(); this is just its cadence. No-op cycles when
-    no "home" is configured (RangeOutlineStore.enabled is False)."""
+    no "center" is configured (RangeOutlineStore.enabled is False)."""
     while not _shutdown.is_set():
         try:
             _range_outline.tick()
@@ -394,8 +394,8 @@ async def lifespan(app: FastAPI):
 
     _range_outline = RangeOutlineStore(
         _redis,
-        home_latitude=_cfg.get("map_home_latitude"),
-        home_longitude=_cfg.get("map_home_longitude"),
+        center_latitude=_cfg.get("map_center_latitude"),
+        center_longitude=_cfg.get("map_center_longitude"),
         snapshot_dir=_RANGE_OUTLINE_DIR,
         retention_seconds=MAP_RANGE_OUTLINE_TTL_SECONDS,
     )
@@ -532,7 +532,7 @@ def get_range_outline(date: Optional[str] = None, band: Optional[str] = None) ->
     UTC. `date=YYYY-MM-DD` -> that day's finalised snapshot from disk
     (HTTP 404 once it's past the retention window). `band=<label>` narrows
     to one band; `band=envelope` returns just the envelope. Empty
-    FeatureCollection when no `MAP_HOME_LATITUDE`/`LONGITUDE` is set."""
+    FeatureCollection when no `MAP_CENTER_LATITUDE`/`LONGITUDE` is set."""
     try:
         return _range_outline.get_outline(date=date, band=band)
     except FileNotFoundError:
@@ -561,19 +561,19 @@ def get_config() -> dict:
     """Runtime configuration the frontend can't otherwise get at -- Vite
     bakes VITE_* values into the bundle at `npm run build` time, so a
     published image built with none set has no way to carry a per-
-    deployment "home" reference point without a runtime channel like this
-    one (see shared/config.py's map_config(), MAP_HOME_LATITUDE/
-    MAP_HOME_LONGITUDE, and map/frontend/src/lib/config.ts's loadConfig()).
+    deployment "center" reference point without a runtime channel like this
+    one (see shared/config.py's map_config(), MAP_CENTER_LATITUDE/
+    MAP_CENTER_LONGITUDE, and map/frontend/src/lib/config.ts's loadConfig()).
 
     A flat top-level object with named sub-keys -- not a bare value -- so a
     later addition (e.g. stale_seconds/evict_seconds) doesn't need a
     breaking shape change."""
-    latitude = _cfg.get("map_home_latitude")
-    longitude = _cfg.get("map_home_longitude")
-    home = None
+    latitude = _cfg.get("map_center_latitude")
+    longitude = _cfg.get("map_center_longitude")
+    center = None
     if latitude is not None and longitude is not None:
-        home = {"latitude": latitude, "longitude": longitude}
-    return {"home": home}
+        center = {"latitude": latitude, "longitude": longitude}
+    return {"center": center}
 
 
 @app.websocket("/ws")
@@ -629,8 +629,8 @@ def _uvicorn_tls_kwargs() -> dict:
     covers running `python -m map.main` (or bare `uvicorn map.main:app`)
     standalone outside the installer flow, where no TLS directory was ever
     generated or mounted. Same "optional, log and carry on" shape as this
-    module's other absent-config paths (e.g. MAP_HOME_LATITUDE/
-    MAP_HOME_LONGITUDE unset -- see get_config())."""
+    module's other absent-config paths (e.g. MAP_CENTER_LATITUDE/
+    MAP_CENTER_LONGITUDE unset -- see get_config())."""
     if os.path.isfile(_TLS_CERT_PATH) and os.path.isfile(_TLS_KEY_PATH):
         return {"ssl_certfile": _TLS_CERT_PATH, "ssl_keyfile": _TLS_KEY_PATH}
     logger.warning(

@@ -596,7 +596,7 @@ prompt_number_range() {
   # Latitude/longitude -- decimal, not integer, so validated with a regex
   # rather than shell integer comparison. `required` (default 1, matching
   # prompt_string's own convention) lets a caller allow a blank answer to
-  # mean "leave this feature disabled" -- see collect_map_env()'s home
+  # mean "leave this feature disabled" -- see collect_map_env()'s center
   # lat/long -- instead of forcing a numeric value.
   local varname="$1" label="$2" default="$3" min="$4" max="$5" required="${6:-1}"
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
@@ -1263,14 +1263,14 @@ collect_map_env() {
   MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed -- should match this deployment's flight_ttl_seconds)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
   probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
 
-  # Optional "home" reference point for the frontend's on-map marker,
-  # initial camera position, and "Recenter on home" button -- read at
+  # Optional "center" reference point for the frontend's on-map marker,
+  # initial camera position, and "Return to center" button -- read at
   # runtime by this backend role and served to the frontend over GET
-  # /api/config (shared/config.py's map_config(), MAP_HOME_LATITUDE/
-  # MAP_HOME_LONGITUDE), not a Vite build-time value. Both or neither:
+  # /api/config (shared/config.py's map_config(), MAP_CENTER_LATITUDE/
+  # MAP_CENTER_LONGITUDE), not a Vite build-time value. Both or neither:
   # leave blank to leave the feature disabled.
-  MAP_HOME_LATITUDE="$(prompt_number_range MAP_HOME_LATITUDE "Home reference latitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LATITUDE)" -90 90 0)"
-  MAP_HOME_LONGITUDE="$(prompt_number_range MAP_HOME_LONGITUDE "Home reference longitude, decimal degrees (blank to disable the home marker/recenter)" "$(existing_env_value "$env_file" MAP_HOME_LONGITUDE)" -180 180 0)"
+  MAP_CENTER_LATITUDE="$(prompt_number_range MAP_CENTER_LATITUDE "Center reference latitude, decimal degrees (blank to disable the center marker/recenter)" "$(existing_env_value "$env_file" MAP_CENTER_LATITUDE)" -90 90 0)"
+  MAP_CENTER_LONGITUDE="$(prompt_number_range MAP_CENTER_LONGITUDE "Center reference longitude, decimal degrees (blank to disable the center marker/recenter)" "$(existing_env_value "$env_file" MAP_CENTER_LONGITUDE)" -180 180 0)"
 
   # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When set,
   # this service publishes a minimal Home Assistant presence (discovery +
@@ -1314,10 +1314,10 @@ MAP_STALE_SECONDS=${MAP_STALE_SECONDS}
 MAP_HIDE_SECONDS=${MAP_HIDE_SECONDS}
 MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
 
-# Optional "home" reference point (on-map marker, initial camera position,
-# "Recenter on home"). Leave both blank to disable.
-MAP_HOME_LATITUDE=${MAP_HOME_LATITUDE}
-MAP_HOME_LONGITUDE=${MAP_HOME_LONGITUDE}
+# Optional "center" reference point (on-map marker, initial camera position,
+# "Return to center"). Leave both blank to disable.
+MAP_CENTER_LATITUDE=${MAP_CENTER_LATITUDE}
+MAP_CENTER_LONGITUDE=${MAP_CENTER_LONGITUDE}
 
 # Optional -- leave MQTT_HOST blank to disable the Home Assistant presence
 # (discovery + running version + start time). No telemetry is published
@@ -2322,11 +2322,17 @@ do_upgrade() {
     echo
     echo "-- ${role_dir} --"
     # Rewrite SKYFOLLOWER_VERSION in place -- every other line, including
-    # any operator edits, is left exactly as it is.
+    # any operator edits, is left exactly as it is. Also renames the map
+    # role's MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys (the "center"
+    # rename) to MAP_CENTER_LATITUDE/MAP_CENTER_LONGITUDE, preserving
+    # whatever value was already set -- a blanket no-op on every non-map
+    # role dir, which never had those keys to begin with.
     local tmp
     tmp="$(mktemp)"
     awk -v v="$IMAGE_VERSION" '
       /^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next }
+      /^MAP_HOME_LATITUDE=/ { sub(/^MAP_HOME_LATITUDE=/, "MAP_CENTER_LATITUDE="); print; next }
+      /^MAP_HOME_LONGITUDE=/ { sub(/^MAP_HOME_LONGITUDE=/, "MAP_CENTER_LONGITUDE="); print; next }
       { print }
     ' "$env_file" > "$tmp"
     (umask 077; mv "$tmp" "$env_file")

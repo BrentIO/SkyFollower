@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { crosshairSvgMarkup, MUTED_GRAY } from "./crosshairIcon";
 
 describe("crosshairSvgMarkup", () => {
-  it("defaults to the muted gray used by the on-map home marker", () => {
+  it("defaults to the muted gray used by the on-map center marker", () => {
     const markup = crosshairSvgMarkup(20);
     expect(markup).toContain(`stroke="${MUTED_GRAY}"`);
     expect(markup).not.toContain("currentColor");

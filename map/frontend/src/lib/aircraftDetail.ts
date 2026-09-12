@@ -6,7 +6,7 @@
 // render test setup -- see lib/config.test.ts's own note on that).
 
 import type { AircraftInfo, AirportRef, MapFlight, OperatorInfo, RegistrantInfo } from "../api/types";
-import type { HomePoint } from "./config";
+import type { CenterPoint } from "./config";
 import { airportLocation, receiverSourceLabel } from "./flightView";
 import { greatCircleNm } from "./geo";
 import { trendArrow } from "./infoBox";
@@ -114,11 +114,11 @@ function buildVerticalSpeedDisplay(verticalSpeed: number | null | undefined): st
   return `${arrow} ${Math.round(Math.abs(verticalSpeed))} ft/min`;
 }
 
-// Omitted whenever config.home is null, or the aircraft's own position
+// Omitted whenever config.center is null, or the aircraft's own position
 // isn't known yet.
-function buildDistanceDisplay(flight: MapFlight, home: HomePoint | null): string | null {
-  if (!home || flight.lat == null || flight.lon == null) return null;
-  const nm = greatCircleNm(home, { latitude: flight.lat, longitude: flight.lon });
+function buildDistanceDisplay(flight: MapFlight, center: CenterPoint | null): string | null {
+  if (!center || flight.lat == null || flight.lon == null) return null;
+  const nm = greatCircleNm(center, { latitude: flight.lat, longitude: flight.lon });
   return nm.toFixed(1);
 }
 
@@ -143,11 +143,11 @@ export interface AircraftDetailData {
 }
 
 // Builds the panel's entire view model in one pass -- the component itself
-// stays a thin, near-logic-free rendering layer over this. `home` is
-// config.home (HomePoint | null); see lib/geo.ts's greatCircleNm doc for why
-// a null home simply omits the Distance row rather than being this
+// stays a thin, near-logic-free rendering layer over this. `center` is
+// config.center (CenterPoint | null); see lib/geo.ts's greatCircleNm doc for
+// why a null center simply omits the Distance row rather than being this
 // function's concern to validate further.
-export function buildAircraftDetail(flight: MapFlight, home: HomePoint | null): AircraftDetailData {
+export function buildAircraftDetail(flight: MapFlight, center: CenterPoint | null): AircraftDetailData {
   const aircraft = flight.aircraft;
   const squawk = nonEmpty(flight.squawk);
 
@@ -169,7 +169,7 @@ export function buildAircraftDetail(flight: MapFlight, home: HomePoint | null): 
     speed: flight.velocity != null ? String(Math.round(flight.velocity)) : null,
     verticalSpeed: buildVerticalSpeedDisplay(flight.vs),
     track: flight.hdg != null ? flight.hdg.toFixed(1) : null,
-    distance: buildDistanceDisplay(flight, home),
+    distance: buildDistanceDisplay(flight, center),
     sources: (flight.receiver_sources ?? []).map(receiverSourceLabel),
     matchedRules: flight.matched_rules ?? [],
   };

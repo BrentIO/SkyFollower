@@ -409,23 +409,23 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     loader, own = _own_loader(loader)
     # Optional -- unlike message_processor_config()'s LATITUDE/LONGITUDE
     # (required there), a stock deployment with neither set is expected and
-    # supported: the frontend's home marker/recenter button are simply
+    # supported: the frontend's center marker/recenter button are simply
     # unavailable (see map/main.py's GET /api/config and
     # map/frontend/src/lib/config.ts). Range-validated by hand rather than
     # via a ConfigLoader helper -- no other block needs a bounded float
     # today.
-    home_latitude = loader.number("MAP_HOME_LATITUDE", None)
-    if home_latitude is not None and not (-90 <= home_latitude <= 90):
+    center_latitude = loader.number("MAP_CENTER_LATITUDE", None)
+    if center_latitude is not None and not (-90 <= center_latitude <= 90):
         loader.problems.append(
-            f"MAP_HOME_LATITUDE must be between -90 and 90 (got {home_latitude!r})"
+            f"MAP_CENTER_LATITUDE must be between -90 and 90 (got {center_latitude!r})"
         )
-        home_latitude = None
-    home_longitude = loader.number("MAP_HOME_LONGITUDE", None)
-    if home_longitude is not None and not (-180 <= home_longitude <= 180):
+        center_latitude = None
+    center_longitude = loader.number("MAP_CENTER_LONGITUDE", None)
+    if center_longitude is not None and not (-180 <= center_longitude <= 180):
         loader.problems.append(
-            f"MAP_HOME_LONGITUDE must be between -180 and 180 (got {home_longitude!r})"
+            f"MAP_CENTER_LONGITUDE must be between -180 and 180 (got {center_longitude!r})"
         )
-        home_longitude = None
+        center_longitude = None
     map_stale_seconds = loader.integer("MAP_STALE_SECONDS", 15)
     map_hide_seconds = loader.integer("MAP_HIDE_SECONDS", 60)
     map_evict_seconds = loader.integer("MAP_EVICT_SECONDS", 300)
@@ -448,8 +448,8 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
         "map_stale_seconds": map_stale_seconds,
         "map_hide_seconds": map_hide_seconds,
         "map_evict_seconds": map_evict_seconds,
-        "map_home_latitude": home_latitude,
-        "map_home_longitude": home_longitude,
+        "map_center_latitude": center_latitude,
+        "map_center_longitude": center_longitude,
     }
     if own:
         loader.raise_for_problems()

@@ -66,12 +66,12 @@ services:
       MAP_REDIS_HOST: ${MAP_REDIS_HOST:-map-redis}
       MAP_REDIS_PORT: ${MAP_REDIS_PORT:-6379}
       MAP_REDIS_PASSWORD: ${MAP_REDIS_PASSWORD:-}
-      # Optional "home" reference point (on-map marker, initial camera
-      # position, "Recenter on home") -- read at runtime by this service
+      # Optional "center" reference point (on-map marker, initial camera
+      # position, "Return to center") -- read at runtime by this service
       # and served to the frontend via GET /api/config, not baked into the
       # frontend bundle at build time. Leave both unset to disable.
-      MAP_HOME_LATITUDE: ${MAP_HOME_LATITUDE:-}
-      MAP_HOME_LONGITUDE: ${MAP_HOME_LONGITUDE:-}
+      MAP_CENTER_LATITUDE: ${MAP_CENTER_LATITUDE:-}
+      MAP_CENTER_LONGITUDE: ${MAP_CENTER_LONGITUDE:-}
       # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When
       # set, this service publishes a minimal Home Assistant presence
       # (discovery + running version + start time) and nothing else; it

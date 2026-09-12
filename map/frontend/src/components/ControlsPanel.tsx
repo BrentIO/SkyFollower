@@ -25,7 +25,7 @@ export interface ControlsPanelProps {
   onToggleMapLabels: () => void;
   /** Daily reception range outline overlay (envelope band only, see
    * lib/mapLayerIds.ts's RANGE_OUTLINE_* ids). Disabled -- not just
-   * unchecked -- when no home is configured, matching `recenterDisabled`:
+   * unchecked -- when no center is configured, matching `recenterDisabled`:
    * the backend always returns an empty FeatureCollection in that case, so
    * there's nothing to show. */
   rangeOutlineVisible: boolean;
@@ -76,14 +76,14 @@ export function ControlsPanel({
         type="button"
         onClick={onRecenter}
         disabled={recenterDisabled}
-        title="Recenter on home"
-        aria-label="Recenter on home"
+        title="Return to center"
+        aria-label="Return to center"
         className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
-        // Same crosshair markup as the on-map home marker -- see
+        // Same crosshair markup as the on-map center marker -- see
         // lib/crosshairIcon.ts's docstring for why they must stay
         // visually identical. "currentColor" lets the button's own
         // text-color classes (light/dark) drive the icon color, unlike
-        // the home marker which passes a fixed color of its own.
+        // the center marker which passes a fixed color of its own.
         dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
       />
 
