@@ -674,6 +674,55 @@ class TestLifetimeCounters:
             assert skipped_cfg["name"] == "Flights Skipped External-Only (Lifetime)"
             assert skipped_cfg["state_class"] == "total_increasing"
 
+    def test_telemetry_publishes_rabbitmq_connected_true(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connected = True
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c for c in mock_mqtt.publish.call_args_list}
+            call = calls["SkyFollower/archive/statistic/rabbitmq_connected"]
+            assert call.args[1] == "True"
+            assert call.kwargs.get("retain") is True
+
+    def test_telemetry_publishes_rabbitmq_connected_false(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            processor._rmq_connected = False
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c for c in mock_mqtt.publish.call_args_list}
+            call = calls["SkyFollower/archive/statistic/rabbitmq_connected"]
+            assert call.args[1] == "False"
+
+    def test_ha_discovery_includes_rabbitmq_connected(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            cfg = configs["homeassistant/sensor/SkyFollower_archive_rabbitmq_connected/config"]
+            assert cfg["name"] == "RabbitMQ Connected"
+            assert cfg["icon"] == "mdi:rabbit"
+            assert cfg["state_topic"] == "SkyFollower/archive/statistic/rabbitmq_connected"
+            assert "availability_topic" in cfg
+
 
 # ---------------------------------------------------------------------------
 # Split-flight stitching

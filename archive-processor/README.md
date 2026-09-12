@@ -411,6 +411,7 @@ All topics use the root `SkyFollower`.
 | `flights_archived_lifetime` | Integer as string | Flights successfully written to S3 since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
 | `flights_skipped_lifetime` | Integer as string | External-only flights dropped instead of archived since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
 | `s3_connected` | `True` or `False` | Current S3 connectivity state |
+| `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
 | `dead_letter_queue_depth` | Integer as string | Flights dead-lettered after repeatedly failing to write to S3 (see [Dead-Lettering Poison Messages and Index Rows](#dead-lettering-poison-messages-and-index-rows)) |

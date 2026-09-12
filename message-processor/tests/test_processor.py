@@ -3024,6 +3024,43 @@ class TestTelemetryPayload:
         assert "state_class" not in cfg
         assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/started_at"
 
+    def test_telemetry_publishes_rabbitmq_connected_true(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rmq_connected = True
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/message-processor/0/statistic/rabbitmq_connected"] == "True"
+
+    def test_telemetry_publishes_rabbitmq_connected_false(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._rmq_connected = False
+        p._publish_telemetry()
+        calls = {c.args[0]: c.args[1] for c in mock_mqtt.publish.call_args_list}
+        assert calls["SkyFollower/message-processor/0/statistic/rabbitmq_connected"] == "False"
+
+    def test_ha_discovery_includes_rabbitmq_connected(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mock_mqtt.publish.call_args_list
+            if c.args[0].startswith("homeassistant/")
+        }
+        cfg = configs["homeassistant/sensor/SkyFollower_message_processor_0_rabbitmq_connected/config"]
+        assert cfg["name"] == "RabbitMQ Connected"
+        assert cfg["icon"] == "mdi:rabbit"
+        assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/rabbitmq_connected"
+        assert "availability_topic" in cfg
+
 
 # ---------------------------------------------------------------------------
 # Telemetry -- active_flights COUNT(*) must not hold self._db_lock

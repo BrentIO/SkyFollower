@@ -942,6 +942,7 @@ class ArchiveProcessor:
             ("flights_archived_lifetime", "Flights Archived (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("flights_skipped_lifetime", "Flights Skipped External-Only (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, None),
+            ("rabbitmq_connected", "RabbitMQ Connected", "mdi:rabbit", None, None, None),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, None),
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, None),
             ("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement", None, None),
@@ -1037,6 +1038,9 @@ class ArchiveProcessor:
             retain=True,
         )
         self._mqtt.publish(f"{base}/s3_connected", str(s3_connected), retain=True)
+        self._mqtt.publish(
+            f"{base}/rabbitmq_connected", str(self._rmq_connected), retain=True
+        )
         self._mqtt.publish(f"{base}/local_queue_depth", str(self._fallback.depth()), retain=True)
         self._mqtt.publish(
             f"{base}/local_index_queue_depth", str(self._index_fallback.depth()), retain=True
