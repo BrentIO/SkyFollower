@@ -1834,6 +1834,25 @@ class TestHaAutodiscoveryStartedAt:
             cfg = configs["homeassistant/sensor/SkyFollower_archive_started_at/config"]
             assert cfg["device_class"] == "timestamp"
 
+    def test_started_at_uses_clock_start_icon(self):
+        # mdi:clock-start, not mdi:clock -- matching receiver's,
+        # message-processor's, and core-health's Start Time sensor icon.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            cfg = configs["homeassistant/sensor/SkyFollower_archive_started_at/config"]
+            assert cfg["icon"] == "mdi:clock-start"
+
     def test_no_standalone_version_sensor(self):
         # Version is already carried in every discovery payload's device
         # block via sw_version -- no other component also publishes it as
