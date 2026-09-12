@@ -41,6 +41,7 @@ import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
+import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
@@ -673,42 +674,61 @@ function MapViewInner({ config }: { config: AppConfig }) {
     );
   }, [rangeOutline, rangeOutlineVisible, mapLoaded]);
 
+  // Coalesces this component's lifetime worth of sync-effect runs (below)
+  // into at most one full source rebuild per MAP_SYNC_THROTTLE_MS -- see
+  // syncThrottle.ts's module docstring for why (a WebSocket batch arrives
+  // on a new `aircraft` object reference regardless of how many aircraft
+  // it actually touched, and every dependency here forces the same full
+  // rebuild). One throttle instance for this component's whole lifetime,
+  // not per-render -- a fresh instance on every render would reset
+  // `lastRunAt` each time and never actually coalesce anything.
+  const syncThrottleRef = useRef(createTrailingThrottle(MAP_SYNC_THROTTLE_MS));
+
+  // Drops any trailing-edge rebuild still pending when this component
+  // unmounts, so it never fires against a map that mount effect's own
+  // cleanup has already torn down (map.remove()).
+  useEffect(() => {
+    return () => syncThrottleRef.current.cancel();
+  }, []);
+
   // --- Keep the aircraft/trail sources and screen positions in sync ---
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
 
-    const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
-    const visibility = { isolateId, followId, protectedId: selectedIcaoHex };
+    syncThrottleRef.current.request(() => {
+      const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
+      const visibility = { isolateId, followId, protectedId: selectedIcaoHex };
 
-    const fc = aircraftFeatureCollection(aircraft, selected, visibility);
-    // Register the SDF image for every silhouette in the current set that
-    // isn't registered yet, *before* the source data references it -- a
-    // typical session touches a few dozen of the ~180 shapes.
-    for (const f of fc.features) {
-      const shape = f.properties?.shape;
-      if (typeof shape === "string") registerShapeImage(map, shape);
-    }
-    (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(fc);
-    (map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-      trailFeatureCollection(aircraft, visibleTrailIds, visibility),
-    );
+      const fc = aircraftFeatureCollection(aircraft, selected, visibility);
+      // Register the SDF image for every silhouette in the current set that
+      // isn't registered yet, *before* the source data references it -- a
+      // typical session touches a few dozen of the ~180 shapes.
+      for (const f of fc.features) {
+        const shape = f.properties?.shape;
+        if (typeof shape === "string") registerShapeImage(map, shape);
+      }
+      (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(fc);
+      (map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+        trailFeatureCollection(aircraft, visibleTrailIds, visibility),
+      );
 
-    // Trace Points -- empty data when off or nothing selected, same
-    // always-present-source convention as the layers above.
-    const tracePoints = tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? []) : [];
-    (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-      tracePointsFeatureCollection(tracePoints),
-    );
+      // Trace Points -- empty data when off or nothing selected, same
+      // always-present-source convention as the layers above.
+      const tracePoints = tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? []) : [];
+      (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+        tracePointsFeatureCollection(tracePoints),
+      );
 
-    const offset = infoBoxOffsetForZoom(map.getZoom());
-    const positions: Record<string, { x: number; y: number; offset: number }> = {};
-    for (const a of Object.values(aircraft)) {
-      if (!hasPosition(a)) continue;
-      const p = map.project([a.lon, a.lat]);
-      positions[a.icao_hex] = { x: p.x, y: p.y, offset };
-    }
-    setScreenPositions(positions);
+      const offset = infoBoxOffsetForZoom(map.getZoom());
+      const positions: Record<string, { x: number; y: number; offset: number }> = {};
+      for (const a of Object.values(aircraft)) {
+        if (!hasPosition(a)) continue;
+        const p = map.project([a.lon, a.lat]);
+        positions[a.icao_hex] = { x: p.x, y: p.y, offset };
+      }
+      setScreenPositions(positions);
+    });
   }, [aircraft, selected, historyAll, mapLoaded, isolateId, followId, tracePointsEnabled, selectedIcaoHex]);
 
   // `selectedIcaoHex` is always still tracked when non-null, *except*
