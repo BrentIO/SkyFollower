@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 // this stays a normal Vite/vitest module rather than needing @types/node, which
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
+import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
 import { hasPosition } from "../lib/featureCollections";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
@@ -61,6 +62,42 @@ function trailLayerPaint(): Record<string, unknown> {
   // eslint-disable-next-line no-new-func -- evaluating a plain object literal
   // extracted from our own source, not user input.
   return new Function(`return (${paintLiteral});`)();
+}
+
+// Minimal evaluator for the small subset of MapLibre style-expression forms
+// used by the paint properties below (case/boolean/get/coalesce/*/min over
+// plain numbers and a feature-properties object) -- enough to check the
+// *values* the real expression produces across icon_scale's actual range,
+// not just its shape. Deliberately not the full style-spec grammar.
+type Expr = unknown;
+function evaluateExpr(expr: Expr, properties: Record<string, unknown>): unknown {
+  if (!Array.isArray(expr)) return expr;
+  const [op, ...args] = expr as [string, ...Expr[]];
+  switch (op) {
+    case "get":
+      return properties[args[0] as string];
+    case "boolean": {
+      const value = evaluateExpr(args[0], properties);
+      return typeof value === "boolean" ? value : evaluateExpr(args[1], properties);
+    }
+    case "coalesce": {
+      for (const candidate of args) {
+        const value = evaluateExpr(candidate, properties);
+        if (value !== undefined && value !== null) return value;
+      }
+      return undefined;
+    }
+    case "case": {
+      const [condition, thenExpr, elseExpr] = args;
+      return evaluateExpr(condition, properties) ? evaluateExpr(thenExpr, properties) : evaluateExpr(elseExpr, properties);
+    }
+    case "*":
+      return args.reduce((acc: number, a) => acc * (evaluateExpr(a, properties) as number), 1);
+    case "min":
+      return Math.min(...args.map((a) => evaluateExpr(a, properties) as number));
+    default:
+      throw new Error(`evaluateExpr: unsupported operator ${op}`);
+  }
 }
 
 // The infoBoxItems computation is a plain expression assigned to a `const`
@@ -153,11 +190,84 @@ describe("aircraft layer paint -- icon-halo-*", () => {
       "#ffffff",
       "#000000",
     ]);
-    expect(paint["icon-halo-width"]).toEqual(["case", ["boolean", ["get", "selected"], false], 3, 1]);
   });
 
-  it("only blurs the selected halo, keeping the unselected outline crisp", () => {
-    expect(paint["icon-halo-blur"]).toEqual(["case", ["boolean", ["get", "selected"], false], 0.5, 0]);
+  it("scales the selected halo width down for small icon_scale shapes, unchanged at/above 1", () => {
+    expect(paint["icon-halo-width"]).toEqual([
+      "case",
+      ["boolean", ["get", "selected"], false],
+      ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+      1,
+    ]);
+  });
+
+  it("scales the selected halo blur down for small icon_scale shapes, unchanged at/above 1", () => {
+    expect(paint["icon-halo-blur"]).toEqual([
+      "case",
+      ["boolean", ["get", "selected"], false],
+      ["*", 0.5, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+      0,
+    ]);
+  });
+
+  it("never touches the unselected halo (width 1 / blur 0) regardless of icon_scale", () => {
+    for (const icon_scale of [0.6, 0.7, 1, 1.3, 1.6, undefined]) {
+      const properties = { selected: false, icon_scale };
+      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(1);
+      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0);
+    }
+  });
+
+  it("leaves the selected halo exactly at its original fixed value for icon_scale >= 1 (larger aircraft unchanged)", () => {
+    for (const icon_scale of [1, 1.2, 1.433, 1.6]) {
+      const properties = { selected: true, icon_scale };
+      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(3);
+      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0.5);
+    }
+  });
+
+  it("scales the selected halo proportionally to icon_scale below 1, across the real generated range (0.6-1.6, clamped in generate-aircraft-shapes.mjs)", () => {
+    // AIRCRAFT_SHAPES.P28A.scale is exactly SCALE_MIN (0.6) -- the smallest
+    // multiplier any real shape uses (generate-aircraft-shapes.mjs).
+    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(1.8);
+    expect(evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(0.3);
+
+    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.8 })).toBeCloseTo(2.4);
+    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.99 })).toBeCloseTo(2.97);
+  });
+
+  it("documents the bug this fixes: the old fixed 3px halo width at the smallest real icon_scale (0.6, e.g. P28A) demanded more texture-space distance than the SDF falloff band encodes -- exceeding it is what turned the ring into a solid box", () => {
+    const BASE_ICON_SIZE_MULTIPLIER = 0.55;
+    const smallestIconScale = 0.6;
+    const oldFixedHaloWidth = 3;
+    const iconSize = BASE_ICON_SIZE_MULTIPLIER * smallestIconScale;
+    const oldTextureDistance = oldFixedHaloWidth / iconSize;
+    expect(oldTextureDistance).toBeGreaterThan(SDF_RADIUS_PX);
+
+    const newHaloWidth = evaluateExpr(paint["icon-halo-width"], {
+      selected: true,
+      icon_scale: smallestIconScale,
+    }) as number;
+    const newTextureDistance = newHaloWidth / iconSize;
+    expect(newTextureDistance).toBeLessThan(SDF_RADIUS_PX);
+  });
+
+  it("keeps requested halo texture-space distance constant across icon_scale <= 1, matching the reference (icon_scale = 1) shape MapLibre already renders correctly (symbol_sdf.fragment.glsl: halo_edge = (6.0 - halo_width / fontScale) / SDF_PX, where fontScale is icon-size)", () => {
+    const BASE_ICON_SIZE_MULTIPLIER = 0.55; // MapView.tsx's icon-size expression
+    const referenceIconSize = BASE_ICON_SIZE_MULTIPLIER * 1;
+    const referenceTextureDistance = 3 / referenceIconSize;
+
+    for (const icon_scale of [0.6, 0.65, 0.7, 0.8, 0.9, 1]) {
+      const iconSize = BASE_ICON_SIZE_MULTIPLIER * icon_scale;
+      const haloWidth = evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale }) as number;
+      const textureDistance = haloWidth / iconSize;
+      expect(textureDistance).toBeCloseTo(referenceTextureDistance, 6);
+      // Comfortably inside the SDF's falloff band (aircraftIcon.ts) -- this
+      // margin is exactly why icon_scale = 1 already renders a correctly
+      // fitted ring today, and why holding every smaller shape to the same
+      // distance fixes them too.
+      expect(textureDistance).toBeLessThan(SDF_RADIUS_PX);
+    }
   });
 
   it("leaves icon-color and icon-opacity untouched by the outline change", () => {

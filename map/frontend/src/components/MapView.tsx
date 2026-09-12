@@ -471,8 +471,39 @@ function MapViewInner({ config }: { config: AppConfig }) {
           // selection is shown only via the halo below.
           "icon-color": ["get", "color"],
           "icon-halo-color": ["case", ["boolean", ["get", "selected"], false], "#ffffff", "#000000"],
-          "icon-halo-width": ["case", ["boolean", ["get", "selected"], false], 3, 1],
-          "icon-halo-blur": ["case", ["boolean", ["get", "selected"], false], 0.5, 0],
+          // Selected halo width/blur are requested in screen pixels, but
+          // MapLibre's SDF shader converts that to *texture*-space distance
+          // by dividing by the feature's icon-size (fontScale in
+          // symbol_sdf.fragment.glsl: `halo_edge = (6.0 - halo_width /
+          // fontScale) / SDF_PX`). Every shape's SDF falloff band is a fixed
+          // SDF_RADIUS_PX (aircraftIcon.ts) regardless of on-screen size, so
+          // a fixed 3px halo width on a shape with a small icon_scale (e.g.
+          // a light single clamped to the 0.6 minimum -- see
+          // aircraftIconResolver.ts's shapeScale()) demands more texture
+          // distance than the falloff band actually encodes. Past that
+          // point the halo's smoothstep threshold falls outside the
+          // texture's representable range and MapLibre just fills the rest
+          // of the icon's bounding square with halo colour -- a solid box
+          // instead of a fitted ring.
+          //
+          // `min(1, icon_scale)` scales the requested halo down only for
+          // icon_scale < 1, keeping the same texture-space distance the
+          // reference icon_scale = 1 shape already renders correctly at (the
+          // icon_scale factor cancels against icon-size's own icon_scale
+          // factor above). For icon_scale >= 1 the multiplier is exactly 1,
+          // so larger aircraft's halo is untouched.
+          "icon-halo-width": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+            1,
+          ],
+          "icon-halo-blur": [
+            "case",
+            ["boolean", ["get", "selected"], false],
+            ["*", 0.5, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+            0,
+          ],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
         },
       });
