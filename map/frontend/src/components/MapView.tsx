@@ -4,7 +4,7 @@ import { MAP_STYLE } from "../lib/maplibreSetup";
 import { buildShapeIconImageData, shapeIconId } from "../lib/aircraftIcon";
 import { AIRCRAFT_SHAPES } from "../lib/aircraftShapes.generated";
 import { FALLBACK_SHAPE } from "../lib/aircraftIconResolver";
-import { crosshairSvgMarkup, MUTED_GRAY } from "../lib/crosshairIcon";
+import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
@@ -305,7 +305,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
         el.style.gap = "2px";
         el.style.pointerEvents = "none";
         el.innerHTML =
-          crosshairSvgMarkup(28, MUTED_GRAY) +
+          `<div style="width:12px;height:12px;border-radius:50%;background:#000000;"></div>` +
           `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">HOME</span>`;
         new maplibregl.Marker({ element: el, anchor: "center" })
           .setLngLat([config.home.longitude, config.home.latitude])
