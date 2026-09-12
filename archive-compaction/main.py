@@ -566,7 +566,6 @@ def publish_completion_stats(
         client.publish(f"{base}/mismatch_runs", str(mismatch_runs), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
-        client.publish(f"{base}/version", os.environ.get("VERSION", "dev"), retain=True)
 
         _publish_ha_autodiscovery(client)
 
@@ -603,7 +602,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         ("mismatch_runs", "Archive Compaction Mismatch Consecutive Runs", "mdi:counter", "measurement", None),
         ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None),
         ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None),
-        ("version", "Archive Compaction Version", "mdi:tag", None, None),
     ]
     for name, friendly_name, icon, state_class, unit in stats:
         payload: dict = {
