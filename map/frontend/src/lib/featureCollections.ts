@@ -17,34 +17,40 @@ export function hasPosition(a: AircraftRecord): a is AircraftRecord & { lat: num
   return a.lat != null && a.lon != null;
 }
 
-// Isolate (isolateId) and Follow (followId) both come from the aircraft
-// detail panel and both key off the currently-selected aircraft, but they
-// affect these builders differently: Isolate is a hard filter (only the
-// isolated aircraft's icon/trail are ever drawn); Follow instead *widens*
-// what's drawn -- its target stays visible (dimmed, via isFollowLost) even
-// once it would otherwise be filtered out for being hidden.
+// Isolate (isolateId), Follow (followId), and the panel-open aircraft
+// (protectedId) all come from the aircraft detail panel and all key off the
+// currently-selected aircraft, but they affect these builders differently:
+// Isolate is a hard filter (only the isolated aircraft's icon/trail are
+// ever drawn); Follow and protectedId instead *widen* what's drawn -- their
+// target stays visible (dimmed, via isFollowLost) even once it would
+// otherwise be filtered out for being hidden. protectedId is what keeps a
+// merely-selected (not Followed) aircraft visible while its panel is open --
+// see isFollowLost's own comment for why it's folded into the same check
+// as followId rather than a separate mechanism.
 export interface VisibilityOptions {
   isolateId?: string | null;
   followId?: string | null;
+  protectedId?: string | null;
 }
 
 // A hidden aircraft (past MAP_HIDE_SECONDS, not yet evicted) is omitted
 // from both feature collections below -- its record and trail are kept
 // server- and client-side (see aircraftState.ts), but it must not be drawn
-// until a position/metadata event un-hides it again. The sole exception is
-// the actively-Followed aircraft (see VisibilityOptions.followId above).
+// until a position/metadata event un-hides it again. The exceptions are the
+// actively-Followed aircraft and the aircraft the panel currently has open
+// (see VisibilityOptions.followId/protectedId above).
 
 export function aircraftFeatureCollection(
   aircraft: Record<string, AircraftRecord>,
   selected: Set<string>,
   options: VisibilityOptions = {},
 ): FeatureCollection {
-  const { isolateId, followId } = options;
+  const { isolateId, followId, protectedId } = options;
   const features: Feature[] = Object.values(aircraft)
     .filter(hasPosition)
     .filter((a) => {
       if (isolateId && a.icao_hex !== isolateId) return false;
-      return a.icao_hex === followId || !a.hidden;
+      return a.icao_hex === followId || a.icao_hex === protectedId || !a.hidden;
     })
     .map((a) => ({
       type: "Feature",
@@ -55,9 +61,9 @@ export function aircraftFeatureCollection(
         color: altitudeColor(a.alt ?? null),
         selected: selected.has(a.icao_hex),
         // Reuses the existing stale-dims-the-icon paint rule (see
-        // MapView.tsx's icon-opacity) for the Follow-lost case too, rather
-        // than adding a second dimming mechanism.
-        stale: a.stale || isFollowLost(a, followId ?? null),
+        // MapView.tsx's icon-opacity) for the Follow-lost/selected-lost
+        // case too, rather than adding a second dimming mechanism.
+        stale: a.stale || isFollowLost(a, followId ?? null, protectedId ?? null),
         // Silhouette + on-map size, resolved once per metadata event in
         // aircraftState.ts (not per render). MapView registers each shape's
         // SDF image lazily, keyed by this `shape` value.
@@ -73,12 +79,12 @@ export function trailFeatureCollection(
   visibleIds: Set<string>,
   options: VisibilityOptions = {},
 ): FeatureCollection {
-  const { isolateId, followId } = options;
+  const { isolateId, followId, protectedId } = options;
   const features: Feature[] = [];
   for (const a of Object.values(aircraft)) {
     if (!visibleIds.has(a.icao_hex)) continue;
     if (isolateId && a.icao_hex !== isolateId) continue;
-    const followLost = isFollowLost(a, followId ?? null);
+    const followLost = isFollowLost(a, followId ?? null, protectedId ?? null);
     if (a.hidden && !followLost) continue;
     // Per-segment coloring (see trailSegments.ts) -- each two-point piece
     // of the trail is colored by the altitude the aircraft actually had
@@ -92,8 +98,9 @@ export function trailFeatureCollection(
           icao_hex: a.icao_hex,
           color: segment.color,
           // See MapView.tsx's trail line-opacity paint rule -- dims the
-          // Follow-lost aircraft's trail the same way its icon is dimmed
-          // above, instead of letting it disappear with the hidden filter.
+          // Follow-lost/selected-lost aircraft's trail the same way its
+          // icon is dimmed above, instead of letting it disappear with the
+          // hidden filter.
           dimmed: followLost,
         },
       });

@@ -35,7 +35,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
-import { followTargetPosition, shouldCancelFollowOnDrag } from "../lib/followTarget";
+import { followTargetPosition, isFollowLost, shouldCancelFollowOnDrag } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { topIcaoHex } from "../lib/mapHitTest";
@@ -679,7 +679,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (!map || !mapLoaded) return;
 
     const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
-    const visibility = { isolateId, followId };
+    const visibility = { isolateId, followId, protectedId: selectedIcaoHex };
 
     const fc = aircraftFeatureCollection(aircraft, selected, visibility);
     // Register the SDF image for every silhouette in the current set that
@@ -749,7 +749,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
-    .filter((a) => !a.hidden)
+    // Same bypass as aircraftFeatureCollection/trailFeatureCollection --
+    // a Followed or currently-selected (panel-open) aircraft stays in the
+    // info-box set even once hidden, instead of vanishing while its panel
+    // is still open.
+    .filter((a) => !a.hidden || isFollowLost(a, followId, selectedIcaoHex))
     .filter((a) => !isolateId || a.icao_hex === isolateId)
     .filter((a) => screenPositions[a.icao_hex] !== undefined)
     .map((a) => ({
