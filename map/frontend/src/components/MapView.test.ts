@@ -44,6 +44,24 @@ function aircraftLayerPaint(): Record<string, unknown> {
   return new Function(`return (${paintLiteral});`)();
 }
 
+// Extracts the `paint: { ... }` object literal belonging to the trail
+// line layer's `map.addLayer({ id: TRAIL_LAYER_ID, ... })` call.
+function trailLayerPaint(): Record<string, unknown> {
+  const idIndex = mapViewSource.indexOf("id: TRAIL_LAYER_ID");
+  if (idIndex === -1) throw new Error("Could not find TRAIL_LAYER_ID layer definition");
+
+  const paintKeyIndex = mapViewSource.indexOf("paint: {", idIndex);
+  if (paintKeyIndex === -1) throw new Error("Could not find paint block after TRAIL_LAYER_ID");
+
+  const objectOpenIndex = paintKeyIndex + "paint: ".length;
+  const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
+  const paintLiteral = mapViewSource.slice(objectOpenIndex, objectCloseIndex + 1);
+
+  // eslint-disable-next-line no-new-func -- evaluating a plain object literal
+  // extracted from our own source, not user input.
+  return new Function(`return (${paintLiteral});`)();
+}
+
 describe("aircraft layer paint -- icon-halo-*", () => {
   const paint = aircraftLayerPaint();
 
@@ -64,5 +82,17 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   it("leaves icon-color and icon-opacity untouched by the outline change", () => {
     expect(paint["icon-color"]).toEqual(["get", "color"]);
     expect(paint["icon-opacity"]).toEqual(["case", ["boolean", ["get", "stale"], false], 0.4, 1]);
+  });
+});
+
+describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
+  const paint = trailLayerPaint();
+
+  it("dims a trail feature flagged dimmed (see featureCollections.ts's trailFeatureCollection)", () => {
+    expect(paint["line-opacity"]).toEqual(["case", ["boolean", ["get", "dimmed"], false], 0.35, 0.85]);
+  });
+
+  it("leaves line-color untouched", () => {
+    expect(paint["line-color"]).toEqual(["get", "color"]);
   });
 });

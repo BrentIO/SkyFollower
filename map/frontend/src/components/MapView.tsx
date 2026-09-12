@@ -22,13 +22,18 @@ import {
   RANGE_RING_LAYER_ID,
   RANGE_RING_SOURCE_ID,
   SELECTABLE_LAYER_IDS,
+  TRACE_POINTS_CIRCLE_LAYER_ID,
+  TRACE_POINTS_LABEL_LAYER_ID,
+  TRACE_POINTS_SOURCE_ID,
   TRAIL_HIT_AREA_LAYER_ID,
   TRAIL_LAYER_ID,
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
+import { followTargetPosition } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { nextSelection } from "../lib/selection";
+import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
 import { ControlsPanel } from "./ControlsPanel";
@@ -90,14 +95,25 @@ export function MapView() {
 // read below is a plain, already-loaded value -- no further async handling
 // needed in here.
 function MapViewInner({ config }: { config: AppConfig }) {
-  const { aircraft, connected, seedTrailFor } = useMapFlights(config.wsUrl, config.restFlightsUrl);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // `selected` is always max-one-element (see lib/selection.ts's
+  // nextSelection), so this is simply "the selected icao_hex, if any" --
+  // no further reduction needed. Computed up front (rather than only near
+  // the render return) since useMapFlights below needs it for eviction
+  // deferral.
+  const selectedIcaoHex = selected.values().next().value ?? null;
+
+  const { aircraft, connected, seedTrailFor, releaseHold } = useMapFlights(
+    config.wsUrl,
+    config.restFlightsUrl,
+    selectedIcaoHex,
+  );
   const roster = useProcessorRoster(config.restProcessorsUrl);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [historyAll, setHistoryAll] = useState(false);
   const [labelsAll, setLabelsAll] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -105,11 +121,61 @@ function MapViewInner({ config }: { config: AppConfig }) {
     Record<string, { x: number; y: number; offset: number }>
   >({});
 
+  // Action-row state (see components/AircraftDetailPanel.tsx). isolateId is
+  // *derived* from isolateEnabled + selectedIcaoHex rather than captured
+  // separately -- that's what makes Isolate automatically re-target to a
+  // newly-selected aircraft instead of clearing (the issue's explicit
+  // Isolate behavior). followId/tracePointsEnabled are plain state because
+  // they deliberately do *not* carry over to a different selection -- see
+  // the reset effect below.
+  const [isolateEnabled, setIsolateEnabled] = useState(false);
+  const isolateId = isolateEnabled ? selectedIcaoHex : null;
+  const [followId, setFollowId] = useState<string | null>(null);
+  const [tracePointsEnabled, setTracePointsEnabled] = useState(false);
+
   // Kept in a ref so the map's 'move' listener (attached once, on mount)
   // always reads current aircraft positions rather than closing over a
   // stale snapshot from whenever that listener was attached.
   const aircraftRef = useRef(aircraft);
   aircraftRef.current = aircraft;
+
+  // Fires whenever the selection moves away from an aircraft -- either to
+  // a different one (reselect) or to none (the panel's close button /
+  // deselect). This is where the close-button contract's non-Isolate
+  // parts live: Follow and Trace Points don't carry over to a different
+  // aircraft (unlike Isolate, which is deliberately derived above so it
+  // *does* re-target), and any eviction this frontend deferred while the
+  // panel was open for the previous aircraft (see aircraftState.ts's
+  // pendingRemoval) is applied now. Isolate itself is only fully reset on
+  // an actual close (selectedIcaoHex becoming null) -- a mere reselect
+  // deliberately leaves it on, re-targeted to the new pick.
+  const prevSelectedIcaoHexRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prevIcaoHex = prevSelectedIcaoHexRef.current;
+    if (prevIcaoHex !== null && prevIcaoHex !== selectedIcaoHex) {
+      setFollowId(null);
+      setTracePointsEnabled(false);
+      if (selectedIcaoHex === null) setIsolateEnabled(false);
+      releaseHold(prevIcaoHex);
+    }
+    prevSelectedIcaoHexRef.current = selectedIcaoHex;
+  }, [selectedIcaoHex, releaseHold]);
+
+  // Follow: recenters on every position update for the followed aircraft,
+  // preserving whatever zoom is already active (no `zoom` key passed to
+  // easeTo) -- same rule as Zoom To's one-shot handler below. Keeps
+  // returning the aircraft's last known position even after it goes
+  // stale/hidden or its eviction is deferred (see followTargetPosition's
+  // own docstring), so the map simply stops receiving new recenters and
+  // stays parked at the last place the aircraft was actually seen -- the
+  // "held in view" behavior Follow specifies on loss.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const target = followTargetPosition(aircraft, followId);
+    if (!target) return;
+    map.easeTo({ center: [target.lon, target.lat] });
+  }, [aircraft, followId]);
 
   // When an aircraft is newly selected, pull the server's accumulated trail
   // for it (GET /api/flights/{icao_hex}) so the drawn trail covers the whole
@@ -230,7 +296,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
         type: "line",
         source: TRAIL_SOURCE_ID,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": ["get", "color"], "line-width": 2.5, "line-opacity": 0.85 },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 2.5,
+          // Dims a Follow-lost aircraft's trail the same way its icon is
+          // dimmed (see AIRCRAFT_LAYER_ID's icon-opacity below) instead of
+          // letting it disappear -- see featureCollections.ts's
+          // trailFeatureCollection, which sets this property.
+          "line-opacity": ["case", ["boolean", ["get", "dimmed"], false], 0.35, 0.85],
+        },
       });
       // Invisible, much wider line over the same geometry -- this is the
       // layer in SELECTABLE_LAYER_IDS, so click/hover get a generous target
@@ -268,6 +342,49 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-halo-width": ["case", ["boolean", ["get", "selected"], false], 3, 1],
           "icon-halo-blur": ["case", ["boolean", ["get", "selected"], false], 0.5, 0],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
+        },
+      });
+
+      // Aircraft detail panel's Trace Points action (lib/tracePoints.ts) --
+      // always present, like the sources above; driven to an empty
+      // FeatureCollection when off rather than layout-visibility-toggled
+      // (see the sync effect below), matching this component's existing
+      // convention for the aircraft/trail sources. Not in
+      // SELECTABLE_LAYER_IDS -- a trace point dot/label is display-only,
+      // never a click target of its own.
+      map.addSource(TRACE_POINTS_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+      map.addLayer({
+        id: TRACE_POINTS_CIRCLE_LAYER_ID,
+        type: "circle",
+        source: TRACE_POINTS_SOURCE_ID,
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": 4,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": ["get", "strokeColor"],
+        },
+      });
+      map.addLayer({
+        id: TRACE_POINTS_LABEL_LAYER_ID,
+        type: "symbol",
+        source: TRACE_POINTS_SOURCE_ID,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 11,
+          "text-anchor": "bottom-left",
+          "text-offset": [0.6, -0.6],
+          "text-justify": "left",
+          // false is MapLibre's own default -- explicit here since this
+          // collision behavior *is* the decluttering mechanism (see
+          // symbol-sort-key below, same as management-ui's TracePointsControl).
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "symbol-sort-key": ["get", "sortKey"],
+        },
+        paint: {
+          "text-color": "#0f172a",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.5,
         },
       });
 
@@ -335,8 +452,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (!map || !mapLoaded) return;
 
     const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
+    const visibility = { isolateId, followId };
 
-    const fc = aircraftFeatureCollection(aircraft, selected);
+    const fc = aircraftFeatureCollection(aircraft, selected, visibility);
     // Register the SDF image for every silhouette in the current set that
     // isn't registered yet, *before* the source data references it -- a
     // typical session touches a few dozen of the ~180 shapes.
@@ -346,7 +464,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
     (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(fc);
     (map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-      trailFeatureCollection(aircraft, visibleTrailIds),
+      trailFeatureCollection(aircraft, visibleTrailIds, visibility),
+    );
+
+    // Trace Points -- empty data when off or nothing selected, same
+    // always-present-source convention as the layers above.
+    const tracePoints = tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? []) : [];
+    (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+      tracePointsFeatureCollection(tracePoints),
     );
 
     const offset = infoBoxOffsetForZoom(map.getZoom());
@@ -357,7 +482,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
       positions[a.icao_hex] = { x: p.x, y: p.y, offset };
     }
     setScreenPositions(positions);
-  }, [aircraft, selected, historyAll, mapLoaded]);
+  }, [aircraft, selected, historyAll, mapLoaded, isolateId, followId, tracePointsEnabled, selectedIcaoHex]);
+
+  // `selectedIcaoHex` is always still tracked when non-null, *except*
+  // during the render right after a `remove` deletes an unprotected
+  // aircraft out from under a stale selection -- practically unreachable
+  // since selectedIcaoHex is exactly what protects it, but the lookup
+  // stays defensive either way.
+  const selectedAircraft = selectedIcaoHex ? aircraft[selectedIcaoHex] : undefined;
 
   function handleRecenter() {
     const map = mapRef.current;
@@ -367,11 +499,21 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.easeTo({ center: [config.home.longitude, config.home.latitude] });
   }
 
-  // `selected` is always max-one-element (see lib/selection.ts's
-  // nextSelection), so this is simply "the selected aircraft, if any and
-  // if still tracked" -- no further reduction needed.
-  const selectedIcaoHex = selected.values().next().value;
-  const selectedAircraft = selectedIcaoHex ? aircraft[selectedIcaoHex] : undefined;
+  // Zoom To: one-shot recenter on the selected aircraft's current
+  // position, preserving whatever zoom is already active (no `zoom` key)
+  // -- explicitly not a snap to a fixed close-up zoom, per the issue.
+  function handleZoomTo() {
+    const map = mapRef.current;
+    if (!map || !selectedAircraft || selectedAircraft.lat == null || selectedAircraft.lon == null) return;
+    map.easeTo({ center: [selectedAircraft.lon, selectedAircraft.lat] });
+  }
+
+  function handleToggleFollow() {
+    if (!selectedIcaoHex) return;
+    const turningOn = followId !== selectedIcaoHex;
+    setFollowId(turningOn ? selectedIcaoHex : null);
+    if (turningOn) handleZoomTo(); // Zoom To once immediately, then the recenter effect above takes over.
+  }
 
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
@@ -396,6 +538,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
           aircraft={selectedAircraft}
           home={config.home}
           onClose={() => setSelected(new Set())}
+          isolateActive={isolateEnabled}
+          onToggleIsolate={() => setIsolateEnabled((prev) => !prev)}
+          onZoomTo={handleZoomTo}
+          followActive={followId === selectedIcaoHex}
+          onToggleFollow={handleToggleFollow}
+          tracePointsActive={tracePointsEnabled}
+          onToggleTracePoints={() => setTracePointsEnabled((prev) => !prev)}
         />
       )}
       <ControlsPanel

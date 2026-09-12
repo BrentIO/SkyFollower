@@ -64,3 +64,82 @@ describe("trailFeatureCollection", () => {
     expect(fc.features).toHaveLength(1);
   });
 });
+
+describe("aircraftFeatureCollection -- Isolate (isolateId)", () => {
+  it("hides every aircraft except the isolated one", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { isolateId: "A1B2C3" });
+    expect(fc.features.map((f) => f.properties?.icao_hex)).toEqual(["A1B2C3"]);
+  });
+
+  it("shows everyone when isolateId is null/undefined", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { isolateId: null });
+    expect(fc.features).toHaveLength(2);
+  });
+
+  it("hides a newly-appearing aircraft too, same as any other aircraft while isolated", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const withNewArrival = applyWsEvent(base, { type: "position", icao_hex: "NEW123", lat: 9, lon: 9 });
+    const fc = aircraftFeatureCollection(withNewArrival, new Set(), { isolateId: "A1B2C3" });
+    expect(fc.features.map((f) => f.properties?.icao_hex)).toEqual(["A1B2C3"]);
+  });
+});
+
+describe("aircraftFeatureCollection -- Follow-lost dimming", () => {
+  it("keeps a hidden followed aircraft visible, marked stale (dimmed)", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { followId: "A1B2C3" });
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].properties?.stale).toBe(true);
+  });
+
+  it("does not affect a hidden aircraft that isn't the followed one", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { followId: "OTHER" });
+    expect(fc.features).toHaveLength(0);
+  });
+
+  it("leaves an already-stale (not hidden) followed aircraft's stale flag as-is", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "stale", icao_hex: "A1B2C3" });
+    const fc = aircraftFeatureCollection(aircraft, new Set(), { followId: "A1B2C3" });
+    expect(fc.features[0].properties?.stale).toBe(true);
+  });
+});
+
+describe("trailFeatureCollection -- Isolate (isolateId)", () => {
+  it("hides every other aircraft's trail even if it's in the visible-ids set", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "D4E5F6", lat: 1.1, lon: 2.1 });
+
+    const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3", "D4E5F6"]), { isolateId: "A1B2C3" });
+    expect(fc.features.every((f) => f.properties?.icao_hex === "A1B2C3")).toBe(true);
+    expect(fc.features.length).toBeGreaterThan(0);
+  });
+});
+
+describe("trailFeatureCollection -- Follow-lost dimming", () => {
+  it("keeps a hidden followed aircraft's trail visible and flags it dimmed", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+
+    const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]), { followId: "A1B2C3" });
+    expect(fc.features.length).toBeGreaterThan(0);
+    expect(fc.features.every((f) => f.properties?.dimmed === true)).toBe(true);
+  });
+
+  it("a normal (not hidden/followed) trail is not marked dimmed", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]));
+    expect(fc.features.every((f) => f.properties?.dimmed === false)).toBe(true);
+  });
+});

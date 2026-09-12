@@ -1,10 +1,12 @@
 // Ported verbatim (logic and breakpoint tables unchanged) from
-// management-ui/frontend/src/lib/flightView.ts's altitudeColor() -- this
-// is a separate, standalone frontend project, so it carries its own copy
-// rather than importing across the two. Used for both the aircraft icon
-// fill (MapView.tsx's symbol layer `icon-color`) and the live trail color
-// (MapView.tsx's trail `line-color`), both driven off each aircraft's
-// current altitude -- same mechanism for both, per design.
+// management-ui/frontend/src/lib/flightView.ts's altitudeColor()/
+// darkenColor() -- this is a separate, standalone frontend project, so it
+// carries its own copy rather than importing across the two. altitudeColor
+// is used for the aircraft icon fill (MapView.tsx's symbol layer
+// `icon-color`), the live trail color (MapView.tsx's trail `line-color`),
+// and the Trace Points dot color (lib/tracePoints.ts), all driven off an
+// altitude value -- same mechanism throughout, per design. darkenColor is
+// used only by Trace Points, for the dot's stroke.
 
 // Altitude-to-color lookup table (hue and lightness each interpolated from
 // their own set of breakpoints below), giving a smooth climb/cruise/descent
@@ -101,4 +103,16 @@ export function altitudeColor(altitudeFt: number | null): string {
   const clampedS = Math.max(0, Math.min(95, s));
   const clampedL = Math.max(0, Math.min(95, l));
   return `hsl(${h.toFixed(1)}, ${clampedS.toFixed(1)}%, ${clampedL.toFixed(1)}%)`;
+}
+
+// Darkens an `altitudeColor()` output by ~10 lightness percentage points
+// (clamped at 0), same hue/saturation -- used for Trace Points circle
+// strokes so overlapping points at low zoom read as a darker shade of the
+// same altitude color instead of merging into a flat near-black outline.
+export function darkenColor(color: string): string {
+  const match = color.match(/^hsl\(([\d.]+), ([\d.]+)%, ([\d.]+)%\)$/);
+  if (!match) return color;
+  const [, h, s, l] = match;
+  const darkenedL = Math.max(0, Number(l) - 10);
+  return `hsl(${h}, ${s}%, ${darkenedL.toFixed(1)}%)`;
 }

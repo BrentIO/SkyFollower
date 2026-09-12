@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BADGE_BASE, BADGE_CLASSES, PILL, PILL_GREEN, PILL_RED, SQUAWK_EMERGENCY_TEXT, TAG_PILL } from "./AircraftDetailPanel";
+// Vite's `?raw` suffix (see MapView.test.ts's own use of this) -- the action
+// row is built from four adjacent <ActionButton> JSX call sites, which is
+// easiest to check for order/props by reading the actual source text rather
+// than rendering (no jsdom in this project -- see lib/config.test.ts).
+import panelSource from "./AircraftDetailPanel.tsx?raw";
 
 // This project has no jsdom/component-render test setup (see
 // lib/config.test.ts's own note on the constraint, and MapView.test.ts's
@@ -41,5 +46,53 @@ describe("Matched Rules / Receiver Sources pill class -- copied verbatim from Fl
     expect(TAG_PILL).toBe(
       "rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300",
     );
+  });
+});
+
+describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
+  it("renders all four buttons in order: Isolate, Zoom To, Follow, Trace Points", () => {
+    const labels = ["Isolate", "Zoom To", "Follow", "Trace Points"];
+    const indices = labels.map((label) => panelSource.indexOf(`label="${label}"`));
+    for (const index of indices) expect(index).toBeGreaterThan(-1);
+    // Strictly increasing -- proves the ordering, not just presence.
+    for (let i = 1; i < indices.length; i++) {
+      expect(indices[i]).toBeGreaterThan(indices[i - 1]);
+    }
+  });
+
+  it("wires each button to its own icon spec", () => {
+    expect(panelSource).toContain('icon={ISOLATE_ICON}');
+    expect(panelSource).toContain('icon={ZOOM_TO_ICON}');
+    expect(panelSource).toContain('icon={FOLLOW_ICON}');
+    expect(panelSource).toContain('icon={TRACE_POINTS_ICON}');
+  });
+
+  it("Isolate, Follow, and Trace Points are real toggles (active prop tracks panel state)", () => {
+    expect(panelSource).toContain("active={isolateActive}");
+    expect(panelSource).toContain("active={followActive}");
+    expect(panelSource).toContain("active={tracePointsActive}");
+  });
+
+  it("Zoom To is one-shot -- always active={false}, never an 'active' state", () => {
+    const zoomToCallIndex = panelSource.indexOf('label="Zoom To"');
+    const callSite = panelSource.slice(zoomToCallIndex, zoomToCallIndex + 200);
+    expect(callSite).toContain("active={false}");
+  });
+
+  it("every action button's icon is stroke-based, 18x18, viewBox 0 0 24 24, stroke-width 2, round caps/joins", () => {
+    const svgOpenIndex = panelSource.indexOf("<svg", panelSource.indexOf("function ActionIcon"));
+    const svgTag = panelSource.slice(svgOpenIndex, panelSource.indexOf(">", svgOpenIndex) + 1);
+    expect(svgTag).toContain('width="18"');
+    expect(svgTag).toContain('height="18"');
+    expect(svgTag).toContain('viewBox="0 0 24 24"');
+    expect(svgTag).toContain('fill="none"');
+    expect(svgTag).toContain('stroke="currentColor"');
+    expect(svgTag).toContain('strokeWidth="2"');
+    expect(svgTag).toContain('strokeLinecap="round"');
+    expect(svgTag).toContain('strokeLinejoin="round"');
+  });
+
+  it("uses the same toggle-button coloring helper as ControlsPanel's toggles", () => {
+    expect(panelSource).toContain("toggleButtonClass(active)");
   });
 });
