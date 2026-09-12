@@ -27,6 +27,7 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
+import { nextSelection } from "../lib/selection";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
@@ -272,12 +273,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
         map.on("click", layerId, (e) => {
           const icaoHex = e.features?.[0]?.properties?.icao_hex as string | undefined;
           if (!icaoHex) return;
-          setSelected((prev) => {
-            const next = new Set(prev);
-            if (next.has(icaoHex)) next.delete(icaoHex);
-            else next.add(icaoHex);
-            return next;
-          });
+          setSelected((prev) => nextSelection(prev, icaoHex));
         });
         map.on("mouseenter", layerId, () => {
           map.getCanvas().style.cursor = "pointer";
