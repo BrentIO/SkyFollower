@@ -42,3 +42,13 @@ export function isFollowLost(
 ): boolean {
   return a.icao_hex === followId && (a.hidden || !!a.pendingRemoval);
 }
+
+// Whether a map `dragstart` event should cancel Follow. MapLibre carries
+// `originalEvent` (the underlying DOM pointer/touch event) only for a
+// genuine user-driven drag -- a programmatic camera move (`easeTo`/
+// `panTo`/`flyTo`, as used by Follow's own recenter, Zoom To, and the
+// recenter button) never sets it. Also false when nothing is being
+// followed, since there's nothing to cancel.
+export function shouldCancelFollowOnDrag(e: { originalEvent?: unknown }, followId: string | null): boolean {
+  return !!e.originalEvent && !!followId;
+}
