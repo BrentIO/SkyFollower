@@ -166,6 +166,33 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   });
 });
 
+describe("home marker stacking order", () => {
+  // No jsdom in this project's test setup (see the file-level comment above),
+  // and DOM z-index stacking can't be asserted meaningfully without a real
+  // browser render anyway -- so this checks the one thing that is testable:
+  // the marker's element has its z-index set below the map canvas's default
+  // stacking, and that it's set on the same `el` passed into `new
+  // maplibregl.Marker(...)` (MapLibre appends that element directly, with no
+  // wrapper, when a custom `element` option is given -- see marker.ts).
+  const markerCallIndex = mapViewSource.indexOf("new maplibregl.Marker(");
+  if (markerCallIndex === -1) throw new Error("Could not find maplibregl.Marker construction");
+
+  const homeBlockStart = mapViewSource.lastIndexOf("const el = document.createElement", markerCallIndex);
+  if (homeBlockStart === -1) throw new Error("Could not find home marker element creation");
+
+  const homeBlock = mapViewSource.slice(homeBlockStart, markerCallIndex);
+
+  it("sets a negative z-index on the marker's own element before constructing the Marker", () => {
+    expect(homeBlock).toMatch(/el\.style\.zIndex\s*=\s*["']-1["']/);
+  });
+
+  it("passes that same element into the Marker constructor", () => {
+    const markerCallEnd = mapViewSource.indexOf(")", markerCallIndex);
+    const markerCall = mapViewSource.slice(markerCallIndex, markerCallEnd);
+    expect(markerCall).toContain("element: el");
+  });
+});
+
 describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
   const paint = trailLayerPaint();
 
