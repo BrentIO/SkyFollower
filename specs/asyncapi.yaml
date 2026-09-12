@@ -636,6 +636,99 @@ channels:
       MessageProcessorAreasVersionMessage:
         $ref: '#/components/messages/MessageProcessorAreasVersionMessage'
 
+  # ── Core Health ──────────────────────────────────────────────────────────
+  # core-health runs no telemetry loop for its own broker-wide RabbitMQ /
+  # Redis stats (those retained SkyFollower/core-health/... topics are
+  # documented in core-health/README.md). What it publishes on other
+  # components' behalf: the message-processor and receiver counters above,
+  # and the per-component "update available" entity below.
+  #
+  # Every MQTT-enabled component self-registers (shared/mqtt_register.py's
+  # publish_register()) to componentRegister below, right alongside its own
+  # Home Assistant discovery publish. Once a day (shared/timing.py's
+  # GHCR_VERSION_CHECK_INTERVAL_SECONDS, plus a first pass
+  # GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS after startup) core-health
+  # compares each registered component's running image version against the
+  # newest calendar-versioned tag of the GHCR image it registered under,
+  # and publishes one Home Assistant `update` entity per component, nested
+  # under that component's own discovery device. Nothing here is inferred
+  # or pattern-matched: both the image name and the running version come
+  # straight out of the registration payload.
+
+  componentRegister:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: 'SkyFollower/register/{component_device_id}'
+    description: >
+      One retained self-registration message per running component
+      instance, published by every MQTT-enabled component
+      (shared/mqtt_register.py's publish_register(), called right after the
+      component builds its own Home Assistant discovery `device` block).
+      A SkyFollower-native topic, not part of the homeassistant/ discovery
+      namespace. Carries the component's GHCR image name (baked in at
+      build time as the COMPONENT_IMAGE environment variable -- see every
+      Dockerfile's `ARG IMAGE` / `ENV COMPONENT_IMAGE` and
+      build-container-images.yaml's `IMAGE=skyfollower-${{ matrix.name }}`
+      build-arg, the same name its own discover-images job already computed
+      as the single source of truth) and the discovery `device` block
+      itself (identifiers, name, sw_version). This is the only signal
+      core-health uses to build its component registry -- an empty
+      retained payload drops the component and clears its
+      coreHealthComponentUpdateDiscovery entity below.
+    parameters:
+      component_device_id:
+        $ref: '#/components/parameters/ComponentDeviceId'
+    messages:
+      ComponentRegisterMessage:
+        $ref: '#/components/messages/ComponentRegisterMessage'
+
+  coreHealthComponentUpdateDiscovery:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: 'homeassistant/update/{component_device_id}_update/config'
+    description: >
+      Home Assistant MQTT discovery config for one component's "update
+      available" entity, built by shared/ha_discovery.py's
+      build_ha_update_entity() and nested under that component's own
+      discovery device (from its componentRegister message, not
+      reconstructed). Published retained the first time core-health sees
+      the component register itself, and cleared (empty retained payload)
+      once its registration is cleared. Uses core-health's own
+      availability (SkyFollower/core-health/status), not the owning
+      component's -- the registration payload carries no availability
+      topic of its own, matching the choice already made for the
+      message-processor/receiver counter mimicry above. Indicator only: no
+      command_topic, no payload_install, no INSTALL supported feature --
+      applying an update stays a manual `docker compose pull`.
+    parameters:
+      component_device_id:
+        $ref: '#/components/parameters/ComponentDeviceId'
+    messages:
+      HaUpdateEntityDiscoveryMessage:
+        $ref: '#/components/messages/HaUpdateEntityDiscoveryMessage'
+
+  coreHealthComponentUpdateState:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: 'SkyFollower/register/{component_device_id}/update'
+    description: >
+      State for one component's "update available" entity: a single JSON
+      object with installed_version (the running image, from the
+      component's own componentRegister message) and latest_version (the
+      newest calendar-versioned tag of the GHCR image that message named).
+      Home Assistant's MQTT `update` integration reads both keys natively
+      -- no value template. Published retained on change, on every
+      core-health MQTT (re)connect, and on each daily registry poll. A
+      registry lookup failure leaves the last-known latest_version in
+      place rather than blanking the entity; until the first successful
+      poll, latest_version equals installed_version.
+    parameters:
+      component_device_id:
+        $ref: '#/components/parameters/ComponentDeviceId'
+    messages:
+      HaUpdateEntityStateMessage:
+        $ref: '#/components/messages/HaUpdateEntityStateMessage'
+
   # ── Archive processor ─────────────────────────────────────────────────────
 
   archiveStatus:
@@ -1280,6 +1373,24 @@ operations:
       $ref: '#/channels/messageProcessorAreasVersion'
     summary: Message processor publishes the short hash of the areas config it has actually loaded
 
+  publishComponentRegister:
+    action: send
+    channel:
+      $ref: '#/channels/componentRegister'
+    summary: A component self-registers its GHCR image name and Home Assistant discovery device, for core-health to track
+
+  publishCoreHealthComponentUpdateDiscovery:
+    action: send
+    channel:
+      $ref: '#/channels/coreHealthComponentUpdateDiscovery'
+    summary: core-health publishes the Home Assistant `update` entity discovery config for one component, on that component's behalf
+
+  publishCoreHealthComponentUpdateState:
+    action: send
+    channel:
+      $ref: '#/channels/coreHealthComponentUpdateState'
+    summary: core-health publishes one component's running-vs-latest image version as a Home Assistant `update` entity state blob
+
   publishArchiveStatus:
     action: send
     channel:
@@ -1727,6 +1838,30 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/MessageProcessorConfigVersion'
+
+    ComponentRegisterMessage:
+      name: ComponentRegisterMessage
+      title: Component self-registration
+      summary: A component's own GHCR image name plus its Home Assistant discovery device block, so core-health needs no inference to track it
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ComponentRegister'
+
+    HaUpdateEntityDiscoveryMessage:
+      name: HaUpdateEntityDiscoveryMessage
+      title: Component "update available" entity discovery config
+      summary: Home Assistant MQTT `update` discovery config core-health publishes per component; empty retained payload clears it
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/HaUpdateEntityDiscovery'
+
+    HaUpdateEntityStateMessage:
+      name: HaUpdateEntityStateMessage
+      title: Component "update available" entity state
+      summary: installed_version vs latest_version for one component, read natively by Home Assistant's MQTT `update` integration
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/HaUpdateEntityState'
 
     ArchiveFlightsArchivedHourMessage:
       name: ArchiveFlightsArchivedHourMessage
@@ -2200,6 +2335,91 @@ components:
         successful load. Compare against the canonical value to see whether
         this instance is up to date.
       example: "deadbeef"
+
+    ComponentRegister:
+      description: >
+        A component's self-registration, published by
+        shared/mqtt_register.py's publish_register() right after it builds
+        its own Home Assistant discovery `device` block. Deliberately just
+        these two fields -- everything core-health's "update available"
+        tracking needs, no more: no separate table anywhere maps a
+        component's identity to its container-registry image name.
+      type: object
+      required: [image, device]
+      properties:
+        image:
+          type: string
+          description: >
+            Bare GHCR repository name this build published to, from the
+            COMPONENT_IMAGE environment variable baked in at build time
+            (build-container-images.yaml's `IMAGE=skyfollower-${{ matrix.name }}`
+            build-arg). "unknown" (the Dockerfile default for a build with
+            no --build-arg IMAGE=...) is never published -- publish_register()
+            skips self-registration entirely in that case.
+          example: "skyfollower-map"
+        device:
+          type: object
+          description: The component's own Home Assistant discovery device block, verbatim (identifiers, name, model, sw_version, ...)
+
+    HaUpdateEntityDiscovery:
+      description: >
+        Home Assistant MQTT `update` discovery config, from
+        shared/ha_discovery.py's build_ha_update_entity(). The `device`
+        block is the component's own, taken directly from its
+        componentRegister message, so the entity nests under it; unique_id
+        / object_id are "<device.identifiers>_update". No command_topic /
+        payload_install / supported_features -- an availability indicator
+        only. An empty retained payload on this topic clears the entity.
+      type: object
+      required: [name, unique_id, object_id, state_topic, device]
+      properties:
+        name:
+          type: string
+          example: "SkyFollower Map Update"
+        unique_id:
+          type: string
+          example: "SkyFollower_map_update"
+        object_id:
+          type: string
+          example: "SkyFollower_map_update"
+        state_topic:
+          type: string
+          example: "SkyFollower/register/SkyFollower_map/update"
+        entity_category:
+          type: string
+          enum: [diagnostic]
+        device:
+          type: object
+          description: The component's own Home Assistant discovery device block
+        availability_topic:
+          type: string
+          description: Always core-health's own status topic, not the owning component's -- the registration payload carries no availability topic of its own
+          example: "SkyFollower/core-health/status"
+        payload_available:
+          type: string
+          example: "ONLINE"
+        payload_not_available:
+          type: string
+          example: "OFFLINE"
+
+    HaUpdateEntityState:
+      description: >
+        Single JSON object Home Assistant's MQTT `update` integration reads
+        natively (no value template). latest_version equals
+        installed_version until core-health's first successful
+        container-registry poll, and holds its last-known value across a
+        failed poll.
+      type: object
+      required: [installed_version, latest_version]
+      properties:
+        installed_version:
+          type: string
+          description: Running image version from the component's own componentRegister message's device.sw_version, with the "(<commit>)" suffix stripped
+          example: "2026.09.10"
+        latest_version:
+          type: string
+          description: Newest YYYY.MM.BB tag of the GHCR image the component's componentRegister message named
+          example: "2026.10.01"
 
     ArchiveFlightsArchivedHour:
       type: integer
@@ -2888,6 +3108,18 @@ components:
       description: >
         Data runner name identifying which import job published statistics.
         One of: mictronics, us-faa-registry, ca-transport-canada-registry, ourairports.
+
+    ComponentDeviceId:
+      description: >
+        The `ids` value of a component's Home Assistant discovery device
+        block -- e.g. SkyFollower_Core, SkyFollower_map,
+        SkyFollower_message_processor_{id}, SkyFollower_receiver_{id},
+        SkyFollower_runner_{name}. This is the component's own stable
+        identifier, unchanged by core-health: its componentRegister
+        message is published at SkyFollower/register/{this}, its update
+        entity's state at SkyFollower/register/{this}/update, and that
+        entity's discovery config at
+        homeassistant/update/{this}_update/config.
 
     ConnectionHost:
       description: >

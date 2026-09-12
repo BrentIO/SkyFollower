@@ -42,6 +42,7 @@ from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import normalize_flight_ident, route_key
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.sqlite_staging import open_staging_db
 
@@ -242,6 +243,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model="Virtual Radar Server Standing Data Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/vrs-standing-data.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Virtual Radar Server Standing Data Records Imported", "mdi:routes", "total_increasing", None),
         ("last_run_at", "Virtual Radar Server Standing Data Last Run At", "mdi:clock", None, None),

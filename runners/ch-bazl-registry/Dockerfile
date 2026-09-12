@@ -21,4 +21,12 @@ ENV VERSION=$VERSION
 ARG COMMIT=unknown
 ENV GIT_COMMIT=$COMMIT
 
+# Bare "skyfollower-<component>" image name this build published to GHCR
+# (the repository shared/version_check.py's get_latest_ghcr_tag() looks
+# up under ghcr.io/brentio/). Read at runtime by
+# shared/mqtt_register.py's publish_register() so core-health never has
+# to infer a component's image name from what it calls itself.
+ARG IMAGE=unknown
+ENV COMPONENT_IMAGE=$IMAGE
+
 CMD ["python", "ch-bazl-registry/main.py"]

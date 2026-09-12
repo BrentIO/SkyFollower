@@ -49,6 +49,7 @@ from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.rabbitmq_topology import ARCHIVE_QUEUE_NAME
 from shared.redis_keys import (
     archive_last_segment_key,
@@ -897,6 +898,7 @@ class ArchiveProcessor:
             name="SkyFollower Archive",
             model="Archive",
         )
+        publish_register(self._mqtt, device)
         availability = {
             "availability_topic": "SkyFollower/archive/status",
             "payload_available": "ONLINE",

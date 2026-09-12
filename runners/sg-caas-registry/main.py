@@ -49,6 +49,7 @@ from shared.redis_keys import (
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 
@@ -369,6 +370,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model=f"Singapore {country_flag('SG')} CAAS Registry Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/sg-caas-registry.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Singapore CAAS Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Singapore CAAS Last Run At", "mdi:clock", None, None),

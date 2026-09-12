@@ -63,6 +63,35 @@ CORE_DEVICE_IDENTIFIER = _mod.CORE_DEVICE_IDENTIFIER
 RABBITMQ_POLL_INTERVAL_SECONDS = _mod.RABBITMQ_POLL_INTERVAL_SECONDS
 ARCHIVE_QUEUE_NAME = _mod.ARCHIVE_QUEUE_NAME
 ADSB_EXCHANGE = _mod.ADSB_EXCHANGE
+_installed_version = _mod._installed_version
+REGISTER_TOPIC_ROOT = _mod.REGISTER_TOPIC_ROOT
+
+
+def _register_message(device_ids, *, image="skyfollower-map", sw_version="2026.09.10 (abc1234)",
+                      name="SkyFollower Map", model="Map"):
+    """A retained SkyFollower/register/{device_ids} message as
+    shared/mqtt_register.py's publish_register() would publish it, as
+    (topic, json-string-payload)."""
+    payload = {
+        "image": image,
+        "device": {
+            "ids": device_ids,
+            "name": name,
+            "manufacturer": "P5Software, LLC",
+            "model": model,
+            "sw_version": sw_version,
+        },
+    }
+    topic = f"{REGISTER_TOPIC_ROOT}/{device_ids}"
+    return topic, json.dumps(payload)
+
+
+def _msg(topic: str, payload: str):
+    """A stand-in for a paho MQTTMessage: topic string + payload bytes."""
+    m = MagicMock()
+    m.topic = topic
+    m.payload = payload.encode("utf-8")
+    return m
 
 
 # ---------------------------------------------------------------------------
@@ -1076,6 +1105,213 @@ class TestReconciledReceiverKeys:
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Component "update available" entities
+# ---------------------------------------------------------------------------
+
+class TestInstalledVersion:
+    def test_commit_suffix_is_stripped(self):
+        assert _installed_version({"sw_version": "2026.09.10 (abc1234)"}) == "2026.09.10"
+
+    def test_bare_version_passes_through(self):
+        assert _installed_version({"sw_version": "2026.09.10"}) == "2026.09.10"
+
+    def test_dev_build(self):
+        assert _installed_version({"sw_version": "dev"}) == "dev"
+
+    def test_absent(self):
+        assert _installed_version({}) is None
+
+
+class TestComponentRegistry:
+    def test_register_message_registers_component_version_and_image(self):
+        app = _wired_app()
+        topic, payload = _register_message("SkyFollower_map")
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, payload))
+
+        entry = app._component_registry["SkyFollower_map"]
+        assert entry.image == "skyfollower-map"
+        assert entry.installed_version == "2026.09.10"
+        assert entry.state_topic == f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"
+
+    def test_topic_not_under_register_root_is_ignored(self):
+        app = _wired_app()
+        app._on_mqtt_message(
+            app._mqtt, None,
+            _msg("homeassistant/update/SkyFollower_map_update/config",
+                 json.dumps({"image": "skyfollower-map",
+                             "device": {"ids": "SkyFollower_map", "sw_version": "2026.09.10"}})),
+        )
+        assert app._component_registry == {}
+
+    def test_missing_image_field_is_ignored(self):
+        app = _wired_app()
+        topic = f"{REGISTER_TOPIC_ROOT}/SkyFollower_map"
+        payload = json.dumps({"device": {"ids": "SkyFollower_map", "sw_version": "2026.09.10"}})
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, payload))
+        assert app._component_registry == {}
+
+    def test_missing_device_field_is_ignored(self):
+        app = _wired_app()
+        topic = f"{REGISTER_TOPIC_ROOT}/SkyFollower_map"
+        payload = json.dumps({"image": "skyfollower-map"})
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, payload))
+        assert app._component_registry == {}
+
+    def test_malformed_payload_does_not_raise(self):
+        app = _wired_app()
+        app._on_mqtt_message(
+            app._mqtt, None, _msg(f"{REGISTER_TOPIC_ROOT}/SkyFollower_map", "{not json"))
+        assert app._component_registry == {}
+
+    def test_cleared_retained_message_drops_component_and_clears_update_entity(self):
+        app = _wired_app()
+        topic, payload = _register_message("SkyFollower_map")
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, payload))
+        assert "SkyFollower_map" in app._component_registry
+
+        # Retained clear: empty payload on the same register topic.
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, ""))
+
+        assert "SkyFollower_map" not in app._component_registry
+        app._mqtt.publish.assert_any_call(
+            "homeassistant/update/SkyFollower_map_update/config", "", retain=True
+        )
+
+
+class TestUpdateEntityPublish:
+    def _register(self, app, device_ids="SkyFollower_map", **kw):
+        topic, payload = _register_message(device_ids, **kw)
+        app._on_mqtt_message(app._mqtt, None, _msg(topic, payload))
+
+    def test_discovery_payload_nests_under_component_device_and_has_no_install_keys(self):
+        app = _wired_app()
+        self._register(app)
+        discovery = _discovery_payloads(app._mqtt)
+        cfg = discovery["homeassistant/update/SkyFollower_map_update/config"]
+        assert cfg["device"]["ids"] == "SkyFollower_map"
+        assert cfg["unique_id"] == "SkyFollower_map_update"
+        assert cfg["state_topic"] == f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"
+        for forbidden in ("command_topic", "payload_install", "supported_features"):
+            assert forbidden not in cfg
+
+    def test_discovery_uses_core_healths_own_availability_not_the_components(self):
+        # The registration payload carries no availability_topic of its own
+        # (image + device is everything it needs) -- core-health's own
+        # availability is used instead, the same choice already made for
+        # the queue/counter mimicry entities.
+        app = _wired_app()
+        self._register(app)
+        cfg = _discovery_payloads(app._mqtt)["homeassistant/update/SkyFollower_map_update/config"]
+        assert cfg["availability_topic"] == f"{MQTT_ROOT}/status"
+
+    def test_state_blob_before_first_poll_reports_installed_as_latest(self):
+        app = _wired_app()
+        self._register(app)
+        published = _state_publishes(app._mqtt)
+        blob = json.loads(published[f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"])
+        assert blob == {"installed_version": "2026.09.10", "latest_version": "2026.09.10"}
+
+    def test_newer_registry_tag_shows_up_in_state(self, monkeypatch):
+        app = _wired_app()
+        self._register(app)
+        monkeypatch.setattr(_mod, "get_latest_ghcr_tag", lambda image: "2026.10.01")
+
+        app._poll_component_versions_once()
+
+        blob = json.loads(_state_publishes(app._mqtt)[f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"])
+        assert blob == {"installed_version": "2026.09.10", "latest_version": "2026.10.01"}
+
+    def test_equal_registry_tag_shows_equal(self, monkeypatch):
+        app = _wired_app()
+        self._register(app)
+        monkeypatch.setattr(_mod, "get_latest_ghcr_tag", lambda image: "2026.09.10")
+
+        app._poll_component_versions_once()
+
+        blob = json.loads(_state_publishes(app._mqtt)[f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"])
+        assert blob["installed_version"] == blob["latest_version"] == "2026.09.10"
+
+    def test_none_result_keeps_last_known_latest_and_loop_survives(self, monkeypatch):
+        app = _wired_app()
+        self._register(app)
+        monkeypatch.setattr(_mod, "get_latest_ghcr_tag", lambda image: "2026.10.01")
+        app._poll_component_versions_once()
+
+        # Registry now unreachable -> None. Must not raise, must keep the
+        # previously-seen tag.
+        monkeypatch.setattr(_mod, "get_latest_ghcr_tag", lambda image: None)
+        app._poll_component_versions_once()
+
+        blob = json.loads(_state_publishes(app._mqtt)[f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"])
+        assert blob["latest_version"] == "2026.10.01"
+
+    def test_poll_deduplicates_images_across_instances(self, monkeypatch):
+        app = _wired_app()
+        self._register(app, device_ids="SkyFollower_message_processor_mp-1",
+                       image="skyfollower-message-processor", name="SkyFollower Message Processor mp-1")
+        self._register(app, device_ids="SkyFollower_message_processor_mp-2",
+                       image="skyfollower-message-processor", name="SkyFollower Message Processor mp-2")
+        calls = []
+        monkeypatch.setattr(_mod, "get_latest_ghcr_tag",
+                            lambda image: calls.append(image) or "2026.10.01")
+
+        app._poll_component_versions_once()
+
+        assert calls == ["skyfollower-message-processor"]
+        published = _state_publishes(app._mqtt)
+        assert f"{REGISTER_TOPIC_ROOT}/SkyFollower_message_processor_mp-1/update" in published
+        assert f"{REGISTER_TOPIC_ROOT}/SkyFollower_message_processor_mp-2/update" in published
+
+    def test_runner_gets_an_update_entity_from_its_own_registration(self):
+        app = _wired_app()
+        self._register(app, device_ids="SkyFollower_runner_mictronics",
+                       image="skyfollower-runner-mictronics",
+                       name="SkyFollower Mictronics Runner", model="Mictronics Runner")
+        cfg = _discovery_payloads(app._mqtt)[
+            "homeassistant/update/SkyFollower_runner_mictronics_update/config"
+        ]
+        assert cfg["device"]["ids"] == "SkyFollower_runner_mictronics"
+        entry = app._component_registry["SkyFollower_runner_mictronics"]
+        assert entry.image == "skyfollower-runner-mictronics"
+
+    def test_archive_processor_image_name_comes_straight_from_the_registration_payload(self):
+        # No inference table any more: archive-processor's own
+        # COMPONENT_IMAGE (skyfollower-archive, not skyfollower-archive-processor)
+        # is exactly what shows up here, verbatim.
+        app = _wired_app()
+        self._register(app, device_ids="SkyFollower_archive", image="skyfollower-archive",
+                       name="SkyFollower Archive", model="Archive")
+        assert app._component_registry["SkyFollower_archive"].image == "skyfollower-archive"
+
+    def test_reconnect_republishes_update_state_for_known_components(self):
+        app = _wired_app()
+        self._register(app)
+        app._mqtt.reset_mock()
+        app._known_update_entities.clear()
+
+        app._on_mqtt_connect(app._mqtt, None, None, 0, None)
+
+        published = _state_publishes(app._mqtt)
+        assert f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update" in published
+        app._mqtt.subscribe.assert_any_call(_mod.REGISTER_TOPIC_WILDCARD)
+
+
+class TestVersionPollInterval:
+    def test_interval_comes_from_shared_timing_not_a_literal(self):
+        import shared.timing as timing
+        assert _mod.GHCR_VERSION_CHECK_INTERVAL_SECONDS is timing.GHCR_VERSION_CHECK_INTERVAL_SECONDS
+        assert (
+            _mod.GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS
+            is timing.GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS
+        )
+
+    def test_startup_delay_short_circuits_on_shutdown(self):
+        app = _wired_app()
+        app._shutdown.set()
+        app._version_poll_loop()  # returns immediately, no poll attempted
+
 
 class TestShutdown:
     def test_publishes_offline_and_stops_loop(self):

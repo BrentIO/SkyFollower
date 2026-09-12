@@ -869,3 +869,29 @@ class TestMqttCompletionStats:
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_types_imported/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_last_run_at/config" in ha_topics
         assert "homeassistant/sensor/SkyFollower_runner_mictronics_last_run_status/config" in ha_topics
+
+    def test_self_registers_with_its_own_image_name(self):
+        # shared/mqtt_register.py's publish_register() call added alongside
+        # this runner's own _publish_ha_autodiscovery() -- COMPONENT_IMAGE
+        # is baked in at build time, mirroring VERSION/GIT_COMMIT.
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch.dict(os.environ, {"COMPONENT_IMAGE": "skyfollower-runner-mictronics"}, clear=True):
+            with patch("mictronics_main.mqtt.Client", return_value=mc):
+                with patch("time.sleep"):
+                    publish_completion_stats(cfg, 100, 10, 3, "success")
+        calls = {c.args[0]: json.loads(c.args[1]) for c in mc.publish.call_args_list
+                  if c.args[0] == "SkyFollower/register/SkyFollower_runner_mictronics"}
+        register = calls["SkyFollower/register/SkyFollower_runner_mictronics"]
+        assert register["image"] == "skyfollower-runner-mictronics"
+        assert register["device"]["ids"] == "SkyFollower_runner_mictronics"
+
+    def test_no_self_registration_without_component_image(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("mictronics_main.mqtt.Client", return_value=mc):
+                with patch("time.sleep"):
+                    publish_completion_stats(cfg, 100, 10, 3, "success")
+        topics = [c.args[0] for c in mc.publish.call_args_list]
+        assert "SkyFollower/register/SkyFollower_runner_mictronics" not in topics

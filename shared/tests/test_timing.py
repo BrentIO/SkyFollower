@@ -27,9 +27,11 @@ _PUBLIC_NAMES = [
 # TIMEOUT / WINDOW / BACKOFF are the documented vocabulary; AGE / LAG /
 # KEEPIDLE / KEEPINTVL are accepted domain terms of art (a staleness
 # threshold, a freshness bound, and the kernel's own TCP option names).
+# DELAY is a one-off wait before a loop's first iteration (distinct from
+# the INTERVAL between its subsequent iterations).
 _ALLOWED_KINDS = {
     "INTERVAL", "TTL", "TIMEOUT", "WINDOW", "BACKOFF",
-    "AGE", "LAG", "KEEPIDLE", "KEEPINTVL",
+    "AGE", "LAG", "KEEPIDLE", "KEEPINTVL", "DELAY",
 }
 
 # Public names that are counts, not durations, and so carry no ``_SECONDS``.

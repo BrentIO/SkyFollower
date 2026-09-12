@@ -45,6 +45,7 @@ from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.rabbitmq_topology import ADSB_EXCHANGE, declare_adsb_topology
 from shared.redis_client import build_redis_client
 from shared.redis_keys import (
@@ -1255,6 +1256,7 @@ class Receiver:
             model="Receiver",
             configuration_url="https://brentio.github.io/SkyFollower/components/receiver.html",
         )
+        publish_register(self._mqtt, device)
         availability = {
             "availability_topic": f"SkyFollower/receiver/{rid}/status",
             "payload_available": "ONLINE",

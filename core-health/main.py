@@ -27,6 +27,18 @@ both components are write-only for their own counters (see their
 respective READMEs), this component is the only one that ever publishes
 them over MQTT/HA. Reads defensively either way: a missing key means the
 count is genuinely zero, never an error.
+
+Also publishes one Home Assistant `update` entity per SkyFollower
+component -- its running image version against the newest
+calendar-versioned tag published to the container registry. Every
+component self-registers (shared/mqtt_register.py's publish_register())
+to a retained SkyFollower/register/{id} message carrying its own GHCR
+image name and Home Assistant discovery `device` block; core-health
+subscribes to that wildcard to learn which components exist and at what
+version with no inference of its own, and polls the registry once a day
+(see _version_poll_loop / _ingest_register). This grants no component any
+new privilege -- it is an availability indicator only, with no install
+command on the wire.
 """
 
 from __future__ import annotations
@@ -52,15 +64,19 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from shared.config import ConfigError, load_config
-from shared.ha_discovery import build_ha_device
+from shared.ha_discovery import build_ha_device, build_ha_update_entity
 from shared.logging_setup import configure_logging
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import REGISTER_TOPIC_ROOT, publish_register
 from shared.timing import (
+    GHCR_VERSION_CHECK_INTERVAL_SECONDS,
+    GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     HTTP_TIMEOUT_SECONDS,
     RABBITMQ_POLL_INTERVAL_SECONDS,
     REDIS_POLL_INTERVAL_SECONDS,
 )
+from shared.version_check import get_latest_ghcr_tag
 from shared.rabbitmq_topology import (
     ADSB_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
@@ -81,8 +97,17 @@ from shared.redis_keys import (
 
 logger = logging.getLogger("core-health")
 
-MQTT_ROOT = "SkyFollower/core-health"
+SKYFOLLOWER_ROOT = "SkyFollower"
+MQTT_ROOT = f"{SKYFOLLOWER_ROOT}/core-health"
 CORE_DEVICE_IDENTIFIER = "SkyFollower_Core"
+
+# Every component self-registers (shared/mqtt_register.py's
+# publish_register()) to SkyFollower/register/{device_ids}, retained.
+# Subscribing to the wildcard lets core-health build a live picture of
+# which components are running, and at what version and GHCR image name,
+# without importing or calling into any of them.
+REGISTER_TOPIC_WILDCARD = f"{REGISTER_TOPIC_ROOT}/+"
+HA_UPDATE_PLATFORM_PREFIX = "homeassistant/update/"
 
 # RabbitMQ/Redis poll cadences and the HTTP deadline are named constants in
 # shared/timing.py (re-exported here so this module's existing references
@@ -274,6 +299,41 @@ def _mp_counter_key(pid: str, kind: str, period: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Component "update available" tracking
+# ---------------------------------------------------------------------------
+#
+# Every SkyFollower component self-registers (shared/mqtt_register.py's
+# publish_register()): one retained SkyFollower/register/{device_ids}
+# message per running instance, carrying its GHCR image name (baked in at
+# build time as COMPONENT_IMAGE -- see every Dockerfile's `ARG IMAGE` /
+# `ENV COMPONENT_IMAGE` and build-container-images.yaml's `IMAGE=
+# skyfollower-${{ matrix.name }}` build-arg, the exact same name its own
+# discover-images job already computed as the single source of truth) and
+# its Home Assistant discovery `device` block (identifiers, name,
+# sw_version). core-health only ever reads these two fields straight out
+# of the payload -- there is no separate table mapping a component's
+# identifier to its image name to keep in sync with the build workflow.
+
+
+def _installed_version(device: dict) -> Optional[str]:
+    """The running image version from a discovery `device` block's
+    ``sw_version``, with build_ha_device()'s ``" (<commit>)"`` suffix
+    stripped so it compares cleanly against a bare ``YYYY.MM.BB`` registry
+    tag. None when absent."""
+    raw = device.get("sw_version")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.split(" (", 1)[0].strip()
+
+
+class _TrackedComponent(NamedTuple):
+    image: str
+    installed_version: str
+    device: dict
+    state_topic: str
+
+
+# ---------------------------------------------------------------------------
 # Core Health
 # ---------------------------------------------------------------------------
 
@@ -321,6 +381,21 @@ class CoreHealth:
         self._known_receiver_fields: set[tuple[str, str]] = set()
         self._core_discovery_published = False
 
+        # "Update available" tracking. The registry is keyed by discovery
+        # `device` identifier (unique per running instance) and populated
+        # entirely from each component's own SkyFollower/register/{id}
+        # message -- the topic's own final segment already is that key, so
+        # dropping a component on a cleared retained message needs no
+        # separate bookkeeping of which topics announced it. _latest_versions
+        # is the last-known newest registry tag per image -- kept across a
+        # failed poll so a transient GHCR outage never blanks an entity.
+        # Touched from both the MQTT callback thread and the version-poll
+        # thread, hence the lock.
+        self._component_registry: dict[str, _TrackedComponent] = {}
+        self._latest_versions: dict[str, str] = {}
+        self._known_update_entities: set[str] = set()
+        self._registry_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------
@@ -333,6 +408,7 @@ class CoreHealth:
         threading.Thread(target=self._rabbitmq_poll_loop, daemon=True, name="rabbitmq-poll").start()
         threading.Thread(target=self._redis_poll_loop, daemon=True, name="redis-poll").start()
         threading.Thread(target=self._healthcheck_loop, daemon=True, name="healthcheck").start()
+        threading.Thread(target=self._version_poll_loop, daemon=True, name="version-poll").start()
 
         self._shutdown.wait()
 
@@ -344,6 +420,7 @@ class CoreHealth:
         self._mqtt = build_mqtt_client(mc, will_topic=f"{MQTT_ROOT}/status")
         self._mqtt.on_connect = self._on_mqtt_connect
         self._mqtt.on_disconnect = self._on_mqtt_disconnect
+        self._mqtt.on_message = self._on_mqtt_message
         try:
             self._mqtt.connect_async(mc["host"], port=mc.get("port", 1883), keepalive=60)
             self._mqtt.loop_start()
@@ -356,12 +433,29 @@ class CoreHealth:
         self._known_queues.clear()
         self._known_mp_counters.clear()
         self._known_receiver_fields.clear()
+        self._known_update_entities.clear()
         self._core_discovery_published = False
         self._publish_core_discovery()
+        # Retained registrations are re-delivered on every re-subscribe,
+        # rebuilding the registry; also re-publish the update entities for
+        # anything already tracked so their state is refreshed on the new
+        # connection without waiting for the next daily poll.
+        client.subscribe(REGISTER_TOPIC_WILDCARD)
+        self._republish_update_entities()
         logger.info("MQTT connected.")
 
     def _on_mqtt_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         self._mqtt_connected = False
+
+    def _on_mqtt_message(self, client, userdata, message) -> None:
+        topic = message.topic
+        if not topic.startswith(f"{REGISTER_TOPIC_ROOT}/"):
+            return
+        payload = message.payload.decode("utf-8", "replace").strip() if message.payload else ""
+        try:
+            self._ingest_register(topic, payload)
+        except Exception as exc:  # noqa: BLE001 -- a bad retained message must not kill the loop
+            logger.debug("Register ingest failed for %s: %s", topic, exc)
 
     # ------------------------------------------------------------------
     # Publish helpers
@@ -401,6 +495,14 @@ class CoreHealth:
         if self._core_discovery_published or not (self._mqtt and self._mqtt_connected):
             return
         device = _core_device()
+        # core-health self-registers like every other component -- it is
+        # just as subject to an "update available" check as anything it
+        # monitors. It never mimics registration on another component's
+        # behalf (unlike the queue/counter stats above): COMPONENT_IMAGE is
+        # baked in per image at build time, so a mimicked registration
+        # here would carry core-health's own image name, not the owning
+        # component's.
+        publish_register(self._mqtt, device)
         availability = {
             "availability_topic": f"{MQTT_ROOT}/status",
             "payload_available": "ONLINE",
@@ -766,6 +868,132 @@ class CoreHealth:
             retain=True,
         )
         self._known_receiver_fields.add(dedup)
+
+    # ------------------------------------------------------------------
+    # Component "update available" entities
+    # ------------------------------------------------------------------
+
+    def _ingest_register(self, topic: str, payload: str) -> None:
+        """Fold one retained SkyFollower/register/{device_ids} message
+        (shared/mqtt_register.py's publish_register()) into the component
+        registry. An empty payload is a cleared retained registration:
+        the component's own final topic segment is its registry key, so it
+        drops out (and its update entity is cleared) with no separate
+        bookkeeping of which topics announced it."""
+        device_ids = topic[len(REGISTER_TOPIC_ROOT) + 1:]
+        if not device_ids:
+            return
+        if not payload:
+            self._forget_component(device_ids)
+            return
+        message = json.loads(payload)
+        if not isinstance(message, dict):
+            return
+        image = message.get("image")
+        device = message.get("device")
+        if not isinstance(image, str) or not image or not isinstance(device, dict):
+            return
+        installed = _installed_version(device)
+        if not installed:
+            return
+
+        entry = _TrackedComponent(
+            image=image,
+            installed_version=installed,
+            device=device,
+            state_topic=f"{REGISTER_TOPIC_ROOT}/{device_ids}/update",
+        )
+        with self._registry_lock:
+            self._component_registry[device_ids] = entry
+        self._publish_update_entity(device_ids, entry)
+
+    def _forget_component(self, device_ids: str) -> None:
+        with self._registry_lock:
+            entry = self._component_registry.pop(device_ids, None)
+        if entry is not None:
+            self._clear_update_entity(device_ids, entry)
+
+    def _version_poll_loop(self) -> None:
+        """Slow loop -- interval GHCR_VERSION_CHECK_INTERVAL_SECONDS. The
+        published registry tags only move on a release, so a daily check is
+        ample; the first pass runs GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS
+        after startup so the entities aren't blank until the following day."""
+        if self._shutdown.wait(GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS):
+            return
+        while not self._shutdown.is_set():
+            self._poll_component_versions_once()
+            self._shutdown.wait(GHCR_VERSION_CHECK_INTERVAL_SECONDS)
+
+    def _poll_component_versions_once(self) -> None:
+        with self._registry_lock:
+            entries = list(self._component_registry.items())
+        for image in sorted({entry.image for _, entry in entries}):
+            try:
+                latest = get_latest_ghcr_tag(image)
+            except Exception as exc:  # noqa: BLE001 -- best-effort, never crash the loop
+                logger.debug("GHCR lookup failed for %s: %s", image, exc)
+                latest = None
+            # A None result (network error, rate limit, no release tags yet)
+            # leaves the last-known latest_version in place rather than
+            # blanking the entity.
+            if latest is not None:
+                self._latest_versions[image] = latest
+        for device_ids, entry in entries:
+            self._publish_update_entity(device_ids, entry)
+
+    def _republish_update_entities(self) -> None:
+        with self._registry_lock:
+            entries = list(self._component_registry.items())
+        for device_ids, entry in entries:
+            self._publish_update_entity(device_ids, entry)
+
+    def _publish_update_entity(self, device_ids: str, entry: _TrackedComponent) -> None:
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        self._ensure_update_discovery(device_ids, entry)
+        latest = self._latest_versions.get(entry.image)
+        state = {
+            "installed_version": entry.installed_version,
+            # Until the first successful registry poll the newest tag is
+            # unknown; reporting the running version as latest reads as
+            # "up to date" rather than asserting a spurious update.
+            "latest_version": latest or entry.installed_version,
+        }
+        self._mqtt.publish(entry.state_topic, json.dumps(state), retain=True)
+
+    def _ensure_update_discovery(self, device_ids: str, entry: _TrackedComponent) -> None:
+        if device_ids in self._known_update_entities or not (self._mqtt and self._mqtt_connected):
+            return
+        config = build_ha_update_entity(
+            device=entry.device,
+            name=f"{entry.device.get('name', device_ids)} Update",
+            state_topic=entry.state_topic,
+            # core-health's own availability, not the owning component's --
+            # the same choice already made for the queue/counter mimicry
+            # entities above (see _ensure_mp_counter_discovery): the
+            # registration payload carries no availability_topic of its
+            # own, and a component being briefly offline shouldn't also
+            # hide whether an update exists for it.
+            availability={
+                "availability_topic": f"{MQTT_ROOT}/status",
+                "payload_available": "ONLINE",
+                "payload_not_available": "OFFLINE",
+            },
+        )
+        self._mqtt.publish(
+            f"{HA_UPDATE_PLATFORM_PREFIX}{entry.device['ids']}_update/config",
+            json.dumps(config),
+            retain=True,
+        )
+        self._known_update_entities.add(device_ids)
+
+    def _clear_update_entity(self, device_ids: str, entry: _TrackedComponent) -> None:
+        self._known_update_entities.discard(device_ids)
+        if not (self._mqtt and self._mqtt_connected):
+            return
+        self._mqtt.publish(
+            f"{HA_UPDATE_PLATFORM_PREFIX}{entry.device['ids']}_update/config", "", retain=True
+        )
 
     # ------------------------------------------------------------------
     # Redis polling

@@ -36,6 +36,7 @@ from shared.ha_discovery import build_ha_device
 from shared.redis_keys import aircraft_registry_key, aircraft_type_key, AIRCRAFT_REGISTRY_SEARCH_INDEX
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 
@@ -417,6 +418,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model=f"Switzerland {country_flag('CH')} BAZL Registry Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/ch-bazl-registry.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Switzerland BAZL Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Switzerland BAZL Last Run At", "mdi:clock", None, None),

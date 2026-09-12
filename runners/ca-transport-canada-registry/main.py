@@ -40,6 +40,7 @@ from shared.ha_discovery import build_ha_device
 from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX, aircraft_registry_key
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 from shared.sqlite_staging import open_staging_db
@@ -554,6 +555,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model=f"Canada {country_flag('CA')} Transport Canada Registry Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/ca-transport-canada-registry.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Transport Canada Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Transport Canada Last Run At", "mdi:clock", None, None),

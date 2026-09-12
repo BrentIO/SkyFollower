@@ -43,6 +43,7 @@ from shared.redis_keys import (
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
+from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 
@@ -323,6 +324,7 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         model=f"Serbia {country_flag('RS')} CAD Registry Runner",
         configuration_url="https://brentio.github.io/SkyFollower/runners/rs-cad-registry.html",
     )
+    publish_register(client, device)
     stats = [
         ("records_imported", "Serbia CAD Registry Records Imported", "mdi:airplane", "total_increasing", None),
         ("last_run_at", "Serbia CAD Last Run At", "mdi:clock", None, None),
