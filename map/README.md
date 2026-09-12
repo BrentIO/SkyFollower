@@ -244,7 +244,7 @@ for that aircraft, plus two untracked-by-aircraft keys:
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
 | `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
-| `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing}:{band}"`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
+| `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing_index}:{band}"`, `bearing_index` a half-degree index `0`-`719`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
 
 These key families are local to this service and are not part of
 `shared/redis_keys.py`'s schema, which documents *core* Redis's keys --
@@ -424,11 +424,12 @@ under [Frontend](#frontend-frontend) below.
 
 The map service builds a **daily reception range outline** -- "how far can
 this whole system hear, per compass bearing, per altitude band" -- from
-the same `position` UDP stream the live map runs on. It mirrors readsb's
+the same `position` UDP stream the live map runs on. It buckets at 720
+half-degree bearing resolution -- finer than readsb's own
 actual-range-outline (360 one-degree bearing buckets, per-bucket farthest
-received position), but runs centrally so it aggregates *every* receiver
-and external feed, not one antenna. Requires a configured home
-(`MAP_HOME_LATITUDE`/`LONGITUDE`) -- there's no origin to measure from
+received position), deliberately, since this runs centrally and aggregates
+*every* receiver and external feed, not one antenna. Requires a configured
+home (`MAP_HOME_LATITUDE`/`LONGITUDE`) -- there's no origin to measure from
 otherwise, and the endpoint returns an empty `FeatureCollection`.
 
 **Accumulation.** For each accepted `position`, the service computes the
@@ -460,6 +461,17 @@ midnight finds no `{today}.json`, starts the new day empty, and leaves
 `MAP_RANGE_OUTLINE_TTL_SECONDS` (30 days) are deleted on each write. If
 `map-redis` restarts while this process stays up, the next 1/min tick
 reloads the current day from disk.
+
+Snapshots written before the bearing bucket resolution was doubled from
+360 (whole-degree) to 720 (half-degree) buckets store bucket keys under
+the old integer-degree scheme. A syntactically valid old key like `"47"`
+is silently reinterpreted under the new scheme as half-degree index 47
+(23.5°), not 47°. This is a known, accepted limitation rather than
+something migrated: a historical `?date=` lookup against a pre-upgrade
+snapshot may render with shifted bearings for the remainder of that
+snapshot's 30-day retention window, after which it's deleted and the
+issue disappears on its own. The live in-progress day is unaffected --
+it clears and rebuilds fresh at every UTC rollover regardless.
 
 **API.**
 

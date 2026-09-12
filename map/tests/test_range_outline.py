@@ -143,6 +143,41 @@ def test_accepts_outlier_jump_with_neighbour_support(redis_client, tmp_path, fro
     assert json.loads(redis_client.hget(OUTLINE_KEY, "0:20000-30000"))["nm"] == pytest.approx(200, abs=1)
 
 
+def test_outlier_neighbour_window_boundary_exactly_three_degrees_passes(redis_client, tmp_path, frozen_date):
+    """The real angular tolerance of the outlier-neighbour guard must stay
+    +/-3 degrees after switching bearing buckets to a half-degree index --
+    a neighbour exactly 3.0 degrees away still supports the jump."""
+    store = _store(redis_client, tmp_path)
+    store.record_position(*_dest(0, 60), 25000)      # establish bearing 0 at ~60 nm
+    store.record_position(*_dest(3.0, 190), 25000)   # neighbour exactly 3.0 degrees away, ~190 nm
+    store.record_position(*_dest(0, 200), 25000)     # accepted -- neighbour at the boundary supports it
+    assert json.loads(redis_client.hget(OUTLINE_KEY, "0:20000-30000"))["nm"] == pytest.approx(200, abs=1)
+
+
+def test_outlier_neighbour_window_beyond_three_degrees_fails(redis_client, tmp_path, frozen_date):
+    """A neighbour just past 3.0 degrees (3.5) must NOT support the jump --
+    pins that doubling the bucket count didn't silently halve the real
+    tolerance to +/-1.5 degrees."""
+    store = _store(redis_client, tmp_path)
+    store.record_position(*_dest(0, 60), 25000)      # establish bearing 0 at ~60 nm
+    store.record_position(*_dest(3.5, 190), 25000)   # neighbour just outside the +/-3 degree window
+    store.record_position(*_dest(0, 200), 25000)     # rejected -- no neighbour support within +/-3 degrees
+    assert json.loads(redis_client.hget(OUTLINE_KEY, "0:20000-30000"))["nm"] == pytest.approx(60, abs=1)
+
+
+def test_half_degree_bearing_lands_in_its_own_bucket(redis_client, tmp_path, frozen_date):
+    """A point at a genuine half-degree bearing (23.5) must occupy its own
+    distinct bucket -- index 47 -- rather than merging with the whole-degree
+    buckets for 23 (index 46) or 24 (index 48)."""
+    store = _store(redis_client, tmp_path)
+    lat, lon = _dest(23.5, 80)
+    store.record_position(lat, lon, 25000)
+    point = json.loads(redis_client.hget(OUTLINE_KEY, "47:20000-30000"))
+    assert point["nm"] == pytest.approx(80.0, abs=0.5)
+    assert redis_client.hget(OUTLINE_KEY, "46:20000-30000") is None
+    assert redis_client.hget(OUTLINE_KEY, "48:20000-30000") is None
+
+
 def test_safety_ttl_is_set(redis_client, tmp_path, frozen_date):
     store = _store(redis_client, tmp_path)
     store.record_position(35.0, -118.0, 25000)
@@ -259,6 +294,19 @@ def test_get_outline_builds_polygon_per_band_plus_envelope(redis_client, tmp_pat
     assert ring[0] == ring[-1]                       # closed
     assert len(ring[0]) == 3                          # [lon, lat, alt]
     assert fc["properties"]["date"] == "2026-09-10"
+
+
+def test_get_outline_point_count_reflects_half_degree_resolution(redis_client, tmp_path, frozen_date):
+    """Four bearings only 0.5 degrees apart must all survive as distinct
+    points -- under the old whole-degree scheme, 0/0.5 and 1.0/1.5 would
+    have collapsed into just 2 buckets instead of 4, proving the outline
+    now resolves up to 720 possible points rather than 360."""
+    store = _store(redis_client, tmp_path)
+    _fan(store, [0, 0.5, 1.0, 1.5], band_alt=25000, nm=80.0)
+    fc = store.get_outline()
+    assert fc["properties"]["point_count"] == 4
+    band_feature = next(f for f in fc["features"] if f["properties"]["band"] == "20000-30000")
+    assert band_feature["properties"]["point_count"] == 4
 
 
 def test_get_outline_band_filter(redis_client, tmp_path, frozen_date):
