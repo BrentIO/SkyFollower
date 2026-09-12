@@ -22,15 +22,23 @@ export interface ControlsPanelProps {
    * turning it off is what hides the basemap's text. */
   mapLabelsOn: boolean;
   onToggleMapLabels: () => void;
+  /** Daily reception range outline overlay (envelope band only, see
+   * lib/mapLayerIds.ts's RANGE_OUTLINE_* ids). Disabled -- not just
+   * unchecked -- when no home is configured, matching `recenterDisabled`:
+   * the backend always returns an empty FeatureCollection in that case, so
+   * there's nothing to show. */
+  rangeOutlineVisible: boolean;
+  onToggleRangeOutline: () => void;
+  rangeOutlineDisabled: boolean;
   onRecenter: () => void;
   recenterDisabled: boolean;
 }
 
 // Top-right floating controls: connection-status dot, aircraft-tracked
-// count, the "History: All", "Labels: All", and "Map Labels" toggles, and
-// (as its own separate square control below the status panel) the recenter
-// button. No persistent side panel in v1 -- see the issue's Page layout
-// section.
+// count, the "History: All", "Labels: All", "Map Labels", and "Range
+// Outline" toggles, and (as its own separate square control below the
+// status panel) the recenter button. No persistent side panel in v1 -- see
+// the issue's Page layout section.
 export function ControlsPanel({
   wsConnected,
   roster,
@@ -41,6 +49,9 @@ export function ControlsPanel({
   onToggleLabelsAll,
   mapLabelsOn,
   onToggleMapLabels,
+  rangeOutlineVisible,
+  onToggleRangeOutline,
+  rangeOutlineDisabled,
   onRecenter,
   recenterDisabled,
 }: ControlsPanelProps) {
@@ -79,6 +90,15 @@ export function ControlsPanel({
           className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors ${toggleButtonClass(mapLabelsOn)}`}
         >
           Map Labels
+        </button>
+        <button
+          type="button"
+          onClick={onToggleRangeOutline}
+          disabled={rangeOutlineDisabled}
+          aria-pressed={rangeOutlineVisible}
+          className={`rounded border px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(rangeOutlineVisible)}`}
+        >
+          Range Outline
         </button>
       </div>
 

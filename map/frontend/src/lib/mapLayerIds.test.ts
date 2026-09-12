@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AIRCRAFT_LAYER_ID,
+  RANGE_OUTLINE_LAYER_ID,
   RANGE_RING_LABEL_LAYER_ID,
   RANGE_RING_LAYER_ID,
   SELECTABLE_LAYER_IDS,
@@ -21,5 +22,9 @@ describe("SELECTABLE_LAYER_IDS", () => {
   it("excludes the range ring layers", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(RANGE_RING_LAYER_ID);
     expect(SELECTABLE_LAYER_IDS).not.toContain(RANGE_RING_LABEL_LAYER_ID);
+  });
+
+  it("excludes the range outline layer", () => {
+    expect(SELECTABLE_LAYER_IDS).not.toContain(RANGE_OUTLINE_LAYER_ID);
   });
 });

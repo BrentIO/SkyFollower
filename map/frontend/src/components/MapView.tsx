@@ -9,6 +9,7 @@ import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
+import { useRangeOutline } from "../hooks/useRangeOutline";
 import {
   aircraftFeatureCollection,
   EMPTY_FEATURE_COLLECTION,
@@ -18,6 +19,8 @@ import {
 import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
+  RANGE_OUTLINE_LAYER_ID,
+  RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
   RANGE_RING_LABEL_SOURCE_ID,
   RANGE_RING_LAYER_ID,
@@ -119,6 +122,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   const [historyAll, setHistoryAll] = useState(false);
   const [labelsAll, setLabelsAll] = useState(false);
+  // Daily reception range outline overlay -- defaults off, matching
+  // historyAll/labelsAll's convention. Polling (see useRangeOutline below)
+  // only happens while this is true, so leaving it off costs nothing.
+  const [rangeOutlineVisible, setRangeOutlineVisible] = useState(false);
+  const rangeOutline = useRangeOutline(config.apiBaseUrl, rangeOutlineVisible && !!config.home);
   // Basemap's own text labels (place names, road names/shields, water
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
@@ -374,6 +382,23 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
       });
 
+      // Daily reception range outline (toggle-able, see the effect below) --
+      // empty until the toggle is on and the first poll resolves. Added
+      // alongside the static range-ring layers above so it renders beneath
+      // live traffic; not part of SELECTABLE_LAYER_IDS, so it's never a
+      // click/hover target.
+      map.addSource(RANGE_OUTLINE_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+      map.addLayer({
+        id: RANGE_OUTLINE_LAYER_ID,
+        type: "line",
+        source: RANGE_OUTLINE_SOURCE_ID,
+        // The API's polygon/line vertices are [lon, lat, alt_ft]; MapLibre's
+        // 2-D `line` layer only ever consumes the first two components, so
+        // altitude is silently ignored here -- expected for this flat v1
+        // envelope line, not a bug.
+        paint: { "line-color": "#196363", "line-width": 2 },
+      });
+
       map.addSource(TRAIL_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
       map.addLayer({
         id: TRAIL_LAYER_ID,
@@ -543,6 +568,21 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
   }, [mapLabelsOn, mapLoaded]);
 
+  // "Range Outline" toggle -- pushes the polled envelope (useRangeOutline
+  // above, which itself stops polling and reports an empty
+  // FeatureCollection whenever this is off/no home configured) into the
+  // source. Keyed on `rangeOutline` so a poll result while it's on updates
+  // the map on arrival, and on the toggle so switching off clears the
+  // overlay immediately rather than waiting for the hook's own reset to
+  // flow through.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    (map.getSource(RANGE_OUTLINE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+      rangeOutlineVisible ? rangeOutline : EMPTY_FEATURE_COLLECTION,
+    );
+  }, [rangeOutline, rangeOutlineVisible, mapLoaded]);
+
   // --- Keep the aircraft/trail sources and screen positions in sync ---
   useEffect(() => {
     const map = mapRef.current;
@@ -654,6 +694,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         onToggleLabelsAll={() => setLabelsAll((prev) => !prev)}
         mapLabelsOn={mapLabelsOn}
         onToggleMapLabels={() => setMapLabelsOn((prev) => !prev)}
+        rangeOutlineVisible={rangeOutlineVisible}
+        onToggleRangeOutline={() => setRangeOutlineVisible((prev) => !prev)}
+        rangeOutlineDisabled={!config.home}
         onRecenter={handleRecenter}
         recenterDisabled={!config.home}
       />
