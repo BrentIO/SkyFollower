@@ -1884,6 +1884,42 @@ class TestHaAutodiscoveryStartedAt:
             topics = {c.args[0] for c in mock_mqtt.publish.call_args_list}
             assert "SkyFollower/archive/statistic/version" not in topics
 
+    def test_has_entity_name_set_on_every_discovery_payload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            discovery_calls = [
+                c for c in mock_mqtt.publish.call_args_list if c.args[0].startswith("homeassistant/")
+            ]
+            assert discovery_calls
+            for call in discovery_calls:
+                assert json.loads(call.args[1])["has_entity_name"] is True
+
+    def test_object_id_and_unique_id_unchanged_by_entity_name_flag(self):
+        """has_entity_name only affects the displayed `name` -- object_id
+        and unique_id must keep tracking the bare field name so existing
+        entity_ids don't churn."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            for call in mock_mqtt.publish.call_args_list:
+                if not call.args[0].startswith("homeassistant/"):
+                    continue
+                cfg = json.loads(call.args[1])
+                field = call.args[0].split("/")[2].replace("SkyFollower_archive_", "")
+                assert cfg["unique_id"] == f"SkyFollower_archive_{field}"
+                assert cfg["object_id"] == f"SkyFollower_archive_{field}"
+
 
 # ---------------------------------------------------------------------------
 # Live-path worker pool (concurrency + icao_hex partitioning)

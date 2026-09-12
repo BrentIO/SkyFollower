@@ -594,21 +594,22 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
     )
     publish_register(client, device)
     stats = [
-        ("files_compacted", "Archive Compaction Files Compacted", "mdi:file-multiple", "total_increasing", None, None),
-        ("files_delete_failed", "Archive Compaction Delete Failures", "mdi:alert", "total_increasing", None, None),
-        ("days_compacted", "Archive Compaction Days Compacted", "mdi:calendar-check", "measurement", None, None),
-        ("last_compacted_date", "Archive Compaction Last Compacted Date", "mdi:calendar", None, None, None),
-        ("mismatch_date", "Archive Compaction Mismatch Date", "mdi:calendar-alert", None, None, None),
-        ("mismatch_uuid_count", "Archive Compaction Mismatch Flight Count", "mdi:alert-circle", "measurement", None,
+        ("files_compacted", "Files Compacted", "mdi:file-multiple", "total_increasing", None, None),
+        ("files_delete_failed", "Delete Failures", "mdi:alert", "total_increasing", None, None),
+        ("days_compacted", "Days Compacted", "mdi:calendar-check", "measurement", None, None),
+        ("last_compacted_date", "Last Compacted Date", "mdi:calendar", None, None, None),
+        ("mismatch_date", "Mismatch Date", "mdi:calendar-alert", None, None, None),
+        ("mismatch_uuid_count", "Mismatch Flight Count", "mdi:alert-circle", "measurement", None,
          f"{MQTT_ROOT}/statistic/mismatch_uuids"),
-        ("mismatch_runs", "Archive Compaction Mismatch Consecutive Runs", "mdi:counter", "measurement", None, None),
-        ("last_run_at", "Archive Compaction Last Run At", "mdi:clock", None, None, None),
-        ("last_run_status", "Archive Compaction Last Run Status", "mdi:check-circle", None, None, None),
+        ("mismatch_runs", "Mismatch Consecutive Runs", "mdi:counter", "measurement", None, None),
+        ("last_run_at", "Last Run At", "mdi:clock", None, None, None),
+        ("last_run_status", "Last Run Status", "mdi:check-circle", None, None, None),
     ]
     for name, friendly_name, icon, state_class, unit, json_attributes_topic in stats:
         payload: dict = {
             "state_topic": f"{MQTT_ROOT}/statistic/{name}",
             "name": friendly_name,
+            "has_entity_name": True,
             "unique_id": f"SkyFollower_archive_compaction_{name}",
             "object_id": f"SkyFollower_archive_compaction_{name}",
             "device": device,

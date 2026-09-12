@@ -923,7 +923,7 @@ class TestPublishHaAutodiscovery:
         topic = "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_runs/config"
         assert topic in configs
         config = configs[topic]
-        assert config["name"] == "Archive Compaction Mismatch Consecutive Runs"
+        assert config["name"] == "Mismatch Consecutive Runs"
         assert config["state_topic"] == f"{MQTT_ROOT}/statistic/mismatch_runs"
         assert config["icon"] == "mdi:counter"
         assert config["unique_id"] == "SkyFollower_archive_compaction_mismatch_runs"
@@ -940,7 +940,7 @@ class TestPublishHaAutodiscovery:
         topic = "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_uuid_count/config"
         assert topic in configs
         config = configs[topic]
-        assert config["name"] == "Archive Compaction Mismatch Flight Count"
+        assert config["name"] == "Mismatch Flight Count"
         assert config["state_topic"] == f"{MQTT_ROOT}/statistic/mismatch_uuid_count"
         assert config["icon"] == "mdi:alert-circle"
         assert config["unique_id"] == "SkyFollower_archive_compaction_mismatch_uuid_count"
@@ -949,6 +949,44 @@ class TestPublishHaAutodiscovery:
         # mismatch_uuids no longer gets its own standalone sensor -- it's
         # consumed only as this sensor's json_attributes_topic.
         assert "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_uuids/config" not in configs
+
+    def test_no_sensor_name_restates_component_name(self):
+        """has_entity_name composes the displayed friendly_name from the
+        device name ("SkyFollower Archive Compaction") plus this short
+        entity name -- a hand-maintained "Archive Compaction " prefix here
+        would double up ("... Archive Compaction Archive Compaction
+        Files Compacted")."""
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mc.publish.call_args_list
+            if c.args[0].startswith("homeassistant/sensor/")
+        }
+        for config in configs.values():
+            assert not config["name"].startswith("Archive Compaction")
+
+    def test_has_entity_name_set_on_every_discovery_payload(self):
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        discovery_calls = [c for c in mc.publish.call_args_list if c.args[0].startswith("homeassistant/")]
+        assert discovery_calls
+        for call in discovery_calls:
+            assert json.loads(call.args[1])["has_entity_name"] is True
+
+    def test_object_id_and_unique_id_unchanged_by_entity_name_flag(self):
+        """has_entity_name and the de-prefixed name only affect the
+        displayed label -- object_id/unique_id must still track the bare
+        field name so existing entity_ids don't churn."""
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        for call in mc.publish.call_args_list:
+            if not call.args[0].startswith("homeassistant/sensor/"):
+                continue
+            cfg = json.loads(call.args[1])
+            field = call.args[0].split("/")[2].replace("SkyFollower_archive_compaction_", "")
+            assert cfg["unique_id"] == f"SkyFollower_archive_compaction_{field}"
+            assert cfg["object_id"] == f"SkyFollower_archive_compaction_{field}"
 
 
 # ---------------------------------------------------------------------------

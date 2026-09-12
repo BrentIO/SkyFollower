@@ -3061,6 +3061,34 @@ class TestTelemetryPayload:
         assert cfg["state_topic"] == "SkyFollower/message-processor/0/statistic/rabbitmq_connected"
         assert "availability_topic" in cfg
 
+    def test_has_entity_name_set_on_every_discovery_payload(self):
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        discovery_calls = [c for c in mock_mqtt.publish.call_args_list if c.args[0].startswith("homeassistant/")]
+        assert discovery_calls
+        for call in discovery_calls:
+            assert json.loads(call.args[1])["has_entity_name"] is True
+
+    def test_object_id_and_unique_id_unchanged_by_entity_name_flag(self):
+        """has_entity_name only affects the displayed `name` -- object_id
+        and unique_id must keep tracking the bare field name so existing
+        entity_ids don't churn."""
+        p = self._make_processor()
+        mock_mqtt = MagicMock()
+        p._mqtt = mock_mqtt
+        p._mqtt_connected = True
+        p._publish_ha_autodiscovery()
+        for call in mock_mqtt.publish.call_args_list:
+            if not call.args[0].startswith("homeassistant/"):
+                continue
+            cfg = json.loads(call.args[1])
+            field = call.args[0].split("/")[2].replace("SkyFollower_message_processor_0_", "")
+            assert cfg["unique_id"] == f"SkyFollower_message_processor_0_{field}"
+            assert cfg["object_id"] == f"SkyFollower_message_processor_0_{field}"
+
 
 # ---------------------------------------------------------------------------
 # Telemetry -- active_flights COUNT(*) must not hold self._db_lock

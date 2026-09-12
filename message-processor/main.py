@@ -2326,6 +2326,7 @@ class MessageProcessor:
                 **availability,
                 "state_topic": f"{base}/{sensor.field}",
                 "name": sensor.name,
+                "has_entity_name": True,
                 "unique_id": f"SkyFollower_message_processor_{pid}_{sensor.field}",
                 "object_id": f"SkyFollower_message_processor_{pid}_{sensor.field}",
                 "device": device,

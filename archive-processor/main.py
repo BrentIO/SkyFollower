@@ -954,6 +954,7 @@ class ArchiveProcessor:
                 **availability,
                 "state_topic": f"{base}/{name}",
                 "name": desc,
+                "has_entity_name": True,
                 "unique_id": f"SkyFollower_archive_{name}",
                 "object_id": f"SkyFollower_archive_{name}",
                 "device": device,

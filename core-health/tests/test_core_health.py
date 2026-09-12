@@ -1324,3 +1324,60 @@ class TestShutdown:
         app = CoreHealth(_minimal_config())
         app.shutdown()  # self._mqtt is None -- must not raise
         assert app._shutdown.is_set()
+
+
+# ---------------------------------------------------------------------------
+# has_entity_name -- every discovery payload this component publishes,
+# whether its own sensors or one of the mimicked-device proxies, must set
+# it so Home Assistant composes the displayed label from device name +
+# short entity name instead of showing the raw `name` verbatim.
+# ---------------------------------------------------------------------------
+
+class TestHasEntityNameSweep:
+    def _publish_everything(self, app: CoreHealth) -> None:
+        # Own sensors.
+        app._publish_core_discovery()
+        # Queue-discovery proxy (message-processor-owned queue).
+        app._publish_queue_stats({
+            "name": "skyfollower-message-processor-mp-1",
+            "consumers": 1,
+            "consumer_utilisation": 0.5,
+            "messages_ready": 3,
+            "messages_unacknowledged": 1,
+            "state": "running",
+            "memory": 12345,
+            "message_bytes": 678,
+            "message_stats": {},
+        })
+        # Message-processor-counter proxy.
+        app._redis.get.return_value = "3"
+        app._publish_message_processor_counters("mp-1")
+        # Receiver-discovery proxy.
+        app._redis.smembers.return_value = {"attic"}
+        registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
+        app._redis.get.side_effect = lambda key: (
+            json.dumps(registration) if key == receiver_registration_key("attic") else "5"
+        )
+        app._poll_receivers()
+
+    def test_has_entity_name_set_on_every_discovery_payload(self):
+        app = _wired_app()
+        self._publish_everything(app)
+        discovery = _discovery_payloads(app._mqtt)
+        assert discovery
+        for topic, payload in discovery.items():
+            assert payload["has_entity_name"] is True, topic
+
+    def test_object_id_and_unique_id_unchanged_by_entity_name_flag(self):
+        """has_entity_name only affects the displayed `name` -- object_id
+        and unique_id must keep tracking the bare field/topic-derived
+        identifier so existing entity_ids don't churn."""
+        app = _wired_app()
+        self._publish_everything(app)
+        discovery = _discovery_payloads(app._mqtt)
+        for topic, payload in discovery.items():
+            # Topic shape is always homeassistant/sensor/{id}/config -- the
+            # same {id} the payload's own object_id/unique_id must equal.
+            expected_id = topic.split("/")[2]
+            assert payload["unique_id"] == expected_id, topic
+            assert payload["object_id"] == expected_id, topic
