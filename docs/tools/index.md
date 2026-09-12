@@ -4,6 +4,10 @@ Standalone command-line utilities that support testing the pipeline —
 plain Python scripts, not containers; there's no Dockerfile or Compose
 service for any of them.
 
+- [Map Load Generator](/tools/map-load-generator) — fires synthetic
+  position/metadata/heartbeat UDP datagrams directly at a `map` instance to
+  stress-test its ingestion and WebSocket relay, independent of the rest of
+  the pipeline
 - [TCP Traffic Replayer](/tools/tcp-traffic-replayer) — serves a captured
   NDJSON file over a raw TCP listen socket in readsb's wire format, standing
   in for readsb so the receiver's own TCP ingest path can be exercised
@@ -17,4 +21,6 @@ RabbitMQ/message-processor pipeline with Traffic Replayer, exercising it
 repeatedly and byte-for-byte identically without live ADS-B traffic or SDR
 hardware present. TCP Traffic Replayer covers the stage upstream of that —
 the receiver itself — by replaying the same capture as the raw TCP feed the
-receiver normally consumes from readsb.
+receiver normally consumes from readsb. Map Load Generator is independent of
+both — it targets `map` directly, bypassing the receiver/RabbitMQ/message-processor
+stages entirely.

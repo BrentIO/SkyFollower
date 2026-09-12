@@ -438,6 +438,13 @@ updates:
       time: "23:40"
       timezone: "Etc/UTC"
   - package-ecosystem: "pip"
+    directory: "/tools/map-load-generator"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "22:40"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "pip"
     directory: "/tools/tcp-traffic-replayer"
     schedule:
       interval: "weekly"
