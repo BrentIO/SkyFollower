@@ -246,12 +246,18 @@ def _confirm_after_repeated_sightings(
 def _flight_metadata_snapshot(flight: Flight) -> str:
     """Canonical hash of the flight fields the map UDP `metadata` message
     carries -- ident, aircraft enrichment, operator, registrant,
-    squawk, origin, destination. Compared against the flight's last-sent
-    snapshot (Flight.map_metadata_hash, persisted across messages so it
-    survives this process reloading the flight from SQLite on every
-    message) to decide whether a re-send is needed. Hashed rather than
-    compared field-by-field so a metadata-relevant field added to Flight
-    later is covered automatically without a matching change here."""
+    squawk, origin, destination, matched_rules. Compared against the
+    flight's last-sent snapshot (Flight.map_metadata_hash, persisted
+    across messages so it survives this process reloading the flight from
+    SQLite on every message) to decide whether a re-send is needed.
+    Hashed rather than compared field-by-field so a metadata-relevant
+    field added to Flight later is covered automatically without a
+    matching change here.
+
+    matched_rules is included so a rule match alone -- with no other
+    metadata-relevant field changing at the same time -- promptly
+    triggers a resend, rather than only riding along on some other
+    field's change or waiting for the periodic unconditional resend."""
     payload = {
         "ident": flight.ident,
         "aircraft": flight.aircraft,
@@ -260,6 +266,7 @@ def _flight_metadata_snapshot(flight: Flight) -> str:
         "squawk": flight.squawk,
         "origin": flight.origin,
         "destination": flight.destination,
+        "matched_rules": flight.matched_rules,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
@@ -1523,8 +1530,8 @@ class MessageProcessor:
         self._maybe_resolve_route(flight)
 
         # Map UDP `metadata` message -- only when ident/aircraft/operator/
-        # registrant/squawk/origin/destination have changed since the last
-        # send; no-op when MAP_UDP_HOST is unset.
+        # registrant/squawk/origin/destination/matched_rules have changed
+        # since the last send; no-op when MAP_UDP_HOST is unset.
         self._maybe_publish_map_metadata(flight, msg.received_at)
 
         # Rules evaluation. Nanoseconds, not milliseconds -- a single
@@ -2001,9 +2008,9 @@ class MessageProcessor:
 
     def _maybe_publish_map_metadata(self, flight: Flight, received_at: float) -> None:
         """Sent the first time a flight's metadata fields (ident, aircraft
-        enrichment, operator, registrant, squawk, origin, destination) are
-        known, and again only when one of them changes -- never on every
-        message. See _flight_metadata_snapshot for the change-detection
+        enrichment, operator, registrant, squawk, origin, destination,
+        matched_rules) are known, and again only when one of them changes
+        -- never on every message. See _flight_metadata_snapshot for the change-detection
         approach and Flight.map_metadata_hash for the persisted snapshot
         this is compared against. Carries `processor_id` -- see
         _publish_map_position's docstring."""

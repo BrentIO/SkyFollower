@@ -2864,6 +2864,10 @@ components:
         manufactured_date:
           type: string
           example: "2005-01-01"
+        special_livery:
+          type: string
+          description: Cleaned, TTS-ready livery name if the aircraft is wearing one; omitted when not
+          example: Retro
         data_sources:
           type: array
           items:
