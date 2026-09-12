@@ -5,6 +5,7 @@ import {
   applyTrailSeed,
   applyWsEvent,
   applyWsEvents,
+  MAX_TRACE_POINTS,
   MAX_TRAIL_POINTS,
   releasePendingRemoval,
 } from "./aircraftState";
@@ -143,24 +144,52 @@ describe("applyWsEvent -- stale/remove", () => {
   });
 });
 
+// pushTrailPoint's spread-and-slice cap check is O(current trail length)
+// per call, so pushing MAX_TRAIL_POINTS-scale events through applyWsEvent
+// one at a time (as these tests used to, back when the cap was a cheap
+// 300) would be needlessly slow now that it's 25,000. Since the cap logic
+// is a simple "keep the last N" applied fresh on every call, seeding most
+// of the trail directly and only pushing the last handful of points
+// through the real applyWsEvent path is behaviorally identical to pushing
+// every point through it, as long as the seeded points and the pushed
+// ones never collide on lat/lon (which would trip the same-as-last dedupe).
+function seedTrail(state: ReturnType<typeof applySnapshot>, icaoHex: string, count: number) {
+  return {
+    ...state,
+    [icaoHex]: {
+      ...state[icaoHex],
+      trail: Array.from({ length: count }, (_, i) => ({
+        latitude: i + 1,
+        longitude: i + 1,
+        altitude: i + 1,
+      })),
+    },
+  };
+}
+
 describe("trail cap", () => {
   it("drops the oldest points once the cap is exceeded, keeping the newest", () => {
-    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0, alt: 0 }]);
     const overflow = 10;
-    for (let i = 1; i <= MAX_TRAIL_POINTS + overflow; i++) {
+    const total = MAX_TRAIL_POINTS + overflow;
+    const pushed = 20; // how many of the `total` points go through the real applyWsEvent path
+    let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0, alt: 0 }]);
+    state = seedTrail(state, "A1B2C3", total - pushed);
+    for (let i = total - pushed + 1; i <= total; i++) {
       state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: i, lon: i, alt: i });
     }
     const trail = state.A1B2C3.trail;
     expect(trail).toHaveLength(MAX_TRAIL_POINTS);
     // The newest point (the last one pushed) survives...
-    expect(trail[trail.length - 1].latitude).toBe(MAX_TRAIL_POINTS + overflow);
-    // ...and the oldest `overflow` points (including the seed point at 0) were dropped.
+    expect(trail[trail.length - 1].latitude).toBe(total);
+    // ...and the oldest `overflow` points were dropped.
     expect(trail[0].latitude).toBe(overflow + 1);
   });
 
   it("never exceeds the cap even across many more pushes than the cap", () => {
     let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0 }]);
-    for (let i = 1; i <= MAX_TRAIL_POINTS * 3; i++) {
+    state = seedTrail(state, "A1B2C3", MAX_TRAIL_POINTS);
+    const extraPushes = MAX_TRAIL_POINTS + 50;
+    for (let i = MAX_TRAIL_POINTS + 1; i <= extraPushes; i++) {
       state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: i, lon: i });
     }
     expect(state.A1B2C3.trail.length).toBe(MAX_TRAIL_POINTS);
@@ -382,12 +411,23 @@ describe("Trace Points sample accumulation (AircraftRecord.tracePoints)", () => 
     expect(state.A1B2C3.tracePoints).toHaveLength(1);
   });
 
-  it("caps accumulated trace points at MAX_TRAIL_POINTS, keeping the newest", () => {
+  it("caps accumulated trace points at MAX_TRACE_POINTS, keeping the newest -- independent of the (much larger) trail-line cap", () => {
     let state = applySnapshot([{ icao_hex: "A1B2C3", lat: 0, lon: 0 }], now);
-    for (let i = 1; i <= MAX_TRAIL_POINTS + 10; i++) {
+    for (let i = 1; i <= MAX_TRACE_POINTS + 10; i++) {
       state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: i, lon: i }, { now });
     }
-    expect(state.A1B2C3.tracePoints).toHaveLength(MAX_TRAIL_POINTS);
-    expect(state.A1B2C3.tracePoints[state.A1B2C3.tracePoints.length - 1].latitude).toBe(MAX_TRAIL_POINTS + 10);
+    expect(state.A1B2C3.tracePoints).toHaveLength(MAX_TRACE_POINTS);
+    expect(state.A1B2C3.tracePoints[state.A1B2C3.tracePoints.length - 1].latitude).toBe(MAX_TRACE_POINTS + 10);
+    expect(MAX_TRACE_POINTS).toBeLessThan(MAX_TRAIL_POINTS);
+  });
+});
+
+describe("trail-line and Trace Points cap values", () => {
+  it("pins the current trail-line cap (raised from a former 300 -- see aircraftState.ts's MAX_TRAIL_POINTS docstring)", () => {
+    expect(MAX_TRAIL_POINTS).toBe(25000);
+  });
+
+  it("pins the current Trace Points cap, independent of the trail-line cap", () => {
+    expect(MAX_TRACE_POINTS).toBe(300);
   });
 });

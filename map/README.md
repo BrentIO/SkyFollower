@@ -242,7 +242,7 @@ for that aircraft, plus two untracked-by-aircraft keys:
 | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale` |
 | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
 | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
-| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
+| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` (25,000 -- see [Trail History Caps](#trail-history-caps)) after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 | `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing_index}:{band}"`, `bearing_index` a half-degree index `0`-`719`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
 
@@ -294,6 +294,74 @@ proactively deleting `flight:trail:{icao_hex}` -- it's refreshed onto the
 same TTL on every update so it would expire on its own moments later
 regardless, but this guarantees no leftover trail key can survive a
 detail-key eviction even if the two TTLs ever drift apart.
+
+### Trail History Caps
+
+Two independent caps, deliberately not sharing one constant:
+
+- **Trail-line history** -- `map/state_store.py`'s `MAX_TRAIL_POINTS`
+  (server-side `flight:trail:{icao_hex}` `LTRIM` bound) and
+  `frontend/src/lib/aircraftState.ts`'s own `MAX_TRAIL_POINTS` (client-
+  accumulated trail, and the cap applied to the server trail once it's
+  fetched as a page-reload/selection seed) -- both **25,000** points, kept
+  in sync by hand since the two can't share a constant across the Python/
+  TypeScript boundary. This is the history drawn as the aircraft's trail
+  line on the map.
+- **Trace Points sample buffer** -- `aircraftState.ts`'s `MAX_TRACE_POINTS`
+  (**300**), capping only the Aircraft Detail Panel's Trace Points feature
+  (one labeled dot per sample, with speed/altitude/local-time). Server-side
+  has no equivalent at all -- Trace Points is client-accumulated only.
+
+Both were previously one shared `MAX_TRAIL_POINTS = 300`. Splitting them
+reflects that they trade off very differently:
+
+- Trace Points renders a labeled dot (plus a text label) per sample, not a
+  thin line segment, so it stays cheap to look at only while the sample
+  count stays small -- 300 is still generous for spot-checking a flight's
+  recent history and was never the actual bottleneck this cap split was
+  about, so it's left where it was.
+- The trail line is one two-point `LineString` feature per consecutive
+  point pair (`frontend/src/lib/featureCollections.ts`, `trailFeatureCollection`
+  / `buildTrailSegments`), rebuilt for the entire tracked-aircraft set on
+  every position/metadata update and coalesced to at most once per 200ms
+  by `frontend/src/lib/syncThrottle.ts` -- that coalescing bounds *how
+  often* the rebuild runs, not *how large* each rebuild is, so the cap on
+  a single aircraft's point count still matters even with the throttle in
+  place.
+
+25,000 was chosen, rather than removing the trail-line cap outright, by
+weighing both costs it's meant to bound:
+
+- **Redis memory.** Each trail point is a small JSON object
+  (`{"lat", "lon", "alt"}`), well under 100 bytes as a Redis list element
+  including per-entry list overhead. 25,000 of them is on the order of
+  2-3MB for a single aircraft that actually reaches the cap -- trivial for
+  `map-redis`'s no-persistence, in-memory-only footprint (see
+  [Configuration](#configuration) above and `docker-compose.map.yaml`)
+  even with several such aircraft airborne at once, at this service's
+  documented "a few dozen aircraft" design scale. No `maxmemory` is
+  configured on `map-redis` today, so there's no hard ceiling this could
+  collide with either way.
+- **Rendering cost.** The message processor enforces a floor of one
+  `position` UDP packet per aircraft per second
+  (`shared/timing.py`'s `DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS`),
+  so 25,000 points is a worst case of roughly 7 hours of uninterrupted
+  max-rate tracking for one aircraft -- comfortably past a typical domestic
+  flight, and past most international ones too, since a ground-based
+  ADS-B/EXTERNAL-feed network rarely holds uninterrupted contact with one
+  aircraft much longer than that (coverage gaps over open ocean/remote
+  terrain are the norm, unlike a satellite-fed source). A single aircraft's
+  worst-case segment count at this cap (24,999) is the same order of
+  magnitude as the full-fleet worst case already reasoned tolerable under
+  the sync throttle (roughly 50 aircraft x the old 300-point cap =~ 14,950
+  segments) -- a genuinely unbounded per-aircraft trail would let one
+  long-haul flight alone exceed that by an arbitrary, unbounded factor
+  instead.
+
+A true ultra-long-haul flight tracked gapless for longer than ~7 hours is
+the one case that still trims its oldest history under this cap -- accepted
+as a deliberate tradeoff rather than removing the cap outright, per the
+reasoning above.
 
 ## Processor Roster
 
@@ -362,7 +430,8 @@ accumulated `{lat, lon, alt}` point for the current flight, oldest first,
 `alt` `null` where it wasn't known when the point was recorded. This is the
 map service's *own* server-side trail (`flight:trail:{icao_hex}`, one point
 per accepted `position` packet, capped at the most recent
-`MAX_TRAIL_POINTS` and lifecycled exactly like `flight:detail` -- see
+`MAX_TRAIL_POINTS` -- 25,000, see [Trail History Caps](#trail-history-caps)
+-- and lifecycled exactly like `flight:detail`, see
 [Lifecycle](#lifecycle)). The frontend fetches this when an aircraft is
 selected so the drawn trail covers the whole flight, not just what that
 browser has seen since it connected -- and so it survives a page reload.
@@ -590,7 +659,9 @@ top of a cluster), a live trail per aircraft (built client-side from
 frontend also fetches `GET /api/flights/{icao_hex}` and reseeds that
 aircraft's trail from the server's own accumulation, so a selected
 aircraft's trail covers the whole flight and survives a page reload -- see
-[REST API](#rest-api) above), a fixed "home" marker/recenter button from
+[REST API](#rest-api) above; both the trail line and the Aircraft Detail
+Panel's separate Trace Points buffer are capped independently, see [Trail
+History Caps](#trail-history-caps) above), a fixed "home" marker/recenter button from
 the backend's `GET /api/config` (see [REST API](#rest-api) above), and a
 "Range Outline" toggle that draws today's reception range outline (the
 `envelope` band from `GET /api/range-outline`, see [Range
