@@ -147,16 +147,18 @@ Published once, at the end of a run, to
 | `files_compacted` | e.g. `142` | Integer as string — per-flight files merged into this run's compacted output(s), summed across every date compacted this run |
 | `files_delete_failed` | e.g. `0` | Integer as string — files that were included in a compacted output but whose delete call failed, and therefore still linger as duplicates, summed across every date compacted this run |
 | `days_compacted` | e.g. `1` | Integer as string — number of date partitions successfully compacted this run (more than one during catch-up after a gap) |
-| `last_compacted_date` | e.g. `2026-07-23` | The watermark after this run — the most recent date whose partition has been fully compacted |
-| `mismatch_date` | e.g. `2026-07-24`, or empty | The date this run stopped at due to a flight/index parity mismatch; empty when the run wasn't stopped by one |
-| `mismatch_uuids` | e.g. `0198abcd-...,0198abce-...`, or empty | Comma-separated flight UUIDs missing their index row on `mismatch_date` — a starting point for manual investigation. Check `local_index_queue_depth` on the archive processor's own stats: nonzero means the row is likely still draining locally and will resolve on its own; zero means it's genuinely lost from the archive processor's perspective |
+| `last_compacted_date` | e.g. `2026-07-23`, or `None` | The watermark after this run — the most recent date whose partition has been fully compacted; `None` only on a fresh deployment before the first successful compaction |
+| `mismatch_date` | e.g. `2026-07-24`, or `None` | The date this run stopped at due to a flight/index parity mismatch; `None` when the run wasn't stopped by one |
+| `mismatch_uuid_count` | e.g. `3`, or `0` | Integer as string — number of flight UUIDs missing their index row on `mismatch_date`; `0` in the healthy state |
+| `mismatch_uuids` | e.g. `{"uuids": ["0198abcd-...", "0198abce-..."]}`, or `{"uuids": []}` | JSON object listing the flight UUIDs missing their index row on `mismatch_date` — a starting point for manual investigation. Check `local_index_queue_depth` on the archive processor's own stats: nonzero means the row is likely still draining locally and will resolve on its own; zero means it's genuinely lost from the archive processor's perspective. Not a standalone HA sensor — consumed only as `mismatch_uuid_count`'s `json_attributes_topic` |
 | `mismatch_runs` | e.g. `7`, or `0` | Integer as string — number of consecutive runs blocked on `mismatch_date`. Resets to `0` once that date compacts successfully, or to `1` if a different date becomes the blocker. A climbing number here, not just a repeated ERROR log line, is the signal that a mismatch needs a human rather than time |
 | `last_run_at` | e.g. `2026-07-25T04:50:03.123456+00:00` | ISO 8601 UTC |
 | `last_run_status` | `Success`, `Failure`, or `Mismatch` | String — `Mismatch` means the run completed without error but stopped early on a parity mismatch (see `mismatch_date`/`mismatch_uuids`/`mismatch_runs`); `Failure` means an actual exception (S3 error, etc.) |
 
 Home Assistant autodiscovery configs are also published (retained) to
 `homeassistant/sensor/SkyFollower_archive_compaction_{name}/config` for
-each of the nine stats above.
+nine of the ten topics above — `mismatch_uuids` has no standalone sensor;
+it's consumed only as `mismatch_uuid_count`'s `json_attributes_topic`.
 
 The process exit code also distinguishes the two non-success cases: `0` on
 `Success`, `2` on `Mismatch`, `1` on `Failure`. Both non-zero codes still

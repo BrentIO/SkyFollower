@@ -807,10 +807,22 @@ class TestPublishCompletionStats:
         assert calls[f"{self._base_topic}/files_delete_failed"] == "1"
         assert calls[f"{self._base_topic}/days_compacted"] == "2"
         assert calls[f"{self._base_topic}/last_compacted_date"] == "2026-07-23"
-        assert calls[f"{self._base_topic}/mismatch_date"] == ""
-        assert calls[f"{self._base_topic}/mismatch_uuids"] == ""
+        assert calls[f"{self._base_topic}/mismatch_date"] == "None"
+        assert calls[f"{self._base_topic}/mismatch_uuids"] == '{"uuids": []}'
+        assert calls[f"{self._base_topic}/mismatch_uuid_count"] == "0"
         assert calls[f"{self._base_topic}/last_run_status"] == "Success"
         assert f"{self._base_topic}/last_run_at" in calls
+
+    def test_publishes_none_sentinel_for_missing_dates(self):
+        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
+        mc = self._setup_mock_client()
+        with patch("archive_compaction_main.mqtt.Client", return_value=mc):
+            with patch("time.sleep"):
+                publish_completion_stats(cfg, self._make_result(), "success")
+        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
+                 if not c.args[0].startswith("homeassistant/")}
+        assert calls[f"{self._base_topic}/last_compacted_date"] == "None"
+        assert calls[f"{self._base_topic}/mismatch_date"] == "None"
 
     def test_publishes_mismatch_fields(self):
         cfg = {"mqtt": {"host": "localhost", "port": 1883}}
@@ -827,7 +839,8 @@ class TestPublishCompletionStats:
         calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list
                  if not c.args[0].startswith("homeassistant/")}
         assert calls[f"{self._base_topic}/mismatch_date"] == "2026-07-23"
-        assert calls[f"{self._base_topic}/mismatch_uuids"] == "uuid-a,uuid-b"
+        assert calls[f"{self._base_topic}/mismatch_uuids"] == json.dumps({"uuids": ["uuid-a", "uuid-b"]})
+        assert calls[f"{self._base_topic}/mismatch_uuid_count"] == "2"
         assert calls[f"{self._base_topic}/last_run_status"] == "Mismatch"
 
     def test_publishes_mismatch_runs(self):
@@ -853,7 +866,7 @@ class TestPublishCompletionStats:
                 publish_completion_stats(cfg, self._make_result(files_compacted=5), "success")
         stat_calls = [c for c in mc.publish.call_args_list
                       if c.args[0].startswith(self._base_topic)]
-        assert len(stat_calls) == 9
+        assert len(stat_calls) == 10
         for call in stat_calls:
             assert call.kwargs.get("retain") is True
 
@@ -915,6 +928,27 @@ class TestPublishHaAutodiscovery:
         assert config["icon"] == "mdi:counter"
         assert config["unique_id"] == "SkyFollower_archive_compaction_mismatch_runs"
         assert config["state_class"] == "measurement"
+
+    def test_mismatch_uuid_count_entry(self):
+        mc = MagicMock()
+        _publish_ha_autodiscovery(mc)
+        configs = {
+            c.args[0]: json.loads(c.args[1])
+            for c in mc.publish.call_args_list
+            if c.args[0].startswith("homeassistant/sensor/")
+        }
+        topic = "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_uuid_count/config"
+        assert topic in configs
+        config = configs[topic]
+        assert config["name"] == "Archive Compaction Mismatch Flight Count"
+        assert config["state_topic"] == f"{MQTT_ROOT}/statistic/mismatch_uuid_count"
+        assert config["icon"] == "mdi:alert-circle"
+        assert config["unique_id"] == "SkyFollower_archive_compaction_mismatch_uuid_count"
+        assert config["state_class"] == "measurement"
+        assert config["json_attributes_topic"] == f"{MQTT_ROOT}/statistic/mismatch_uuids"
+        # mismatch_uuids no longer gets its own standalone sensor -- it's
+        # consumed only as this sensor's json_attributes_topic.
+        assert "homeassistant/sensor/SkyFollower_archive_compaction_mismatch_uuids/config" not in configs
 
 
 # ---------------------------------------------------------------------------
