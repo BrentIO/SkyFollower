@@ -131,9 +131,10 @@ discovery publish) carrying its GHCR image name and its discovery
 `device` block verbatim. The image name is baked into the image at build
 time exactly the way `VERSION`/`GIT_COMMIT` already are: every
 Dockerfile declares `ARG IMAGE=unknown` / `ENV COMPONENT_IMAGE=$IMAGE`,
-and `build-container-images.yaml` passes
-`IMAGE=skyfollower-${{ matrix.name }}` — the same bare name its own
-`discover-images` job already computed as the single source of truth for
+and `build-container-images.yaml` passes an `IMAGE` build-arg of
+`skyfollower-` followed by that workflow's own `matrix.name` value — the
+same bare name its own `discover-images` job already computed as the
+single source of truth for
 what each component's published image is called, so there is no second,
 hand-maintained mapping of component identity to image name anywhere in
 this component's own code to drift out of sync with that workflow.
