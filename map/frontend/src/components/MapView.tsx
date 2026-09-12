@@ -30,10 +30,12 @@ import {
   TRAIL_LAYER_ID,
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
+import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
 import { followTargetPosition } from "../lib/followTarget";
 import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { nextSelection } from "../lib/selection";
+import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
@@ -170,6 +172,71 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
     prevSelectedIcaoHexRef.current = selectedIcaoHex;
   }, [selectedIcaoHex, releaseHold]);
+
+  // Shareable URL (see lib/shareUrl.ts/lib/deepLink.ts): the icao_hex
+  // named in the URL's ?aircraft= param at mount, if any -- read once via
+  // a lazy initializer (never state, since it must not change once the
+  // page has loaded) and held here until it's been selected + Zoomed To,
+  // or abandoned, by the two effects below.
+  const pendingDeepLinkIcaoHexRef = useRef<string | null>(readSelectionFromSearch(window.location.search));
+
+  // Deep-link-on-load, part 1: once the aircraft named in the URL shows up
+  // in tracked state -- immediately, if it was already in the initial
+  // GET /api/flights snapshot, or once a WS event adds it soon after --
+  // select it. Abandoned (ref cleared, never retried) if the operator
+  // makes their own selection first: a manual click should never be
+  // stomped on by a deep link resolving late. If the aircraft never
+  // appears at all, this simply never fires again -- the "fail silently"
+  // behavior the issue calls for.
+  useEffect(() => {
+    const pending = pendingDeepLinkIcaoHexRef.current;
+    if (!pending) return;
+    if (selectedIcaoHex !== null) {
+      pendingDeepLinkIcaoHexRef.current = null;
+      return;
+    }
+    if (deepLinkAircraftAvailable(aircraft, pending)) {
+      setSelected(new Set([pending]));
+    }
+  }, [aircraft, selectedIcaoHex]);
+
+  // Deep-link-on-load, part 2: once the deep-linked aircraft is selected
+  // and has a known position, Zoom To it -- reusing the exact same
+  // recenter-preserving-zoom mechanism as the panel's own Zoom To button
+  // (handleZoomTo below), against whatever the map's initial/default zoom
+  // is, per the issue. One-shot: the ref is cleared right after so a
+  // later manual deselect/reselect of the same aircraft never re-triggers
+  // it.
+  useEffect(() => {
+    const pending = pendingDeepLinkIcaoHexRef.current;
+    if (!pending || selectedIcaoHex !== pending) return;
+    if (!deepLinkReadyToZoom(aircraft, pending, mapLoaded)) return;
+    handleZoomTo();
+    pendingDeepLinkIcaoHexRef.current = null;
+  }, [aircraft, selectedIcaoHex, mapLoaded]);
+
+  // Keeps the address bar in sync with the current selection, continuously
+  // -- not just on initial load -- so a link copied at any point in a
+  // session reproduces that exact selection: selecting sets
+  // ?aircraft=<icao_hex>, deselecting clears it back to the bare map URL.
+  // Driven off `selectedIcaoHex` (rather than duplicated at each place
+  // `selected` changes) so every current and future call site -- the
+  // click handler, the panel's close button, Isolate re-targeting the
+  // same selection -- is covered by this one effect. Skips the very first
+  // run (mount): the URL already reflects the right thing at that point
+  // (bare, or a deep link's own param that the two effects above are
+  // still trying to resolve), so writing here on mount could clobber an
+  // unresolved deep link. Uses history.replaceState rather than
+  // pushState -- see this change's PR description for why.
+  const isFirstSelectionSyncRef = useRef(true);
+  useEffect(() => {
+    if (isFirstSelectionSyncRef.current) {
+      isFirstSelectionSyncRef.current = false;
+      return;
+    }
+    const nextSearch = searchWithSelection(window.location.search, selectedIcaoHex);
+    window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+  }, [selectedIcaoHex]);
 
   // Follow: recenters on every position update for the followed aircraft,
   // preserving whatever zoom is already active (no `zoom` key passed to
