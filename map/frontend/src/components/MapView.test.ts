@@ -303,6 +303,44 @@ describe("home marker stacking order", () => {
   });
 });
 
+// Extracts the body of `function handleRecenter() { ... }` as plain source
+// text -- same rationale as the helpers above: handleRecenter closes over
+// several hooks (mapRef, config, cancelFollow) and calls into a real
+// maplibregl.Map, so there's no jsdom/component-render setup to mount it
+// through. Reading the real source instead of a hand-copied duplicate means
+// this can't drift from what the component actually does.
+function handleRecenterBody(): string {
+  const marker = "function handleRecenter() {";
+  const startIndex = mapViewSource.indexOf(marker);
+  if (startIndex === -1) throw new Error("Could not find handleRecenter declaration");
+
+  const bodyOpenIndex = startIndex + marker.length - 1;
+  const bodyCloseIndex = findMatchingBrace(mapViewSource, bodyOpenIndex);
+  return mapViewSource.slice(bodyOpenIndex + 1, bodyCloseIndex);
+}
+
+describe("handleRecenter -- cancels Follow before recentering", () => {
+  const body = handleRecenterBody();
+
+  it("calls cancelFollow()", () => {
+    expect(body).toContain("cancelFollow()");
+  });
+
+  it("cancels Follow before issuing the easeTo, not after -- otherwise Follow's own recenter effect\n" +
+    "    (which re-runs on every `aircraft` update while followId is set) can still land a second\n" +
+    "    easeTo that snaps the view right back before the cancellation takes effect", () => {
+    const cancelIndex = body.indexOf("cancelFollow()");
+    const easeToIndex = body.indexOf("map.easeTo(");
+    expect(cancelIndex).toBeGreaterThan(-1);
+    expect(easeToIndex).toBeGreaterThan(-1);
+    expect(cancelIndex).toBeLessThan(easeToIndex);
+  });
+
+  it("still guards on a missing map/home reference, unchanged from before", () => {
+    expect(body).toContain("if (!map || !config.home) return;");
+  });
+});
+
 describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
   const paint = trailLayerPaint();
 
