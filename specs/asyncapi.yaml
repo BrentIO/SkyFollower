@@ -1014,6 +1014,20 @@ channels:
       ArchiveCompactionMismatchUuidCountMessage:
         $ref: '#/components/messages/ArchiveCompactionMismatchUuidCountMessage'
 
+  archiveCompactionMismatchRuns:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive-compaction/statistic/mismatch_runs
+    description: >
+      Count of consecutive daily runs blocked by the same parity mismatch
+      date, so an operator can tell a stuck backlog from a one-off. 0 when
+      the run wasn't stopped by a mismatch, or when today's mismatch date
+      differs from the prior run's (the streak reset, not continued).
+      Published once per run, retained.
+    messages:
+      ArchiveCompactionMismatchRunsMessage:
+        $ref: '#/components/messages/ArchiveCompactionMismatchRunsMessage'
+
   archiveCompactionLastRunAt:
     servers:
       - $ref: '#/servers/mqtt'
@@ -1584,6 +1598,12 @@ operations:
       $ref: '#/channels/archiveCompactionMismatchUuidCount'
     summary: Archive compaction publishes the count of flight UUIDs missing their index row
 
+  publishArchiveCompactionMismatchRuns:
+    action: send
+    channel:
+      $ref: '#/channels/archiveCompactionMismatchRuns'
+    summary: Archive compaction publishes how many consecutive runs the current parity mismatch (if any) has blocked
+
   publishArchiveCompactionLastRunAt:
     action: send
     channel:
@@ -2115,6 +2135,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveCompactionMismatchUuidCount'
+
+    ArchiveCompactionMismatchRunsMessage:
+      name: ArchiveCompactionMismatchRunsMessage
+      title: Archive compaction mismatch consecutive runs
+      summary: How many consecutive runs the current parity mismatch has blocked
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveCompactionMismatchRuns'
 
     ArchiveCompactionLastRunAtMessage:
       name: ArchiveCompactionLastRunAtMessage
@@ -2672,6 +2700,14 @@ components:
         Count of flight UUIDs missing their Parquet index row on
         mismatch_date. Always numeric; 0 when the run wasn't stopped by a
         mismatch
+      example: 0
+
+    ArchiveCompactionMismatchRuns:
+      type: integer
+      description: >
+        Consecutive daily runs blocked by the same parity mismatch date.
+        0 when the run wasn't stopped by a mismatch, or when today's
+        mismatch date differs from the prior run's
       example: 0
 
     ArchiveCompactionLastRunAt:
