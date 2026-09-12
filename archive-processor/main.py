@@ -305,7 +305,7 @@ class ArchiveProcessor:
 
     def start(self) -> None:
         self._setup_logging()
-        logger.info(f"Starting SkyFollower Archive {self._version}")
+        logger.info(f"Starting SkyFollower Archive Processor {self._version}")
         self._connect_mqtt()
         if self._connect_s3():
             self._finish_s3_connect()
@@ -895,8 +895,8 @@ class ArchiveProcessor:
             return
         device = build_ha_device(
             identifier="SkyFollower_archive",
-            name="SkyFollower Archive",
-            model="Archive",
+            name="SkyFollower Archive Processor",
+            model="Archive Processor",
         )
         publish_register(self._mqtt, device)
         availability = {

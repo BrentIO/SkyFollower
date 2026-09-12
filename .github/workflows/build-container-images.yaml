@@ -91,7 +91,7 @@ jobs:
             case "$dir" in
               receiver) name="receiver" ;;
               message-processor) name="message-processor" ;;
-              archive-processor) name="archive" ;;
+              archive-processor) name="archive-processor" ;;
               archive-compaction) name="archive-compaction" ;;
               aws-setup) name="aws-setup" ;;
               core-health) name="core-health" ;;

@@ -4,7 +4,7 @@
 title Archive Processor — Period Counter Reset Mechanism
 
 box "Archive Processor" $OnPrem
-    participant "Archiver" as Archiver
+    participant "Archive Processor" as Archiver
 end box
 
 box "Redis" $OnPrem

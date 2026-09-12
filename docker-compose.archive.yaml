@@ -24,7 +24,7 @@ x-archive-environment: &archive-environment
 services:
 
   archive-processor:
-    image: ghcr.io/brentio/skyfollower-archive:${SKYFOLLOWER_VERSION:-latest}
+    image: ghcr.io/brentio/skyfollower-archive-processor:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
     environment:
       <<: *archive-environment

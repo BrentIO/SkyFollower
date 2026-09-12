@@ -145,7 +145,7 @@ time via a relative path reference in their `requirements.txt`.
   dependency deliberately absent in this deployment (e.g. a message
   processor publishing completed flights with `mandatory=True` against an
   `skyfollower-archive` queue no operator declared because this environment runs no
-  archiver). A caller passes the exception type(s) that signal this via
+  archive processor). A caller passes the exception type(s) that signal this via
   `non_poison_exceptions` — `FallbackQueue` stays broker-agnostic and
   never imports the caller's library. A row failing only with those types
   is retried forever and never dead-lettered: losing it would discard

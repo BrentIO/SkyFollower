@@ -1277,13 +1277,12 @@ class TestUpdateEntityPublish:
         assert entry.image == "skyfollower-runner-mictronics"
 
     def test_archive_processor_image_name_comes_straight_from_the_registration_payload(self):
-        # No inference table any more: archive-processor's own
-        # COMPONENT_IMAGE (skyfollower-archive, not skyfollower-archive-processor)
-        # is exactly what shows up here, verbatim.
+        # No inference table: archive-processor's own COMPONENT_IMAGE is
+        # exactly what shows up here, verbatim.
         app = _wired_app()
-        self._register(app, device_ids="SkyFollower_archive", image="skyfollower-archive",
-                       name="SkyFollower Archive", model="Archive")
-        assert app._component_registry["SkyFollower_archive"].image == "skyfollower-archive"
+        self._register(app, device_ids="SkyFollower_archive", image="skyfollower-archive-processor",
+                       name="SkyFollower Archive Processor", model="Archive Processor")
+        assert app._component_registry["SkyFollower_archive"].image == "skyfollower-archive-processor"
 
     def test_reconnect_republishes_update_state_for_known_components(self):
         app = _wired_app()

@@ -192,7 +192,7 @@ def _queue_target(queue_name: str) -> _QueueTarget:
     if queue_name == ARCHIVE_QUEUE_NAME:
         return _QueueTarget(
             device=build_ha_device(
-                identifier="SkyFollower_archive", name="SkyFollower Archive", model="Archive"
+                identifier="SkyFollower_archive", name="SkyFollower Archive Processor", model="Archive Processor"
             ),
             state_base=f"{MQTT_ROOT}/archive/statistic",
             unique_prefix="SkyFollower_archive_queue",

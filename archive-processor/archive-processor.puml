@@ -3,7 +3,7 @@
 
 !startsub COMPONENT
 package "Archive Processor" as ArchProc $OnPrem {
-    component "Archiver" as Archiver
+    component "Archive Processor" as Archiver
     database "s3.db\n(SQLite WAL)" as ArchiveFallback
 
     Archiver -right-> ArchiveFallback : S3 write failed

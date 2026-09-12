@@ -364,6 +364,18 @@ doesn't already exist. Both steps are idempotent, so this is also just
 what happens on every ordinary re-run — nothing else in this section's
 drain order changes.
 
+**Upgrading an existing host past the archive-processor image rename** —
+the published image moved from `ghcr.io/brentio/skyfollower-archive` to
+`ghcr.io/brentio/skyfollower-archive-processor`, matching every other
+component's directory-to-image naming 1:1. There is no dual-publish or
+alias tag: once this lands, `skyfollower-archive` stops receiving new
+release tags. `git pull` the updated `docker-compose.archive.yaml` (it now
+points at the new image name) on the archive host, then run `docker
+compose pull` *before* the next `docker compose up -d`. Skipping the
+`pull` doesn't fail loudly — Compose just keeps running whatever
+`skyfollower-archive` image is already cached locally, silently falling
+further behind as new releases stop publishing to it.
+
 **A message processor: stopping vs. unbinding.** These look like the same
 action from the operator's side and are not. **Stopping is free** — the
 same recovery path as any restart (a deliberate stop, a crash, a host

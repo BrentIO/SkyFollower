@@ -4,11 +4,11 @@
 title Archive Processor — Flight & Parquet Index Write
 
 box "Archive Processor" $OnPrem
-    participant "Archiver\n(RabbitMQ consumer thread)" as Consumer
-    participant "Archiver\n(worker pool — 12 threads,\nkeyed by icao_hex)" as Worker
-    participant "Archiver\n(S3 reconnect thread)" as Reconnect
-    participant "Archiver\n(telemetry thread)" as Telemetry
-    participant "Archiver\n(draining thread)" as Drainer
+    participant "Archive Processor\n(RabbitMQ consumer thread)" as Consumer
+    participant "Archive Processor\n(worker pool — 12 threads,\nkeyed by icao_hex)" as Worker
+    participant "Archive Processor\n(S3 reconnect thread)" as Reconnect
+    participant "Archive Processor\n(telemetry thread)" as Telemetry
+    participant "Archive Processor\n(draining thread)" as Drainer
     database "s3.db\n(SQLite WAL)" as FallbackDB
 end box
 
