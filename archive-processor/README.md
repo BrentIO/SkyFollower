@@ -408,6 +408,8 @@ All topics use the root `SkyFollower`.
 | `flights_archived_today` | Integer as string | Flights successfully written to S3 today (UTC) |
 | `flights_skipped_hour` | Integer as string | External-only flights dropped instead of archived this hour |
 | `flights_skipped_today` | Integer as string | External-only flights dropped instead of archived today, UTC |
+| `flights_archived_lifetime` | Integer as string | Flights successfully written to S3 since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
+| `flights_skipped_lifetime` | Integer as string | External-only flights dropped instead of archived since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
 | `s3_connected` | `True` or `False` | Current S3 connectivity state |
 | `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
 | `local_index_queue_depth` | Integer as string | Parquet index rows currently queued for retry (`index_queue` table in `s3.db`) |
@@ -433,9 +435,14 @@ call creates the key — never on a later increment within the same period, so
 the window can't slide forward. Redis's own TTL expiry deletes the key at
 the boundary; the next completed/skipped flight after that recreates it
 fresh, a genuine reset with no external scheduler involved. There is no
-`lifetime` period for either counter — out of scope for this component's
-existing two counters, unlike message-processor's equivalent mechanism (see
+`lifetime` period for either counter in this Redis mechanism — out of scope
+for this component's existing two counters, unlike message-processor's
+equivalent mechanism (see
 [message-processor/README.md](../message-processor/README.md)), which does
-add one.
+add one. `flights_archived_lifetime`/`flights_skipped_lifetime` above cover
+the same need through a different, additive mechanism instead: plain
+in-memory counters published directly by the archive processor, never
+touching Redis, deliberately not durable across a restart (mirroring the
+receiver's own Lifetime sensors).
 
 ![Period counter reset mechanism](./period-counter-sequence.svg)

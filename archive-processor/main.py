@@ -265,6 +265,19 @@ class ArchiveProcessor:
         self._s3_connected = False
         self._s3_lock = threading.Lock()
 
+        # Pure in-memory running totals for this process's own lifetime --
+        # never written to Redis, never reset at an hour/midnight boundary.
+        # They are device-local counters published directly, so they reset
+        # to zero on every archive-processor restart by design (mirrors
+        # receiver/main.py's _RateTracker.lifetime_count). The increment
+        # sites (_post_write_success and the external-only skip path) run
+        # on concurrent S3 worker threads, so a lock guards the
+        # read-modify-write += 1 -- the receiver's equivalent increment is
+        # already inside _RateTracker._lock, which this doesn't have.
+        self._flights_archived_lifetime = 0
+        self._flights_skipped_lifetime = 0
+        self._lifetime_lock = threading.Lock()
+
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
@@ -625,6 +638,11 @@ class ArchiveProcessor:
                 self._incr_period_counters(metrics_flights_skipped_key, ("hour", "today"))
             except Exception as exc:
                 logger.warning("Redis counter update failed: %s", exc)
+            # In-memory lifetime total -- independent of the Redis
+            # hour/today counters above, so it still increments even if
+            # Redis is unreachable (see __init__'s _lifetime_lock comment).
+            with self._lifetime_lock:
+                self._flights_skipped_lifetime += 1
             logger.debug("Skipped external-only flight %s (no force_archive match).", flight.id)
             return
 
@@ -835,6 +853,14 @@ class ArchiveProcessor:
         except Exception as exc:
             logger.warning("Redis counter update failed: %s", exc)
 
+        # In-memory lifetime total -- independent of the Redis hour/today
+        # counters above, so it still increments even if Redis is
+        # unreachable (see __init__'s _lifetime_lock comment). Only reached
+        # on a genuine successful S3 write (the caller writes before
+        # calling this method).
+        with self._lifetime_lock:
+            self._flights_archived_lifetime += 1
+
         logger.debug("Archived flight %s -> s3://%s", flight.id, s3_key)
 
     # ------------------------------------------------------------------
@@ -910,6 +936,11 @@ class ArchiveProcessor:
             ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, None),
             ("flights_skipped_hour", "Flights Skipped External-Only (Hour)", "mdi:airplane-off", "total_increasing", None, None),
             ("flights_skipped_today", "Flights Skipped External-Only (Today)", "mdi:airplane-off", "total_increasing", None, None),
+            # total_increasing is the correct HA semantics for a counter
+            # that legitimately resets on a device restart -- which these
+            # two do, being sourced from the in-memory counters, not Redis.
+            ("flights_archived_lifetime", "Flights Archived (Lifetime)", "mdi:counter", "total_increasing", None, None),
+            ("flights_skipped_lifetime", "Flights Skipped External-Only (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, None),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, None),
             ("local_index_queue_depth", "Local Index Queue Depth", "mdi:tray-full", "measurement", None, None),
@@ -988,6 +1019,21 @@ class ArchiveProcessor:
         self._mqtt.publish(
             f"{base}/flights_skipped_today",
             str(self._redis_counter(metrics_flights_skipped_key("today"))),
+            retain=True,
+        )
+        # Device-local running totals for this process's lifetime, sourced
+        # straight from the in-memory counters and never from Redis -- so
+        # they reset to zero on every archive-processor restart. No lock
+        # needed here: a plain int read is atomic, the lock only guards the
+        # read-modify-write increments in _post_write_success/_process_flight.
+        self._mqtt.publish(
+            f"{base}/flights_archived_lifetime",
+            str(self._flights_archived_lifetime),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/flights_skipped_lifetime",
+            str(self._flights_skipped_lifetime),
             retain=True,
         )
         self._mqtt.publish(f"{base}/s3_connected", str(s3_connected), retain=True)

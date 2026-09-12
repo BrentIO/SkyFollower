@@ -789,6 +789,38 @@ channels:
       ArchiveFlightsSkippedTodayMessage:
         $ref: '#/components/messages/ArchiveFlightsSkippedTodayMessage'
 
+  archiveFlightsArchivedLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/flights_archived_lifetime
+    description: >
+      Flights successfully written to S3 since this archive-processor
+      process started -- not since the container was first installed. A
+      process-local, in-memory figure the archive processor publishes
+      directly (mirroring the receiver's messages_*_total_lifetime),
+      never written to or read from Redis, so it resets to zero on every
+      archive-processor restart by design. Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveFlightsArchivedLifetimeMessage:
+        $ref: '#/components/messages/ArchiveFlightsArchivedLifetimeMessage'
+
+  archiveFlightsSkippedLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/flights_skipped_lifetime
+    description: >
+      External-only flights dropped instead of archived since this
+      archive-processor process started -- not since the container was
+      first installed. A process-local, in-memory figure the archive
+      processor publishes directly (mirroring the receiver's
+      messages_*_total_lifetime), never written to or read from Redis, so
+      it resets to zero on every archive-processor restart by design.
+      Published every MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveFlightsSkippedLifetimeMessage:
+        $ref: '#/components/messages/ArchiveFlightsSkippedLifetimeMessage'
+
   archiveS3Connected:
     servers:
       - $ref: '#/servers/mqtt'
@@ -1421,6 +1453,18 @@ operations:
       $ref: '#/channels/archiveFlightsSkippedToday'
     summary: Archive processor publishes today's external-only flights skipped
 
+  publishArchiveFlightsArchivedLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFlightsArchivedLifetime'
+    summary: Archive processor publishes lifetime flights archived
+
+  publishArchiveFlightsSkippedLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFlightsSkippedLifetime'
+    summary: Archive processor publishes lifetime external-only flights skipped
+
   publishArchiveS3Connected:
     action: send
     channel:
@@ -1894,6 +1938,22 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveFlightsSkippedToday'
+
+    ArchiveFlightsArchivedLifetimeMessage:
+      name: ArchiveFlightsArchivedLifetimeMessage
+      title: Archive flights archived (lifetime)
+      summary: Flights successfully written to S3 since this process started; process-local, resets on restart
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsArchivedLifetime'
+
+    ArchiveFlightsSkippedLifetimeMessage:
+      name: ArchiveFlightsSkippedLifetimeMessage
+      title: Archive flights skipped (lifetime)
+      summary: External-only flights dropped instead of archived since this process started; process-local, resets on restart
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFlightsSkippedLifetime'
 
     ArchiveS3ConnectedMessage:
       name: ArchiveS3ConnectedMessage
@@ -2440,6 +2500,26 @@ components:
       type: integer
       description: External-only flights dropped instead of archived today, UTC
       example: 2540
+
+    ArchiveFlightsArchivedLifetime:
+      type: integer
+      description: >
+        Flights successfully written to S3 since this archive-processor
+        process started -- not since the container was first installed. An
+        in-memory figure the archive processor publishes directly, never
+        Redis-backed, so it resets to zero on every archive-processor
+        restart by design.
+      example: 193822
+
+    ArchiveFlightsSkippedLifetime:
+      type: integer
+      description: >
+        External-only flights dropped instead of archived since this
+        archive-processor process started -- not since the container was
+        first installed. An in-memory figure the archive processor
+        publishes directly, never Redis-backed, so it resets to zero on
+        every archive-processor restart by design.
+      example: 41230
 
     ArchiveS3Connected:
       type: boolean
