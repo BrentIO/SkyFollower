@@ -29,6 +29,28 @@ describe("status box -- bare connection dot only (aircraft count moved to Aircra
   it("keeps the dot's hover tooltip via connectionTooltip()", () => {
     expect(controlsPanelSource).toContain("title={connectionTooltip(wsConnected, roster)}");
   });
+
+  it("positions the dot in its own top-2/right-2 wrapper, independent of the icon column's top-4/right-4", () => {
+    // #1768: the dot used to share the icon column's container (top-4
+    // right-4, items-end), which visually offset it from the true corner.
+    // It now gets its own absolutely-positioned wrapper at half the
+    // column's inset.
+    expect(controlsPanelSource).toContain(
+      'className="pointer-events-auto absolute top-2 right-2 flex h-8 w-8 items-center justify-center"',
+    );
+  });
+
+  it("no longer nests the dot inside the icon column's own absolute container", () => {
+    const dotIndex = controlsPanelSource.indexOf("title={connectionTooltip(wsConnected, roster)}");
+    const columnContainerIndex = controlsPanelSource.indexOf(
+      'className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2"',
+    );
+    expect(dotIndex).toBeGreaterThan(-1);
+    expect(columnContainerIndex).toBeGreaterThan(-1);
+    // The dot's own wrapper renders before the icon column's container now,
+    // rather than being nested inside it.
+    expect(dotIndex).toBeLessThan(columnContainerIndex);
+  });
 });
 
 describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outline, Map Labels", () => {
