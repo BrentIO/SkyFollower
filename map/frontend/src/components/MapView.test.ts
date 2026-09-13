@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
+import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { hasPosition } from "../lib/featureCollections";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
@@ -276,30 +277,98 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   });
 });
 
-describe("center marker stacking order", () => {
-  // No jsdom in this project's test setup (see the file-level comment above),
-  // and DOM z-index stacking can't be asserted meaningfully without a real
-  // browser render anyway -- so this checks the one thing that is testable:
-  // the marker's element has its z-index set below the map canvas's default
-  // stacking, and that it's set on the same `el` passed into `new
-  // maplibregl.Marker(...)` (MapLibre appends that element directly, with no
-  // wrapper, when a custom `element` option is given -- see marker.ts).
-  const markerCallIndex = mapViewSource.indexOf("new maplibregl.Marker(");
-  if (markerCallIndex === -1) throw new Error("Could not find maplibregl.Marker construction");
+// Extracts the full `map.addLayer({ ... }, beforeId)` call for the layer
+// whose definition contains `id: <layerIdConstant>` (a source-level
+// constant name, e.g. "CENTER_POINT_CIRCLE_LAYER_ID" -- not its string
+// value, since that's how the real source refers to it).
+function extractAddLayerCall(layerIdConstant: string): string {
+  const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
+  if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
 
-  const centerBlockStart = mapViewSource.lastIndexOf("const el = document.createElement", markerCallIndex);
-  if (centerBlockStart === -1) throw new Error("Could not find center marker element creation");
+  const callStart = mapViewSource.lastIndexOf("map.addLayer(", idIndex);
+  if (callStart === -1) throw new Error(`Could not find map.addLayer( call for ${layerIdConstant}`);
 
-  const centerBlock = mapViewSource.slice(centerBlockStart, markerCallIndex);
+  const parenOpenIndex = callStart + "map.addLayer".length;
+  let depth = 0;
+  let i = parenOpenIndex;
+  for (; i < mapViewSource.length; i++) {
+    if (mapViewSource[i] === "(") depth++;
+    else if (mapViewSource[i] === ")") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  return mapViewSource.slice(callStart, i + 1);
+}
 
-  it("sets a negative z-index on the marker's own element before constructing the Marker", () => {
-    expect(centerBlock).toMatch(/el\.style\.zIndex\s*=\s*["']-1["']/);
+// Returns the `beforeId` (second) argument of an `addLayer(layer, beforeId)`
+// call, i.e. whatever comes after the layer object literal's matching `}`.
+function addLayerBeforeId(layerIdConstant: string): string {
+  const call = extractAddLayerCall(layerIdConstant);
+  const objectOpenIndex = call.indexOf("{");
+  const objectCloseIndex = findMatchingBrace(call, objectOpenIndex);
+  const rest = call.slice(objectCloseIndex + 1, call.lastIndexOf(")"));
+  return rest.replace(/^[,\s]+/, "").replace(/[,\s]+$/, "");
+}
+
+function extractLayerPaint(layerIdConstant: string): Record<string, unknown> {
+  const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
+  if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
+
+  const paintKeyIndex = mapViewSource.indexOf("paint: {", idIndex);
+  if (paintKeyIndex === -1) throw new Error(`Could not find paint block after ${layerIdConstant}`);
+
+  const objectOpenIndex = paintKeyIndex + "paint: ".length;
+  const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
+  const paintLiteral = mapViewSource.slice(objectOpenIndex, objectCloseIndex + 1);
+
+  // The center point label's paint literal references the imported
+  // MUTED_GRAY constant by name (not a literal string), so it must be
+  // supplied as an in-scope binding here -- same reasoning as the
+  // aircraft/isolate expression evaluators above.
+  // eslint-disable-next-line no-new-func -- evaluating a plain object literal
+  // extracted from our own source, not user input.
+  const fn = new Function("MUTED_GRAY", `return (${paintLiteral});`);
+  return fn(MUTED_GRAY);
+}
+
+describe("center point layer -- visible, and behind aircraft icons", () => {
+  // This regression was a DOM `Marker` given a negative z-index
+  // (`el.style.zIndex = "-1"`) so it would lose to aircraft icons
+  // drawn on MapLibre's WebGL canvas -- but a DOM element appended into the
+  // canvas's own container paints either entirely in front of that canvas
+  // or entirely behind ALL of it, never behind just some of what it draws.
+  // A negative z-index buried the marker under the canvas's own opaque
+  // paint, hiding it outright regardless of whether an aircraft was nearby.
+  // The center point is now a map layer (source feature), sharing the same
+  // WebGL paint pipeline as the aircraft icons, so it's always painted (no
+  // z-index fight to lose) and layer order -- not z-index -- controls
+  // whether it renders under aircraft icons.
+
+  it("has no DOM Marker construction left for the center point (the regression's actual mechanism)", () => {
+    expect(mapViewSource).not.toContain("new maplibregl.Marker(");
+    expect(mapViewSource).not.toContain("el.style.zIndex");
   });
 
-  it("passes that same element into the Marker constructor", () => {
-    const markerCallEnd = mapViewSource.indexOf(")", markerCallIndex);
-    const markerCall = mapViewSource.slice(markerCallIndex, markerCallEnd);
-    expect(markerCall).toContain("element: el");
+  it("inserts the circle layer before the aircraft icon layer, not merely appended on top", () => {
+    expect(addLayerBeforeId("CENTER_POINT_CIRCLE_LAYER_ID")).toBe("AIRCRAFT_LAYER_ID");
+  });
+
+  it("inserts the label layer before the aircraft icon layer too", () => {
+    expect(addLayerBeforeId("CENTER_POINT_LABEL_LAYER_ID")).toBe("AIRCRAFT_LAYER_ID");
+  });
+
+  it("the circle layer paints a fully visible black dot -- no opacity/visibility hiding it", () => {
+    const paint = extractLayerPaint("CENTER_POINT_CIRCLE_LAYER_ID");
+    expect(paint["circle-color"]).toBe("#000000");
+    expect(paint["circle-opacity"]).toBeUndefined();
+  });
+
+  it("the label layer paints the CENTER text with a white halo for contrast, not hidden", () => {
+    const paint = extractLayerPaint("CENTER_POINT_LABEL_LAYER_ID");
+    expect(paint["text-color"]).toBe(MUTED_GRAY);
+    expect(paint["text-opacity"]).toBeUndefined();
+    expect(paint["text-halo-color"]).toBe("#ffffff");
   });
 });
 

@@ -107,3 +107,25 @@ export function rangeRingLabelsFeatureCollection(
   }));
   return { type: "FeatureCollection", features };
 }
+
+/**
+ * Single-point FeatureCollection at `center` itself, for the "CENTER"
+ * reference-point layer (MapView.tsx's CENTER_POINT_SOURCE_ID). Rendered
+ * as a map layer rather than a DOM `Marker` so it shares the aircraft
+ * icons' own paint pipeline -- "behind aircraft icons" is then a normal
+ * layer-order concern instead of a DOM z-index fight against MapLibre's
+ * own canvas.
+ */
+export function centerPointFeatureCollection(center: CenterPoint | null): FeatureCollection {
+  if (!center) return { type: "FeatureCollection", features: [] };
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [center.longitude, center.latitude] },
+        properties: {},
+      },
+    ],
+  };
+}
