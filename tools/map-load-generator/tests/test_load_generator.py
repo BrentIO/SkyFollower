@@ -636,6 +636,30 @@ class TestFleetSimulatorRampUp:
             frame = sim.tick(start_at / 2.0)
             assert all(s != last_seat_index for s, _, _ in frame)
 
+    def test_balloon_spawns_at_t0_regardless_of_ramp_up_or_aircraft_count(self):
+        # #1773: the balloon used to spawn one stagger slot after the last
+        # lane seat (`lane_seat_count * per_aircraft_stagger`), which
+        # approaches the *entire* ramp-up window as --aircraft-count grows.
+        # It's independent of the lane-seat stagger sequence now.
+        for aircraft_count in (2, 10, 400):
+            sim = _simulator(aircraft_count=aircraft_count, ramp_up_seconds=60.0, duration=0.0)
+            assert sim.balloon_start_offset == 0.0
+
+    def test_balloon_active_on_the_very_first_tick_during_a_long_ramp_up(self):
+        sim = _simulator(aircraft_count=400, ramp_up_seconds=60.0, duration=0.0)
+        frame = sim.tick(0.0)
+        assert any(s is None for s, _, _ in frame)
+
+    def test_balloon_spawn_offset_unaffected_by_lane_seat_stagger_pacing(self):
+        # Lane-seat stagger pacing itself is unchanged by this -- only the
+        # balloon's own offset was decoupled from it.
+        sim = _simulator(aircraft_count=10, ramp_up_seconds=60.0, duration=0.0)
+        assert sim.start_offsets[0] == 0.0
+        assert sim.start_offsets[1] > sim.start_offsets[0]
+        last_seat_index = sim.lane_seat_count - 1
+        assert sim.start_offsets[last_seat_index] < 60.0
+        assert sim.balloon_start_offset == 0.0
+
 
 class TestFleetSimulatorLaneExitReplacement:
     def test_exiting_seat_gets_a_fresh_never_reused_hex(self):
