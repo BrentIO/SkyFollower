@@ -49,10 +49,10 @@ export function IconButton({ label, icon, active, onClick, disabled = false, siz
 // Renders one IconSpec (lib/actionIcons.ts) as an 18x18 stroke icon.
 // `stroke="currentColor"` means the button's own active/inactive text
 // color drives the icon color for free -- no separate icon-color logic.
-// A circle marked `filled` (IconCircle.filled -- e.g. TAGS_ICON's small
-// punch-hole dot) additionally gets `fill="currentColor"`, matching how
-// Lucide's own source renders it; every other shape keeps inheriting the
-// svg's `fill="none"`.
+// A circle marked `filled` (IconCircle.filled) additionally gets
+// `fill="currentColor"`, matching how Lucide's own source renders it;
+// every other shape -- rects included -- keeps inheriting the svg's
+// `fill="none"`.
 export function ActionIcon({ spec }: { spec: IconSpec }) {
   return (
     <svg
@@ -72,6 +72,9 @@ export function ActionIcon({ spec }: { spec: IconSpec }) {
       {spec.lines?.map((l, i) => <line key={`l${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />)}
       {spec.paths?.map((p, i) => <path key={`p${i}`} d={p.d} />)}
       {spec.polygons?.map((pg, i) => <polygon key={`pg${i}`} points={pg.points} />)}
+      {spec.rects?.map((r, i) => (
+        <rect key={`r${i}`} x={r.x} y={r.y} width={r.width} height={r.height} rx={r.rx} />
+      ))}
     </svg>
   );
 }
