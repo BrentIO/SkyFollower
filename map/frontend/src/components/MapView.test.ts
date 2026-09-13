@@ -206,7 +206,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     expect(paint["icon-halo-blur"]).toEqual([
       "case",
       ["boolean", ["get", "selected"], false],
-      ["*", 0.5, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+      ["*", 0.08, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
       0,
     ]);
   });
@@ -223,7 +223,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     for (const icon_scale of [1, 1.2, 1.433, 1.6]) {
       const properties = { selected: true, icon_scale };
       expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(3);
-      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0.5);
+      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0.08);
     }
   });
 
@@ -231,10 +231,67 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     // AIRCRAFT_SHAPES.P28A.scale is exactly SCALE_MIN (0.6) -- the smallest
     // multiplier any real shape uses (generate-aircraft-shapes.mjs).
     expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(1.8);
-    expect(evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(0.3);
+    expect(evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(0.048);
 
     expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.8 })).toBeCloseTo(2.4);
     expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.99 })).toBeCloseTo(2.97);
+  });
+
+  it("documents the #1763 fix: the old 0.5 base icon-halo-blur pushed the shader's smoothstep band well below zero at the reference icon_scale = 1 (the issue's own worked example, ~[-0.163, 0.299]), giving every texel fully outside the SDF shape -- floored at exactly 0, never negative -- nonzero halo alpha (the reported wash); the new value keeps the band's lower bound close to zero instead, at every real icon_scale", () => {
+    // Mirrors the shader math verified against map/frontend/node_modules/
+    // maplibre-gl/src/shaders/glsl/symbol_sdf.fragment.glsl: SDF_PX = 8,
+    // EDGE_GAMMA = 0.105 / DPR, halo_edge = (6 - halo_width / fontScale) /
+    // SDF_PX, gamma_halo = (halo_blur * 1.19 / SDF_PX + EDGE_GAMMA) /
+    // fontScale (u_gamma_scale taken as 1, matching the issue's own worked
+    // example), band = halo_edge -/+ gamma_halo. Only halo_blur's own
+    // contribution to gamma_halo cancels icon_scale out (it carries the
+    // same min(1, icon_scale) factor as fontScale); the fixed EDGE_GAMMA
+    // term does not (fontScale alone shrinks with icon_scale), so the
+    // band is *more* negative for smaller aircraft regardless of
+    // halo_blur -- that residual is the issue's separately-documented,
+    // out-of-scope baseline wash, not something this fix touches. What
+    // this fix controls is the halo_blur-specific delta, checked here as
+    // a comparison against the old value rather than an absolute
+    // threshold that would vary by icon_scale.
+    const SDF_PX = 8;
+    const DPR = 2;
+    const EDGE_GAMMA = 0.105 / DPR;
+    const BASE_ICON_SIZE_MULTIPLIER = 0.55;
+    const OLD_HALO_BLUR = 0.5;
+
+    function bandLowerBound(haloBlur: number, iconScale: number): number {
+      const fontScale = BASE_ICON_SIZE_MULTIPLIER * iconScale;
+      const haloWidth = 3 * Math.min(1, iconScale);
+      const scaledBlur = haloBlur * Math.min(1, iconScale);
+      const haloEdge = (6 - haloWidth / fontScale) / SDF_PX;
+      const gammaHalo = (scaledBlur * 1.19) / SDF_PX / fontScale + EDGE_GAMMA / fontScale;
+      return haloEdge - gammaHalo;
+    }
+
+    // Reference case: reproduces the issue's own numbers almost exactly
+    // (halo_edge ~= 0.068, band ~= [-0.163, 0.299] at the old value).
+    const oldReferenceLowerBound = bandLowerBound(OLD_HALO_BLUR, 1);
+    expect(oldReferenceLowerBound).toBeCloseTo(-0.1625, 3);
+    const newReferenceLowerBound = bandLowerBound(0.08, 1);
+    expect(newReferenceLowerBound).toBeGreaterThan(-0.05);
+
+    // At every real icon_scale, the new value's band lower bound is
+    // strictly closer to zero (less negative, or less far above zero)
+    // than the old value's -- a consistent improvement, even though (per
+    // the comment above) it isn't driven fully to zero for the smallest
+    // aircraft. icon_scale <= 1 (where fontScale is smallest and the
+    // wash is worst) sees a large improvement; icon_scale > 1 already had
+    // little/no wash even at the old value, so the improvement there is
+    // small but still strictly present.
+    for (const icon_scale of [0.6, 0.8, 1, 1.3, 1.6]) {
+      const newHaloBlur = evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale }) as number;
+      const oldBound = bandLowerBound(OLD_HALO_BLUR, icon_scale);
+      const newBound = bandLowerBound(newHaloBlur, icon_scale);
+      expect(newBound).toBeGreaterThan(oldBound);
+      if (icon_scale <= 1) {
+        expect(newBound).toBeGreaterThan(oldBound + 0.1);
+      }
+    }
   });
 
   it("documents the bug this fixes: the old fixed 3px halo width at the smallest real icon_scale (0.6, e.g. P28A) demanded more texture-space distance than the SDF falloff band encodes -- exceeding it is what turned the ring into a solid box", () => {

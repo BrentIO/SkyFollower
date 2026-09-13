@@ -556,10 +556,34 @@ function MapViewInner({ config }: { config: AppConfig }) {
             ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
             1,
           ],
+          // A second, independent overflow risk from icon-halo-width's above:
+          // symbol_sdf.fragment.glsl's `gamma_halo = (halo_blur * 1.19 /
+          // SDF_PX + EDGE_GAMMA) / (fontScale * u_gamma_scale)` divides
+          // halo_blur by the same small fontScale, widening the smoothstep
+          // band the ring's edge sits in. At the old 0.5 base value that
+          // band's lower bound went meaningfully negative, and since our
+          // SDF alpha floors at exactly 0 outside the shape (never
+          // negative), every texel in that floored region -- i.e. the
+          // icon's entire flat background, not just a ring near the edge
+          // -- picked up nonzero partial halo alpha: a faint white wash
+          // across the whole icon on selection. Unlike icon-halo-width
+          // above, this isn't specific to small icon_scale (fontScale is
+          // small for every aircraft, capped at 0.88) -- 0.08 keeps the
+          // band's lower bound close to zero at the reference icon_scale =
+          // 1 (see MapView.test.ts), and cuts it roughly in half even at
+          // the smallest real icon_scale (0.6), while still giving the
+          // ring a soft rather than hard edge. A small residual wash
+          // remains at small icon_scale even at 0.08 -- that's the fixed
+          // EDGE_GAMMA anti-aliasing term (present even at halo_blur = 0)
+          // dividing by a shrinking fontScale, the same already-present,
+          // out-of-scope baseline the unselected 1px halo has (see
+          // MapView.test.ts). The `min(1, icon_scale)` factor is kept only
+          // for structural symmetry with icon-halo-width above, not
+          // because it targets this problem.
           "icon-halo-blur": [
             "case",
             ["boolean", ["get", "selected"], false],
-            ["*", 0.5, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+            ["*", 0.08, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
             0,
           ],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
