@@ -9,11 +9,14 @@
 // view zooms out keeps every box visually anchored to its icon without any
 // collision-avoidance/nudging.
 
-// Gap at MAX_OFFSET_ZOOM and above -- unchanged from the original fixed value.
-export const MAX_INFO_BOX_OFFSET = 34;
+// Gap at MAX_OFFSET_ZOOM and above. Previously 34px -- confirmed live that
+// even this closest-zoom maximum still read as detached from the icon,
+// since InfoBoxLayer.tsx draws no leader line connecting box to icon and
+// proximity is the only anchoring cue.
+export const MAX_INFO_BOX_OFFSET = 9;
 
-// Gap at MIN_OFFSET_ZOOM and below.
-export const MIN_INFO_BOX_OFFSET = 12;
+// Gap at MIN_OFFSET_ZOOM and below. Previously 12px.
+export const MIN_INFO_BOX_OFFSET = 3;
 
 // Zoom levels bounding the ramp between the two gaps above -- outside this
 // range the offset is clamped rather than extrapolated.
@@ -30,10 +33,10 @@ const MIN_OFFSET_ZOOM = 4;
 // operator's normal working range -- still sat at ~80-90% of the max offset
 // (only a 12-20% reduction), leaving labels visibly detached from their
 // icon. Cubing `t` keeps the offset close to the minimum through most of
-// the range and saves the climb to the full 34px gap for the last stretch
+// the range and saves the climb to the full-size gap for the last stretch
 // right below MAX_OFFSET_ZOOM, so the full-size gap stays reserved for
 // genuinely close-in views while zoom 7-9 gets a meaningfully smaller one
-// (e.g. ~18.5px at zoom 8, ~24.7px at zoom 9, down from ~27px/~30px).
+// (e.g. ~4.8px at zoom 8, ~6.5px at zoom 9).
 export function infoBoxOffsetForZoom(zoom: number): number {
   if (zoom >= MAX_OFFSET_ZOOM) return MAX_INFO_BOX_OFFSET;
   if (zoom <= MIN_OFFSET_ZOOM) return MIN_INFO_BOX_OFFSET;

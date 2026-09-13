@@ -27,23 +27,23 @@ describe("infoBoxOffsetForZoom", () => {
 
   it("pins the cubic ease-in curve's values at representative zoom levels", () => {
     // A genuinely zoomed-out view (multi-state) keeps the existing small offset.
-    expect(infoBoxOffsetForZoom(4)).toBeCloseTo(12, 2);
+    expect(infoBoxOffsetForZoom(4)).toBeCloseTo(3, 2);
 
     // The "regional" 7-9 band -- where labels were reported floating --
-    // now sits meaningfully below the old linear ramp's ~23/~27/~30px.
-    expect(infoBoxOffsetForZoom(7)).toBeCloseTo(14.75, 2);
-    expect(infoBoxOffsetForZoom(8)).toBeCloseTo(18.52, 2);
-    expect(infoBoxOffsetForZoom(9)).toBeCloseTo(24.73, 2);
+    // still ramps in below the max, just against the smaller endpoints.
+    expect(infoBoxOffsetForZoom(7)).toBeCloseTo(3.75, 2);
+    expect(infoBoxOffsetForZoom(8)).toBeCloseTo(4.78, 2);
+    expect(infoBoxOffsetForZoom(9)).toBeCloseTo(6.47, 2);
 
-    // A close-in view keeps the full, comfortable gap.
-    expect(infoBoxOffsetForZoom(10)).toBeCloseTo(34, 2);
+    // A close-in view keeps the full, still-tight anchored gap.
+    expect(infoBoxOffsetForZoom(10)).toBeCloseTo(9, 2);
   });
 
-  it("reduces the offset at the regional 7-9 band by more than the old linear ramp did", () => {
-    // Old linear ramp gave ~23px/~27px/~30px at zoom 7/8/9 -- only a
-    // 12-20% reduction off the max at the top of that band. The new curve
-    // reduces meaningfully more: at least 30% off the max by zoom 8, and
-    // at least 15% off the max by zoom 9.
+  it("reduces the offset at the regional 7-9 band by more than a linear ramp would", () => {
+    // A linear ramp spends its "budget" evenly across the whole zoom span,
+    // so it would only be a 12-20% reduction off the max at the top of the
+    // 7-9 band. The cubic curve reduces meaningfully more: at least 30% off
+    // the max by zoom 8, and at least 15% off the max by zoom 9.
     const zoom8 = infoBoxOffsetForZoom(8);
     const zoom9 = infoBoxOffsetForZoom(9);
 
