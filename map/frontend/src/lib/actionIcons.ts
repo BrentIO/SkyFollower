@@ -21,15 +21,18 @@
 // recenter glyph, Navigation = the conventional map-app "follow me"
 // compass-arrow).
 //
-// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON are Lucide's "Route"/"Tags"/
-// "Type"/"Radar" glyphs (fetched byte-for-byte from lucide-icons/lucide,
-// same convention as above) -- also no prior precedent in this codebase;
-// picked per the issue's suggested set for ControlsPanel's toggle row
-// (Route = two endpoints joined by a winding path, reading as "every
-// flight's path"; Tags = the generic label/tag glyph for aircraft info-box
-// labels; Type = a stylized "A", deliberately distinct from Tags so the
-// two label toggles don't look identical; Radar = concentric arcs + sweep
-// needle, reading directly as reception range/coverage).
+// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON are Lucide's "Route"/
+// "square-text"/"Type"/"Radar" glyphs (fetched byte-for-byte from
+// lucide-icons/lucide, same convention as above) -- also no prior
+// precedent in this codebase; picked per the issue's suggested set for
+// ControlsPanel's toggle row (Route = two endpoints joined by a winding
+// path, reading as "every flight's path"; square-text = a rounded square
+// containing three text lines, reading as "aircraft info-box labels" --
+// TAGS_ICON was originally Lucide's "Tags" glyph, swapped to square-text
+// per Brent's preference with no functional change; Type = a stylized "A",
+// deliberately distinct from square-text so the two label toggles don't
+// look identical; Radar = concentric arcs + sweep needle, reading directly
+// as reception range/coverage).
 //
 // MAXIMIZE_ICON/MINIMIZE_ICON are Lucide's "Maximize"/"Minimize" glyphs
 // (fetched byte-for-byte from lucide-icons/lucide's icons/maximize.svg and
@@ -47,8 +50,9 @@ export interface IconCircle {
   cy: number;
   r: number;
   /** True for a circle Lucide renders solid (`fill="currentColor"`) rather
-   * than as an outline -- e.g. TAGS_ICON's small punch-hole dot. Absent/
-   * false preserves every existing icon's outline-only rendering. */
+   * than as an outline -- e.g. a small punch-hole dot within a larger
+   * glyph. Absent/false preserves every existing icon's outline-only
+   * rendering. */
   filled?: boolean;
 }
 export interface IconLine {
@@ -60,6 +64,13 @@ export interface IconLine {
 export interface IconPolygon {
   points: string;
 }
+export interface IconRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rx?: number;
+}
 
 // All optional -- a given icon only populates the shape kinds it uses.
 export interface IconSpec {
@@ -67,6 +78,7 @@ export interface IconSpec {
   circles?: IconCircle[];
   lines?: IconLine[];
   polygons?: IconPolygon[];
+  rects?: IconRect[];
 }
 
 export const ISOLATE_ICON: IconSpec = {
@@ -119,13 +131,8 @@ export const ROUTE_ICON: IconSpec = {
 };
 
 export const TAGS_ICON: IconSpec = {
-  paths: [
-    {
-      d: "M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z",
-    },
-    { d: "M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193" },
-  ],
-  circles: [{ cx: 10.5, cy: 6.5, r: 0.5, filled: true }],
+  rects: [{ x: 3, y: 3, width: 18, height: 18, rx: 2 }],
+  paths: [{ d: "M7 8h8" }, { d: "M7 12h10" }, { d: "M7 16h6" }],
 };
 
 export const TYPE_ICON: IconSpec = {
