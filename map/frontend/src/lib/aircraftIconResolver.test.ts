@@ -101,3 +101,35 @@ describe("resolveAircraftShape", () => {
     }
   });
 });
+
+describe("compact/simple-silhouette shape scale floor", () => {
+  // Mirrors COMPACT_SILHOUETTE_KEYS in scripts/generate-aircraft-shapes.mjs
+  // (issue #1742): the unique shape-key targets of TYPE_ALIASES's
+  // "Helicopters" section above (which already covers CATEGORY_SHAPES.A7 /
+  // DESCRIPTION_SHAPES.H's "H60"), plus the balloon/gyroplane/glider/UAV/
+  // motor-glider shapes the issue's own follow-up comment broadened the fix
+  // to cover -- any silhouette without an airplane's elongated wing/tail
+  // cross-shape, which reads as an unrecognizable blob at the general
+  // SCALE_MIN floor. Keep this list in sync with the generator script's.
+  const COMPACT_SILHOUETTE_SHAPE_KEYS = [
+    "EC20", "EC35", "EC45", "GAZL", "AS65", "AS32", "S61", "R44", "H60",
+    "NH90", "LYNX", "MI24", "H47",
+    "BALL", "GYRO", "AS21", "Q4", "SF25",
+  ];
+  const SCALE_MIN_COMPACT_SILHOUETTE = 1.0;
+
+  it("gives every shape in the broadened set at least the higher scale floor", () => {
+    for (const key of COMPACT_SILHOUETTE_SHAPE_KEYS) {
+      expect(AIRCRAFT_SHAPES[key], `AIRCRAFT_SHAPES[${key}]`).toBeDefined();
+      expect(AIRCRAFT_SHAPES[key].scale, `${key}.scale`).toBeGreaterThanOrEqual(
+        SCALE_MIN_COMPACT_SILHOUETTE,
+      );
+    }
+  });
+
+  it("leaves other correctly-small shapes at the general, lower floor", () => {
+    // A light GA single is intentionally near the general 0.6 floor and
+    // must stay there -- only the broadened set's floor should move.
+    expect(AIRCRAFT_SHAPES.C172.scale).toBeLessThan(SCALE_MIN_COMPACT_SILHOUETTE);
+  });
+});
