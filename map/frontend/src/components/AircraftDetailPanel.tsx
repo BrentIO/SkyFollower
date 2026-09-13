@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MapFlight } from "../api/types";
 import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON } from "../lib/actionIcons";
 import { buildAircraftDetail, type AircraftDetailData, type AirportBlockData } from "../lib/aircraftDetail";
 import type { CenterPoint } from "../lib/config";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
+import { formatRelativeTime, relativeTimeTickIntervalMs } from "../lib/relativeTime";
 import { IconButton } from "./IconButton";
 
 // Copied verbatim (Tailwind class strings, not just visually similar hex
@@ -43,7 +44,12 @@ const ROW_LABEL = "text-xs text-slate-500 dark:text-slate-400";
 const ROW_VALUE = "text-sm text-slate-900 dark:text-slate-100";
 
 export interface AircraftDetailPanelProps {
-  aircraft: MapFlight;
+  /** `lastReceivedAt` (epoch ms) is AircraftRecord's client-stamped field --
+   * optional here so this prop stays structurally compatible with a bare
+   * MapFlight (e.g. in tests) as well as the real AircraftMap record this
+   * panel is actually given. See lib/aircraftState.ts's AircraftRecord
+   * docstring. */
+  aircraft: MapFlight & { lastReceivedAt?: number };
   center: CenterPoint | null;
   onClose: () => void;
   /** Isolate/Follow/Trace Points are real toggles; Zoom To is one-shot and
@@ -83,6 +89,29 @@ export function AircraftDetailPanel({
   onToggleTracePoints,
 }: AircraftDetailPanelProps) {
   const data = useMemo(() => buildAircraftDetail(aircraft, center), [aircraft, center]);
+
+  // Live-ticking clock for the Last Message Received row below -- re-renders
+  // the formatted relative age while the panel stays open and no new
+  // message arrives (e.g. "3s ago" -> "4s ago"), backing off from every
+  // second to every 15s to every minute as the age grows
+  // (relativeTimeTickIntervalMs). Re-armed whenever the selected aircraft
+  // changes or a new position/metadata event moves lastReceivedAt forward;
+  // cleared on unmount or aircraft change via the effect's own cleanup.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (data.lastReceivedAt == null) return;
+    const lastReceivedAt = data.lastReceivedAt;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const current = Date.now();
+      setNow(current);
+      timeoutId = setTimeout(tick, relativeTimeTickIntervalMs(current - lastReceivedAt));
+    };
+    setNow(Date.now());
+    timeoutId = setTimeout(tick, relativeTimeTickIntervalMs(Date.now() - lastReceivedAt));
+    return () => clearTimeout(timeoutId);
+  }, [aircraft.icao_hex, data.lastReceivedAt]);
+  const lastMessageReceived = data.lastReceivedAt != null ? formatRelativeTime(data.lastReceivedAt, now) : null;
 
   const hasHeaderSubline = data.registration != null || data.icaoHex != null;
   const hasBadges = data.military || data.specialLivery != null;
@@ -175,7 +204,7 @@ export function AircraftDetailPanel({
 
       <div className={DIVIDER}>
         <div className={SECTION_BAR}>Flight</div>
-        <FlightRows data={data} />
+        <FlightRows data={data} lastMessageReceived={lastMessageReceived} />
       </div>
 
       <div className={`${DIVIDER} flex items-center justify-center gap-2 px-4 py-2.5`}>
@@ -214,7 +243,16 @@ function AirportBlock({ airport, pillClass }: { airport: AirportBlockData; pillC
 // separates a row from a *previously rendered* row, never precedes the
 // first visible one, so the section reads correctly no matter which rows
 // are actually present.
-function FlightRows({ data }: { data: AircraftDetailData }) {
+function FlightRows({
+  data,
+  lastMessageReceived,
+}: {
+  data: AircraftDetailData;
+  /** Pre-formatted by the parent (see its `now` ticking state) rather than
+   * derived from data.lastReceivedAt here, so this component stays a plain
+   * render of already-computed strings. */
+  lastMessageReceived: string | null;
+}) {
   let rendered = false;
   function divider(): string {
     const cls = rendered ? DIVIDER : "";
@@ -260,6 +298,12 @@ function FlightRows({ data }: { data: AircraftDetailData }) {
         <div className={`${ROW} ${divider()}`}>
           <span className={ROW_LABEL}>Distance</span>
           <span className={ROW_VALUE}>{data.distance} nmi</span>
+        </div>
+      )}
+      {lastMessageReceived != null && (
+        <div className={`${ROW} ${divider()}`}>
+          <span className={ROW_LABEL}>Last Message Received</span>
+          <span className={ROW_VALUE}>{lastMessageReceived}</span>
         </div>
       )}
       {data.sources.length > 0 && (

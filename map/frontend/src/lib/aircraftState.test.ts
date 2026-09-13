@@ -25,6 +25,26 @@ describe("applySnapshot", () => {
   });
 });
 
+describe("applySnapshot -- lastReceivedAt seeding", () => {
+  it("seeds lastReceivedAt (epoch ms) from the wire's last_message when present", () => {
+    const snapshot: MapFlight[] = [{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }];
+    const state = applySnapshot(snapshot);
+    expect(state.A1B2C3.lastReceivedAt).toBe(Date.parse("2026-09-13T12:00:00Z"));
+  });
+
+  it("leaves lastReceivedAt undefined when the wire has no last_message", () => {
+    const snapshot: MapFlight[] = [{ icao_hex: "A1B2C3" }];
+    const state = applySnapshot(snapshot);
+    expect(state.A1B2C3.lastReceivedAt).toBeUndefined();
+  });
+
+  it("leaves lastReceivedAt undefined for an unparseable last_message rather than NaN", () => {
+    const snapshot: MapFlight[] = [{ icao_hex: "A1B2C3", last_message: "not-a-timestamp" }];
+    const state = applySnapshot(snapshot);
+    expect(state.A1B2C3.lastReceivedAt).toBeUndefined();
+  });
+});
+
 describe("applyWsEvent -- position/metadata merge", () => {
   it("merges a position event onto an existing aircraft without clobbering unrelated fields", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3", ident: "DAL659", alt: 1000 }]);
@@ -92,6 +112,38 @@ describe("applyWsEvent -- position/metadata merge", () => {
     // The pre-gap trail point survives the hide/reveal round trip.
     expect(revived.A1B2C3.trail[0]).toEqual({ latitude: 1, longitude: 2, altitude: null });
     expect(revived.A1B2C3.trail).toHaveLength(2);
+  });
+});
+
+describe("applyWsEvent -- lastReceivedAt stamping", () => {
+  it("stamps lastReceivedAt to `now` on a position event, unconditionally", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    const next = applyWsEvent(base, { type: "position", icao_hex: "A1B2C3", hdg: 10 }, { now: 5000 });
+    expect(next.A1B2C3.lastReceivedAt).toBe(5000);
+  });
+
+  it("stamps lastReceivedAt to `now` on a metadata event, even when no displayed field changes", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3", ident: "DAL659" }], 1000);
+    const next = applyWsEvent(base, { type: "metadata", icao_hex: "A1B2C3", ident: "DAL659" }, { now: 9000 });
+    expect(next.A1B2C3.lastReceivedAt).toBe(9000);
+  });
+
+  it("advances lastReceivedAt forward on each successive position/metadata event", () => {
+    let state = applyWsEvent({}, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 }, { now: 1000 });
+    expect(state.A1B2C3.lastReceivedAt).toBe(1000);
+    state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 }, { now: 2000 });
+    expect(state.A1B2C3.lastReceivedAt).toBe(2000);
+  });
+
+  it("stamps a brand-new aircraft record created from its first position event", () => {
+    const next = applyWsEvent({}, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 }, { now: 4242 });
+    expect(next.A1B2C3.lastReceivedAt).toBe(4242);
+  });
+
+  it("does not stamp lastReceivedAt on stale/hide/remove events", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3" }], 1000);
+    const staled = applyWsEvent(base, { type: "stale", icao_hex: "A1B2C3" }, { now: 9999 });
+    expect(staled.A1B2C3.lastReceivedAt).toBeUndefined();
   });
 });
 

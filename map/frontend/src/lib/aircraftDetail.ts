@@ -138,6 +138,14 @@ export interface AircraftDetailData {
   verticalSpeed: string | null;
   track: string | null;
   distance: string | null;
+  /** Epoch ms of the last position/metadata event actually received for
+   * this aircraft (AircraftRecord.lastReceivedAt), or null when not yet
+   * known (e.g. a snapshot with no wire `last_message` and no live event
+   * yet). The component formats this into a live-ticking relative-time
+   * string (lib/relativeTime.ts) rather than this function doing it, so a
+   * ticking clock doesn't require rebuilding the whole detail view every
+   * second. */
+  lastReceivedAt: number | null;
   sources: string[];
   matchedRules: string[];
 }
@@ -147,7 +155,10 @@ export interface AircraftDetailData {
 // config.center (CenterPoint | null); see lib/geo.ts's greatCircleNm doc for
 // why a null center simply omits the Distance row rather than being this
 // function's concern to validate further.
-export function buildAircraftDetail(flight: MapFlight, center: CenterPoint | null): AircraftDetailData {
+export function buildAircraftDetail(
+  flight: MapFlight & { lastReceivedAt?: number },
+  center: CenterPoint | null,
+): AircraftDetailData {
   const aircraft = flight.aircraft;
   const squawk = nonEmpty(flight.squawk);
 
@@ -170,6 +181,7 @@ export function buildAircraftDetail(flight: MapFlight, center: CenterPoint | nul
     verticalSpeed: buildVerticalSpeedDisplay(flight.vs),
     track: flight.hdg != null ? flight.hdg.toFixed(1) : null,
     distance: buildDistanceDisplay(flight, center),
+    lastReceivedAt: flight.lastReceivedAt ?? null,
     sources: (flight.receiver_sources ?? []).map(receiverSourceLabel),
     matchedRules: flight.matched_rules ?? [],
   };
