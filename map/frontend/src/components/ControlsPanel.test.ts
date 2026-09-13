@@ -7,8 +7,8 @@ import controlsPanelSource from "./ControlsPanel.tsx?raw";
 
 describe("status box -- connection dot + aircraft count only", () => {
   it("no longer renders any of the five toggle/action buttons as text buttons", () => {
-    expect(controlsPanelSource).not.toContain("Trails: All</button>");
-    expect(controlsPanelSource).not.toContain(">Labels: All<");
+    expect(controlsPanelSource).not.toContain("Trails</button>");
+    expect(controlsPanelSource).not.toContain(">Labels<");
     expect(controlsPanelSource).not.toContain(">Map Labels<");
     expect(controlsPanelSource).not.toContain(">Range Outline<");
   });
@@ -26,7 +26,7 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
   });
 
   it("sizes each IconButton-based control to h-9 w-9 via the size prop", () => {
-    const labels = ["Labels: All", "Trails: All", "Range Outline", "Map Labels"];
+    const labels = ["Labels", "Trails", "Range Outline", "Map Labels"];
     for (const label of labels) {
       const index = controlsPanelSource.indexOf(`label="${label}"`);
       const callSite = controlsPanelSource.slice(index, index + 250);
@@ -37,8 +37,8 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
   it("renders the controls in the required top-to-bottom order: Full screen, Center, Labels, Trails, Range outline, Map labels", () => {
     const fullscreenIndex = controlsPanelSource.indexOf("onClick={onToggleFullscreen}");
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
-    const labelsIndex = controlsPanelSource.indexOf('label="Labels: All"');
-    const trailsIndex = controlsPanelSource.indexOf('label="Trails: All"');
+    const labelsIndex = controlsPanelSource.indexOf('label="Labels"');
+    const trailsIndex = controlsPanelSource.indexOf('label="Trails"');
     const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
     const mapLabelsIndex = controlsPanelSource.indexOf('label="Map Labels"');
 
@@ -75,7 +75,7 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
   });
 
   it("no other IconButton-based toggle passes a disabled prop", () => {
-    const labels = ["Trails: All", "Labels: All", "Map Labels"];
+    const labels = ["Trails", "Labels", "Map Labels"];
     for (const label of labels) {
       const index = controlsPanelSource.indexOf(`label="${label}"`);
       const callSite = controlsPanelSource.slice(index, index + 150);
@@ -90,8 +90,8 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
 });
 
 describe("Trails toggle button", () => {
-  it('renders the visible label (and title/aria-label, via IconButton) as "Trails: All"', () => {
-    expect(controlsPanelSource).toContain('label="Trails: All"');
+  it('renders the visible label (and title/aria-label, via IconButton) as "Trails"', () => {
+    expect(controlsPanelSource).toContain('label="Trails"');
   });
 
   it('does not use the old "History" wording anywhere in the visible label', () => {
@@ -129,7 +129,7 @@ describe("Center (recenter) button -- moved into the unified column", () => {
 
   it("is the second control in the unified column, right after Fullscreen", () => {
     const fullscreenIndex = controlsPanelSource.indexOf("onClick={onToggleFullscreen}");
-    const labelsIndex = controlsPanelSource.indexOf('label="Labels: All"');
+    const labelsIndex = controlsPanelSource.indexOf('label="Labels"');
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     expect(recenterIndex).toBeGreaterThan(fullscreenIndex);
     expect(recenterIndex).toBeLessThan(labelsIndex);

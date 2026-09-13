@@ -52,7 +52,7 @@ export interface ControlsPanelProps {
 // count (status box), and -- below that -- one unified vertically stacked
 // column mixing the recenter button (its own separately-styled square
 // control -- a momentary action, not an on/off toggle) with the icon
-// buttons for the "Fullscreen", "Labels: All", "Trails: All",
+// buttons for the "Fullscreen", "Labels", "Trails",
 // "Range Outline", and "Map Labels" toggles, in that top-to-bottom order.
 // Icon buttons share the exact rendering mechanism (IconButton,
 // toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
@@ -116,9 +116,9 @@ export function ControlsPanel({
           // the center marker which passes a fixed color of its own.
           dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
         />
-        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
+        <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
         <IconButton
-          label="Trails: All"
+          label="Trails"
           icon={ROUTE_ICON}
           active={historyAll}
           onClick={onToggleHistoryAll}
