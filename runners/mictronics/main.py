@@ -342,7 +342,13 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         pipe.execute()
 
     for row in rows:
-        types_row = row if row["manufacturer_model"] is not None else None
+        # A LEFT JOIN with no matching types row leaves *every* joined
+        # column NULL -- gating on manufacturer_model alone was meant to
+        # detect that "no match" case, but incorrectly also discarded a
+        # real match's description_code whenever that designator's types
+        # row happens to have manufacturer_model unset but description_code
+        # populated (or vice versa). Check both columns instead.
+        types_row = row if (row["manufacturer_model"] is not None or row["description_code"] is not None) else None
         record = build_aircraft_record(row, types_row)
         key = aircraft_mictronics_key(record["icao_hex"])
         batch.append((key, record))
