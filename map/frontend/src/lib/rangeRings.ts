@@ -109,7 +109,7 @@ export function rangeRingLabelsFeatureCollection(
 }
 
 /**
- * Single-point FeatureCollection at `center` itself, for the "CENTER"
+ * Single-point FeatureCollection at `center` itself, for the center
  * reference-point layer (MapView.tsx's CENTER_POINT_SOURCE_ID). Rendered
  * as a map layer rather than a DOM `Marker` so it shares the aircraft
  * icons' own paint pipeline -- "behind aircraft icons" is then a normal

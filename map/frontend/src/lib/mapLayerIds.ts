@@ -28,7 +28,7 @@ export const RANGE_OUTLINE_LAYER_ID = "sf-range-outline-line";
 export const TRACE_POINTS_SOURCE_ID = "sf-trace-points";
 export const TRACE_POINTS_CIRCLE_LAYER_ID = "sf-trace-points-circle";
 export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
-// Static "center" reference-point marker (black dot + "CENTER" label).
+// Static "center" reference-point marker (black dot).
 // Rendered as a map layer, not a DOM `Marker` -- a DOM marker element
 // appended into MapLibre's canvas container is either entirely in front
 // of the WebGL canvas or entirely behind it (there's no z-index that puts
@@ -37,7 +37,6 @@ export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
 // "visible, but behind aircraft icons" possible at the same time.
 export const CENTER_POINT_SOURCE_ID = "sf-center-point";
 export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
-export const CENTER_POINT_LABEL_LAYER_ID = "sf-center-point-label";
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,
