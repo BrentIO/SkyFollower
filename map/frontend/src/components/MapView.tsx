@@ -12,10 +12,14 @@ import { useProcessorRoster } from "../hooks/useProcessorRoster";
 import { useRangeOutline } from "../hooks/useRangeOutline";
 import {
   aircraftFeatureCollection,
+  buildAircraftSourceDiff,
+  buildTrailSourceDiff,
   EMPTY_FEATURE_COLLECTION,
   hasPosition,
   trailFeatureCollection,
 } from "../lib/featureCollections";
+import { diffAircraftMaps } from "../lib/aircraftMapDiff";
+import type { AircraftMap } from "../lib/aircraftState";
 import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
@@ -768,11 +772,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
   }, [rangeOutline, rangeOutlineVisible, mapLoaded]);
 
   // Coalesces this component's lifetime worth of sync-effect runs (below)
-  // into at most one full source rebuild per MAP_SYNC_THROTTLE_MS -- see
+  // into at most one source update per MAP_SYNC_THROTTLE_MS -- see
   // syncThrottle.ts's module docstring for why (a WebSocket batch arrives
   // on a new `aircraft` object reference regardless of how many aircraft
-  // it actually touched, and every dependency here forces the same full
-  // rebuild). One throttle instance for this component's whole lifetime,
+  // it actually touched, and every dependency here forces the same
+  // check). One throttle instance for this component's whole lifetime,
   // not per-render -- a fresh instance on every render would reset
   // `lastRunAt` each time and never actually coalesce anything.
   const syncThrottleRef = useRef(createTrailingThrottle(MAP_SYNC_THROTTLE_MS));
@@ -784,30 +788,141 @@ function MapViewInner({ config }: { config: AppConfig }) {
     return () => syncThrottleRef.current.cancel();
   }, []);
 
+  // Bookkeeping for the sync effect's incremental-diff path (#1775) --
+  // read/written only inside that effect's throttled callback, never
+  // rendered from, so plain refs rather than state. `prevAircraftRef`
+  // is what diffAircraftMaps() compares each tick's `aircraft` against;
+  // `syncedTrailSegmentIdsRef` is this MapView instance's own record of
+  // which trail-segment feature ids it last pushed per icao_hex, needed
+  // because TRAIL_SOURCE_ID holds a variable number of features per
+  // aircraft (one per trail segment) rather than the aircraft source's
+  // clean one-feature-per-hex mapping -- see featureCollections.ts's
+  // buildTrailSourceDiff.
+  const prevAircraftRef = useRef<AircraftMap>({});
+  const syncedTrailSegmentIdsRef = useRef<Map<string, string[]>>(new Map());
+
+  // The sync effect's own record of the *visibility-affecting* inputs
+  // (everything the full feature-collection builders take besides
+  // `aircraft` itself) as of its last run, so that run can tell "only
+  // aircraft data changed this tick" (-> cheap incremental diff) apart
+  // from "a toggle/selection changed too" (-> full rebuild). A toggle
+  // like historyAll can flip visibility for an arbitrary, not-cheaply-
+  // diffable subset of the whole fleet at once (e.g. "Trails: All" going
+  // on reveals every tracked aircraft's trail simultaneously) -- rare and
+  // user-driven, not the sustained-WS-traffic cost this issue targets, so
+  // a full rebuild on *those* ticks is the right, proportionate trade-off
+  // rather than trying to diff that case cheaply too.
+  const prevVisibilityInputsRef = useRef<{
+    historyAll: boolean;
+    selected: Set<string>;
+    isolateId: string | null;
+    followId: string | null;
+    protectedId: string | null;
+    tracePointsEnabled: boolean;
+  } | null>(null);
+
   // --- Keep the aircraft/trail sources and screen positions in sync ---
+  //
+  // Two paths, chosen fresh on every throttled run (#1775):
+  //
+  // - Full rebuild (setData()): the first run ever, or any run where a
+  //   visibility-affecting input (historyAll/selected/isolateId/followId/
+  //   protectedId/tracePointsEnabled) changed since the last run -- see
+  //   prevVisibilityInputsRef's own comment for why that case stays a
+  //   full rebuild rather than trying to diff it too.
+  // - Incremental diff (updateData()): every other run -- only `aircraft`
+  //   itself changed, from live WS traffic. diffAircraftMaps() finds
+  //   exactly which icao_hexes actually changed (by object reference,
+  //   see aircraftMapDiff.ts) against the previous run's snapshot, and
+  //   featureCollections.ts's buildAircraftSourceDiff/buildTrailSourceDiff
+  //   turn just those into a GeoJSONSourceDiff -- so cost scales with how
+  //   much of the fleet moved, not how large the fleet is. This is the
+  //   fix for the profiled root cause: setData() reprocessing every
+  //   feature's geometry from scratch on every tick regardless of how
+  //   many aircraft actually changed (see the issue this implements).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
 
     syncThrottleRef.current.request(() => {
-      const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
       const visibility = { isolateId, followId, protectedId: selectedIcaoHex };
+      const visibilityInputs = {
+        historyAll,
+        selected,
+        isolateId,
+        followId,
+        protectedId: selectedIcaoHex,
+        tracePointsEnabled,
+      };
+      const prevInputs = prevVisibilityInputsRef.current;
+      const visibilityChanged =
+        !prevInputs ||
+        prevInputs.historyAll !== historyAll ||
+        prevInputs.selected !== selected ||
+        prevInputs.isolateId !== isolateId ||
+        prevInputs.followId !== followId ||
+        prevInputs.protectedId !== selectedIcaoHex ||
+        prevInputs.tracePointsEnabled !== tracePointsEnabled;
+      prevVisibilityInputsRef.current = visibilityInputs;
 
-      const fc = aircraftFeatureCollection(aircraft, selected, visibility);
-      // Register the SDF image for every silhouette in the current set that
-      // isn't registered yet, *before* the source data references it -- a
-      // typical session touches a few dozen of the ~180 shapes.
-      for (const f of fc.features) {
-        const shape = f.properties?.shape;
-        if (typeof shape === "string") registerShapeImage(map, shape);
+      const aircraftSource = map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      const trailSource = map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+
+      if (visibilityChanged) {
+        const fc = aircraftFeatureCollection(aircraft, selected, visibility);
+        // Register the SDF image for every silhouette in the current set
+        // that isn't registered yet, *before* the source data references
+        // it -- a typical session touches a few dozen of the ~180 shapes.
+        for (const f of fc.features) {
+          const shape = f.properties?.shape;
+          if (typeof shape === "string") registerShapeImage(map, shape);
+        }
+        aircraftSource?.setData(fc);
+
+        const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
+        const trailFc = trailFeatureCollection(aircraft, visibleTrailIds, visibility);
+        trailSource?.setData(trailFc);
+        // Re-sync this MapView instance's own bookkeeping of what's
+        // actually in the source now, so the next data-only tick's
+        // incremental diff starts from the right baseline.
+        const bySegmentHex = new Map<string, string[]>();
+        for (const f of trailFc.features) {
+          const hex = f.properties?.icao_hex;
+          if (typeof hex !== "string" || f.id == null) continue;
+          const ids = bySegmentHex.get(hex) ?? [];
+          ids.push(String(f.id));
+          bySegmentHex.set(hex, ids);
+        }
+        syncedTrailSegmentIdsRef.current = bySegmentHex;
+      } else {
+        const changed = diffAircraftMaps(prevAircraftRef.current, aircraft);
+        if (changed.size > 0) {
+          const aircraftDiff = buildAircraftSourceDiff(changed, aircraft, selected, visibility);
+          for (const f of aircraftDiff.add ?? []) {
+            const shape = f.properties?.shape;
+            if (typeof shape === "string") registerShapeImage(map, shape);
+          }
+          aircraftSource?.updateData(aircraftDiff);
+
+          const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
+          const trailResult = buildTrailSourceDiff(
+            changed,
+            aircraft,
+            visibleTrailIds,
+            syncedTrailSegmentIdsRef.current,
+            visibility,
+          );
+          trailSource?.updateData(trailResult.diff);
+          syncedTrailSegmentIdsRef.current = trailResult.syncedSegmentIds;
+        }
       }
-      (map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(fc);
-      (map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-        trailFeatureCollection(aircraft, visibleTrailIds, visibility),
-      );
+      prevAircraftRef.current = aircraft;
 
       // Trace Points -- empty data when off or nothing selected, same
-      // always-present-source convention as the layers above.
+      // always-present-source convention as the layers above. Small (one
+      // aircraft's own sample buffer, capped at MAX_TRACE_POINTS) and only
+      // relevant while a detail panel is open, so this stays a plain
+      // setData() on every run rather than joining the diff paths above.
       const tracePoints = tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? []) : [];
       (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
         tracePointsFeatureCollection(tracePoints),

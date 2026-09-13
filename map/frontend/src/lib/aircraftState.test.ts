@@ -324,6 +324,28 @@ describe("applyWsEvents", () => {
     const next = applyWsEvents(base, events);
     expect("A1B2C3" in next).toBe(false);
   });
+
+  // #1775: MapView.tsx's sync effect diffs two AircraftMap snapshots by
+  // per-key object *reference* (not deep equality) to find which aircraft
+  // actually changed, so it can push an incremental updateData() diff to
+  // MapLibre instead of rebuilding every feature on every tick. That's
+  // only correct if applyWsEvent(s) never touches an untouched aircraft's
+  // record reference -- these two tests pin that contract explicitly, so
+  // a future change to the merge logic that broke it would fail loudly
+  // here rather than silently degrading into stale/incorrect map features.
+  it("preserves the exact record reference for an aircraft untouched by any event in the batch", () => {
+    const base = applyWsEvent(applySnapshot([]), { type: "position", icao_hex: "UNTOUCH", lat: 1, lon: 2 });
+    const untouchedBefore = base.UNTOUCH;
+    const next = applyWsEvents(base, [{ type: "position", icao_hex: "A1B2C3", lat: 3, lon: 4 }]);
+    expect(next.UNTOUCH).toBe(untouchedBefore);
+  });
+
+  it("gives a genuinely-touched aircraft a new record reference, even for a no-visible-change event like stale", () => {
+    const base = applyWsEvent(applySnapshot([]), { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 });
+    const before = base.A1B2C3;
+    const next = applyWsEvents(base, [{ type: "stale", icao_hex: "A1B2C3" }]);
+    expect(next.A1B2C3).not.toBe(before);
+  });
 });
 
 describe("icon shape resolution", () => {

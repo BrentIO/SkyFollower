@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { applySnapshot, applyWsEvent, type AircraftMap } from "./aircraftState";
-import { aircraftFeatureCollection, trailFeatureCollection } from "./featureCollections";
+import { applySnapshot, applyTrailSeed, applyWsEvent, type AircraftMap } from "./aircraftState";
+import {
+  aircraftFeature,
+  aircraftFeatureCollection,
+  buildAircraftSourceDiff,
+  buildTrailSourceDiff,
+  trailFeatureCollection,
+  trailSegmentFeatures,
+} from "./featureCollections";
 
 function withOnePositionedAircraft(icaoHex = "A1B2C3"): AircraftMap {
   return applySnapshot([{ icao_hex: icaoHex, lat: 1, lon: 2, alt: 1000 }]);
@@ -171,6 +178,58 @@ describe("trailFeatureCollection -- Follow-lost dimming", () => {
   });
 });
 
+describe("aircraftFeature -- single-feature builder (#1775)", () => {
+  it("stamps a stable id (icao_hex) on every feature, required for updateData()", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3");
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.id).toBe("A1B2C3");
+  });
+
+  it("returns null (not a feature) for an aircraft that shouldn't be drawn", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(aircraftFeature(hidden.A1B2C3, new Set())).toBeNull();
+  });
+
+  it("aircraftFeatureCollection's features are exactly what aircraftFeature would build per aircraft", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    const fc = aircraftFeatureCollection(aircraft, new Set(["A1B2C3"]), { followId: "D4E5F6" });
+    for (const f of fc.features) {
+      const hex = f.properties?.icao_hex as string;
+      expect(f).toEqual(aircraftFeature(aircraft[hex], new Set(["A1B2C3"]), { followId: "D4E5F6" }));
+    }
+  });
+});
+
+describe("trailSegmentFeatures -- per-segment builder with stable ids (#1775)", () => {
+  it("stamps a stable `${icao_hex}:${index}` id on every segment", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
+    const segments = trailSegmentFeatures(aircraft.A1B2C3, false);
+    expect(segments.length).toBeGreaterThanOrEqual(2);
+    segments.forEach((segment, index) => {
+      expect(segment.id).toBe(`A1B2C3:${index}`);
+    });
+  });
+
+  it("ids are stable across repeated calls over the same trail (unchanged geometry)", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const first = trailSegmentFeatures(aircraft.A1B2C3, false);
+    const second = trailSegmentFeatures(aircraft.A1B2C3, false);
+    expect(first.map((f) => f.id)).toEqual(second.map((f) => f.id));
+  });
+
+  it("carries the dimmed flag passed in, independent of hidden/follow state", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const segments = trailSegmentFeatures(aircraft.A1B2C3, true);
+    expect(segments.every((f) => f.properties?.dimmed === true)).toBe(true);
+  });
+});
+
 describe("trailFeatureCollection -- selected (protectedId, not Followed) lost dimming", () => {
   it("keeps a hidden selected-but-not-followed aircraft's trail visible and flags it dimmed", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
@@ -189,5 +248,116 @@ describe("trailFeatureCollection -- selected (protectedId, not Followed) lost di
 
     const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]), { protectedId: "OTHER" });
     expect(fc.features).toHaveLength(0);
+  });
+});
+
+describe("buildAircraftSourceDiff (#1775)", () => {
+  it("adds a changed hex that still resolves to a visible feature", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3");
+    const diff = buildAircraftSourceDiff(["A1B2C3"], aircraft, new Set());
+    expect(diff.add).toHaveLength(1);
+    expect(diff.add?.[0].id).toBe("A1B2C3");
+    expect(diff.remove).toHaveLength(0);
+  });
+
+  it("removes a changed hex no longer present in the aircraft map at all", () => {
+    const diff = buildAircraftSourceDiff(["GONE123"], {}, new Set());
+    expect(diff.add).toHaveLength(0);
+    expect(diff.remove).toEqual(["GONE123"]);
+  });
+
+  it("removes a changed hex that's present but no longer visible (hidden, no exception)", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    const diff = buildAircraftSourceDiff(["A1B2C3"], hidden, new Set());
+    expect(diff.add).toHaveLength(0);
+    expect(diff.remove).toEqual(["A1B2C3"]);
+  });
+
+  it("only touches the hexes named in changedIcaoHexes, not the whole fleet", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    const diff = buildAircraftSourceDiff(["A1B2C3"], aircraft, new Set());
+    expect(diff.add).toHaveLength(1);
+    expect(diff.add?.[0].id).toBe("A1B2C3");
+  });
+});
+
+describe("buildTrailSourceDiff (#1775)", () => {
+  it("adds every current segment for a newly-touched, visible hex with no prior sync record", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const { diff, syncedSegmentIds } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+    expect(diff.add?.length).toBeGreaterThan(0);
+    expect(diff.remove).toHaveLength(0);
+    expect(syncedSegmentIds.get("A1B2C3")).toEqual(diff.add?.map((f) => f.id));
+  });
+
+  it("a pure append re-upserts every current segment (cheap/harmless) and removes nothing stale", () => {
+    // Deliberately not a suffix-only optimization (see buildTrailSourceDiff's
+    // own doc comment) -- re-adding an unchanged segment is a harmless
+    // upsert, and recomputing fresh every touched-hex tick is what keeps
+    // a reseed (tested separately below) correct without needing extra
+    // state to distinguish "appended" from "replaced".
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+    const firstCount = first.syncedSegmentIds.get("A1B2C3")?.length ?? 0;
+
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+
+    expect(second.diff.remove).toHaveLength(0);
+    expect(second.diff.add).toHaveLength(firstCount + 1);
+    expect(second.syncedSegmentIds.get("A1B2C3")?.length).toBe(firstCount + 1);
+  });
+
+  it("removes every previously-synced segment id for a hex that's no longer visible", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+    const previousIds = first.syncedSegmentIds.get("A1B2C3")!;
+    expect(previousIds.length).toBeGreaterThan(0);
+
+    // No longer in the visible-ids set (e.g. deselected while historyAll is off).
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(), first.syncedSegmentIds);
+    expect(second.diff.remove).toEqual(previousIds);
+    expect(second.diff.add).toHaveLength(0);
+    expect(second.syncedSegmentIds.has("A1B2C3")).toBe(false);
+  });
+
+  it("a trail reseed (wholesale replace) correctly removes stale ids and adds the new set, not just a suffix", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+
+    // Reseed with an entirely different (here, longer) server-fetched trail --
+    // same mechanism as selecting an aircraft (lib/aircraftState.ts's
+    // applyTrailSeed), which replaces trail wholesale rather than appending.
+    aircraft = applyTrailSeed(aircraft, "A1B2C3", [
+      { lat: 9, lon: 9, alt: null },
+      { lat: 9.1, lon: 9.1, alt: null },
+      { lat: 9.2, lon: 9.2, alt: null },
+      { lat: 9.3, lon: 9.3, alt: null },
+    ]);
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+
+    // The reseeded trail's segments must all be (re-)added with their new
+    // geometry -- not silently skipped because the id count happened to
+    // grow, which would leave stale coordinates on screen.
+    expect(second.diff.add?.length).toBe(3);
+    for (const feature of second.diff.add ?? []) {
+      expect((feature.geometry as { coordinates: number[][] }).coordinates[0][0]).toBeGreaterThan(8);
+    }
+  });
+
+  it("only touches the hexes named in changedIcaoHexes", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6") };
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "D4E5F6", lat: 5.1, lon: 6.1 });
+
+    const { diff } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3", "D4E5F6"]), new Map());
+    expect(diff.add?.every((f) => f.properties?.icao_hex === "A1B2C3")).toBe(true);
   });
 });
