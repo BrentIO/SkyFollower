@@ -81,59 +81,65 @@ export function ControlsPanel({
   const overallStatus = overallConnectionStatus(wsConnected, roster);
 
   return (
-    <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
+    <>
       {/* Bare floating indicator -- no card/background, per the issue that
           detached this from the aircraft count (now in AircraftListPanel's
-          header). The h-8 w-8 button gives it a comfortable hover/tap hit
-          area around the visually small 2.5x2.5 dot. */}
+          header). Positioned independently of the icon column below (its
+          own top-2/right-2 inset, half the column's top-4/right-4) so it
+          sits tucked into the true corner -- equidistant from both edges --
+          rather than inheriting the column's shared alignment. The h-8 w-8
+          button gives it a comfortable hover/tap hit area around the
+          visually small 2.5x2.5 dot. */}
       <span
         title={connectionTooltip(wsConnected, roster)}
-        className="pointer-events-auto flex h-8 w-8 items-center justify-center"
+        className="pointer-events-auto absolute top-2 right-2 flex h-8 w-8 items-center justify-center"
       >
         <span className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`} />
       </span>
 
-      <div className="pointer-events-auto flex flex-col gap-2">
-        <IconButton
-          label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
-          icon={fullscreenIcon(fullscreen)}
-          active={fullscreen}
-          onClick={onToggleFullscreen}
-          disabled={fullscreenDisabled}
-          size="md"
-        />
-        <button
-          type="button"
-          onClick={onRecenter}
-          disabled={recenterDisabled}
-          title="Return to center"
-          aria-label="Return to center"
-          className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
-          // Same crosshair markup as the on-map center marker -- see
-          // lib/crosshairIcon.ts's docstring for why they must stay
-          // visually identical. "currentColor" lets the button's own
-          // text-color classes (light/dark) drive the icon color, unlike
-          // the center marker which passes a fixed color of its own.
-          dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
-        />
-        <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
-        <IconButton
-          label="Trails"
-          icon={ROUTE_ICON}
-          active={historyAll}
-          onClick={onToggleHistoryAll}
-          size="md"
-        />
-        <IconButton
-          label="Range Outline"
-          icon={RADAR_ICON}
-          active={rangeOutlineVisible}
-          onClick={onToggleRangeOutline}
-          disabled={rangeOutlineDisabled}
-          size="md"
-        />
-        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
+      <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
+        <div className="pointer-events-auto flex flex-col gap-2">
+          <IconButton
+            label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+            icon={fullscreenIcon(fullscreen)}
+            active={fullscreen}
+            onClick={onToggleFullscreen}
+            disabled={fullscreenDisabled}
+            size="md"
+          />
+          <button
+            type="button"
+            onClick={onRecenter}
+            disabled={recenterDisabled}
+            title="Return to center"
+            aria-label="Return to center"
+            className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
+            // Same crosshair markup as the on-map center marker -- see
+            // lib/crosshairIcon.ts's docstring for why they must stay
+            // visually identical. "currentColor" lets the button's own
+            // text-color classes (light/dark) drive the icon color, unlike
+            // the center marker which passes a fixed color of its own.
+            dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
+          />
+          <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
+          <IconButton
+            label="Trails"
+            icon={ROUTE_ICON}
+            active={historyAll}
+            onClick={onToggleHistoryAll}
+            size="md"
+          />
+          <IconButton
+            label="Range Outline"
+            icon={RADAR_ICON}
+            active={rangeOutlineVisible}
+            onClick={onToggleRangeOutline}
+            disabled={rangeOutlineDisabled}
+            size="md"
+          />
+          <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
