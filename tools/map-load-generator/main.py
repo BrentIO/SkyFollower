@@ -709,7 +709,14 @@ class FleetSimulator:
 
         per_aircraft_stagger = (self.ramp_up_seconds / aircraft_count) if (self.ramp_up_seconds and aircraft_count) else 0.0
         self.start_offsets: dict[int, float] = {i: i * per_aircraft_stagger for i in range(self.lane_seat_count)}
-        self.balloon_start_offset = self.lane_seat_count * per_aircraft_stagger
+        # Independent of the lane-seat stagger sequence entirely (was
+        # `lane_seat_count * per_aircraft_stagger` -- exactly one slot after
+        # the very last lane seat, which approaches the *entire* ramp-up
+        # window as --aircraft-count grows). The balloon is the one aircraft
+        # here meant to exercise the BALL icon shape and its accent-cutout
+        # detail, so it should be visible promptly like everything else
+        # rather than guaranteed to appear last.
+        self.balloon_start_offset = 0.0
 
         self._next_aircraft_number = 0
         self.occupants: dict[int, Occupant] = {}
