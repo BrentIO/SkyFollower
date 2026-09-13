@@ -42,6 +42,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -467,6 +468,17 @@ app = FastAPI(
     version="9999.99.99",
     lifespan=lifespan,
 )
+
+
+@app.get("/", include_in_schema=False)
+def redirect_root_to_map() -> RedirectResponse:
+    """Bare `GET /` has no route of its own -- redirect to the frontend
+    SPA's directory index. The trailing slash matters: redirecting to
+    `/map/` (not `/map`) lands directly on `_SPAStaticFiles`'s `html=True`
+    directory-index handling in one hop, rather than a bare `/map` taking a
+    second redirect through Starlette's own mount-without-trailing-slash
+    handling first."""
+    return RedirectResponse(url="/map/")
 
 
 @app.get("/api/flights", tags=["flights"])

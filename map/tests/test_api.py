@@ -86,6 +86,15 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Stops urllib from transparently following a redirect, so
+    test_get_root_redirects_to_map can assert on the redirect response
+    itself (status + Location header) rather than the page it points to."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 class _Server:
     """A real `python -m map.main` subprocess, bound to freshly-chosen
     ports so parallel xdist workers/tests never collide."""
@@ -141,6 +150,18 @@ class _Server:
     def get_flights(self) -> list[dict]:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/flights", timeout=5) as resp:
             return json.loads(resp.read())
+
+    def get_root(self) -> tuple[int, str]:
+        """(status_code, Location header) for GET / -- a redirect opener
+        that does NOT follow redirects, so the test can assert on the
+        redirect itself rather than wherever it points."""
+        opener = urllib.request.build_opener(_NoRedirect)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.http_port}/")
+        try:
+            resp = opener.open(req, timeout=5)
+            return resp.status, resp.headers.get("Location", "")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers.get("Location", "")
 
     def get_flight_history(self, icao_hex: str) -> tuple[int, dict]:
         """(status_code, body) for GET /api/flights/{icao_hex} -- returns
@@ -333,6 +354,15 @@ def test_get_flights_omits_hidden_aircraft(server):
             return
         time.sleep(0.1)
     raise AssertionError(f"{icao_hex} was never omitted from GET /api/flights after hiding")
+
+
+def test_get_root_redirects_to_map(server):
+    """GET / has no route of its own -- it must redirect to the frontend
+    SPA's directory index at /map/ (trailing slash, so the browser lands
+    directly on _SPAStaticFiles's html=True handling in one hop)."""
+    status, location = server.get_root()
+    assert status == 307
+    assert location == "/map/"
 
 
 def test_get_flights_only_lists_currently_tracked_aircraft(server):
