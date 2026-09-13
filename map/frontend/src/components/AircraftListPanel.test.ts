@@ -125,29 +125,45 @@ describe("row click -- selects the aircraft", () => {
   });
 });
 
-describe("panel mechanics -- edge tab, vertical centering, z-index, opacity", () => {
-  it("is vertically centered on the viewport edge, not top-aligned", () => {
-    expect(panelSource).toContain("top-1/2 right-0");
-    expect(panelSource).toContain("translateY(-50%)");
-    expect(panelSource).not.toContain("top-4 right-4");
+describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)", () => {
+  it("is a real flex sibling (push layout), not an absolute overlay", () => {
+    // #1769: the drawer used to be an absolute top-1/2 overlay translated
+    // by transform; it's now a flex item whose own width the map area
+    // shrinks to accommodate, so it can never cover ControlsPanel and the
+    // map keeps its center centered in whatever width remains.
+    expect(panelSource).toContain("flex h-full flex-none items-stretch overflow-hidden transition-[width]");
+    expect(panelSource).not.toContain("absolute top-1/2 right-0");
+    expect(panelSource).not.toContain("transform:");
+    expect(panelSource).not.toContain("translateY(-50%)");
   });
 
-  it("slides by exactly the panel's own width when closed, not the tab+panel combined width", () => {
+  it("transitions width (not transform) between the tab-only and tab+panel widths", () => {
     expect(panelSource).toContain("const PANEL_WIDTH_PX = 720;");
-    expect(panelSource).toContain("translateX(${open ? 0 : PANEL_WIDTH_PX}px)");
+    expect(panelSource).toContain("const TAB_WIDTH_PX = 24;");
+    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + PANEL_WIDTH_PX : TAB_WIDTH_PX");
+  });
+
+  it("keeps the tab vertically centered within the drawer's own full height, not top-aligned", () => {
+    const tabWrapperIndex = panelSource.indexOf('className="flex h-full flex-none items-center"');
+    expect(tabWrapperIndex).toBeGreaterThan(-1);
   });
 
   it("uses a ◀/▶ edge-tab handle", () => {
     expect(panelSource).toContain("{open ? \"▶\" : \"◀\"}");
   });
 
-  it("reuses MAX_LABEL_Z_INDEX rather than inventing a second stacking constant", () => {
-    expect(panelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder"');
-    expect(panelSource).toContain("zIndex: MAX_LABEL_Z_INDEX");
+  it("spans the drawer's full height, no vertical-centering cap on the panel body", () => {
+    expect(panelSource).not.toContain("max-h-[80vh]");
+    expect(panelSource).toContain("flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white");
+  });
+
+  it("no longer imports or reuses MAX_LABEL_Z_INDEX -- a flex sibling doesn't need to out-stack anything", () => {
+    expect(panelSource).not.toContain("MAX_LABEL_Z_INDEX");
+    expect(panelSource).not.toContain("labelStackOrder");
   });
 
   it("is fully opaque (no /90-style translucency) on the panel body", () => {
-    const bodyIndex = panelSource.indexOf("pointer-events-auto flex max-h-[80vh]");
+    const bodyIndex = panelSource.indexOf("flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white");
     expect(bodyIndex).toBeGreaterThan(-1);
     const callSite = panelSource.slice(bodyIndex, bodyIndex + 200);
     expect(callSite).not.toContain("/90");
