@@ -1,5 +1,6 @@
 import { RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
+import { fullscreenIcon } from "../lib/fullscreen";
 import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
 import type { ProcessorRoster } from "../api/types";
 import { IconButton } from "./IconButton";
@@ -33,15 +34,27 @@ export interface ControlsPanelProps {
   rangeOutlineDisabled: boolean;
   onRecenter: () => void;
   recenterDisabled: boolean;
+  /** Whole-page Fullscreen API toggle -- true once
+   * `document.fullscreenElement` is set, kept in sync via a
+   * `fullscreenchange` listener in MapView.tsx rather than only optimistic
+   * state, since Esc/F11/OS gestures exit fullscreen without going through
+   * `onToggleFullscreen`. */
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+  /** Mirrors `rangeOutlineDisabled`'s convention: the button always
+   * renders, just disabled, rather than being hidden outright, when
+   * `document.fullscreenEnabled` is false (some embedded/iframe contexts
+   * and older Safari versions). */
+  fullscreenDisabled: boolean;
 }
 
 // Top-right floating controls: connection-status dot + aircraft-tracked
 // count (status box), the recenter button below it (its own separate
 // square control), and -- below that -- a vertically stacked column of
 // icon buttons (one per row, matching the recenter button) for the
-// "History: All", "Labels: All", "Map Labels", and "Range Outline"
-// toggles. Icon buttons share the exact rendering mechanism (IconButton,
-// toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
+// "History: All", "Labels: All", "Map Labels", "Range Outline", and
+// "Fullscreen" toggles. Icon buttons share the exact rendering mechanism
+// (IconButton, toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
 // via IconButton's "md" size prop to match the recenter button's own
 // h-9 w-9 -- AircraftDetailPanel's row keeps IconButton's default size and
 // its own horizontal layout, unrelated to this column. No persistent side
@@ -61,6 +74,9 @@ export function ControlsPanel({
   rangeOutlineDisabled,
   onRecenter,
   recenterDisabled,
+  fullscreen,
+  onToggleFullscreen,
+  fullscreenDisabled,
 }: ControlsPanelProps) {
   const overallStatus = overallConnectionStatus(wsConnected, roster);
 
@@ -107,6 +123,14 @@ export function ControlsPanel({
           active={rangeOutlineVisible}
           onClick={onToggleRangeOutline}
           disabled={rangeOutlineDisabled}
+          size="md"
+        />
+        <IconButton
+          label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          icon={fullscreenIcon(fullscreen)}
+          active={fullscreen}
+          onClick={onToggleFullscreen}
+          disabled={fullscreenDisabled}
           size="md"
         />
       </div>

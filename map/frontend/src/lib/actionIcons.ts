@@ -30,6 +30,14 @@
 // labels; Type = a stylized "A", deliberately distinct from Tags so the
 // two label toggles don't look identical; Radar = concentric arcs + sweep
 // needle, reading directly as reception range/coverage).
+//
+// MAXIMIZE_ICON/MINIMIZE_ICON are Lucide's "Maximize"/"Minimize" glyphs
+// (fetched byte-for-byte from lucide-icons/lucide's icons/maximize.svg and
+// icons/minimize.svg), same fetch-don't-guess convention as above. Used
+// together as a pair by ControlsPanel's fullscreen toggle -- Maximize
+// (four corner brackets not quite forming a closed square) when the page
+// isn't fullscreen, swapping to Minimize (the same four corners pointing
+// inward) once it is, per the issue's icon-state convention.
 
 export interface IconPath {
   d: string;
@@ -135,4 +143,22 @@ export const RADAR_ICON: IconSpec = {
     { d: "m13.41 10.59 5.66-5.66" },
   ],
   circles: [{ cx: 12, cy: 12, r: 2 }],
+};
+
+export const MAXIMIZE_ICON: IconSpec = {
+  paths: [
+    { d: "M8 3H5a2 2 0 0 0-2 2v3" },
+    { d: "M21 8V5a2 2 0 0 0-2-2h-3" },
+    { d: "M3 16v3a2 2 0 0 0 2 2h3" },
+    { d: "M16 21h3a2 2 0 0 0 2-2v-3" },
+  ],
+};
+
+export const MINIMIZE_ICON: IconSpec = {
+  paths: [
+    { d: "M8 3v3a2 2 0 0 1-2 2H3" },
+    { d: "M21 8h-3a2 2 0 0 1-2-2V3" },
+    { d: "M3 16h3a2 2 0 0 1 2 2v3" },
+    { d: "M16 21v-3a2 2 0 0 1 2-2h3" },
+  ],
 };
