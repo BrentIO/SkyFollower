@@ -362,7 +362,10 @@ def run(
 def main() -> None:
     parser = argparse.ArgumentParser(description="SkyFollower Map Load Generator")
     parser.add_argument("--host", required=True, help="Target map instance's UDP listen host")
-    parser.add_argument("--port", required=True, type=int, help="Target map instance's UDP listen port (MAP_LISTEN_PORT)")
+    parser.add_argument(
+        "--port", type=int, default=30500,
+        help="Target map instance's UDP listen port (MAP_LISTEN_PORT) (default: 30500)",
+    )
     parser.add_argument(
         "--aircraft-count", type=int, default=10,
         help="Number of simulated aircraft, each a distinct synthetic icao_hex/ident (default: 10)",
