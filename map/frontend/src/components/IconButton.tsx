@@ -18,9 +18,19 @@ export interface IconButtonProps {
    * the two existing callers that need this; every other button omits it
    * and behaves exactly as before. */
   disabled?: boolean;
+  /** "sm" (32x32px, the default) keeps AircraftDetailPanel's action row
+   * exactly as it always was. ControlsPanel passes "md" (36x36px) so its
+   * toggle row matches the recenter button's own h-9 w-9 square instead of
+   * bumping every caller of this shared component. */
+  size?: "sm" | "md";
 }
 
-export function IconButton({ label, icon, active, onClick, disabled = false }: IconButtonProps) {
+const SIZE_CLASSES: Record<"sm" | "md", string> = {
+  sm: "h-8 w-8",
+  md: "h-9 w-9",
+};
+
+export function IconButton({ label, icon, active, onClick, disabled = false, size = "sm" }: IconButtonProps) {
   return (
     <button
       type="button"
@@ -29,7 +39,7 @@ export function IconButton({ label, icon, active, onClick, disabled = false }: I
       title={label}
       aria-label={label}
       aria-pressed={active}
-      className={`flex h-8 w-8 items-center justify-center rounded border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(active)}`}
+      className={`flex ${SIZE_CLASSES[size]} items-center justify-center rounded border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(active)}`}
     >
       <ActionIcon spec={icon} />
     </button>
