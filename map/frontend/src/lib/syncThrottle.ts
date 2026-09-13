@@ -82,3 +82,14 @@ export function createTrailingThrottle(intervalMs: number, now: () => number = D
 // Isolate, Follow, History: All) landing in the same tick -- which is
 // exactly the case a full source rebuild shouldn't pay for more than once.
 export const MAP_SYNC_THROTTLE_MS = 200;
+
+// The coalescing window for MapView's `"move"`-driven screen-position sync
+// (InfoBoxLayer/AircraftDetailPanel repositioning during pan/zoom/Follow).
+// Deliberately tighter than MAP_SYNC_THROTTLE_MS: unlike the data-source
+// sync above (which waits on new WebSocket data), this handler only
+// re-projects positions the app already has, so there's no reason to trail
+// the same distance behind -- this just needs to read as instantaneous
+// during continuous camera movement while still bounding the unthrottled
+// per-frame `project()`-over-the-fleet cost `"move"` would otherwise pay on
+// every transform tick.
+export const SCREEN_POSITION_THROTTLE_MS = 50;
