@@ -39,14 +39,22 @@ const COORD_PRECISION = 1;
 // cosmetic highlight that would just look like a fill defect.
 //
 // We tell the two apart by the Accent/outline path-length ratio. Measured
-// against the current vendored set (every shape with 2+ paths, n=164):
-// BALL (balloon gore lines + basket) is a sole extreme outlier at ~11.4;
-// every other shape is at or below ~2.5 (median ~0.36). A threshold of 5
-// sits cleanly in the ~2.5-11.4 gap, so it isolates today's outlier(s)
-// without catching any shape whose Accent layer is merely cosmetic. If a
-// future vendored SVG lands with a similarly detail-bearing Accent layer,
-// it will cross this threshold and pick up a cutout automatically.
-const ACCENT_CUTOUT_RATIO_THRESHOLD = 5;
+// against the current vendored set (every shape with 2+ paths, n=164): the
+// full distribution decays smoothly and continuously from BALL's ~11.4
+// down through EC35's ~2.5, E3TF/E3CF/A225/MIRA's ~0.7-0.9, and on down to
+// ~0.03 -- there is no second natural cluster below BALL the way BALL
+// itself stands apart from everything else (~2.5 vs. BALL's ~11.4, a
+// ~4.5-wide gap). A threshold of 2 sits just below EC35's ratio and just
+// above the next cluster starting at ~0.9, so it's a conservative, once
+// re-verified step down from the original all-shapes outlier (BALL alone)
+// to pick up EC35 (helicopter) as well, without reaching into the
+// continuous part of the curve where the ratio alone can no longer
+// distinguish real detail from a cosmetic highlight -- going lower than
+// this needs a human visually reviewing each candidate's rendered result,
+// not another blind threshold drop. If a future vendored SVG lands with a
+// similarly detail-bearing Accent layer, it will cross this threshold and
+// pick up a cutout automatically.
+const ACCENT_CUTOUT_RATIO_THRESHOLD = 2;
 
 // Fallback stroke width (source units, in the SVG's 80x80-unit space) for
 // an Accent path whose `style` has no parseable `stroke-width` -- shouldn't
