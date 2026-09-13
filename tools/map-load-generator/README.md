@@ -35,10 +35,10 @@ meaningfully bigger tool, not something bolted onto a UDP packet sender.
 ```bash
 pip install -r requirements.txt
 
-python main.py --host 192.168.1.20 --port 5566 \
+python main.py --host 192.168.1.20 --port 30500 \
     --aircraft-count 200 --position-rate 2 --duration 300
 
-python main.py --host 192.168.1.20 --port 5566 \
+python main.py --host 192.168.1.20 --port 30500 \
     --aircraft-count 50 --mode stress
 ```
 

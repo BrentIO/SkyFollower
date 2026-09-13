@@ -24,10 +24,10 @@ exercise `map`'s UDP ingestion rate, Redis write rate, and WS broadcast
 behavior; a headless-browser rendering benchmark is a separate concern.
 
 Usage:
-    python main.py --host 192.168.1.20 --port 5566 \
+    python main.py --host 192.168.1.20 --port 30500 \
         --aircraft-count 200 --position-rate 2 --duration 300
 
-    python main.py --host 192.168.1.20 --port 5566 \
+    python main.py --host 192.168.1.20 --port 30500 \
         --aircraft-count 50 --mode stress
 """
 
