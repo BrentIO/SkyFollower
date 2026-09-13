@@ -131,16 +131,19 @@ describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)
     // by transform; it's now a flex item whose own width the map area
     // shrinks to accommodate, so it can never cover ControlsPanel and the
     // map keeps its center centered in whatever width remains.
-    expect(panelSource).toContain("flex h-full flex-none items-stretch overflow-hidden transition-[width]");
+    expect(panelSource).toContain("flex h-full flex-none items-stretch overflow-hidden");
     expect(panelSource).not.toContain("absolute top-1/2 right-0");
     expect(panelSource).not.toContain("transform:");
     expect(panelSource).not.toContain("translateY(-50%)");
   });
 
   it("transitions width (not transform) between the tab-only and tab+panel widths", () => {
-    expect(panelSource).toContain("const PANEL_WIDTH_PX = 720;");
     expect(panelSource).toContain("const TAB_WIDTH_PX = 24;");
-    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + PANEL_WIDTH_PX : TAB_WIDTH_PX");
+    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX");
+  });
+
+  it("suppresses the open/close width transition while actively resize-dragging (#1784)", () => {
+    expect(panelSource).toContain('resizing ? "" : "transition-[width] duration-200"');
   });
 
   it("keeps the tab vertically centered within the drawer's own full height, not top-aligned", () => {
@@ -189,5 +192,55 @@ describe("performance -- throttled row rebuild", () => {
 
   it("cancels any pending throttled run on unmount", () => {
     expect(panelSource).toContain("throttleRef.current.cancel()");
+  });
+});
+
+describe("drag-to-resize (#1784)", () => {
+  it("seeds width from persisted storage and reads/writes through aircraftListPanelPersistence.ts", () => {
+    expect(panelSource).toContain(
+      'import {\n  clampPanelWidth,\n  loadPersistedPanelWidth,\n  savePersistedPanelWidth,\n} from "../lib/aircraftListPanelPersistence"',
+    );
+    expect(panelSource).toContain("useState(() => loadPersistedPanelWidth())");
+    expect(panelSource).toContain("savePersistedPanelWidth(widthRef.current)");
+  });
+
+  it("only renders the resize handle while open", () => {
+    const handleIndex = panelSource.indexOf('aria-label="Resize aircraft list"');
+    expect(handleIndex).toBeGreaterThan(-1);
+    const callSite = panelSource.slice(Math.max(0, handleIndex - 150), handleIndex);
+    expect(callSite).toContain("{open && (");
+  });
+
+  it("wires the handle to pointer down/move/up/cancel, using pointer capture", () => {
+    expect(panelSource).toContain("onPointerDown={handleResizeStart}");
+    expect(panelSource).toContain("onPointerMove={handleResizeMove}");
+    expect(panelSource).toContain("onPointerUp={handleResizeEnd}");
+    expect(panelSource).toContain("onPointerCancel={handleResizeEnd}");
+    expect(panelSource).toContain("e.currentTarget.setPointerCapture(e.pointerId)");
+    expect(panelSource).toContain("e.currentTarget.releasePointerCapture(e.pointerId)");
+  });
+
+  it("computes the drag delta as startWidth + (startX - currentX), clamped", () => {
+    expect(panelSource).toContain(
+      "dragStartRef.current.startWidth + (dragStartRef.current.startX - e.clientX)",
+    );
+    expect(panelSource).toContain("clampPanelWidth(Math.min(raw, viewportMax))");
+  });
+
+  it("adds a viewport-aware ceiling so the map area keeps a minimum width during a drag", () => {
+    expect(panelSource).toContain("const MIN_MAP_AREA_WIDTH_PX = 320;");
+    expect(panelSource).toContain("window.innerWidth - TAB_WIDTH_PX - MIN_MAP_AREA_WIDTH_PX");
+  });
+
+  it("is a proper ARIA vertical separator, not an unlabeled div", () => {
+    const handleIndex = panelSource.indexOf('aria-label="Resize aircraft list"');
+    const callSite = panelSource.slice(handleIndex - 100, handleIndex + 100);
+    expect(callSite).toContain('role="separator"');
+    expect(callSite).toContain('aria-orientation="vertical"');
+  });
+
+  it("scrolls horizontally rather than overflowing when dragged narrower than the table's content", () => {
+    expect(panelSource).toContain('className="overflow-auto"');
+    expect(panelSource).not.toContain('className="overflow-y-auto"');
   });
 });
