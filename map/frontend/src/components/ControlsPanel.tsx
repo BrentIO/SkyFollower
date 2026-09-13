@@ -13,7 +13,6 @@ export interface ControlsPanelProps {
    * last-known roster snapshot. */
   wsConnected: boolean;
   roster: ProcessorRoster;
-  aircraftCount: number;
   historyAll: boolean;
   onToggleHistoryAll: () => void;
   labelsAll: boolean;
@@ -48,22 +47,22 @@ export interface ControlsPanelProps {
   fullscreenDisabled: boolean;
 }
 
-// Top-right floating controls: connection-status dot + aircraft-tracked
-// count (status box), and -- below that -- one unified vertically stacked
-// column mixing the recenter button (its own separately-styled square
-// control -- a momentary action, not an on/off toggle) with the icon
-// buttons for the "Fullscreen", "Labels", "Trails",
+// Top-right floating controls: a bare connection-status dot (no card/
+// background of its own -- see the issue that moved the aircraft count out
+// of this component into AircraftListPanel's header, leaving the dot as
+// an independent floating indicator), and -- below that -- one unified
+// vertically stacked column mixing the recenter button (its own
+// separately-styled square control -- a momentary action, not an on/off
+// toggle) with the icon buttons for the "Fullscreen", "Labels", "Trails",
 // "Range Outline", and "Map Labels" toggles, in that top-to-bottom order.
 // Icon buttons share the exact rendering mechanism (IconButton,
 // toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
 // via IconButton's "md" size prop to match the recenter button's own
 // h-9 w-9 -- AircraftDetailPanel's row keeps IconButton's default size and
-// its own horizontal layout, unrelated to this column. No persistent side
-// panel in v1 -- see the issue's Page layout section.
+// its own horizontal layout, unrelated to this column.
 export function ControlsPanel({
   wsConnected,
   roster,
-  aircraftCount,
   historyAll,
   onToggleHistoryAll,
   labelsAll,
@@ -83,15 +82,16 @@ export function ControlsPanel({
 
   return (
     <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
-      <div className="pointer-events-auto flex flex-col gap-2 rounded-md bg-white/90 p-3 text-sm text-slate-900 shadow-md dark:bg-slate-900/90 dark:text-slate-100">
-        <div className="flex items-center gap-2">
-          <span
-            title={connectionTooltip(wsConnected, roster)}
-            className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`}
-          />
-          <span className="tabular-nums">{aircraftCount} aircraft</span>
-        </div>
-      </div>
+      {/* Bare floating indicator -- no card/background, per the issue that
+          detached this from the aircraft count (now in AircraftListPanel's
+          header). The h-8 w-8 button gives it a comfortable hover/tap hit
+          area around the visually small 2.5x2.5 dot. */}
+      <span
+        title={connectionTooltip(wsConnected, roster)}
+        className="pointer-events-auto flex h-8 w-8 items-center justify-center"
+      >
+        <span className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`} />
+      </span>
 
       <div className="pointer-events-auto flex flex-col gap-2">
         <IconButton
