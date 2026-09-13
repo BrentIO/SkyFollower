@@ -37,11 +37,15 @@ export interface ControlsPanelProps {
 
 // Top-right floating controls: connection-status dot + aircraft-tracked
 // count (status box), the recenter button below it (its own separate
-// square control), and -- below that -- an icon-button row for the
+// square control), and -- below that -- a vertically stacked column of
+// icon buttons (one per row, matching the recenter button) for the
 // "History: All", "Labels: All", "Map Labels", and "Range Outline"
 // toggles. Icon buttons share the exact rendering mechanism (IconButton,
-// toggleButtonClass coloring) as AircraftDetailPanel's action row. No
-// persistent side panel in v1 -- see the issue's Page layout section.
+// toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
+// via IconButton's "md" size prop to match the recenter button's own
+// h-9 w-9 -- AircraftDetailPanel's row keeps IconButton's default size and
+// its own horizontal layout, unrelated to this column. No persistent side
+// panel in v1 -- see the issue's Page layout section.
 export function ControlsPanel({
   wsConnected,
   roster,
@@ -87,16 +91,23 @@ export function ControlsPanel({
         dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
       />
 
-      <div className="pointer-events-auto flex gap-2">
-        <IconButton label="History: All" icon={ROUTE_ICON} active={historyAll} onClick={onToggleHistoryAll} />
-        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} />
-        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} />
+      <div className="pointer-events-auto flex flex-col gap-2">
+        <IconButton
+          label="History: All"
+          icon={ROUTE_ICON}
+          active={historyAll}
+          onClick={onToggleHistoryAll}
+          size="md"
+        />
+        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
+        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
         <IconButton
           label="Range Outline"
           icon={RADAR_ICON}
           active={rangeOutlineVisible}
           onClick={onToggleRangeOutline}
           disabled={rangeOutlineDisabled}
+          size="md"
         />
       </div>
     </div>

@@ -20,6 +20,20 @@ describe("status box -- connection dot + aircraft count only", () => {
 });
 
 describe("icon-button row -- History, Labels, Map Labels, Range Outline", () => {
+  it("stacks the four buttons vertically, one per row, matching the recenter button's layout", () => {
+    expect(controlsPanelSource).toContain('<div className="pointer-events-auto flex flex-col gap-2">');
+    expect(controlsPanelSource).not.toContain('<div className="pointer-events-auto flex gap-2">');
+  });
+
+  it("sizes each button to match the recenter button's h-9 w-9, via IconButton's size prop", () => {
+    const labels = ["History: All", "Labels: All", "Map Labels", "Range Outline"];
+    for (const label of labels) {
+      const index = controlsPanelSource.indexOf(`label="${label}"`);
+      const callSite = controlsPanelSource.slice(index, index + 250);
+      expect(callSite).toContain('size="md"');
+    }
+  });
+
   it("renders all four buttons in order below the recenter button", () => {
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const labels = ["History: All", "Labels: All", "Map Labels", "Range Outline"];

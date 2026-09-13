@@ -21,6 +21,13 @@ describe("IconButton / ActionIcon -- shared icon-only button used by both Aircra
     expect(iconButtonSource).toContain("disabled={disabled}");
   });
 
+  it("supports an optional size prop, defaulting to the original 32x32px (sm) size", () => {
+    expect(iconButtonSource).toContain('size = "sm"');
+    expect(iconButtonSource).toContain('sm: "h-8 w-8"');
+    expect(iconButtonSource).toContain('md: "h-9 w-9"');
+    expect(iconButtonSource).toContain("SIZE_CLASSES[size]");
+  });
+
   it("renders icons as stroke-based, 18x18, viewBox 0 0 24 24, stroke-width 2, round caps/joins", () => {
     const svgOpenIndex = iconButtonSource.indexOf("<svg");
     const svgTag = iconButtonSource.slice(svgOpenIndex, iconButtonSource.indexOf(">", svgOpenIndex) + 1);
