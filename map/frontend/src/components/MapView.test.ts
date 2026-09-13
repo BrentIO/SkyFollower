@@ -522,3 +522,33 @@ describe("Fullscreen state sync -- fullscreenchange listener", () => {
     expect(mapViewSource.slice(addIndex, closeIndex)).not.toContain("useEffect(");
   });
 });
+
+describe("screen-position sync on 'move' -- throttled (#1776)", () => {
+  it("registers a throttled wrapper on 'move', not syncScreenPositions directly", () => {
+    expect(mapViewSource).toContain('map.on("move", throttledSyncScreenPositions);');
+    expect(mapViewSource).not.toContain('map.on("move", syncScreenPositions);');
+  });
+
+  it("unregisters the same throttled wrapper on cleanup", () => {
+    expect(mapViewSource).toContain('map.off("move", throttledSyncScreenPositions);');
+  });
+
+  it("routes the wrapper through a dedicated throttle instance, not the data-source sync's own", () => {
+    expect(mapViewSource).toContain("screenPositionThrottleRef.current.request(syncScreenPositions)");
+    expect(mapViewSource).toContain("createTrailingThrottle(SCREEN_POSITION_THROTTLE_MS)");
+  });
+
+  it("cancels the screen-position throttle's pending trailing run on unmount", () => {
+    const refIndex = mapViewSource.indexOf("screenPositionThrottleRef = useRef(");
+    const cancelIndex = mapViewSource.indexOf("screenPositionThrottleRef.current.cancel()");
+    expect(refIndex).toBeGreaterThan(-1);
+    expect(cancelIndex).toBeGreaterThan(refIndex);
+  });
+
+  it("still calls syncScreenPositions directly (unthrottled) once right after registering the listener", () => {
+    // The initial paint shouldn't wait on the throttle's own window.
+    const registerIndex = mapViewSource.indexOf('map.on("move", throttledSyncScreenPositions);');
+    const callSite = mapViewSource.slice(registerIndex, registerIndex + 200);
+    expect(callSite).toContain("syncScreenPositions();");
+  });
+});

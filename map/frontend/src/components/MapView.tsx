@@ -46,7 +46,7 @@ import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
-import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
+import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS, SCREEN_POSITION_THROTTLE_MS } from "../lib/syncThrottle";
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
@@ -362,6 +362,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
   }, [historyAll, aircraft, seedTrailFor]);
 
+  // One throttle instance for this component's whole lifetime (not
+  // per-effect-run) so `"move"` -- which fires on every camera-transform
+  // frame, continuously for the duration of any pan/pinch/easeTo -- can't
+  // trigger an unthrottled full-fleet `project()` pass per frame. See
+  // syncThrottle.ts's SCREEN_POSITION_THROTTLE_MS docstring for why this is
+  // a separate, tighter window than the data-source sync's own throttle
+  // below rather than reusing it.
+  const screenPositionThrottleRef = useRef(createTrailingThrottle(SCREEN_POSITION_THROTTLE_MS));
+  useEffect(() => {
+    return () => screenPositionThrottleRef.current.cancel();
+  }, []);
+
   // --- Map construction (once) ---------------------------------------
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -408,6 +420,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
         positions[a.icao_hex] = { x: p.x, y: p.y, offset };
       }
       setScreenPositions(positions);
+    }
+
+    // The throttled wrapper is what's actually registered on "move" below
+    // -- syncScreenPositions() is still called directly, unthrottled, once
+    // right after registration, so the initial paint isn't delayed by the
+    // throttle's own window.
+    function throttledSyncScreenPositions() {
+      screenPositionThrottleRef.current.request(syncScreenPositions);
     }
 
     map.on("load", () => {
@@ -703,13 +723,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
         AIRCRAFT_LAYER_ID,
       );
 
-      map.on("move", syncScreenPositions);
+      map.on("move", throttledSyncScreenPositions);
       syncScreenPositions();
       setMapLoaded(true);
     });
 
     return () => {
-      map.off("move", syncScreenPositions);
+      map.off("move", throttledSyncScreenPositions);
       map.remove();
       mapRef.current = null;
     };
