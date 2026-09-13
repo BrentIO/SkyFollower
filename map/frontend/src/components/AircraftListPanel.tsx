@@ -3,7 +3,6 @@ import type { AircraftMap } from "../lib/aircraftState";
 import { buildAircraftListRows, type AircraftListRow } from "../lib/aircraftListRow";
 import { nextAircraftListSortState, sortAircraftListRows, type AircraftListSortState } from "../lib/aircraftListSort";
 import type { CenterPoint } from "../lib/config";
-import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
 import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 
@@ -76,10 +75,16 @@ const DEFAULT_SORT_STATE: AircraftListSortState = { columnKey: "distance", dir: 
 
 // Fixed (not resizable), wide enough for all six columns without wrapping
 // at a normal viewport width -- see the issue's "Width" note. Applied via
-// inline style (both here and in the wrapper's closed-state translateX
-// below) rather than a Tailwind arbitrary-value class, since Tailwind's
-// JIT scanner can't see a class name built from a template literal.
+// inline style (both here and in the wrapper's open/closed width below)
+// rather than a Tailwind arbitrary-value class, since Tailwind's JIT
+// scanner can't see a class name built from a template literal.
 const PANEL_WIDTH_PX = 720;
+
+// The edge tab's own width (h-12 w-6 button -- see its className below).
+// Kept as a named constant since the wrapper's open/closed width (below)
+// needs it alongside PANEL_WIDTH_PX, rather than hardcoding "24" a second
+// time disconnected from the button's own w-6 class.
+const TAB_WIDTH_PX = 24;
 
 const ROW_BAND_EVEN = "bg-white dark:bg-slate-900";
 const ROW_BAND_ODD = "bg-slate-50 dark:bg-slate-800/60";
@@ -131,6 +136,14 @@ export interface AircraftListPanelProps {
 // centered on the viewport (not top-aligned like tar1090's own handle) so
 // it can never collide with ControlsPanel's top-right icon column/status
 // dot, both of which are anchored top-right.
+//
+// A real flex sibling of the map area (see MapView.tsx's root layout), not
+// an absolute overlay on top of it -- this component's own box width is
+// what actually pushes the map narrower while open, so the drawer can
+// never cover ControlsPanel (which tracks the map area's own, now-
+// narrower, right edge) and the map keeps its configured center centered
+// in whatever width remains, the same way resizing any MapLibre container
+// does.
 export function AircraftListPanel({ aircraft, aircraftCount, center, selected, onSelect }: AircraftListPanelProps) {
   // Closed by default -- an on-demand addition to the view, not something
   // that should claim screen space (and partially occlude the map) on
@@ -180,32 +193,35 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
   }
 
   return (
-    // Translates by exactly the *panel's* own width (PANEL_WIDTH_PX, below
-    // -- not this wrapper's combined tab+panel width, which `translate-x-full`
-    // would use) when closed. That difference is what keeps the tab flush
-    // against the viewport's right edge (still visible/clickable to reopen)
-    // while only the panel itself slides past it, off-screen -- rather than
-    // dragging the tab off-screen along with the panel.
+    // The wrapper's own inline-style `width` (not a `transform`) is what's
+    // transitioned -- a transform doesn't change a flex sibling's layout
+    // box the way it could get away with as an absolute overlay, which is
+    // exactly what let the map area's box actually shrink/grow here.
+    // `overflow-hidden` clips the panel content out of view once the
+    // wrapper narrows to just the tab's own width, rather than reflowing
+    // or wrapping it.
     <div
-      className="pointer-events-none absolute top-1/2 right-0 flex items-center transition-transform duration-200"
-      style={{
-        zIndex: MAX_LABEL_Z_INDEX,
-        transform: `translateY(-50%) translateX(${open ? 0 : PANEL_WIDTH_PX}px)`,
-      }}
+      className="flex h-full flex-none items-stretch overflow-hidden transition-[width] duration-200"
+      style={{ width: open ? TAB_WIDTH_PX + PANEL_WIDTH_PX : TAB_WIDTH_PX }}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        title={open ? "Close aircraft list" : "Open aircraft list"}
-        aria-label={open ? "Close aircraft list" : "Open aircraft list"}
-        aria-expanded={open}
-        className="pointer-events-auto flex h-12 w-6 items-center justify-center rounded-l-md bg-white text-slate-700 shadow-md hover:bg-slate-50 dark:bg-slate-900 dark:text-white dark:hover:bg-slate-800"
-      >
-        {open ? "▶" : "◀"}
-      </button>
+      {/* Tab stays vertically centered within the drawer's full height --
+          not top-aligned like tar1090's own handle -- so it can never
+          collide with ControlsPanel's top-right icon column/status dot. */}
+      <div className="flex h-full flex-none items-center" style={{ width: TAB_WIDTH_PX }}>
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          title={open ? "Close aircraft list" : "Open aircraft list"}
+          aria-label={open ? "Close aircraft list" : "Open aircraft list"}
+          aria-expanded={open}
+          className="flex h-12 w-6 items-center justify-center rounded-l-md bg-white text-slate-700 shadow-md hover:bg-slate-50 dark:bg-slate-900 dark:text-white dark:hover:bg-slate-800"
+        >
+          {open ? "▶" : "◀"}
+        </button>
+      </div>
 
       <div
-        className="pointer-events-auto flex max-h-[80vh] flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+        className="flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
         style={{ width: PANEL_WIDTH_PX }}
       >
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-700">

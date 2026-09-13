@@ -885,43 +885,51 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }));
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={mapContainerRef} className="h-full w-full" />
-      {mapLoaded && (
-        <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
-      )}
-      {selectedAircraft && (
-        <AircraftDetailPanel
-          aircraft={selectedAircraft}
-          center={config.center}
-          onClose={() => setSelected(new Set())}
-          isolateActive={isolateEnabled}
-          onToggleIsolate={() => setIsolateEnabled((prev) => !prev)}
-          onZoomTo={handleZoomTo}
-          followActive={followId === selectedIcaoHex}
-          onToggleFollow={handleToggleFollow}
-          tracePointsActive={tracePointsEnabled}
-          onToggleTracePoints={() => setTracePointsEnabled((prev) => !prev)}
+    // Flex row: the map area (below) and AircraftListPanel are real
+    // siblings, not an overlay on top of an unchanged-width map -- so the
+    // drawer's own box width actually pushes the map narrower while open
+    // (see the issue this implements). `min-w-0` overrides a flex item's
+    // default `min-width: auto`, which would otherwise refuse to let the
+    // map area shrink below its content's natural size.
+    <div className="flex h-full w-full">
+      <div className="relative min-w-0 flex-1">
+        <div ref={mapContainerRef} className="h-full w-full" />
+        {mapLoaded && (
+          <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
+        )}
+        {selectedAircraft && (
+          <AircraftDetailPanel
+            aircraft={selectedAircraft}
+            center={config.center}
+            onClose={() => setSelected(new Set())}
+            isolateActive={isolateEnabled}
+            onToggleIsolate={() => setIsolateEnabled((prev) => !prev)}
+            onZoomTo={handleZoomTo}
+            followActive={followId === selectedIcaoHex}
+            onToggleFollow={handleToggleFollow}
+            tracePointsActive={tracePointsEnabled}
+            onToggleTracePoints={() => setTracePointsEnabled((prev) => !prev)}
+          />
+        )}
+        <ControlsPanel
+          wsConnected={connected}
+          roster={roster}
+          historyAll={historyAll}
+          onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
+          labelsAll={labelsAll}
+          onToggleLabelsAll={() => setLabelsAll((prev) => !prev)}
+          mapLabelsOn={mapLabelsOn}
+          onToggleMapLabels={() => setMapLabelsOn((prev) => !prev)}
+          rangeOutlineVisible={rangeOutlineVisible}
+          onToggleRangeOutline={() => setRangeOutlineVisible((prev) => !prev)}
+          rangeOutlineDisabled={!config.center}
+          onRecenter={handleRecenter}
+          recenterDisabled={!config.center}
+          fullscreen={fullscreen}
+          onToggleFullscreen={handleToggleFullscreen}
+          fullscreenDisabled={!fullscreenSupported}
         />
-      )}
-      <ControlsPanel
-        wsConnected={connected}
-        roster={roster}
-        historyAll={historyAll}
-        onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
-        labelsAll={labelsAll}
-        onToggleLabelsAll={() => setLabelsAll((prev) => !prev)}
-        mapLabelsOn={mapLabelsOn}
-        onToggleMapLabels={() => setMapLabelsOn((prev) => !prev)}
-        rangeOutlineVisible={rangeOutlineVisible}
-        onToggleRangeOutline={() => setRangeOutlineVisible((prev) => !prev)}
-        rangeOutlineDisabled={!config.center}
-        onRecenter={handleRecenter}
-        recenterDisabled={!config.center}
-        fullscreen={fullscreen}
-        onToggleFullscreen={handleToggleFullscreen}
-        fullscreenDisabled={!fullscreenSupported}
-      />
+      </div>
       <AircraftListPanel
         aircraft={aircraft}
         aircraftCount={Object.keys(aircraft).length}
