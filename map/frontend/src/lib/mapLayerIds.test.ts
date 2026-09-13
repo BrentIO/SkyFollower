@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   AIRCRAFT_LAYER_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
-  CENTER_POINT_LABEL_LAYER_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_RING_LABEL_LAYER_ID,
   RANGE_RING_LAYER_ID,
@@ -30,8 +29,7 @@ describe("SELECTABLE_LAYER_IDS", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(RANGE_OUTLINE_LAYER_ID);
   });
 
-  it("excludes the center reference-point layers", () => {
+  it("excludes the center reference-point layer", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(CENTER_POINT_CIRCLE_LAYER_ID);
-    expect(SELECTABLE_LAYER_IDS).not.toContain(CENTER_POINT_LABEL_LAYER_ID);
   });
 });

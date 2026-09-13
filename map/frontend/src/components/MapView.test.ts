@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
-import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { hasPosition } from "../lib/featureCollections";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
@@ -322,14 +321,10 @@ function extractLayerPaint(layerIdConstant: string): Record<string, unknown> {
   const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
   const paintLiteral = mapViewSource.slice(objectOpenIndex, objectCloseIndex + 1);
 
-  // The center point label's paint literal references the imported
-  // MUTED_GRAY constant by name (not a literal string), so it must be
-  // supplied as an in-scope binding here -- same reasoning as the
-  // aircraft/isolate expression evaluators above.
   // eslint-disable-next-line no-new-func -- evaluating a plain object literal
   // extracted from our own source, not user input.
-  const fn = new Function("MUTED_GRAY", `return (${paintLiteral});`);
-  return fn(MUTED_GRAY);
+  const fn = new Function(`return (${paintLiteral});`);
+  return fn();
 }
 
 describe("center point layer -- visible, and behind aircraft icons", () => {
@@ -354,21 +349,10 @@ describe("center point layer -- visible, and behind aircraft icons", () => {
     expect(addLayerBeforeId("CENTER_POINT_CIRCLE_LAYER_ID")).toBe("AIRCRAFT_LAYER_ID");
   });
 
-  it("inserts the label layer before the aircraft icon layer too", () => {
-    expect(addLayerBeforeId("CENTER_POINT_LABEL_LAYER_ID")).toBe("AIRCRAFT_LAYER_ID");
-  });
-
   it("the circle layer paints a fully visible black dot -- no opacity/visibility hiding it", () => {
     const paint = extractLayerPaint("CENTER_POINT_CIRCLE_LAYER_ID");
     expect(paint["circle-color"]).toBe("#000000");
     expect(paint["circle-opacity"]).toBeUndefined();
-  });
-
-  it("the label layer paints the CENTER text with a white halo for contrast, not hidden", () => {
-    const paint = extractLayerPaint("CENTER_POINT_LABEL_LAYER_ID");
-    expect(paint["text-color"]).toBe(MUTED_GRAY);
-    expect(paint["text-opacity"]).toBeUndefined();
-    expect(paint["text-halo-color"]).toBe("#ffffff");
   });
 });
 

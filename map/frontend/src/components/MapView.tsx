@@ -5,7 +5,6 @@ import { buildShapeIconImageData, shapeIconId } from "../lib/aircraftIcon";
 import { AIRCRAFT_SHAPES } from "../lib/aircraftShapes.generated";
 import { basemapLabelLayerIds } from "../lib/basemapLabels";
 import { FALLBACK_SHAPE } from "../lib/aircraftIconResolver";
-import { MUTED_GRAY } from "../lib/crosshairIcon";
 import { loadConfig, type AppConfig } from "../lib/config";
 import { loadPersistedControls, savePersistedControls } from "../lib/controlsPersistence";
 import { useMapFlights } from "../hooks/useMapFlights";
@@ -21,7 +20,6 @@ import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
-  CENTER_POINT_LABEL_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
@@ -675,26 +673,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
           paint: {
             "circle-color": "#000000",
             "circle-radius": 6,
-          },
-        },
-        AIRCRAFT_LAYER_ID,
-      );
-      map.addLayer(
-        {
-          id: CENTER_POINT_LABEL_LAYER_ID,
-          type: "symbol",
-          source: CENTER_POINT_SOURCE_ID,
-          layout: {
-            "text-field": "CENTER",
-            "text-size": 9,
-            "text-anchor": "top",
-            "text-offset": [0, 0.7],
-            "text-allow-overlap": true,
-          },
-          paint: {
-            "text-color": MUTED_GRAY,
-            "text-halo-color": "#ffffff",
-            "text-halo-width": 1.5,
           },
         },
         AIRCRAFT_LAYER_ID,
