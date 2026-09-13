@@ -3,6 +3,7 @@ import type { MapFlight } from "../api/types";
 import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON } from "../lib/actionIcons";
 import { buildAircraftDetail, type AircraftDetailData, type AirportBlockData } from "../lib/aircraftDetail";
 import type { CenterPoint } from "../lib/config";
+import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { IconButton } from "./IconButton";
 
 // Copied verbatim (Tailwind class strings, not just visually similar hex
@@ -63,9 +64,12 @@ export interface AircraftDetailPanelProps {
 // aircraft (see lib/selection.ts's single-select nextSelection) -- a
 // different, additional surface from the floating per-aircraft
 // InfoBoxLayer boxes, not a replacement for them. Same visual language as
-// ControlsPanel (rounded-md, bg-white/90 dark:bg-slate-900/90, shadow-md),
-// docked left with the matching top-4/left-4 margin so it never collides
-// with that top-right panel.
+// ControlsPanel (rounded-md, shadow-md), docked left with the matching
+// top-4/left-4 margin so it never collides with that top-right panel.
+// Unlike ControlsPanel, this panel is fully opaque (not /90) and pinned
+// above every InfoBoxLayer label box via MAX_LABEL_Z_INDEX + 1 -- those
+// boxes carry their own explicit z-index (see labelStackOrder.ts), which
+// otherwise beats an auto-z-index sibling regardless of DOM order.
 export function AircraftDetailPanel({
   aircraft,
   center,
@@ -84,7 +88,10 @@ export function AircraftDetailPanel({
   const hasBadges = data.military || data.specialLivery != null;
 
   return (
-    <div className="absolute top-4 left-4 w-80 overflow-hidden rounded-md bg-white/90 text-slate-900 shadow-md dark:bg-slate-900/90 dark:text-slate-100">
+    <div
+      className="absolute top-4 left-4 w-80 overflow-hidden rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+      style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
+    >
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0">
           <div className="text-xl leading-tight font-bold">{data.title}</div>

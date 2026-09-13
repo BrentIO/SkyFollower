@@ -49,12 +49,13 @@ export interface ControlsPanelProps {
 }
 
 // Top-right floating controls: connection-status dot + aircraft-tracked
-// count (status box), the recenter button below it (its own separate
-// square control), and -- below that -- a vertically stacked column of
-// icon buttons (one per row, matching the recenter button) for the
-// "History: All", "Labels: All", "Map Labels", "Range Outline", and
-// "Fullscreen" toggles. Icon buttons share the exact rendering mechanism
-// (IconButton, toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
+// count (status box), and -- below that -- one unified vertically stacked
+// column mixing the recenter button (its own separately-styled square
+// control -- a momentary action, not an on/off toggle) with the icon
+// buttons for the "Fullscreen", "Labels: All", "Trails: All",
+// "Range Outline", and "Map Labels" toggles, in that top-to-bottom order.
+// Icon buttons share the exact rendering mechanism (IconButton,
+// toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
 // via IconButton's "md" size prop to match the recenter button's own
 // h-9 w-9 -- AircraftDetailPanel's row keeps IconButton's default size and
 // its own horizontal layout, unrelated to this column. No persistent side
@@ -92,39 +93,7 @@ export function ControlsPanel({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={onRecenter}
-        disabled={recenterDisabled}
-        title="Return to center"
-        aria-label="Return to center"
-        className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
-        // Same crosshair markup as the on-map center marker -- see
-        // lib/crosshairIcon.ts's docstring for why they must stay
-        // visually identical. "currentColor" lets the button's own
-        // text-color classes (light/dark) drive the icon color, unlike
-        // the center marker which passes a fixed color of its own.
-        dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
-      />
-
       <div className="pointer-events-auto flex flex-col gap-2">
-        <IconButton
-          label="History: All"
-          icon={ROUTE_ICON}
-          active={historyAll}
-          onClick={onToggleHistoryAll}
-          size="md"
-        />
-        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
-        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
-        <IconButton
-          label="Range Outline"
-          icon={RADAR_ICON}
-          active={rangeOutlineVisible}
-          onClick={onToggleRangeOutline}
-          disabled={rangeOutlineDisabled}
-          size="md"
-        />
         <IconButton
           label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
           icon={fullscreenIcon(fullscreen)}
@@ -133,6 +102,37 @@ export function ControlsPanel({
           disabled={fullscreenDisabled}
           size="md"
         />
+        <button
+          type="button"
+          onClick={onRecenter}
+          disabled={recenterDisabled}
+          title="Return to center"
+          aria-label="Return to center"
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
+          // Same crosshair markup as the on-map center marker -- see
+          // lib/crosshairIcon.ts's docstring for why they must stay
+          // visually identical. "currentColor" lets the button's own
+          // text-color classes (light/dark) drive the icon color, unlike
+          // the center marker which passes a fixed color of its own.
+          dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
+        />
+        <IconButton label="Labels: All" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
+        <IconButton
+          label="Trails: All"
+          icon={ROUTE_ICON}
+          active={historyAll}
+          onClick={onToggleHistoryAll}
+          size="md"
+        />
+        <IconButton
+          label="Range Outline"
+          icon={RADAR_ICON}
+          active={rangeOutlineVisible}
+          onClick={onToggleRangeOutline}
+          disabled={rangeOutlineDisabled}
+          size="md"
+        />
+        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
       </div>
     </div>
   );
