@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 // checked by reading the actual source text rather than rendering.
 import controlsPanelSource from "./ControlsPanel.tsx?raw";
 
-describe("status box -- connection dot + aircraft count only", () => {
+describe("status box -- bare connection dot only (aircraft count moved to AircraftListPanel)", () => {
   it("no longer renders any of the five toggle/action buttons as text buttons", () => {
     expect(controlsPanelSource).not.toContain("Trails</button>");
     expect(controlsPanelSource).not.toContain(">Labels<");
@@ -13,9 +13,21 @@ describe("status box -- connection dot + aircraft count only", () => {
     expect(controlsPanelSource).not.toContain(">Range Outline<");
   });
 
-  it("still renders the connection dot and aircraft count", () => {
+  it("still renders the connection dot", () => {
     expect(controlsPanelSource).toContain("PROCESSOR_STATUS_DOT_COLOR[overallStatus]");
-    expect(controlsPanelSource).toContain("{aircraftCount} aircraft");
+  });
+
+  it("no longer accepts or renders an aircraftCount prop/text", () => {
+    expect(controlsPanelSource).not.toContain("aircraftCount");
+    expect(controlsPanelSource).not.toContain("aircraft</span>");
+  });
+
+  it("no longer wraps the dot in a card (no rounded-md bg-white/90 status box)", () => {
+    expect(controlsPanelSource).not.toContain("rounded-md bg-white/90 p-3");
+  });
+
+  it("keeps the dot's hover tooltip via connectionTooltip()", () => {
+    expect(controlsPanelSource).toContain("title={connectionTooltip(wsConnected, roster)}");
   });
 });
 
