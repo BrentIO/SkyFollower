@@ -103,8 +103,8 @@ VFR aircraft is identified the real-world way, by squawking the standard
 US VFR code `1200` (see "Squawk assignment" below). An aircraft above
 FL180 is always IFR and always carries an operator (Class A airspace
 requires an IFR clearance); below FL180, VFR (no operator, no
-origin/destination) and IFR (operator, one fixed shared origin/destination
-pair) are both represented.
+origin/destination/registrant) and IFR (operator, registrant, one fixed
+shared origin/destination pair) are both represented.
 
 ### Speed and vertical rate
 
@@ -124,10 +124,10 @@ instead of holding level the whole time.
 ### Squawk assignment
 
 - **VFR** aircraft (below-FL180, +500 altitude) always squawk `1200`, and
-  never carry an operator or origin/destination.
+  never carry an operator, origin/destination, or registrant.
 - **IFR** aircraft squawk a synthetic discrete-looking code instead, and
-  always carry an operator and the one fixed origin/destination pair shared
-  by every IFR aircraft in the run.
+  always carry an operator, a registrant, and the one fixed
+  origin/destination pair shared by every IFR aircraft in the run.
 - A small subset (2, fixed) instead squawk one of the real emergency codes
   `7500`/`7600`/`7700`/`7777`, chosen randomly, overriding whatever squawk
   they'd otherwise have. When an aircraft holding an emergency code exits
@@ -194,10 +194,10 @@ further — its roster entry ages from green to amber to red purely from real
 wall-clock silence over a long-enough run, exercising a code path the
 primary (continuously healthy) `--processor-id` never touches.
 
-Metadata fields (operator/origin/destination/squawk/receiver_sources) are
-randomized per the rules above; `--matched-rule`, if given, is stamped into
-every aircraft's `matched_rules` list unchanged, exercising the map's
-rule-match indicator too.
+Metadata fields (operator/origin/destination/registrant/squawk/
+receiver_sources) are randomized per the rules above; `--matched-rule`, if
+given, is stamped into every aircraft's `matched_rules` list unchanged,
+exercising the map's rule-match indicator too.
 
 ## Wire Format
 
@@ -242,14 +242,18 @@ detect against synthetic data):
     "icao_hex": "FF0000",
     "type_designator": "B738",
     "category": "Land",
-    "wake_turbulence_category": "medium"
+    "wake_turbulence_category": "medium",
+    "registration": "N0000",
+    "manufacturer_model": "BOEING 737-800",
+    "description_code": "L2J"
   },
   "ident": "LOAD0000",
   "processor_id": "load-gen-1",
   "last_message": "2024-06-01T12:00:00.000Z",
-  "operator": {"airline_designator": "LG1", "name": "Load Generator One", "callsign": "LOADGEN"},
-  "origin": {"icao_code": "ZZ00", "name": "Load Test Airport ZZ00"},
-  "destination": {"icao_code": "ZZ01", "name": "Load Test Airport ZZ01"},
+  "operator": {"airline_designator": "LG1", "name": "Load Generator One", "callsign": "LOADGEN", "country": "Load Country"},
+  "origin": {"icao_code": "ZZ00", "iata_code": "Z00", "name": "Load Test Airport ZZ00", "city": "Load City", "region": "Load Region", "country": "Load Country"},
+  "destination": {"icao_code": "ZZ01", "iata_code": "Z01", "name": "Load Test Airport ZZ01", "city": "Load Destination City", "region": "Load Destination Region", "country": "Load Destination Country"},
+  "registrant": {"names": ["Load Generator Holdings LLC"]},
   "squawk": "4703",
   "matched_rules": [],
   "receiver_sources": ["1090", "EXTERNAL"]
@@ -257,10 +261,13 @@ detect against synthetic data):
 ```
 
 A VFR aircraft carries `"squawk": "1200"` and omits `operator`/`origin`/
-`destination` entirely; the no-metadata subset's `aircraft` dict carries
-only `icao_hex` and `emitter_category`; the military/livery seats add
-`military: true` / `special_livery`/`description_code` alongside the fields
-above.
+`destination`/`registrant` entirely; the no-metadata subset's `aircraft`
+dict carries only `icao_hex` and `emitter_category` (no registration/
+manufacturer_model/description_code, simulating a genuine enrichment
+miss); the military/livery seats add `military: true` / `special_livery`
+alongside the fields above (every role with a `type_designator`, livery
+included, gets `registration`/`manufacturer_model`/`description_code` the
+same way).
 
 Note `icao_hex` is nested under `aircraft`, never top-level — this packet
 type is shaped like message-processor's `CompletedFlight` notification

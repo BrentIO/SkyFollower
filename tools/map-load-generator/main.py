@@ -330,7 +330,12 @@ def tick_elapsed_seconds(tick: int, position_rate: float) -> float:
 # Synthetic identity
 # ---------------------------------------------------------------------------
 
-def synthetic_icao_hex(aircraft_number: int, prefix: str = "FF") -> str:
+# Shared default so synthetic_registration can strip exactly the prefix
+# synthetic_icao_hex actually used, rather than a second hardcoded "FF".
+_ICAO_HEX_PREFIX = "FF"
+
+
+def synthetic_icao_hex(aircraft_number: int, prefix: str = _ICAO_HEX_PREFIX) -> str:
     """A distinct, obviously-synthetic 6-character hex ICAO address: a
     fixed prefix (default "FF", an unallocated ICAO address block) plus a
     zero-padded hex counter filling the remaining digits. `aircraft_number`
@@ -346,6 +351,15 @@ def synthetic_icao_hex(aircraft_number: int, prefix: str = "FF") -> str:
 def synthetic_ident(aircraft_number: int) -> str:
     """A distinct, obviously-synthetic flight ident."""
     return f"LOAD{aircraft_number:04d}"
+
+
+def synthetic_registration(icao_hex: str, prefix: str = _ICAO_HEX_PREFIX) -> str:
+    """A synthetic tail number derived from `icao_hex`, stable per occupant
+    with no new counter needed: `icao_hex`'s own synthetic prefix (default
+    "FF") replaced with "N" (e.g. "FF0001" -> "N0001"). None of this tool's
+    synthetic occupants carry a real airline-style flight number distinct
+    from their own tail number, so this is registration's only source."""
+    return "N" + icao_hex.removeprefix(prefix)
 
 
 # Real-world codes this tool must never hand out as an ordinary "synthetic
@@ -416,14 +430,45 @@ _LIVERY_SEAT_COUNT = 1
 _NO_METADATA_SEAT_COUNT = 2
 _HELICOPTER_SEAT_COUNT = 3
 
-# Synthetic operator/airport pools -- obviously fake designators/codes, just
-# enough shape to populate map's info panel fields during a load run.
+# manufacturer_model + ICAO Doc 8643 description_code for every type
+# designator this tool hands out (the three interleaved pools above, the
+# helicopter/military pools, and the livery aircraft's own V22) -- so every
+# role that gets a type_designator also populates the Detail panel's
+# Manufacturer/Model row and the aircraft list's Desc column, not just the
+# livery role (which already carries its own description_code separately,
+# matching this table's V22 entry).
+_TYPE_INFO: dict[str, tuple[str, str]] = {
+    "A320": ("AIRBUS A320", "L2J"),
+    "B738": ("BOEING 737-800", "L2J"),
+    "B772": ("BOEING 777-200", "L2J"),
+    "E170": ("EMBRAER 170", "L2J"),
+    "DH8D": ("DE HAVILLAND DHC-8-400", "L2T"),
+    "C172": ("CESSNA 172 SKYHAWK", "L1P"),
+    "SR22": ("CIRRUS SR22", "L1P"),
+    "PA46": ("PIPER PA-46 MALIBU", "L1P"),
+    "P28A": ("PIPER PA-28 CHEROKEE", "L1P"),
+    "C25B": ("CESSNA CITATION CJ3", "L2J"),
+    "GLF6": ("GULFSTREAM G650", "L2J"),
+    "LJ35": ("LEARJET 35", "L2J"),
+    "FA7X": ("DASSAULT FALCON 7X", "L3J"),
+    "R44": ("ROBINSON R44", "H1P"),
+    "EC35": ("AIRBUS HELICOPTERS EC135", "H2T"),
+    "S76": ("SIKORSKY S-76", "H2T"),
+    "F16": ("GENERAL DYNAMICS F-16 FIGHTING FALCON", "L1J"),
+    "F15": ("MCDONNELL DOUGLAS F-15 EAGLE", "L2J"),
+    _LIVERY_TYPE_DESIGNATOR: ("BELL BOEING V-22 OSPREY", _LIVERY_DESCRIPTION_CODE),
+}
+
+# Synthetic operator/airport/registrant pools -- obviously fake designators/
+# codes/names, just enough shape to populate map's info panel fields during
+# a load run.
 _SYNTHETIC_OPERATORS = (
-    {"airline_designator": "LG1", "name": "Load Generator One", "callsign": "LOADGEN"},
-    {"airline_designator": "LG2", "name": "Load Generator Two", "callsign": "LOADRUN"},
-    {"airline_designator": "LG3", "name": "Load Generator Three", "callsign": "LOADTEST"},
+    {"airline_designator": "LG1", "name": "Load Generator One", "callsign": "LOADGEN", "country": "Load Country"},
+    {"airline_designator": "LG2", "name": "Load Generator Two", "callsign": "LOADRUN", "country": "Load Country"},
+    {"airline_designator": "LG3", "name": "Load Generator Three", "callsign": "LOADTEST", "country": "Load Country"},
 )
 _SYNTHETIC_AIRPORT_CODES = tuple(f"ZZ{n:02d}" for n in range(10))
+_SYNTHETIC_REGISTRANT = {"names": ["Load Generator Holdings LLC"]}
 
 
 def assign_seat_roles(lane_seat_count: int, climbing_count: int) -> dict[int, str]:
@@ -515,6 +560,7 @@ class Occupant:
     operator: dict | None
     origin: dict | None
     destination: dict | None
+    registrant: dict | None
     receiver_sources: list[str]
     aircraft_extra: dict
     spawn_elapsed_seconds: float
@@ -544,11 +590,13 @@ def spawn_occupant(
         operator = None
         origin = None
         destination = None
+        registrant = None
     else:
         squawk = synthetic_squawk(aircraft_number)
         operator = dict(random.choice(_SYNTHETIC_OPERATORS))
         origin = dict(fixed_origin)
         destination = dict(fixed_destination)
+        registrant = dict(_SYNTHETIC_REGISTRANT)
 
     aircraft_extra: dict = {}
     if seat.role == "no_metadata":
@@ -560,10 +608,13 @@ def spawn_occupant(
         aircraft_extra["type_designator"] = type_designator
         aircraft_extra["category"] = "Land"
         aircraft_extra["wake_turbulence_category"] = random.choice(_WAKE_TURBULENCE_CATEGORIES)
+        aircraft_extra["registration"] = synthetic_registration(icao_hex)
+        type_info = _TYPE_INFO.get(type_designator)
+        if type_info:
+            aircraft_extra["manufacturer_model"], aircraft_extra["description_code"] = type_info
         if seat.role == "military":
             aircraft_extra["military"] = True
         if seat.role == "livery":
-            aircraft_extra["description_code"] = _LIVERY_DESCRIPTION_CODE
             aircraft_extra["special_livery"] = _LIVERY_NAME
 
     return Occupant(
@@ -573,6 +624,7 @@ def spawn_occupant(
         operator=operator,
         origin=origin,
         destination=destination,
+        registrant=registrant,
         receiver_sources=random_receiver_sources(),
         aircraft_extra=aircraft_extra,
         spawn_elapsed_seconds=spawn_elapsed_seconds,
@@ -613,6 +665,7 @@ def build_metadata_packet(
     operator: dict | None = None,
     origin: dict | None = None,
     destination: dict | None = None,
+    registrant: dict | None = None,
     squawk: str | None = None,
     matched_rules: list[str] | None = None,
     receiver_sources: list[str] | None = None,
@@ -622,13 +675,16 @@ def build_metadata_packet(
     notification payload (`_build_flight_notification_payload()`) plus
     `"type": "metadata"` -- icao_hex nested under `aircraft` (along with
     whatever `aircraft_extra` fields this occupant carries -- type_
-    designator/category/wake_turbulence_category/military/special_livery/
+    designator/category/wake_turbulence_category/registration/
+    manufacturer_model/description_code/military/special_livery/
     emitter_category), never top-level (see map/main.py's `_handle_packet`),
-    and `last_message` as the out-of-order guard's clock for this packet
-    type (metadata carries no `ts` -- see map/main.py's
-    `_extract_timestamp`). Optional fields are omitted entirely rather than
-    sent as null/empty, matching `_build_flight_notification_payload`'s own
-    falsy-drop convention for operator/origin/destination."""
+    `registrant` as its own sibling field (matching production's wire
+    shape -- see message-processor's Flight.registrant), and `last_message`
+    as the out-of-order guard's clock for this packet type (metadata
+    carries no `ts` -- see map/main.py's `_extract_timestamp`). Optional
+    fields are omitted entirely rather than sent as null/empty, matching
+    `_build_flight_notification_payload`'s own falsy-drop convention for
+    operator/origin/destination."""
     packet: dict = {
         "type": "metadata",
         "aircraft": {"icao_hex": icao_hex, **(aircraft_extra or {})},
@@ -642,6 +698,8 @@ def build_metadata_packet(
         packet["origin"] = origin
     if destination:
         packet["destination"] = destination
+    if registrant:
+        packet["registrant"] = registrant
     if squawk:
         packet["squawk"] = squawk
     if matched_rules:
@@ -692,11 +750,19 @@ class FleetSimulator:
 
         self.fixed_origin = {
             "icao_code": _SYNTHETIC_AIRPORT_CODES[0],
+            "iata_code": _SYNTHETIC_AIRPORT_CODES[0][-3:],
             "name": f"Load Test Airport {_SYNTHETIC_AIRPORT_CODES[0]}",
+            "city": "Load City",
+            "region": "Load Region",
+            "country": "Load Country",
         }
         self.fixed_destination = {
             "icao_code": _SYNTHETIC_AIRPORT_CODES[1],
+            "iata_code": _SYNTHETIC_AIRPORT_CODES[1][-3:],
             "name": f"Load Test Airport {_SYNTHETIC_AIRPORT_CODES[1]}",
+            "city": "Load Destination City",
+            "region": "Load Destination Region",
+            "country": "Load Destination Country",
         }
 
         # Ramp-up is disabled outright (not scaled down) when a nonzero
@@ -741,6 +807,7 @@ class FleetSimulator:
             operator=None,
             origin=None,
             destination=None,
+            registrant=None,
             receiver_sources=random_receiver_sources(),
             aircraft_extra={
                 "type_designator": _BALLOON_TYPE_DESIGNATOR,
@@ -943,6 +1010,7 @@ def run(
                         operator=occupant.operator,
                         origin=occupant.origin,
                         destination=occupant.destination,
+                        registrant=occupant.registrant,
                         squawk=sim.occupant_squawk(seat_index, occupant),
                         matched_rules=[matched_rule] if matched_rule else None,
                         receiver_sources=occupant.receiver_sources,

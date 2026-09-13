@@ -547,6 +547,54 @@ class TestSpawnOccupant:
         assert occ1.icao_hex != occ2.icao_hex
         assert occ1.ident != occ2.ident
 
+    def test_registration_derived_from_icao_hex_for_every_typed_role(self):
+        # #1772: every role that gets a type_designator also gets a
+        # registration, derived from its own icao_hex's "FF" prefix
+        # replaced with "N".
+        origin, destination = self._origin_destination()
+        for role, type_designator in (
+            ("regular", "A320"),
+            ("helicopter", "R44"),
+            ("military", None),
+            ("livery", _LIVERY_TYPE_DESIGNATOR),
+            ("climbing", "A320"),
+        ):
+            seat = self._seat(role, 3000.0, type_designator=type_designator)
+            occ = spawn_occupant(seat, 7, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+            assert occ.aircraft_extra["registration"] == "N" + occ.icao_hex.removeprefix("FF")
+
+    def test_no_metadata_role_has_no_registration(self):
+        origin, destination = self._origin_destination()
+        seat = self._seat("no_metadata", 3000.0, type_designator=None)
+        occ = spawn_occupant(seat, 1, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+        assert "registration" not in occ.aircraft_extra
+
+    def test_manufacturer_model_and_description_code_present_for_every_known_type(self):
+        origin, destination = self._origin_destination()
+        for type_designator in ("A320", "C172", "C25B", "R44", "F16", _LIVERY_TYPE_DESIGNATOR):
+            role = "livery" if type_designator == _LIVERY_TYPE_DESIGNATOR else "regular"
+            seat = self._seat(role, 3000.0, type_designator=type_designator)
+            occ = spawn_occupant(seat, 1, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+            assert occ.aircraft_extra["manufacturer_model"]
+            assert occ.aircraft_extra["description_code"]
+
+    def test_military_role_gets_manufacturer_model_and_description_code_too(self):
+        origin, destination = self._origin_destination()
+        seat = self._seat("military", 3000.0, type_designator=None)
+        occ = spawn_occupant(seat, 1, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+        assert occ.aircraft_extra["manufacturer_model"]
+        assert occ.aircraft_extra["description_code"]
+
+    def test_registrant_present_for_ifr_absent_for_vfr(self):
+        origin, destination = self._origin_destination()
+        vfr_seat = self._seat("regular", 3500.0)  # VFR altitude
+        ifr_seat = self._seat("regular", 3000.0)  # IFR altitude
+        vfr_occ = spawn_occupant(vfr_seat, 1, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+        ifr_occ = spawn_occupant(ifr_seat, 2, spawn_elapsed_seconds=0.0, start_distance_nm=0.0, fixed_origin=origin, fixed_destination=destination)
+        assert vfr_occ.registrant is None
+        assert ifr_occ.registrant is not None
+        assert ifr_occ.registrant["names"]
+
 
 class TestFleetSimulatorLaneMotion:
     """Straight lane-based motion, replacing the old orbit model."""
@@ -773,6 +821,21 @@ class TestFleetSimulatorWtcOriginDestinationReceiverSources:
         sizes = {len(occ.receiver_sources) for occ in sim.occupants.values()}
         assert sizes.issubset({1, 2, 3})
 
+    def test_operator_carries_a_country(self):
+        sim = _simulator(aircraft_count=20, ramp_up_seconds=0.0)
+        ifr_operators = [occ.operator for occ in sim.occupants.values() if occ.operator is not None]
+        assert ifr_operators, "expected at least one IFR occupant in a 20-aircraft fleet"
+        for operator in ifr_operators:
+            assert operator["country"]
+
+    def test_fixed_origin_and_destination_carry_iata_city_region_country(self):
+        sim = _simulator(aircraft_count=20, ramp_up_seconds=0.0)
+        for airport in (sim.fixed_origin, sim.fixed_destination):
+            assert airport["iata_code"]
+            assert airport["city"]
+            assert airport["region"]
+            assert airport["country"]
+
 
 class TestBuildPositionPacket:
     def test_shape_matches_the_real_wire_protocol(self):
@@ -829,7 +892,7 @@ class TestBuildMetadataPacket:
 
     def test_optional_fields_omitted_when_not_given(self):
         packet = build_metadata_packet("FF0001", "LOAD0001", "load-gen-1", "2024-01-01T00:00:00Z")
-        for key in ("operator", "origin", "destination", "squawk", "matched_rules", "receiver_sources"):
+        for key in ("operator", "origin", "destination", "registrant", "squawk", "matched_rules", "receiver_sources"):
             assert key not in packet
 
     def test_optional_fields_included_when_given(self):
@@ -838,6 +901,7 @@ class TestBuildMetadataPacket:
             operator={"airline_designator": "LG1"},
             origin={"icao_code": "ZZ00"},
             destination={"icao_code": "ZZ01"},
+            registrant={"names": ["Some Holdings LLC"]},
             squawk="1200",
             matched_rules=["some-rule"],
             receiver_sources=["1090"],
@@ -845,9 +909,19 @@ class TestBuildMetadataPacket:
         assert packet["operator"] == {"airline_designator": "LG1"}
         assert packet["origin"] == {"icao_code": "ZZ00"}
         assert packet["destination"] == {"icao_code": "ZZ01"}
+        assert packet["registrant"] == {"names": ["Some Holdings LLC"]}
         assert packet["squawk"] == "1200"
         assert packet["matched_rules"] == ["some-rule"]
         assert packet["receiver_sources"] == ["1090"]
+
+    def test_registrant_is_a_sibling_field_not_nested_under_aircraft(self):
+        packet = build_metadata_packet(
+            "FF0001", "LOAD0001", "load-gen-1", "2024-01-01T00:00:00Z",
+            registrant={"names": ["Some Holdings LLC"]},
+            aircraft_extra={"type_designator": "B738"},
+        )
+        assert packet["registrant"] == {"names": ["Some Holdings LLC"]}
+        assert "registrant" not in packet["aircraft"]
 
     def test_empty_matched_rules_is_treated_as_not_given(self):
         packet = build_metadata_packet(
