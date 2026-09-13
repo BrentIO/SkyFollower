@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { AircraftMap } from "../lib/aircraftState";
+import {
+  clampPanelWidth,
+  loadPersistedPanelWidth,
+  savePersistedPanelWidth,
+} from "../lib/aircraftListPanelPersistence";
 import { buildAircraftListRows, type AircraftListRow } from "../lib/aircraftListRow";
 import { nextAircraftListSortState, sortAircraftListRows, type AircraftListSortState } from "../lib/aircraftListSort";
 import type { CenterPoint } from "../lib/config";
@@ -73,18 +78,18 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
 // the issue's "Sorting" section.
 const DEFAULT_SORT_STATE: AircraftListSortState = { columnKey: "distance", dir: "asc" };
 
-// Fixed (not resizable), wide enough for all six columns without wrapping
-// at a normal viewport width -- see the issue's "Width" note. Applied via
-// inline style (both here and in the wrapper's open/closed width below)
-// rather than a Tailwind arbitrary-value class, since Tailwind's JIT
-// scanner can't see a class name built from a template literal.
-const PANEL_WIDTH_PX = 720;
-
 // The edge tab's own width (h-12 w-6 button -- see its className below).
 // Kept as a named constant since the wrapper's open/closed width (below)
-// needs it alongside PANEL_WIDTH_PX, rather than hardcoding "24" a second
-// time disconnected from the button's own w-6 class.
+// needs it alongside the panel's own (now operator-resizable, see #1784)
+// width, rather than hardcoding "24" a second time disconnected from the
+// button's own w-6 class.
 const TAB_WIDTH_PX = 24;
+
+// A floor under the map area's own width during an active resize drag, so
+// a narrow browser window can't have its map squeezed to nothing -- on
+// top of aircraftListPanelPersistence.ts's own static MIN/MAX_PANEL_WIDTH_PX
+// clamp, which is independent of the live viewport.
+const MIN_MAP_AREA_WIDTH_PX = 320;
 
 const ROW_BAND_EVEN = "bg-white dark:bg-slate-900";
 const ROW_BAND_ODD = "bg-slate-50 dark:bg-slate-800/60";
@@ -151,6 +156,44 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
   const [open, setOpen] = useState(false);
   const [sort, setSort] = useState<AircraftListSortState>(DEFAULT_SORT_STATE);
 
+  // Operator-resizable width (#1784) -- seeded from whatever this browser
+  // last persisted, defaulting to the original fixed 720px otherwise. Kept
+  // in a ref alongside the state so handleResizeEnd's save always sees the
+  // latest value regardless of closure timing (same pattern as aircraftRef
+  // above).
+  const [width, setWidth] = useState(() => loadPersistedPanelWidth());
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const [resizing, setResizing] = useState(false);
+  const dragStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  function handleResizeStart(e: PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    dragStartRef.current = { startX: e.clientX, startWidth: widthRef.current };
+    setResizing(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handleResizeMove(e: PointerEvent<HTMLDivElement>) {
+    if (!dragStartRef.current) return;
+    const raw = dragStartRef.current.startWidth + (dragStartRef.current.startX - e.clientX);
+    // Extra viewport-aware ceiling on top of clampPanelWidth's static
+    // MIN/MAX -- never leaves less than MIN_MAP_AREA_WIDTH_PX for the map
+    // area itself, even on a narrow browser window.
+    const viewportMax = Math.max(0, window.innerWidth - TAB_WIDTH_PX - MIN_MAP_AREA_WIDTH_PX);
+    setWidth(clampPanelWidth(Math.min(raw, viewportMax)));
+  }
+
+  function handleResizeEnd(e: PointerEvent<HTMLDivElement>) {
+    if (!dragStartRef.current) return;
+    dragStartRef.current = null;
+    setResizing(false);
+    savePersistedPanelWidth(widthRef.current);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  }
+
   // Coalesces this panel's own row rebuild the same way MapView.tsx
   // coalesces its MapLibre source rebuild (see syncThrottle.ts's module
   // docstring) -- a WebSocket batch touching hundreds of aircraft would
@@ -199,10 +242,12 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
     // exactly what let the map area's box actually shrink/grow here.
     // `overflow-hidden` clips the panel content out of view once the
     // wrapper narrows to just the tab's own width, rather than reflowing
-    // or wrapping it.
+    // or wrapping it. The open/close width transition is suppressed while
+    // actively resize-dragging (#1784) so the live width tracks the
+    // pointer instead of lagging behind a 200ms transition.
     <div
-      className="flex h-full flex-none items-stretch overflow-hidden transition-[width] duration-200"
-      style={{ width: open ? TAB_WIDTH_PX + PANEL_WIDTH_PX : TAB_WIDTH_PX }}
+      className={`flex h-full flex-none items-stretch overflow-hidden ${resizing ? "" : "transition-[width] duration-200"}`}
+      style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX }}
     >
       {/* Tab stays vertically centered within the drawer's full height --
           not top-aligned like tar1090's own handle -- so it can never
@@ -221,15 +266,41 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
       </div>
 
       <div
-        className="flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
-        style={{ width: PANEL_WIDTH_PX }}
+        className="relative flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+        style={{ width }}
       >
+        {/* Drag-to-resize handle (#1784) -- absolutely positioned so it
+            doesn't add to the panel's own flex width, straddling the
+            panel's left edge. Only rendered while open: resizing a
+            collapsed, invisible drawer doesn't make sense, and this keeps
+            it out of the tab-order/accessibility tree when it can't do
+            anything. Pointer Events (not mouse-only) so this works for
+            touch too; pointer capture keeps receiving move/up events even
+            if the pointer leaves this thin strip mid-drag. */}
+        {open && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize aircraft list"
+            onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove}
+            onPointerUp={handleResizeEnd}
+            onPointerCancel={handleResizeEnd}
+            className={`absolute top-0 left-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none ${
+              resizing ? "bg-slate-400/70 dark:bg-slate-500/70" : "hover:bg-slate-300/70 dark:hover:bg-slate-600/70"
+            }`}
+          />
+        )}
+
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-700">
           <div className="text-base font-bold">Aircraft List</div>
           <div className="tabular-nums text-xs text-slate-500 dark:text-slate-400">{aircraftCount} aircraft</div>
         </div>
 
-        <div className="overflow-y-auto">
+        {/* overflow-auto (not just -y): a user-dragged width narrower than
+            the table's natural content width (#1784) scrolls horizontally
+            instead of visually overflowing the rounded panel card. */}
+        <div className="overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
