@@ -7,9 +7,15 @@
 // a fixed palette) and `icon-halo-*` draws the selection ring -- neither
 // works on a plain raster icon. Each shape is filled solid to a canvas
 // (the source path is a closed outline; its thin "Accent" detail layer is
-// dropped at generation time) and every shape is scaled to the same pixel
-// footprint here, so the SDF resolution is uniform; real relative size is
-// applied on the map via `icon-size` and each shape's `scale`.
+// dropped at generation time for nearly every shape -- see
+// generate-aircraft-shapes.mjs's ACCENT_CUTOUT_RATIO_THRESHOLD) and every
+// shape is scaled to the same pixel footprint here, so the SDF resolution
+// is uniform; real relative size is applied on the map via `icon-size` and
+// each shape's `scale`. For the rare shape whose Accent layer survives
+// generation (`shape.accentD`), it's stroked onto the filled outline with
+// `destination-out` compositing -- a flat single-color fill has no other
+// way to show interior detail, so it's carved out as a thin transparent
+// cutout rather than drawn as a second fill.
 //
 // Source paths are drawn nose-up (north), matching `icon-rotate` bound to
 // heading -- no rotation offset.
@@ -204,6 +210,22 @@ export function buildShapeIconImageData(shape: AircraftShape): ImageData {
   // centre and `span` source units span SDF_SHAPE_PX pixels.
   ctx.setTransform(k, 0, 0, k, SDF_CANVAS_PX / 2 - shape.cx * k, SDF_CANVAS_PX / 2 - shape.cy * k);
   ctx.fill(new Path2D(shape.d));
+
+  if (shape.accentD) {
+    // Erase a thin gap along the Accent path through the fill just laid
+    // down. `ctx.lineWidth` is in the same (still-active) user-space
+    // coordinates as the fill above, so the current `k` scale carries it to
+    // device pixels the same way it carried the outline geometry -- setting
+    // it to `shape.accentStrokeWidth` here is equivalent to an on-canvas
+    // width of `shape.accentStrokeWidth * k`. Clamp that to >= 1 on-canvas
+    // pixel (by flooring the user-space width at `1 / k`) so the cutout
+    // doesn't antialias away before the later downscale to the SDF canvas.
+    ctx.lineWidth = Math.max(shape.accentStrokeWidth ?? 0, 1 / k);
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.stroke(new Path2D(shape.accentD));
+    ctx.globalCompositeOperation = "source-over";
+  }
+
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   const imageData = ctx.getImageData(0, 0, SDF_CANVAS_PX, SDF_CANVAS_PX);
