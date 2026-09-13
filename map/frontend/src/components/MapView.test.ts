@@ -421,3 +421,63 @@ describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
     expect(paint["line-color"]).toEqual(["get", "color"]);
   });
 });
+
+// Extracts the body of `function handleToggleFullscreen() { ... }` as plain
+// source text -- same rationale as handleRecenterBody above: it calls into
+// real Fullscreen API methods with no jsdom/component-render setup to
+// mount it through.
+function handleToggleFullscreenBody(): string {
+  const marker = "function handleToggleFullscreen() {";
+  const startIndex = mapViewSource.indexOf(marker);
+  if (startIndex === -1) throw new Error("Could not find handleToggleFullscreen declaration");
+
+  const bodyOpenIndex = startIndex + marker.length - 1;
+  const bodyCloseIndex = findMatchingBrace(mapViewSource, bodyOpenIndex);
+  return mapViewSource.slice(bodyOpenIndex + 1, bodyCloseIndex);
+}
+
+describe("Fullscreen toggle -- targets document.documentElement, not mapContainerRef", () => {
+  const body = handleToggleFullscreenBody();
+
+  it("requests fullscreen on document.documentElement", () => {
+    expect(body).toContain("document.documentElement.requestFullscreen()");
+  });
+
+  it("never targets mapContainerRef -- that's a sibling of the overlay panels, not their parent", () => {
+    expect(body).not.toContain("mapContainerRef");
+  });
+
+  it("calls document.exitFullscreen() to leave fullscreen", () => {
+    expect(body).toContain("document.exitFullscreen()");
+  });
+
+  it("branches on document.fullscreenElement to decide enter vs. exit", () => {
+    expect(body).toContain("document.fullscreenElement");
+  });
+});
+
+describe("Fullscreen state sync -- fullscreenchange listener", () => {
+  it("checks document.fullscreenEnabled once via a lazy useState initializer, not on every render", () => {
+    expect(mapViewSource).toContain("useState(() => document.fullscreenEnabled)");
+  });
+
+  it("registers a fullscreenchange listener on document", () => {
+    expect(mapViewSource).toContain('document.addEventListener("fullscreenchange", handleFullscreenChange)');
+  });
+
+  it("cleans up the fullscreenchange listener on unmount", () => {
+    expect(mapViewSource).toContain('document.removeEventListener("fullscreenchange", handleFullscreenChange)');
+  });
+
+  it("registers the listener in an effect with an empty dependency array -- once per mount", () => {
+    const addIndex = mapViewSource.indexOf('document.addEventListener("fullscreenchange"');
+    const removeIndex = mapViewSource.indexOf('document.removeEventListener("fullscreenchange"');
+    const closeIndex = mapViewSource.indexOf("}, []);", removeIndex);
+    expect(removeIndex).toBeGreaterThan(addIndex);
+    expect(closeIndex).toBeGreaterThan(removeIndex);
+    // Nothing but the cleanup return sits between the listener registration
+    // and the effect's own closing `}, []);` -- proves this is a single,
+    // mount-once effect rather than one re-subscribing on every render.
+    expect(mapViewSource.slice(addIndex, closeIndex)).not.toContain("useEffect(");
+  });
+});

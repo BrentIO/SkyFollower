@@ -157,6 +157,39 @@ function MapViewInner({ config }: { config: AppConfig }) {
     savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible });
   }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible]);
 
+  // Whole-page Fullscreen API toggle -- not persisted like the four above,
+  // since it's a transient browser-chrome state rather than an operator
+  // preference (reloading always starts out of fullscreen). Checked once
+  // rather than tracked live: `fullscreenEnabled` reflects permission/
+  // support, which doesn't change over a page's lifetime the way
+  // `fullscreenElement` does.
+  const [fullscreenSupported] = useState(() => document.fullscreenEnabled);
+  const [fullscreen, setFullscreen] = useState(() => document.fullscreenElement != null);
+
+  // Esc, F11, and OS-level gestures all exit fullscreen without going
+  // through handleToggleFullscreen below, so the button's state can't rely
+  // on optimistic state set only inside that click handler -- same class
+  // of "something outside our own handler changed the state" problem the
+  // map's own dragstart listener handles for Follow further down.
+  useEffect(() => {
+    const handleFullscreenChange = () => setFullscreen(document.fullscreenElement != null);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  // Fullscreens the whole page (document.documentElement), not
+  // mapContainerRef.current -- the map container is a sibling of
+  // ControlsPanel/AircraftDetailPanel/InfoBoxLayer below, not their
+  // parent, so fullscreening it alone would drop every overlay from the
+  // fullscreen view.
+  function handleToggleFullscreen() {
+    if (document.fullscreenElement != null) {
+      void document.exitFullscreen();
+    } else {
+      void document.documentElement.requestFullscreen();
+    }
+  }
+
   // The basemap's own text-bearing layer ids, computed once on "load" (see
   // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
   // runtime, so there's no need to recompute this on every toggle.
@@ -856,6 +889,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         rangeOutlineDisabled={!config.center}
         onRecenter={handleRecenter}
         recenterDisabled={!config.center}
+        fullscreen={fullscreen}
+        onToggleFullscreen={handleToggleFullscreen}
+        fullscreenDisabled={!fullscreenSupported}
       />
     </div>
   );

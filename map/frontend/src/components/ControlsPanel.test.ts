@@ -83,3 +83,44 @@ describe("icon-button row -- History, Labels, Map Labels, Range Outline", () => 
     expect(controlsPanelSource).toContain("<IconButton");
   });
 });
+
+describe("Fullscreen toggle button", () => {
+  // The prop declaration/destructuring both mention "onToggleFullscreen"
+  // earlier in the file, so anchor on the JSX call site specifically
+  // (`onClick={onToggleFullscreen}`) rather than the bare identifier.
+  const callSiteIndex = controlsPanelSource.indexOf("onClick={onToggleFullscreen}");
+
+  it("finds exactly one JSX call site wiring onClick to onToggleFullscreen", () => {
+    expect(callSiteIndex).toBeGreaterThan(-1);
+  });
+
+  it("renders after Range Outline, as the last button in the column", () => {
+    const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
+    expect(callSiteIndex).toBeGreaterThan(rangeOutlineIndex);
+  });
+
+  it("sizes to match the other icon buttons via IconButton's size prop", () => {
+    const callSite = controlsPanelSource.slice(callSiteIndex - 250, callSiteIndex + 100);
+    expect(callSite).toContain('size="md"');
+  });
+
+  it("derives its icon from fullscreenIcon() rather than a static IconSpec", () => {
+    expect(controlsPanelSource).toContain('import { fullscreenIcon } from "../lib/fullscreen"');
+    expect(controlsPanelSource).toContain("icon={fullscreenIcon(fullscreen)}");
+  });
+
+  it("wires active/onClick/disabled to the fullscreen prop trio", () => {
+    const callSite = controlsPanelSource.slice(callSiteIndex - 150, callSiteIndex + 100);
+    expect(callSite).toContain("active={fullscreen}");
+    expect(callSite).toContain("onClick={onToggleFullscreen}");
+    expect(callSite).toContain("disabled={fullscreenDisabled}");
+  });
+
+  it("mirrors Range Outline's disabled-not-hidden convention for feature detection", () => {
+    // The button is always in the tree -- gating is via IconButton's
+    // `disabled` prop, not a conditional render -- matching how
+    // rangeOutlineDisabled works rather than hiding the control outright.
+    expect(controlsPanelSource).not.toMatch(/\{fullscreenSupported\s*&&/);
+    expect(controlsPanelSource).not.toMatch(/\{!fullscreenDisabled\s*&&/);
+  });
+});
