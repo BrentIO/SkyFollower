@@ -133,3 +133,32 @@ describe("compact/simple-silhouette shape scale floor", () => {
     expect(AIRCRAFT_SHAPES.C172.scale).toBeLessThan(SCALE_MIN_COMPACT_SILHOUETTE);
   });
 });
+
+describe("accent-detail icon cutouts (ACCENT_CUTOUT_RATIO_THRESHOLD)", () => {
+  // Mirrors ACCENT_CUTOUT_RATIO_THRESHOLD = 2 in
+  // scripts/generate-aircraft-shapes.mjs, lowered from an original 5: BALL
+  // (balloon) was the sole outlier at threshold 5; lowering to 2
+  // additionally picks up EC35 (helicopter), the next-highest ratio (~2.5)
+  // with a real remaining gap above the continuous decay below it. Keep
+  // this list in sync with the generator script's own threshold.
+  const SHAPES_WITH_ACCENT_CUTOUT = ["BALL", "EC35"];
+
+  it("gives exactly the expected shapes an accentD cutout, no others", () => {
+    for (const key of SHAPES_WITH_ACCENT_CUTOUT) {
+      expect(AIRCRAFT_SHAPES[key], `AIRCRAFT_SHAPES[${key}]`).toBeDefined();
+      expect(AIRCRAFT_SHAPES[key].accentD, `${key}.accentD`).toBeTruthy();
+    }
+    const actualKeysWithAccent = Object.keys(AIRCRAFT_SHAPES).filter((key) => AIRCRAFT_SHAPES[key].accentD);
+    expect(actualKeysWithAccent.sort()).toEqual([...SHAPES_WITH_ACCENT_CUTOUT].sort());
+  });
+
+  it("BALL's existing cutout is unaffected by the threshold change", () => {
+    expect(AIRCRAFT_SHAPES.BALL.accentD).toBeTruthy();
+    expect(AIRCRAFT_SHAPES.BALL.accentStrokeWidth).toBeGreaterThan(0);
+  });
+
+  it("EC35 gets a real accentD path and a parsed positive stroke width", () => {
+    expect(AIRCRAFT_SHAPES.EC35.accentD).toBeTruthy();
+    expect(AIRCRAFT_SHAPES.EC35.accentStrokeWidth).toBeGreaterThan(0);
+  });
+});
