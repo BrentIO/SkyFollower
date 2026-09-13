@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  centerPointFeatureCollection,
   destinationPoint,
   rangeRingLabelsFeatureCollection,
   rangeRingsFeatureCollection,
@@ -99,5 +100,21 @@ describe("rangeRingLabelsFeatureCollection", () => {
       expect(lon).toBeCloseTo(center.longitude, 6);
       expect(lat).toBeLessThan(center.latitude);
     }
+  });
+});
+
+describe("centerPointFeatureCollection", () => {
+  it("returns no features when there's no center point", () => {
+    expect(centerPointFeatureCollection(null).features).toHaveLength(0);
+  });
+
+  it("returns exactly one Point feature at the center coordinate", () => {
+    const center = { latitude: 40, longitude: -75 };
+    const fc = centerPointFeatureCollection(center);
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].geometry.type).toBe("Point");
+    const [lon, lat] = (fc.features[0].geometry as GeoJSON.Point).coordinates;
+    expect(lon).toBe(center.longitude);
+    expect(lat).toBe(center.latitude);
   });
 });

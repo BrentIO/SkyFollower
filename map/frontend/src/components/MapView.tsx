@@ -20,6 +20,9 @@ import {
 import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
+  CENTER_POINT_CIRCLE_LAYER_ID,
+  CENTER_POINT_LABEL_LAYER_ID,
+  CENTER_POINT_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
@@ -36,7 +39,11 @@ import {
 } from "../lib/mapLayerIds";
 import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
 import { followTargetPosition, isFollowLost, shouldCancelFollowOnDrag } from "../lib/followTarget";
-import { rangeRingLabelsFeatureCollection, rangeRingsFeatureCollection } from "../lib/rangeRings";
+import {
+  centerPointFeatureCollection,
+  rangeRingLabelsFeatureCollection,
+  rangeRingsFeatureCollection,
+} from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
@@ -609,26 +616,56 @@ function MapViewInner({ config }: { config: AppConfig }) {
       });
 
       // Centered reference point -- a fixed marker from config, never
-      // derived from received data.
-      if (config.center) {
-        const el = document.createElement("div");
-        el.style.display = "flex";
-        el.style.flexDirection = "column";
-        el.style.alignItems = "center";
-        el.style.gap = "2px";
-        el.style.pointerEvents = "none";
-        // MapLibre appends this element directly as a sibling of its WebGL
-        // canvas (no wrapper div), so a negative z-index here is what keeps
-        // it behind aircraft icons drawn on the canvas -- otherwise DOM
-        // insertion order would put this marker on top.
-        el.style.zIndex = "-1";
-        el.innerHTML =
-          `<div style="width:12px;height:12px;border-radius:50%;background:#000000;"></div>` +
-          `<span style="font-size:9px;font-weight:600;letter-spacing:0.05em;color:${MUTED_GRAY};text-shadow:0 1px 2px rgba(255,255,255,0.8);">CENTER</span>`;
-        new maplibregl.Marker({ element: el, anchor: "center" })
-          .setLngLat([config.center.longitude, config.center.latitude])
-          .addTo(map);
-      }
+      // derived from received data. Rendered as a map layer (a GeoJSON
+      // source feature, same as the range rings above), not a DOM
+      // `Marker`: a DOM marker is appended into MapLibre's own canvas
+      // container as a sibling of its WebGL canvas, which paints as one
+      // opaque surface, so a DOM element is either entirely in front of
+      // it (visible, but always on top of every aircraft icon -- the
+      // original bug) or entirely behind it (behind *all* of the canvas's
+      // paint, not just the icons on it -- invisible outright, this
+      // regression). There is no z-index value that puts a sibling DOM
+      // element behind only some of what a single canvas draws. Putting
+      // the marker in the same paint pipeline as the aircraft icons
+      // (`beforeId: AIRCRAFT_LAYER_ID`) makes "behind aircraft icons" an
+      // ordinary layer-order concern instead, the same way the range
+      // rings above are guaranteed to render beneath live traffic.
+      map.addSource(CENTER_POINT_SOURCE_ID, {
+        type: "geojson",
+        data: centerPointFeatureCollection(config.center),
+      });
+      map.addLayer(
+        {
+          id: CENTER_POINT_CIRCLE_LAYER_ID,
+          type: "circle",
+          source: CENTER_POINT_SOURCE_ID,
+          paint: {
+            "circle-color": "#000000",
+            "circle-radius": 6,
+          },
+        },
+        AIRCRAFT_LAYER_ID,
+      );
+      map.addLayer(
+        {
+          id: CENTER_POINT_LABEL_LAYER_ID,
+          type: "symbol",
+          source: CENTER_POINT_SOURCE_ID,
+          layout: {
+            "text-field": "CENTER",
+            "text-size": 9,
+            "text-anchor": "top",
+            "text-offset": [0, 0.7],
+            "text-allow-overlap": true,
+          },
+          paint: {
+            "text-color": MUTED_GRAY,
+            "text-halo-color": "#ffffff",
+            "text-halo-width": 1.5,
+          },
+        },
+        AIRCRAFT_LAYER_ID,
+      );
 
       map.on("move", syncScreenPositions);
       syncScreenPositions();
