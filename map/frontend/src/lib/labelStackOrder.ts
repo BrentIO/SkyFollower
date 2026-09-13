@@ -15,14 +15,19 @@
 export const UNKNOWN_ALTITUDE_Z_INDEX = 0;
 
 const MAX_ALTITUDE_FT = 60_000;
-const MAX_KNOWN_Z_INDEX = 1000;
 
-// Maps a known altitude onto [1, MAX_KNOWN_Z_INDEX]; out-of-range values
+// Clamp ceiling for per-aircraft label z-indexes. Exported so any overlay
+// that must always paint above every InfoBoxLayer label box (e.g.
+// AircraftDetailPanel.tsx) can set its own z-index to this constant + 1
+// rather than duplicating the literal.
+export const MAX_LABEL_Z_INDEX = 1000;
+
+// Maps a known altitude onto [1, MAX_LABEL_Z_INDEX]; out-of-range values
 // are clamped rather than extrapolated.
 export function altitudeZIndex(altitudeFt: number | null | undefined): number {
   if (altitudeFt == null) return UNKNOWN_ALTITUDE_Z_INDEX;
   const clamped = Math.min(Math.max(altitudeFt, 0), MAX_ALTITUDE_FT);
-  return 1 + Math.round((clamped / MAX_ALTITUDE_FT) * (MAX_KNOWN_Z_INDEX - 1));
+  return 1 + Math.round((clamped / MAX_ALTITUDE_FT) * (MAX_LABEL_Z_INDEX - 1));
 }
 
 export interface LabelStackInput {
