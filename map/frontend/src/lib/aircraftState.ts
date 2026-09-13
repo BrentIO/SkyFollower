@@ -65,6 +65,19 @@ export interface AircraftRecord extends MapFlight {
   /** Oldest-first; see TracePoint's own docstring. */
   tracePoints: TracePoint[];
   /**
+   * Epoch ms of the last `position` or `metadata` WS event actually
+   * received for this aircraft (see applyWsEvent's position/metadata case)
+   * -- stamped unconditionally on every such event, unlike the wire's own
+   * `last_message` field (MapFlight.last_message), which the message
+   * processor only re-sends when a displayed field changes and would
+   * therefore freeze on a steady cruise flight. Drives the aircraft detail
+   * panel's live-relative "Last Message Received" row (lib/aircraftDetail.ts,
+   * components/AircraftDetailPanel.tsx). Undefined until the first
+   * position/metadata event, unless applySnapshot could seed it from the
+   * wire's `last_message` on initial load.
+   */
+  lastReceivedAt?: number;
+  /**
    * The resolved silhouette shape key (aircraftIconResolver.ts) and its
    * on-map size multiplier. Computed only when the aircraft's `aircraft`
    * enrichment sub-object changes (a `metadata` event or the snapshot),
@@ -135,6 +148,17 @@ function capTrail(trail: TrailPoint[]): TrailPoint[] {
   return trail.length > MAX_TRAIL_POINTS ? trail.slice(trail.length - MAX_TRAIL_POINTS) : trail;
 }
 
+// Parses the wire's ISO-8601 `last_message` timestamp (MapFlight.last_message)
+// to epoch milliseconds, for seeding AircraftRecord.lastReceivedAt from the
+// initial snapshot (see applySnapshot) -- returns undefined for a missing or
+// unparseable value rather than NaN, so a malformed timestamp behaves the
+// same as an absent one (row omitted until a live event stamps it).
+function parseWireTimestamp(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
 // Same push/dedupe/cap rules as pushTrailPoint, plus velocity and a
 // wall-clock timestamp for Trace Points' label (see TracePoint's
 // docstring). `now` is an injectable epoch-milliseconds reading (default
@@ -202,6 +226,7 @@ export function applySnapshot(snapshot: MapFlight[], now: number = Date.now()): 
       tracePoints: pushTracePoint([], flight, now),
       shape,
       iconScale: shapeScale(shape),
+      lastReceivedAt: parseWireTimestamp(flight.last_message),
     };
   }
   return state;
@@ -222,7 +247,9 @@ export interface ApplyWsEventsOptions {
    */
   protectedIcaoHex?: string | null;
   /** Injectable wall-clock reading (epoch milliseconds) for Trace Points
-   * sample timestamps -- see pushTracePoint. Defaults to Date.now(). */
+   * sample timestamps (see pushTracePoint) and for stamping
+   * AircraftRecord.lastReceivedAt on position/metadata events. Defaults to
+   * Date.now(). */
   now?: number;
 }
 
@@ -251,6 +278,12 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: Ap
         hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
         pendingRemoval: false, // ...and cancels a deferred eviction (contact resumed).
       };
+      // Unconditional on every position/metadata event -- a message was
+      // actually just heard from this aircraft, regardless of whether any
+      // displayed field changed (see AircraftRecord.lastReceivedAt's
+      // docstring for why this deliberately differs from the wire's own
+      // last_message field).
+      merged.lastReceivedAt = now;
       merged.trail = event.type === "position" ? pushTrailPoint(existing?.trail ?? [], merged) : (existing?.trail ?? []);
       merged.tracePoints =
         event.type === "position" ? pushTracePoint(existing?.tracePoints ?? [], merged, now) : (existing?.tracePoints ?? []);

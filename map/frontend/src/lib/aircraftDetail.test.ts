@@ -267,6 +267,17 @@ describe("buildAircraftDetail -- Distance", () => {
   });
 });
 
+describe("buildAircraftDetail -- lastReceivedAt passthrough", () => {
+  it("passes lastReceivedAt through unchanged when present", () => {
+    const data = buildAircraftDetail({ ...baseFlight(), lastReceivedAt: 1234567890 }, null);
+    expect(data.lastReceivedAt).toBe(1234567890);
+  });
+
+  it("defaults to null when the record has no lastReceivedAt yet", () => {
+    expect(buildAircraftDetail(baseFlight(), null).lastReceivedAt).toBeNull();
+  });
+});
+
 describe("buildAircraftDetail -- Sources / Matched Rules", () => {
   it("omits both when empty", () => {
     const data = buildAircraftDetail(baseFlight(), null);
