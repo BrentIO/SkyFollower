@@ -86,6 +86,37 @@ for (const file of files) {
   };
 }
 
+// Shapes with a compact and/or simple silhouette -- no airplane's
+// elongated wing/tail cross-shape to fill the frame -- that antialias down
+// into an unrecognizable blob at the general SCALE_MIN floor rather than
+// reading as their real shape. These get their own higher floor below
+// instead of raising SCALE_MIN globally, which would wrongly inflate other
+// shapes that are correctly small.
+const COMPACT_SILHOUETTE_KEYS = new Set([
+  // Helicopters -- rotorcraft silhouette, no wingspan to fill the frame.
+  // Keys taken from aircraftIconResolver.ts's TYPE_ALIASES "Helicopters"
+  // section, plus CATEGORY_SHAPES.A7 / DESCRIPTION_SHAPES.H (both map to
+  // "H60", already listed here).
+  "EC20", "EC35", "EC45", "GAZL", "AS65", "AS32", "S61", "R44", "H60",
+  "NH90", "LYNX", "MI24", "H47",
+  // Balloon -- round envelope + basket, no wing/tail shape at all.
+  "BALL",
+  // Gyroplane -- short stub wings dwarfed by the rotor disc outline.
+  "GYRO",
+  // Glider/sailplane -- long wing but a very narrow fuselage, so the
+  // overall silhouette is delicate rather than filling its footprint.
+  "AS21",
+  // UAV -- small, compact airframe by design.
+  "Q4",
+  // Motor glider -- same delicate, wing-dominated silhouette issue as AS21.
+  "SF25",
+]);
+for (const key of COMPACT_SILHOUETTE_KEYS) {
+  if (!shapes[key]) {
+    throw new Error(`COMPACT_SILHOUETTE_KEYS references unknown shape key ${JSON.stringify(key)}`);
+  }
+}
+
 // A shape's on-map size multiplier: its drawn span relative to the median,
 // through a square-root curve so the spread from a Cessna to an An-225
 // stays legible rather than the extremes dominating, then clamped. Real
@@ -94,10 +125,12 @@ for (const file of files) {
 const sorted = [...spans].sort((a, b) => a - b);
 const referenceSpan = sorted[Math.floor(sorted.length / 2)];
 const SCALE_MIN = 0.6;
+const SCALE_MIN_COMPACT_SILHOUETTE = 1.0;
 const SCALE_MAX = 1.6;
 for (const key of Object.keys(shapes)) {
   const raw = Math.sqrt(shapes[key].span / referenceSpan);
-  shapes[key].scale = round(Math.min(SCALE_MAX, Math.max(SCALE_MIN, raw)));
+  const floor = COMPACT_SILHOUETTE_KEYS.has(key) ? SCALE_MIN_COMPACT_SILHOUETTE : SCALE_MIN;
+  shapes[key].scale = round(Math.min(SCALE_MAX, Math.max(floor, raw)));
 }
 
 function round(n) {
@@ -125,7 +158,12 @@ export interface AircraftShape {
   cy: number;
   /** max(bbox width, bbox height), in source units. */
   span: number;
-  /** On-map size multiplier vs. the median shape, clamped to [${SCALE_MIN}, ${SCALE_MAX}]. */
+  /**
+   * On-map size multiplier vs. the median shape, clamped to
+   * [${SCALE_MIN}, ${SCALE_MAX}], except compact/simple-silhouette shapes
+   * (see COMPACT_SILHOUETTE_KEYS in generate-aircraft-shapes.mjs), which get
+   * a higher [${SCALE_MIN_COMPACT_SILHOUETTE}, ${SCALE_MAX}] floor.
+   */
   scale: number;
 }
 
