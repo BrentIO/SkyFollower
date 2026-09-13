@@ -34,6 +34,10 @@ python main.py --host 192.168.1.20 --port 5566 \
     --aircraft-count 50 --mode stress
 ```
 
+`--port` defaults to `30500` (the installer's suggested
+`MAP_LISTEN_PORT`/`MAP_UDP_PORT`) and can be omitted if the target `map`
+instance uses it.
+
 There are no third-party runtime dependencies — `requirements.txt` exists
 only so this tool's tests are picked up by CI's per-component discovery.
 
@@ -155,7 +159,7 @@ the three, matching the real traffic-reduction design (see
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--host` | Yes | — | Target `map` instance's UDP listen host. |
-| `--port` | Yes | — | Target `map` instance's UDP listen port (`MAP_LISTEN_PORT`). |
+| `--port` | No | `30500` | Target `map` instance's UDP listen port (`MAP_LISTEN_PORT`). |
 | `--aircraft-count` | No | `10` | Number of simulated aircraft. |
 | `--position-rate` | No | `2.0` | Position datagrams per second, **per aircraft**. Deliberately allowed to exceed the real `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` throttle (default 1/s in message-processor) — finding where that breaks is the point. |
 | `--metadata-interval` | No | `30.0` | Seconds between metadata resends per aircraft. |
