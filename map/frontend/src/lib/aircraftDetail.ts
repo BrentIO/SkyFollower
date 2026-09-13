@@ -115,8 +115,11 @@ function buildVerticalSpeedDisplay(verticalSpeed: number | null | undefined): st
 }
 
 // Omitted whenever config.center is null, or the aircraft's own position
-// isn't known yet.
-function buildDistanceDisplay(flight: MapFlight, center: CenterPoint | null): string | null {
+// isn't known yet. Exported so components/AircraftListPanel.tsx's Distance
+// column (lib/aircraftListRow.ts's buildAircraftListRow) can reuse the
+// exact same computation as this panel's own Distance row, per the issue
+// that introduced that column.
+export function buildDistanceDisplay(flight: MapFlight, center: CenterPoint | null): string | null {
   if (!center || flight.lat == null || flight.lon == null) return null;
   const nm = greatCircleNm(center, { latitude: flight.lat, longitude: flight.lon });
   return nm.toFixed(1);

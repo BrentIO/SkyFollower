@@ -50,6 +50,7 @@ import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottl
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
+import { AircraftListPanel } from "./AircraftListPanel";
 import { ControlsPanel } from "./ControlsPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
@@ -815,6 +816,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (turningOn) handleZoomTo(); // Zoom To once immediately, then the recenter effect above takes over.
   }
 
+  // AircraftListPanel row click -- same single-select mechanism as clicking
+  // an aircraft's icon on the map (see the "click" handler in the mount
+  // effect above), reused rather than a second selection code path.
+  function handleSelectFromList(icaoHex: string) {
+    setSelected((prev) => nextSelection(prev, icaoHex));
+  }
+
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
     .filter(hasPosition)
     // Same bypass as aircraftFeatureCollection/trailFeatureCollection --
@@ -855,7 +863,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
       <ControlsPanel
         wsConnected={connected}
         roster={roster}
-        aircraftCount={Object.keys(aircraft).length}
         historyAll={historyAll}
         onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
         labelsAll={labelsAll}
@@ -870,6 +877,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
         fullscreen={fullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         fullscreenDisabled={!fullscreenSupported}
+      />
+      <AircraftListPanel
+        aircraft={aircraft}
+        aircraftCount={Object.keys(aircraft).length}
+        center={config.center}
+        selected={selected}
+        onSelect={handleSelectFromList}
       />
     </div>
   );

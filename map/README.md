@@ -720,13 +720,33 @@ backend has no origin to measure from in that case either.
 - `src/components/MapView.tsx` -- map construction, aircraft/trail
   sources+layers (via `src/lib/featureCollections.ts`),
   click-to-toggle-trail, and the info-box overlay.
-- `src/components/ControlsPanel.tsx` -- the top-right status
-  panel/toggles/recenter button. The connection dot is green/amber/red
-  (amber = "at least one processor reconnecting/disconnected, but at
-  least one still connected"), and hovering it lists every rostered
-  processor by `processor_id` with its own status label. Its "Range
-  Outline" toggle is disabled whenever no center is configured, matching
-  the recenter button's own disabled state.
+- `src/components/ControlsPanel.tsx` -- the top-right connection-status
+  dot (a bare floating indicator, no card/background) plus the toggles/
+  recenter icon column below it. The dot is green/amber/red (amber = "at
+  least one processor reconnecting/disconnected, but at least one still
+  connected"), and hovering it lists every rostered processor by
+  `processor_id` with its own status label. Its "Range Outline" toggle is
+  disabled whenever no center is configured, matching the recenter
+  button's own disabled state. The tracked-aircraft count is not shown
+  here -- see `AircraftListPanel.tsx` below.
+- `src/lib/aircraftListRow.ts` / `src/lib/aircraftListSort.ts` -- pure
+  view-model/sort logic for the right-side aircraft list flyout: per-row
+  field extraction (reusing `aircraftDetail.ts`'s `buildDistanceDisplay`/
+  `isEmergencySquawk` and `infoBox.ts`'s `trendArrow`/`formatAltitude`
+  rather than reimplementing them), the non-hidden population filter (same
+  rule as `featureCollections.ts`), and the column-header sort-state
+  toggle (mirrors `management-ui/frontend`'s `resultsSort.ts`).
+- `src/components/AircraftListPanel.tsx` -- the right-side flyout: a
+  sortable, columnar table (Ident, Registration, Type, Desc, Altitude,
+  Distance) of every currently-tracked, non-hidden aircraft, opened via
+  its own edge-tab handle (vertically centered on the viewport, not
+  top-aligned, so it can't collide with `ControlsPanel`'s top-right icon
+  column/status dot). Column definitions are a data-driven array
+  (`{ key, header, sortKey, render }[]`). Row clicks select that aircraft
+  via the same mechanism as clicking its map icon. Throttles its own row
+  rebuild against `aircraft` state changes (`syncThrottle.ts`,
+  `MAP_SYNC_THROTTLE_MS`) the same way `MapView.tsx` throttles its MapLibre
+  source rebuild, and only while open.
 
 ```bash
 cd map/frontend
