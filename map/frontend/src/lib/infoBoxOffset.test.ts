@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { infoBoxOffsetForZoom, MAX_INFO_BOX_OFFSET, MIN_INFO_BOX_OFFSET } from "./infoBoxOffset";
+import {
+  infoBoxOffsetForZoom,
+  infoBoxTextOffsetZoomExpression,
+  INFO_BOX_TEXT_OFFSET_REFERENCE_PX,
+  MAX_INFO_BOX_OFFSET,
+  MIN_INFO_BOX_OFFSET,
+} from "./infoBoxOffset";
 
 describe("infoBoxOffsetForZoom", () => {
   it("returns the max offset at and above the high-zoom threshold", () => {
@@ -55,5 +61,63 @@ describe("infoBoxOffsetForZoom", () => {
     expect(infoBoxOffsetForZoom(9.9)).toBeLessThanOrEqual(MAX_INFO_BOX_OFFSET);
     expect(infoBoxOffsetForZoom(-5)).toBe(MIN_INFO_BOX_OFFSET);
     expect(infoBoxOffsetForZoom(100)).toBe(MAX_INFO_BOX_OFFSET);
+  });
+});
+
+// #1808: components/MapView.tsx's INFO_BOX_LAYER_ID symbol layer has no
+// per-frame JS callback to call infoBoxOffsetForZoom() from (unlike the
+// removed DOM InfoBoxLayer.tsx, which called it once per throttled "move"
+// tick) -- this builds the equivalent MapLibre `text-offset` zoom
+// expression instead, evaluated GPU/style-engine-side.
+describe("infoBoxTextOffsetZoomExpression", () => {
+  const expr = infoBoxTextOffsetZoomExpression();
+
+  it("is an interpolate/linear/zoom expression", () => {
+    expect(expr[0]).toBe("interpolate");
+    expect(expr[1]).toEqual(["linear"]);
+    expect(expr[2]).toEqual(["zoom"]);
+  });
+
+  it("has an even number of stop entries (zoom, [dx, dy] pairs) after the three header elements", () => {
+    const stops = expr.slice(3);
+    expect(stops.length % 2).toBe(0);
+    expect(stops.length).toBeGreaterThan(0);
+  });
+
+  it("stop zoom values are strictly increasing -- required by MapLibre's interpolate expression", () => {
+    const stops = expr.slice(3);
+    const zooms = stops.filter((_, i) => i % 2 === 0) as number[];
+    for (let i = 1; i < zooms.length; i++) {
+      expect(zooms[i]).toBeGreaterThan(zooms[i - 1]);
+    }
+  });
+
+  it("every stop's [dx, dy] em value equals infoBoxOffsetForZoom(zoom)/referencePx, with dx === dy (diagonal down-right offset)", () => {
+    const stops = expr.slice(3);
+    for (let i = 0; i < stops.length; i += 2) {
+      const zoom = stops[i] as number;
+      const [dx, dy] = stops[i + 1] as [number, number];
+      const expectedEm = infoBoxOffsetForZoom(zoom) / INFO_BOX_TEXT_OFFSET_REFERENCE_PX;
+      expect(dx).toBeCloseTo(expectedEm, 6);
+      expect(dy).toBeCloseTo(expectedEm, 6);
+    }
+  });
+
+  it("covers at least the MIN_OFFSET_ZOOM..MAX_OFFSET_ZOOM ramp's endpoints (zoom 4 and zoom 10)", () => {
+    const stops = expr.slice(3);
+    const zooms = stops.filter((_, i) => i % 2 === 0) as number[];
+    expect(Math.min(...zooms)).toBeLessThanOrEqual(4);
+    expect(Math.max(...zooms)).toBeGreaterThanOrEqual(10);
+  });
+
+  it("a custom referencePx scales every em value inversely", () => {
+    const doubled = infoBoxTextOffsetZoomExpression(INFO_BOX_TEXT_OFFSET_REFERENCE_PX * 2);
+    const baseStops = expr.slice(3);
+    const doubledStops = doubled.slice(3);
+    for (let i = 1; i < baseStops.length; i += 2) {
+      const [baseDx] = baseStops[i] as [number, number];
+      const [doubledDx] = doubledStops[i] as [number, number];
+      expect(doubledDx).toBeCloseTo(baseDx / 2, 6);
+    }
   });
 });

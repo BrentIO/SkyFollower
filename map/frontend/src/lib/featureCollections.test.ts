@@ -5,6 +5,7 @@ import {
   aircraftFeatureCollection,
   buildAircraftSourceDiff,
   buildTrailSourceDiff,
+  isAircraftVisible,
   trailFeatureCollection,
   trailSegmentFeatures,
 } from "./featureCollections";
@@ -273,6 +274,49 @@ describe("trailFeatureCollection -- selected (protectedId, not Followed) lost di
 
     const fc = trailFeatureCollection(aircraft, new Set(["A1B2C3"]), { protectedId: "OTHER" });
     expect(fc.features).toHaveLength(0);
+  });
+});
+
+// #1808: extracted out of aircraftFeature so the info-box label feature
+// builder (lib/infoBoxSource.ts) can share the exact same isolate/hidden
+// visibility rule, rather than risking a label ever drifting out of sync
+// with its own aircraft's icon.
+describe("isAircraftVisible -- shared aircraft/label visibility rule (#1808)", () => {
+  it("a normal (not hidden, not isolated-out) aircraft is visible", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3");
+    expect(isAircraftVisible(aircraft.A1B2C3)).toBe(true);
+  });
+
+  it("a hidden aircraft with no Follow/protectedId exception is not visible", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(isAircraftVisible(hidden.A1B2C3)).toBe(false);
+  });
+
+  it("a hidden aircraft that's the followId is visible (Follow-lost exception)", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(isAircraftVisible(hidden.A1B2C3, { followId: "A1B2C3" })).toBe(true);
+  });
+
+  it("a hidden aircraft that's the protectedId is visible (selected-lost exception)", () => {
+    const base = withOnePositionedAircraft("A1B2C3");
+    const hidden = applyWsEvent(base, { type: "hide", icao_hex: "A1B2C3" });
+    expect(isAircraftVisible(hidden.A1B2C3, { protectedId: "A1B2C3" })).toBe(true);
+  });
+
+  it("isolate is a hard filter, overriding any other aircraft's visibility regardless of hidden state", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3");
+    expect(isAircraftVisible(aircraft.A1B2C3, { isolateId: "OTHER" })).toBe(false);
+    expect(isAircraftVisible(aircraft.A1B2C3, { isolateId: "A1B2C3" })).toBe(true);
+  });
+
+  it("deliberately doesn't check hasPosition -- aircraftFeature/infoBoxLabelFeature must check that themselves first", () => {
+    // A position-less aircraft is otherwise a normal, non-hidden aircraft --
+    // isAircraftVisible alone says "visible" here; only the caller's own
+    // hasPosition() check actually excludes it.
+    const noPosition = applySnapshot([{ icao_hex: "A1B2C3" }]);
+    expect(isAircraftVisible(noPosition.A1B2C3)).toBe(true);
   });
 });
 
