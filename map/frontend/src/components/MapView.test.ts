@@ -620,3 +620,14 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
     expect(occurrences).toBe(1);
   });
 });
+
+describe("handleSelectFromList -- AircraftListPanel row click (#1791)", () => {
+  it("enables Isolate in addition to selecting, matching the Isolate button's own effect", () => {
+    const startIndex = mapViewSource.indexOf("function handleSelectFromList(icaoHex: string) {");
+    const endIndex = mapViewSource.indexOf("\n  }", startIndex);
+    expect(startIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(startIndex, endIndex);
+    expect(body).toContain("setSelected((prev) => nextSelection(prev, icaoHex));");
+    expect(body).toContain("setIsolateEnabled(true);");
+  });
+});

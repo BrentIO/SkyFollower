@@ -977,9 +977,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   // AircraftListPanel row click -- same single-select mechanism as clicking
   // an aircraft's icon on the map (see the "click" handler in the mount
-  // effect above), reused rather than a second selection code path.
+  // effect above), reused rather than a second selection code path. Also
+  // enables Isolate (#1791), matching the side panel's own Isolate button
+  // for a freshly-selected aircraft -- picking an aircraft from the list is
+  // exactly the "focus on just this one" gesture Isolate exists for.
   function handleSelectFromList(icaoHex: string) {
     setSelected((prev) => nextSelection(prev, icaoHex));
+    setIsolateEnabled(true);
   }
 
   const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
