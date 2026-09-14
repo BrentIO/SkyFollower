@@ -877,7 +877,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "text-field": [
             "format",
             ["get", "identLine"],
-            { "font-scale": 1.15, "text-font": BASEMAP_TEXT_FONT_BOLD },
+            // #1823: a bare array here (`"text-font": BASEMAP_TEXT_FONT_BOLD`)
+            // fails MapLibre's real expression parser -- it treats *any*
+            // nested array as a sub-expression unless wrapped in
+            // ["literal", [...]], the exact same rule (and the exact same
+            // mistake) as #1815's text-offset bug. That one shipped
+            // because every test only checked the plain-array shape; this
+            // one shipped because a TS error on the unwrapped form was
+            // cast through `unknown` instead of fixed. See
+            // MapView.test.ts's "is a valid MapLibre expression" test,
+            // which runs this exact literal through the real parser
+            // (@maplibre/maplibre-gl-style-spec) so this class of bug
+            // fails a plain `vitest run`, not just a live page load.
+            { "font-scale": 1.15, "text-font": ["literal", BASEMAP_TEXT_FONT_BOLD] },
             ["case", ["get", "hasBothLines"], "\n", ""],
             {},
             ["get", "detailLines"],
