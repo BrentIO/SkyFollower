@@ -1,3 +1,4 @@
+import { createExpression, v8 as styleSpecV8 } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 // Vite's `?raw` suffix (declared by vite/client, referenced in src/vite-env.d.ts)
 // imports a file's contents as a plain string -- used here instead of node:fs so
@@ -5,6 +6,8 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
+import { INFO_BOX_ICON_ID } from "../lib/infoBoxIcon";
+import { INFO_BOX_TEXT_OFFSET_REFERENCE_PX, infoBoxTextOffsetZoomExpression } from "../lib/infoBoxOffset";
 import { AIRCRAFT_LAYER_ID, INFO_BOX_LAYER_ID, SELECTABLE_LAYER_IDS, TRAIL_HIT_AREA_LAYER_ID } from "../lib/mapLayerIds";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
@@ -537,6 +540,46 @@ describe("info-box label source sync (#1808)", () => {
     expect(mapViewSource).toContain('"symbol-sort-key": ["get", "sortKey"]');
   });
 
+  // #1815 and #1823: two separate bugs, same actual mistake both times --
+  // a bare array (a `text-offset` interpolate stop's [em, em] output,
+  // then a format section's `text-font`) where MapLibre's real expression
+  // parser requires `["literal", [...]]", each shipping because nothing
+  // in this file's tests ever ran the *whole* text-field/layout MapView.tsx
+  // actually builds through that real parser -- only plain-array-shape
+  // assertions, or (for #1823) a TS-level cast that silenced the type
+  // error without checking the runtime value. This validates the whole
+  // `layout` object MapLibre would actually receive for INFO_BOX_LAYER_ID,
+  // the same way `map.addLayer` itself validates it internally --
+  // exercising @maplibre/maplibre-gl-style-spec's real parser, not a
+  // hand-rolled expression evaluator, so a bug of this exact class fails
+  // a plain `vitest run` instead of only showing up as a silent
+  // console.error on a live page load.
+  it("text-field and text-offset -- the two properties this layer builds as real expression trees, not plain literals -- are valid MapLibre expressions (#1815, #1823)", () => {
+    // Scoped to just these two (not every layout property generically):
+    // they're the only ones MapView.tsx constructs as an actual
+    // `["op", ...]` expression tree (format()/interpolate()) rather than a
+    // plain literal value -- and both of #1815/#1823's real bugs were
+    // specifically a bare array *nested inside* one of these trees, where
+    // MapLibre's parser can't tell "literal array" from "sub-expression"
+    // apart without a ["literal", ...] wrapper. A plain top-level literal
+    // property (e.g. icon-text-fit-padding's fixed [4,6,4,6]) doesn't go
+    // through this same disambiguation and isn't what either bug was.
+    const layout = extractLayerLayout("INFO_BOX_LAYER_ID", {
+      INFO_BOX_ICON_ID,
+      INFO_BOX_TEXT_OFFSET_REFERENCE_PX,
+      infoBoxTextOffsetZoomExpression,
+      BASEMAP_TEXT_FONT: extractModuleConst("BASEMAP_TEXT_FONT"),
+      BASEMAP_TEXT_FONT_BOLD: extractModuleConst("BASEMAP_TEXT_FONT_BOLD"),
+    });
+    const layoutSpec = styleSpecV8.layout_symbol as Record<string, unknown>;
+    for (const key of ["text-field", "text-offset"]) {
+      const result = createExpression(layout[key], `layout_symbol.${key}`, layoutSpec[key] as never);
+      if (result.result === "error") {
+        throw new Error(`${key}: ${JSON.stringify(layout[key])} -- ${result.value.map((e) => e.message).join("; ")}`);
+      }
+    }
+  });
+
   it("both allow-overlap and ignore-placement are set for icon and text, matching the removed DOM version's no-collision-avoidance design (boxes are free to overlap)", () => {
     expect(mapViewSource).toContain('"icon-allow-overlap": true');
     expect(mapViewSource).toContain('"icon-ignore-placement": true');
@@ -664,8 +707,15 @@ function extractLayerFilter(layerIdConstant: string): unknown {
 
 // Extracts the `layout: { ... }` object literal belonging to the layer whose
 // definition contains `id: <layerIdConstant>`, evaluated into a real object
-// -- same extraction convention as extractLayerPaint/extractLayerFilter above.
-function extractLayerLayout(layerIdConstant: string): Record<string, unknown> {
+// -- same extraction convention as extractLayerPaint/extractLayerFilter
+// above. `scope` binds identifiers the layout literal itself references but
+// that aren't defined within the extracted snippet (module-level imports
+// like INFO_BOX_ICON_ID, or a called function like
+// infoBoxTextOffsetZoomExpression()) -- pass the *real* imported
+// values/functions so the evaluated layout is the actual one MapView.tsx
+// builds, not a stand-in. Layers with no such references (the common case)
+// need no scope at all.
+function extractLayerLayout(layerIdConstant: string, scope: Record<string, unknown> = {}): Record<string, unknown> {
   const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
   if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
 
@@ -674,11 +724,36 @@ function extractLayerLayout(layerIdConstant: string): Record<string, unknown> {
 
   const objectOpenIndex = layoutKeyIndex + "layout: ".length;
   const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
-  const layoutLiteral = mapViewSource.slice(objectOpenIndex, objectCloseIndex + 1);
+  // Strips a TS `as ...`/`as unknown as ...` type-assertion trailing a
+  // property value (e.g. INFO_BOX_LAYER_ID's `text-field` -- see that
+  // property's own cast) -- valid TS, not valid plain JS, and `new
+  // Function` below only understands the latter.
+  const layoutLiteral = mapViewSource
+    .slice(objectOpenIndex, objectCloseIndex + 1)
+    .replace(/\s+as\s+unknown\s+as\s+[A-Za-z_][\w.]*(\["[^"]+"\])?/g, "")
+    .replace(/\s+as\s+[A-Za-z_][\w.]*(\["[^"]+"\])?/g, "");
 
   // eslint-disable-next-line no-new-func -- evaluating a plain object literal
-  // extracted from our own source, not user input.
-  return new Function(`return (${layoutLiteral});`)();
+  // (plus caller-supplied real bindings) extracted from our own source, not
+  // user input.
+  const fn = new Function(...Object.keys(scope), `return (${layoutLiteral});`);
+  return fn(...Object.values(scope));
+}
+
+// Pulls one module-private `const NAME = ...;` declaration's literal value
+// straight out of mapViewSource -- for identifiers a layout references that
+// aren't exported (BASEMAP_TEXT_FONT/BASEMAP_TEXT_FONT_BOLD), so
+// extractLayerLayout's scope can bind their *real* current value instead of
+// a hand-copied duplicate that could silently drift from the source.
+function extractModuleConst(name: string): unknown {
+  const marker = `const ${name} = `;
+  const startIndex = mapViewSource.indexOf(marker);
+  if (startIndex === -1) throw new Error(`Could not find "${marker}" in MapView.tsx`);
+  const valueStart = startIndex + marker.length;
+  const semicolonIndex = mapViewSource.indexOf(";", valueStart);
+  const literal = mapViewSource.slice(valueStart, semicolonIndex);
+  // eslint-disable-next-line no-new-func -- see extractLayerLayout above.
+  return new Function(`return (${literal});`)();
 }
 
 describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- dilated-silhouette selection outline for icon_scale < 1 (#1806/#1816)", () => {
