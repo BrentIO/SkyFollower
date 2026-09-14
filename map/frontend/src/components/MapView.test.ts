@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
-import { hasPosition } from "../lib/featureCollections";
+import { AIRCRAFT_LAYER_ID, INFO_BOX_LAYER_ID, SELECTABLE_LAYER_IDS, TRAIL_HIT_AREA_LAYER_ID } from "../lib/mapLayerIds";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
 // callback that also constructs a real maplibregl.Map and reads several hooks --
@@ -105,86 +105,6 @@ function evaluateExpr(expr: Expr, properties: Record<string, unknown>): unknown 
       throw new Error(`evaluateExpr: unsupported operator ${op}`);
   }
 }
-
-// The infoBoxItems computation is a plain expression assigned to a `const`
-// inside the component body (no map/hooks involved beyond reading `aircraft`,
-// `screenPositions`, and `isolateId` from the surrounding scope), so it's
-// extracted and evaluated the same way as the paint objects above -- this
-// exercises the real filter chain, including the isolate check, rather than
-// a hand-copied duplicate that could drift from the source.
-function extractInfoBoxItemsExpression(): string {
-  const marker = "const infoBoxItems: InfoBoxLayerItem[] = ";
-  const startIndex = mapViewSource.indexOf(marker);
-  if (startIndex === -1) throw new Error("Could not find infoBoxItems declaration");
-
-  const exprStart = startIndex + marker.length;
-  const endIndex = mapViewSource.indexOf(";", exprStart);
-  if (endIndex === -1) throw new Error("Could not find end of infoBoxItems computation");
-
-  return mapViewSource.slice(exprStart, endIndex);
-}
-
-interface FakeAircraft {
-  icao_hex: string;
-  lat: number | null;
-  lon: number | null;
-  hidden: boolean;
-}
-
-interface FakeScreenPosition {
-  x: number;
-  y: number;
-  offset: "above" | "below";
-}
-
-function computeInfoBoxItems(
-  aircraft: Record<string, FakeAircraft>,
-  screenPositions: Record<string, FakeScreenPosition>,
-  isolateId: string | null,
-): Array<{ id: string }> {
-  const expression = extractInfoBoxItemsExpression();
-  // eslint-disable-next-line no-new-func -- evaluating a plain expression
-  // extracted from our own source, not user input.
-  const fn = new Function(
-    "aircraft",
-    "screenPositions",
-    "isolateId",
-    "hasPosition",
-    `return (${expression});`,
-  );
-  return fn(aircraft, screenPositions, isolateId, hasPosition);
-}
-
-describe("infoBoxItems -- isolate filtering", () => {
-  function fakeAircraft(icao_hex: string): FakeAircraft {
-    return { icao_hex, lat: 1, lon: 1, hidden: false };
-  }
-
-  function fakeScreenPosition(): FakeScreenPosition {
-    return { x: 0, y: 0, offset: "above" };
-  }
-
-  const aircraft: Record<string, FakeAircraft> = {
-    AAAAAA: fakeAircraft("AAAAAA"),
-    BBBBBB: fakeAircraft("BBBBBB"),
-    CCCCCC: fakeAircraft("CCCCCC"),
-  };
-  const screenPositions: Record<string, FakeScreenPosition> = {
-    AAAAAA: fakeScreenPosition(),
-    BBBBBB: fakeScreenPosition(),
-    CCCCCC: fakeScreenPosition(),
-  };
-
-  it("with Isolate on, only the isolated aircraft's info box item appears", () => {
-    const items = computeInfoBoxItems(aircraft, screenPositions, "BBBBBB");
-    expect(items.map((item) => item.id)).toEqual(["BBBBBB"]);
-  });
-
-  it("with Isolate off (isolateId null), every aircraft's info box item appears", () => {
-    const items = computeInfoBoxItems(aircraft, screenPositions, null);
-    expect(items.map((item) => item.id).sort()).toEqual(["AAAAAA", "BBBBBB", "CCCCCC"]);
-  });
-});
 
 describe("aircraft layer paint -- icon-halo-*", () => {
   const paint = aircraftLayerPaint();
@@ -501,36 +421,6 @@ describe("Fullscreen state sync -- fullscreenchange listener", () => {
   });
 });
 
-describe("screen-position sync on 'move' -- throttled (#1776)", () => {
-  it("registers a throttled wrapper on 'move', not syncScreenPositions directly", () => {
-    expect(mapViewSource).toContain('map.on("move", throttledSyncScreenPositions);');
-    expect(mapViewSource).not.toContain('map.on("move", syncScreenPositions);');
-  });
-
-  it("unregisters the same throttled wrapper on cleanup", () => {
-    expect(mapViewSource).toContain('map.off("move", throttledSyncScreenPositions);');
-  });
-
-  it("routes the wrapper through a dedicated throttle instance, not the data-source sync's own", () => {
-    expect(mapViewSource).toContain("screenPositionThrottleRef.current.request(syncScreenPositions)");
-    expect(mapViewSource).toContain("createTrailingThrottle(SCREEN_POSITION_THROTTLE_MS)");
-  });
-
-  it("cancels the screen-position throttle's pending trailing run on unmount", () => {
-    const refIndex = mapViewSource.indexOf("screenPositionThrottleRef = useRef(");
-    const cancelIndex = mapViewSource.indexOf("screenPositionThrottleRef.current.cancel()");
-    expect(refIndex).toBeGreaterThan(-1);
-    expect(cancelIndex).toBeGreaterThan(refIndex);
-  });
-
-  it("still calls syncScreenPositions directly (unthrottled) once right after registering the listener", () => {
-    // The initial paint shouldn't wait on the throttle's own window.
-    const registerIndex = mapViewSource.indexOf('map.on("move", throttledSyncScreenPositions);');
-    const callSite = mapViewSource.slice(registerIndex, registerIndex + 200);
-    expect(callSite).toContain("syncScreenPositions();");
-  });
-});
-
 describe("aircraft/trail source sync -- incremental updateData() diff path (#1775)", () => {
   it("imports the diff-tracking and diff-building helpers", () => {
     expect(mapViewSource).toContain('import { diffAircraftMaps } from "../lib/aircraftMapDiff"');
@@ -556,7 +446,7 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
 
   it("uses full setData() rebuilds only on the visibilityChanged branch", () => {
     const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
-    const elseIndex = mapViewSource.indexOf("} else {", ifIndex);
+    const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
     expect(ifIndex).toBeGreaterThan(-1);
     expect(elseIndex).toBeGreaterThan(ifIndex);
     const ifBranch = mapViewSource.slice(ifIndex, elseIndex);
@@ -565,18 +455,24 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
     expect(ifBranch).not.toContain("updateData");
   });
 
-  it("uses diffAircraftMaps + updateData() on the data-only (else) branch, gated on any actual change", () => {
+  it("uses diffAircraftMaps + updateData() on the data-only (else-if) branch, gated on any actual change", () => {
+    // #1808: `changed` is now computed once, up front (shared with the
+    // info-box label source's own diff path below), rather than inside
+    // this branch -- so this branch is now `else if (changed.size > 0)`,
+    // not a nested `if` inside a bare `else`. Bounded at
+    // "// INFO_BOX_SOURCE_ID:" (that source's own, separate full/diff
+    // split starts there) rather than at prevAircraftRef's assignment
+    // further down, which now sits *after* both sources' branches.
     const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
-    const elseIndex = mapViewSource.indexOf("} else {", ifIndex);
-    const effectEnd = mapViewSource.indexOf("prevAircraftRef.current = aircraft;", elseIndex);
+    const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
+    const branchEnd = mapViewSource.indexOf("// INFO_BOX_SOURCE_ID:", elseIndex);
     expect(elseIndex).toBeGreaterThan(-1);
-    expect(effectEnd).toBeGreaterThan(elseIndex);
-    const elseBranch = mapViewSource.slice(elseIndex, effectEnd);
-    expect(elseBranch).toContain("diffAircraftMaps(prevAircraftRef.current, aircraft)");
-    expect(elseBranch).toContain("if (changed.size > 0) {");
+    expect(branchEnd).toBeGreaterThan(elseIndex);
+    const elseBranch = mapViewSource.slice(elseIndex, branchEnd);
     expect(elseBranch).toContain("aircraftSource?.updateData(aircraftDiff)");
     expect(elseBranch).toContain("trailSource?.updateData(trailResult.diff)");
     expect(elseBranch).not.toContain("setData");
+    expect(mapViewSource).toContain("const changed = diffAircraftMaps(prevAircraftRef.current, aircraft);");
   });
 
   it("registers SDF shape images for newly-added features on both the full and incremental paths", () => {
@@ -596,6 +492,99 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
   it("updates prevAircraftRef exactly once per run, after both branches", () => {
     const occurrences = (mapViewSource.match(/prevAircraftRef\.current = aircraft;/g) ?? []).length;
     expect(occurrences).toBe(1);
+  });
+});
+
+// #1808: InfoBoxLayer.tsx (a DOM <div> per labeled aircraft, restyled up to
+// 20Hz -- the profiled root cause of sustained >100% CPU with "Labels: All"
+// on) was removed in favor of INFO_BOX_LAYER_ID, a MapLibre symbol layer
+// driven by its own GeoJSON source (INFO_BOX_SOURCE_ID). The filter logic
+// itself (selected/hovered/showAll, altitude sort key, empty-content
+// omission) is covered directly in lib/infoBoxSource.test.ts against real
+// AircraftRecord fixtures -- these tests only check MapView.tsx's own
+// wiring (which can't be exercised without a live map -- see this file's
+// module docstring): that the source/layer are actually added, stack above
+// AIRCRAFT_LAYER_ID, and that the sync effect updates the label source on
+// its own independent full-rebuild-vs-diff schedule.
+describe("info-box label source sync (#1808)", () => {
+  it("no longer imports or renders the removed DOM-based InfoBoxLayer component", () => {
+    // Comments referencing "InfoBoxLayer.tsx" by name (documenting what
+    // this replaced) are expected and fine -- only the actual import and
+    // JSX usage must be gone.
+    expect(mapViewSource).not.toContain('from "./InfoBoxLayer"');
+    expect(mapViewSource).not.toContain("<InfoBoxLayer");
+  });
+
+  it("registers the background icon and adds the source/layer once, inside map.on('load')", () => {
+    expect(mapViewSource).toContain("registerInfoBoxIcon(map);");
+    expect(mapViewSource).toContain(
+      'map.addSource(INFO_BOX_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });',
+    );
+    expect(mapViewSource).toContain("id: INFO_BOX_LAYER_ID");
+  });
+
+  it("adds the layer with no beforeId, so it stacks above every other layer added so far (including AIRCRAFT_LAYER_ID and the trace-point layers)", () => {
+    expect(addLayerBeforeId("INFO_BOX_LAYER_ID")).toBe("");
+  });
+
+  it("fits the background icon to the rendered text and pads it to roughly match the removed DOM box's px-1.5 py-1 Tailwind padding", () => {
+    expect(mapViewSource).toContain('"icon-image": INFO_BOX_ICON_ID');
+    expect(mapViewSource).toContain('"icon-text-fit": "both"');
+    expect(mapViewSource).toContain('"icon-text-fit-padding": [4, 6, 4, 6]');
+  });
+
+  it("sorts overlapping boxes by the same altitude-based key InfoBoxLayer.tsx's removed inline z-index used", () => {
+    expect(mapViewSource).toContain('"symbol-sort-key": ["get", "sortKey"]');
+  });
+
+  it("both allow-overlap and ignore-placement are set for icon and text, matching the removed DOM version's no-collision-avoidance design (boxes are free to overlap)", () => {
+    expect(mapViewSource).toContain('"icon-allow-overlap": true');
+    expect(mapViewSource).toContain('"icon-ignore-placement": true');
+    expect(mapViewSource).toContain('"text-allow-overlap": true');
+    expect(mapViewSource).toContain('"text-ignore-placement": true');
+  });
+
+  it("computes labelVisibilityChanged from its own visibility inputs, separate from the aircraft/trail sync's prevVisibilityInputsRef", () => {
+    expect(mapViewSource).toContain("const prevLabelInputsRef = useRef<{");
+    expect(mapViewSource).toContain("const labelVisibilityChanged =");
+    expect(mapViewSource).toContain("prevLabelInputs.selected !== selected");
+    expect(mapViewSource).toContain("prevLabelInputs.isolateId !== isolateId");
+    expect(mapViewSource).toContain("prevLabelInputs.followId !== followId");
+    expect(mapViewSource).toContain("prevLabelInputs.protectedId !== selectedIcaoHex");
+    expect(mapViewSource).toContain("prevLabelInputs.labelsAll !== labelsAll");
+    expect(mapViewSource).toContain("prevLabelInputs.hoveredId !== hoveredId");
+  });
+
+  it("full-rebuilds the label source with setData() only when labelVisibilityChanged, diffs with updateData() otherwise (gated on any actual aircraft change)", () => {
+    const ifIndex = mapViewSource.indexOf("if (labelVisibilityChanged) {");
+    const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
+    expect(ifIndex).toBeGreaterThan(-1);
+    expect(elseIndex).toBeGreaterThan(ifIndex);
+    const ifBranch = mapViewSource.slice(ifIndex, elseIndex);
+    expect(ifBranch).toContain(
+      "labelSource?.setData(infoBoxLabelFeatureCollection(aircraft, labelFilter, visibility));",
+    );
+    expect(mapViewSource).toContain(
+      "labelSource?.updateData(buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, visibility));",
+    );
+  });
+
+  it("labelFilter is built from selected/labelsAll/hoveredId, matching InfoBoxLayer.tsx's removed filter exactly", () => {
+    expect(mapViewSource).toContain("const labelFilter: LabelFilter = { selected, showAll: labelsAll, hoveredId };");
+  });
+
+  it("includes labelsAll and hoveredId in the sync effect's dependency array, so a hover/showAll-only change still re-runs it", () => {
+    // Anchored on the array's last two (newly-added) entries and its
+    // closing `]);`, rather than the whole array (whitespace-sensitive),
+    // so this doesn't break if an unrelated entry is reordered above them.
+    expect(mapViewSource).toMatch(/labelsAll,\s*\n\s*hoveredId,\s*\n\s*\]\);/);
+  });
+});
+
+describe("info-box label layer -- never selectable (#1808)", () => {
+  it("is not in SELECTABLE_LAYER_IDS -- clicking/hovering a label box must not itself trigger selection, same as the removed DOM version's pointer-events-none container", () => {
+    expect(SELECTABLE_LAYER_IDS).not.toContain(INFO_BOX_LAYER_ID);
+    expect(SELECTABLE_LAYER_IDS).toEqual([AIRCRAFT_LAYER_ID, TRAIL_HIT_AREA_LAYER_ID]);
   });
 });
 

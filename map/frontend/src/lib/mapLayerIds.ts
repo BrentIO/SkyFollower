@@ -45,6 +45,11 @@ export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
 // "visible, but behind aircraft icons" possible at the same time.
 export const CENTER_POINT_SOURCE_ID = "sf-center-point";
 export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
+// Info-box labels (issue #1808) -- GPU-rendered symbol layer replacing the
+// removed DOM-based InfoBoxLayer.tsx component. Added last (no `beforeId`),
+// so it always renders above AIRCRAFT_LAYER_ID -- see MapView.tsx.
+export const INFO_BOX_SOURCE_ID = "sf-info-boxes";
+export const INFO_BOX_LAYER_ID = "sf-info-boxes-label";
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,

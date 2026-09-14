@@ -52,6 +52,23 @@ export interface VisibilityOptions {
 // actively-Followed aircraft and the aircraft the panel currently has open
 // (see VisibilityOptions.followId/protectedId above).
 
+// Whether `a` should be drawn at all right now, given VisibilityOptions --
+// isolate is a hard filter; a hidden aircraft is excluded unless it's the
+// actively-Followed or currently-panel-open (protectedId) exception.
+// Deliberately *not* checking hasPosition -- callers that need the
+// TypeScript position-narrowing side effect (e.g. aircraftFeature below,
+// which reads `a.lat`/`a.lon`) must still call hasPosition themselves;
+// this only covers the isolate/hidden rules. Shared by aircraftFeature and
+// the info-box label feature builder (lib/infoBoxSource.ts) so "is this
+// aircraft currently drawn on the map" can never drift between an
+// aircraft's icon and its label -- a label should never outlive, or lag
+// behind, its own icon's visibility.
+export function isAircraftVisible(a: AircraftRecord, options: VisibilityOptions = {}): boolean {
+  const { isolateId, followId, protectedId } = options;
+  if (isolateId && a.icao_hex !== isolateId) return false;
+  return a.icao_hex === followId || a.icao_hex === protectedId || !a.hidden;
+}
+
 // Builds one aircraft's icon feature, or null if it shouldn't be drawn at
 // all right now (no known position, isolated out, or hidden with neither
 // Follow/protectedId exception). The `id` (icao_hex) is what lets
@@ -63,9 +80,8 @@ export function aircraftFeature(
   options: VisibilityOptions = {},
 ): Feature | null {
   if (!hasPosition(a)) return null;
-  const { isolateId, followId, protectedId } = options;
-  if (isolateId && a.icao_hex !== isolateId) return null;
-  if (!(a.icao_hex === followId || a.icao_hex === protectedId || !a.hidden)) return null;
+  if (!isAircraftVisible(a, options)) return null;
+  const { followId, protectedId } = options;
   return {
     type: "Feature",
     id: a.icao_hex,
