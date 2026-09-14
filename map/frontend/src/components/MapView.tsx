@@ -506,6 +506,69 @@ function MapViewInner({ config }: { config: AppConfig }) {
       });
 
       map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+
+      // #1816 (follow-up to #1806/#1813): dilated-silhouette selection
+      // outline for icon_scale < 1, replacing #1813's fixed circle-radius
+      // ring -- that circle didn't fit an elongated, non-circular airframe
+      // (too small around a near-1 icon_scale shape's wingspan, floating
+      // with dead space around a 0.6-floor shape's fuselage). This layer
+      // instead draws the *same* per-shape SDF icon as AIRCRAFT_LAYER_ID
+      // below, in white, at a slightly larger icon-size -- the same
+      // "duplicate, enlarged copy underneath" trick a CSS text-stroke uses.
+      // Added *before* AIRCRAFT_LAYER_ID (this whole map is layer-order-is-
+      // paint-order, like every other pair here) so the real icon paints
+      // over it and only the enlarged silhouette's edge shows through, as a
+      // fitted outline rather than a bounding circle.
+      //
+      // Deliberately plain icon-size scaling, not icon-halo-width/-blur --
+      // sidesteps #1806's actual root cause entirely (AIRCRAFT_LAYER_ID's
+      // icon-halo-width comment below has the full derivation): that bug
+      // was specific to the SDF halo shader's EDGE_GAMMA term not
+      // canceling against a shrinking fontScale, and has no equivalent
+      // here since this is just two copies of the same well-formed SDF
+      // image at two sizes, not a halo threshold in texture space.
+      //
+      // The 1.15 enlargement factor is chosen so the *absolute* on-screen
+      // gap it produces at icon_scale's upper end (just under 1, e.g.
+      // GLF6's 0.989) lands close to the 3px halo width AIRCRAFT_LAYER_ID's
+      // real SDF halo already uses at icon_scale >= 1 -- continuity across
+      // that boundary, not an arbitrary constant. Being a uniform scale
+      // rather than a true constant-width morphological dilation, the
+      // enlarged copy grows proportionally with the shape rather than by a
+      // fixed pixel margin -- a wingtip or nose far from the icon's own
+      // center picks up more visible gap than the fuselage sides do, and
+      // the gap itself shrinks in absolute px as icon_scale drops toward
+      // the 0.6 floor. Accepted trade-off per #1816: still reads as an
+      // outline fitted to the actual airframe, which a circle never did,
+      // at the cost of not being a perfectly even-width ring. A future
+      // pre-baked, per-shape dilated SDF variant (also discussed in #1816)
+      // could give a true constant-width outline if this proves not
+      // enough, at the cost of the dilation amount needing to vary with
+      // icon_scale to stay constant on screen -- meaningfully more
+      // generation-time work, not attempted here.
+      map.addLayer({
+        id: AIRCRAFT_SELECTION_RING_LAYER_ID,
+        type: "symbol",
+        source: AIRCRAFT_SOURCE_ID,
+        filter: [
+          "all",
+          ["boolean", ["get", "selected"], false],
+          ["<", ["coalesce", ["get", "icon_scale"], 1], 1],
+        ],
+        layout: {
+          "icon-image": ["concat", "sf-ac-", ["get", "shape"]],
+          "icon-rotate": ["get", "heading"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-size": ["*", 0.55 * 1.15, ["coalesce", ["get", "icon_scale"], 1]],
+        },
+        paint: {
+          "icon-color": "#ffffff",
+          "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
+        },
+      });
+
       map.addLayer({
         id: AIRCRAFT_LAYER_ID,
         type: "symbol",
@@ -525,8 +588,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
         paint: {
           // Icon fill is altitude-based; it never changes on selection --
           // selection is shown via the halo below (icon_scale >= 1) or the
-          // separate AIRCRAFT_SELECTION_RING_LAYER_ID circle (icon_scale <
-          // 1, added right after this layer below).
+          // dilated-silhouette AIRCRAFT_SELECTION_RING_LAYER_ID added just
+          // above this layer (icon_scale < 1, #1816).
           "icon-color": ["get", "color"],
           "icon-halo-color": ["case", ["boolean", ["get", "selected"], false], "#ffffff", "#000000"],
           // #1806: three rounds of scaling this halo down for icon_scale < 1
@@ -534,8 +597,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
           // eliminated a residual wash/box for small icon_scale, because the
           // wash's actual source can't be fixed by retuning icon-halo-width/
           // -blur at all -- see the derivation below. So icon_scale < 1 no
-          // longer uses this halo; it's given a fixed-size, non-SDF
-          // selection ring instead (AIRCRAFT_SELECTION_RING_LAYER_ID). This
+          // longer uses this halo; it's given a dilated-silhouette outline
+          // instead (AIRCRAFT_SELECTION_RING_LAYER_ID, #1816). This
           // halo now only ever applies -- at its original fixed values,
           // exactly as MapLibre already renders it correctly -- when
           // icon_scale >= 1 (e.g. B77L at 1.435, confirmed clean in #1806).
@@ -595,45 +658,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
             0,
           ],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
-        },
-      });
-
-      // #1806: fixed-size (non-scaled) selection ring for icon_scale < 1,
-      // replacing the icon's own icon-halo-* for that range -- see the long
-      // comment on AIRCRAFT_LAYER_ID's icon-halo-width above for why the SDF
-      // halo technique can't produce a clean fitted ring there at all, at
-      // any icon-halo-width/-blur value. A plain circle layer has no SDF
-      // texture-space math to overflow -- circle-radius/-stroke-width are
-      // screen pixels the whole way through, so this renders identically
-      // regardless of the selected aircraft's icon_scale. Shares
-      // AIRCRAFT_SOURCE_ID (already carries `selected`/`icon_scale`/`stale`
-      // per feature), so it needs no separate data-sync wiring. The filter
-      // does the icon_scale >= 1 split instead of paint, since every paint
-      // value here is otherwise unconditional. Not in SELECTABLE_LAYER_IDS
-      // -- display-only, like TRACE_POINTS_CIRCLE_LAYER_ID.
-      map.addLayer({
-        id: AIRCRAFT_SELECTION_RING_LAYER_ID,
-        type: "circle",
-        source: AIRCRAFT_SOURCE_ID,
-        filter: [
-          "all",
-          ["boolean", ["get", "selected"], false],
-          ["<", ["coalesce", ["get", "icon_scale"], 1], 1],
-        ],
-        paint: {
-          // Transparent fill -- only the stroke is drawn, so this never
-          // occludes the aircraft icon it surrounds regardless of layer
-          // order. Radius/stroke-width are a deliberately simple fixed
-          // size (not derived from icon_scale -- that's the whole point),
-          // chosen to roughly match the reference icon_scale = 1 icon's
-          // on-screen footprint; needs visual confirmation against real
-          // small-icon_scale aircraft (see #1806).
-          "circle-radius": 10,
-          "circle-color": "rgba(0, 0, 0, 0)",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 2,
-          "circle-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
-          "circle-stroke-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
         },
       });
 

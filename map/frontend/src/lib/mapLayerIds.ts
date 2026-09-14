@@ -6,11 +6,13 @@
 
 export const AIRCRAFT_SOURCE_ID = "sf-aircraft";
 export const AIRCRAFT_LAYER_ID = "sf-aircraft-icons";
-// Fixed-size (non-scaled) selection ring for shapes whose icon_scale < 1 --
-// see MapView.tsx's AIRCRAFT_LAYER_ID paint block and #1806 for why the
-// icon's own SDF icon-halo-* can't render a clean fitted ring below that
-// scale (a fixed EDGE_GAMMA shader term doesn't cancel against the
-// shrinking fontScale, so the halo overflows into a filled box). Shares
+// Dilated-silhouette selection outline for shapes whose icon_scale < 1 -- a
+// second, enlarged copy of the same per-shape SDF icon, drawn in white
+// underneath AIRCRAFT_LAYER_ID's real icon (#1816, following up on #1806's
+// fixed-circle version -- see MapView.tsx's AIRCRAFT_LAYER_ID paint block
+// for why the icon's own SDF icon-halo-* can't render a clean fitted ring
+// below that scale: a fixed EDGE_GAMMA shader term doesn't cancel against
+// the shrinking fontScale, so the halo overflows into a filled box). Shares
 // AIRCRAFT_SOURCE_ID -- no separate data-sync wiring needed. Not in
 // SELECTABLE_LAYER_IDS -- purely decorative, like TRACE_POINTS_CIRCLE_LAYER_ID.
 export const AIRCRAFT_SELECTION_RING_LAYER_ID = "sf-aircraft-selection-ring";
