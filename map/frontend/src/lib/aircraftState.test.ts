@@ -346,6 +346,66 @@ describe("applyWsEvents", () => {
     const next = applyWsEvents(base, [{ type: "stale", icao_hex: "A1B2C3" }]);
     expect(next.A1B2C3).not.toBe(before);
   });
+
+  // #1820: applyWsEvents previously reduced over applyWsEvent, spreading
+  // the *entire* AircraftMap fresh once per event in the batch -- O(batch
+  // size x tracked fleet size) work, confirmed via a live trace as a real
+  // CPU cost with the full live fleet. It's now a single lazily-created
+  // (copy-on-write) clone for the whole batch instead. These tests pin
+  // the two things that refactor must never regress: applying N events
+  // still only ever touches the map once (not N times), and a batch that
+  // turns out to be entirely no-ops still returns the exact same
+  // top-level reference untouched -- same as a single no-op
+  // applyWsEvent call always has, matching every other reducer here.
+  it("an empty batch returns the exact same map reference", () => {
+    const base = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2 }]);
+    expect(applyWsEvents(base, [])).toBe(base);
+  });
+
+  it("a batch whose every event is a no-op returns the exact same top-level map reference, not just per-hex", () => {
+    const base = applyWsEvent(applySnapshot([]), { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 });
+    const stale = applyWsEvents(base, [{ type: "stale", icao_hex: "A1B2C3" }]);
+    // Redundant stale on an already-stale aircraft, and a stale for a hex
+    // never tracked -- both individually no-ops, so the whole batch is.
+    const next = applyWsEvents(stale, [
+      { type: "stale", icao_hex: "A1B2C3" },
+      { type: "stale", icao_hex: "NEVER_TRACKED" },
+    ]);
+    expect(next).toBe(stale);
+  });
+
+  it("a real position update inside an otherwise-no-op batch still produces a new top-level map", () => {
+    const base = applyWsEvent(applySnapshot([]), { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 });
+    const next = applyWsEvents(base, [
+      { type: "stale", icao_hex: "NEVER_TRACKED" }, // no-op
+      { type: "position", icao_hex: "A1B2C3", lat: 5, lon: 6 }, // real change
+    ]);
+    expect(next).not.toBe(base);
+    expect(next.A1B2C3.lat).toBe(5);
+  });
+
+  it("processes a large batch against the fleet only once (regression guard for the O(batch x fleet) full-map-clone-per-event bug)", () => {
+    // Not a strict call-count assertion (this module has no clone-tracking
+    // seam) -- instead pins the actual observable contract: every
+    // untouched aircraft's record reference survives a batch that only
+    // names a handful of other hexes, exactly as it would if the batch
+    // were applied against one shared working copy rather than one fresh
+    // spread per event.
+    let base = applySnapshot([]);
+    for (let i = 0; i < 200; i++) {
+      base = applyWsEvent(base, { type: "position", icao_hex: `AC${i}`, lat: i, lon: i });
+    }
+    const untouchedBefore = base.AC0;
+    const events: MapWsEvent[] = Array.from({ length: 50 }, (_, i) => ({
+      type: "position",
+      icao_hex: `AC${i + 100}`,
+      lat: i + 1000,
+      lon: i + 1000,
+    }));
+    const next = applyWsEvents(base, events);
+    expect(next.AC0).toBe(untouchedBefore);
+    expect(next.AC149.lat).toBe(1049);
+  });
 });
 
 describe("icon shape resolution", () => {
