@@ -93,6 +93,24 @@ type SymbolLayout = NonNullable<Extract<AddLayerObject, { type: "symbol" }>["lay
 // issue -- fixed here rather than left inconsistent.
 const BASEMAP_TEXT_FONT = ["Noto Sans Regular"];
 
+// #1819: the removed DOM InfoBoxLayer.tsx used `font-mono` for its whole
+// box (an ATC-style ident/altitude/speed box reads naturally in a
+// fixed-width font) and `font-bold` for its ident line specifically.
+// Confirmed (curl against the glyphs endpoint) that openfreemap's
+// "positron" style -- the only glyph source this app's basemap actually
+// has -- serves just "Noto Sans Regular"/"Bold"/"Italic"; no monospace
+// family is available there at all, so an exact `font-mono` match isn't
+// achievable without hosting a separate glyph source (out of scope here).
+// "Noto Sans Bold" *is* available, though, and restores the one part of
+// the original design MapLibre has no other way to express at all: a
+// bold `text-font` is the only way to get real visual weight on a
+// MapLibre text section, there's no CSS-style `font-weight`. Used only on
+// INFO_BOX_LAYER_ID's ident-line format section (below), not as this
+// file's shared BASEMAP_TEXT_FONT default -- the other two text layers
+// (RANGE_RING_LABEL_LAYER_ID, TRACE_POINTS_LABEL_LAYER_ID) have no
+// bold/regular distinction to preserve.
+const BASEMAP_TEXT_FONT_BOLD = ["Noto Sans Bold"];
+
 // Builds and registers one silhouette's SDF image with MapLibre, once.
 // `shapeKey` is an AIRCRAFT_SHAPES key; an unknown key (a shape the
 // resolver picked but the generated set somehow lacks) falls back to the
@@ -842,24 +860,29 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
           "text-font": BASEMAP_TEXT_FONT,
-          // Ident line first, larger (font-scale 1.15, roughly matching the
-          // DOM box's 12px-vs-10.5px ident/detail size ratio), then the
-          // altitude/speed and registration/type lines -- joined with "\n"
-          // only when both halves are actually present (`hasBothLines`),
-          // so an aircraft missing its ident (or missing every detail
-          // line) never renders a stray blank line. See
-          // lib/infoBoxSource.ts's infoBoxLabelFeature for how
-          // identLine/detailLines/hasBothLines are derived from
-          // lib/infoBox.ts's buildInfoBoxLines().
+          // Ident line first, larger and bold (font-scale 1.15, roughly
+          // matching the DOM box's 12px-vs-10.5px ident/detail size ratio;
+          // BASEMAP_TEXT_FONT_BOLD giving it the same real visual weight
+          // the DOM box's `font-bold` had -- #1819, a per-`format`-section
+          // `text-font` override is the only way to get a bold *weight*
+          // out of MapLibre text at all, there is no CSS-style
+          // `font-weight` equivalent), then the altitude/speed and
+          // registration/type lines -- joined with "\n" only when both
+          // halves are actually present (`hasBothLines`), so an aircraft
+          // missing its ident (or missing every detail line) never
+          // renders a stray blank line. See lib/infoBoxSource.ts's
+          // infoBoxLabelFeature for how identLine/detailLines/
+          // hasBothLines are derived from lib/infoBox.ts's
+          // buildInfoBoxLines().
           "text-field": [
             "format",
             ["get", "identLine"],
-            { "font-scale": 1.15 },
+            { "font-scale": 1.15, "text-font": BASEMAP_TEXT_FONT_BOLD },
             ["case", ["get", "hasBothLines"], "\n", ""],
             {},
             ["get", "detailLines"],
             {},
-          ] as SymbolLayout["text-field"],
+          ] as unknown as SymbolLayout["text-field"],
           "text-size": INFO_BOX_TEXT_OFFSET_REFERENCE_PX,
           // Anchored at the aircraft's own point, offset diagonally
           // down-right by a zoom-scaled gap (lib/infoBoxOffset.ts) --
