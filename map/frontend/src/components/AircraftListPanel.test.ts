@@ -160,9 +160,16 @@ describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)
     expect(panelSource).toContain("flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white");
   });
 
-  it("no longer imports or reuses MAX_LABEL_Z_INDEX -- a flex sibling doesn't need to out-stack anything", () => {
-    expect(panelSource).not.toContain("MAX_LABEL_Z_INDEX");
-    expect(panelSource).not.toContain("labelStackOrder");
+  it("reuses MAX_LABEL_Z_INDEX (#1790, reversing #1769's assumption)", () => {
+    // #1769 dropped this on the assumption that a flex sibling doesn't need
+    // to out-stack anything. That assumption was wrong: the map area (this
+    // panel's flex sibling) has no z-index of its own, so it doesn't scope
+    // InfoBoxLayer's label z-indices to within itself -- they compete
+    // directly against this panel in the shared outer stacking context,
+    // and a positioned label painted over this plain flex child regardless
+    // of DOM order. See the test above for the fix.
+    expect(panelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder"');
+    expect(panelSource).toContain("zIndex: MAX_LABEL_Z_INDEX + 1");
   });
 
   it("is fully opaque (no /90-style translucency) on the panel body", () => {

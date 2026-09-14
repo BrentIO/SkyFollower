@@ -8,6 +8,7 @@ import {
 import { buildAircraftListRows, type AircraftListRow } from "../lib/aircraftListRow";
 import { nextAircraftListSortState, sortAircraftListRows, type AircraftListSortState } from "../lib/aircraftListSort";
 import type { CenterPoint } from "../lib/config";
+import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
 import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 
@@ -247,7 +248,14 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
     // pointer instead of lagging behind a 200ms transition.
     <div
       className={`flex h-full flex-none items-stretch overflow-hidden ${resizing ? "" : "transition-[width] duration-200"}`}
-      style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX }}
+      // zIndex: this panel is a flex sibling of the map area (MapView.tsx),
+      // which has no z-index of its own and so doesn't scope InfoBoxLayer's
+      // label z-indices (up to MAX_LABEL_Z_INDEX) to within itself -- they
+      // compete directly against this panel in the shared outer stacking
+      // context. Without this, a positioned label painted over this plain
+      // flex child regardless of DOM order (#1790). Matches
+      // AircraftDetailPanel's own MAX_LABEL_Z_INDEX + 1.
+      style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       {/* Tab stays vertically centered within the drawer's full height --
           not top-aligned like tar1090's own handle -- so it can never
