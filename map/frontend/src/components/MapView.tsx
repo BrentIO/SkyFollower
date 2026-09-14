@@ -22,6 +22,7 @@ import { diffAircraftMaps } from "../lib/aircraftMapDiff";
 import type { AircraftMap } from "../lib/aircraftState";
 import {
   AIRCRAFT_LAYER_ID,
+  AIRCRAFT_SELECTION_RING_LAYER_ID,
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
@@ -549,71 +550,116 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
         paint: {
           // Icon fill is altitude-based; it never changes on selection --
-          // selection is shown only via the halo below.
+          // selection is shown via the halo below (icon_scale >= 1) or the
+          // separate AIRCRAFT_SELECTION_RING_LAYER_ID circle (icon_scale <
+          // 1, added right after this layer below).
           "icon-color": ["get", "color"],
           "icon-halo-color": ["case", ["boolean", ["get", "selected"], false], "#ffffff", "#000000"],
-          // Selected halo width/blur are requested in screen pixels, but
-          // MapLibre's SDF shader converts that to *texture*-space distance
-          // by dividing by the feature's icon-size (fontScale in
-          // symbol_sdf.fragment.glsl: `halo_edge = (6.0 - halo_width /
-          // fontScale) / SDF_PX`). Every shape's SDF falloff band is a fixed
-          // SDF_RADIUS_PX (aircraftIcon.ts) regardless of on-screen size, so
-          // a fixed 3px halo width on a shape with a small icon_scale (e.g.
-          // a light single clamped to the 0.6 minimum -- see
-          // aircraftIconResolver.ts's shapeScale()) demands more texture
-          // distance than the falloff band actually encodes. Past that
-          // point the halo's smoothstep threshold falls outside the
-          // texture's representable range and MapLibre just fills the rest
-          // of the icon's bounding square with halo colour -- a solid box
-          // instead of a fitted ring.
+          // #1806: three rounds of scaling this halo down for icon_scale < 1
+          // (#1705, #1742/#1758, #1763/#1767) each reduced but never
+          // eliminated a residual wash/box for small icon_scale, because the
+          // wash's actual source can't be fixed by retuning icon-halo-width/
+          // -blur at all -- see the derivation below. So icon_scale < 1 no
+          // longer uses this halo; it's given a fixed-size, non-SDF
+          // selection ring instead (AIRCRAFT_SELECTION_RING_LAYER_ID). This
+          // halo now only ever applies -- at its original fixed values,
+          // exactly as MapLibre already renders it correctly -- when
+          // icon_scale >= 1 (e.g. B77L at 1.435, confirmed clean in #1806).
           //
-          // `min(1, icon_scale)` scales the requested halo down only for
-          // icon_scale < 1, keeping the same texture-space distance the
-          // reference icon_scale = 1 shape already renders correctly at (the
-          // icon_scale factor cancels against icon-size's own icon_scale
-          // factor above). For icon_scale >= 1 the multiplier is exactly 1,
-          // so larger aircraft's halo is untouched.
-          // Unselected aircraft carry no halo at all (issue #1787) -- the
-          // flat 1px halo every icon paid for regardless of selection was a
-          // real per-frame GPU cost across the whole rendered fleet, unlike
-          // the selected-only halo above which only ever costs one icon.
+          // The math (symbol_sdf.fragment.glsl, verified against the real
+          // vendored shader, not just the style-spec docs):
+          //   halo_edge  = (6 - halo_width/fontScale) / SDF_PX
+          //   gamma_halo = (halo_blur * 1.19/SDF_PX + EDGE_GAMMA) / fontScale
+          // (u_gamma_scale ~= 1; fontScale is this layer's icon-size, i.e.
+          // 0.55 * icon_scale). A background texel (SDF value 0, i.e.
+          // anywhere outside SDF_RADIUS_PX of the silhouette) gets *some*
+          // nonzero halo alpha whenever `halo_edge - gamma_halo < 0` -- and
+          // gets *fully opaque* halo colour once the texel's own SDF value
+          // exceeds `halo_edge + gamma_halo`. That's the box: once the lower
+          // bound goes negative, there's no distance value low enough to stay
+          // fully transparent, so the "ring" smears across the entire
+          // bounding square instead of sitting only at the silhouette's edge.
+          //
+          // Both halo_width's and halo_blur's own contributions to that
+          // bound are already scale-invariant for icon_scale < 1 (each
+          // carries the same icon_scale factor as fontScale, so it cancels
+          // -- see the #1763 test below). But EDGE_GAMMA is a shader-side
+          // constant MapLibre adds unconditionally, with no matching
+          // icon_scale factor to cancel against -- so EDGE_GAMMA/fontScale
+          // grows without bound as icon_scale shrinks, and neither
+          // icon-halo-width nor icon-halo-blur can subtract it back out:
+          // both only ever *add* to gamma_halo (regardless of sign of the
+          // value fed in -- MapLibre's halo-blur is not meant to go
+          // negative), so no combination of them can shrink an already-too-
+          // large gamma_halo. Plugging in this layer's actual numbers shows
+          // the lower bound is negative for *every* icon_scale < 1 (it's
+          // strictly increasing in icon_scale, and already slightly negative
+          // at the icon_scale = 1 reference point everything else here is
+          // pinned to) -- i.e. this is a real mathematical floor of the SDF
+          // halo technique as used here, not merely under-tuned constants.
+          // See MapView.test.ts for the worked numbers, including the
+          // issue's own icon_scale = 0.722 (E55P/C25B) and 0.989 (GALX/
+          // GLF6) cases.
           "icon-halo-width": [
             "case",
-            ["boolean", ["get", "selected"], false],
-            ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+            [
+              "all",
+              ["boolean", ["get", "selected"], false],
+              [">=", ["coalesce", ["get", "icon_scale"], 1], 1],
+            ],
+            3,
             0,
           ],
-          // A second, independent overflow risk from icon-halo-width's above:
-          // symbol_sdf.fragment.glsl's `gamma_halo = (halo_blur * 1.19 /
-          // SDF_PX + EDGE_GAMMA) / (fontScale * u_gamma_scale)` divides
-          // halo_blur by the same small fontScale, widening the smoothstep
-          // band the ring's edge sits in. At the old 0.5 base value that
-          // band's lower bound went meaningfully negative, and since our
-          // SDF alpha floors at exactly 0 outside the shape (never
-          // negative), every texel in that floored region -- i.e. the
-          // icon's entire flat background, not just a ring near the edge
-          // -- picked up nonzero partial halo alpha: a faint white wash
-          // across the whole icon on selection. Unlike icon-halo-width
-          // above, this isn't specific to small icon_scale (fontScale is
-          // small for every aircraft, capped at 0.88) -- 0.08 keeps the
-          // band's lower bound close to zero at the reference icon_scale =
-          // 1 (see MapView.test.ts), and cuts it roughly in half even at
-          // the smallest real icon_scale (0.6), while still giving the
-          // ring a soft rather than hard edge. A small residual wash
-          // remains at small icon_scale even at 0.08 -- that's the fixed
-          // EDGE_GAMMA anti-aliasing term (present even at halo_blur = 0)
-          // dividing by a shrinking fontScale, the same already-present,
-          // out-of-scope baseline the unselected 1px halo has (see
-          // MapView.test.ts). The `min(1, icon_scale)` factor is kept only
-          // for structural symmetry with icon-halo-width above, not
-          // because it targets this problem.
           "icon-halo-blur": [
             "case",
-            ["boolean", ["get", "selected"], false],
-            ["*", 0.08, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
+            [
+              "all",
+              ["boolean", ["get", "selected"], false],
+              [">=", ["coalesce", ["get", "icon_scale"], 1], 1],
+            ],
+            0.08,
             0,
           ],
           "icon-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
+        },
+      });
+
+      // #1806: fixed-size (non-scaled) selection ring for icon_scale < 1,
+      // replacing the icon's own icon-halo-* for that range -- see the long
+      // comment on AIRCRAFT_LAYER_ID's icon-halo-width above for why the SDF
+      // halo technique can't produce a clean fitted ring there at all, at
+      // any icon-halo-width/-blur value. A plain circle layer has no SDF
+      // texture-space math to overflow -- circle-radius/-stroke-width are
+      // screen pixels the whole way through, so this renders identically
+      // regardless of the selected aircraft's icon_scale. Shares
+      // AIRCRAFT_SOURCE_ID (already carries `selected`/`icon_scale`/`stale`
+      // per feature), so it needs no separate data-sync wiring. The filter
+      // does the icon_scale >= 1 split instead of paint, since every paint
+      // value here is otherwise unconditional. Not in SELECTABLE_LAYER_IDS
+      // -- display-only, like TRACE_POINTS_CIRCLE_LAYER_ID.
+      map.addLayer({
+        id: AIRCRAFT_SELECTION_RING_LAYER_ID,
+        type: "circle",
+        source: AIRCRAFT_SOURCE_ID,
+        filter: [
+          "all",
+          ["boolean", ["get", "selected"], false],
+          ["<", ["coalesce", ["get", "icon_scale"], 1], 1],
+        ],
+        paint: {
+          // Transparent fill -- only the stroke is drawn, so this never
+          // occludes the aircraft icon it surrounds regardless of layer
+          // order. Radius/stroke-width are a deliberately simple fixed
+          // size (not derived from icon_scale -- that's the whole point),
+          // chosen to roughly match the reference icon_scale = 1 icon's
+          // on-screen footprint; needs visual confirmation against real
+          // small-icon_scale aircraft (see #1806).
+          "circle-radius": 10,
+          "circle-color": "rgba(0, 0, 0, 0)",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
+          "circle-stroke-opacity": ["case", ["boolean", ["get", "stale"], false], 0.4, 1],
         },
       });
 

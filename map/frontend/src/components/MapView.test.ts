@@ -95,6 +95,12 @@ function evaluateExpr(expr: Expr, properties: Record<string, unknown>): unknown 
       return args.reduce((acc: number, a) => acc * (evaluateExpr(a, properties) as number), 1);
     case "min":
       return Math.min(...args.map((a) => evaluateExpr(a, properties) as number));
+    case "all":
+      return args.every((a) => evaluateExpr(a, properties));
+    case ">=":
+      return (evaluateExpr(args[0], properties) as number) >= (evaluateExpr(args[1], properties) as number);
+    case "<":
+      return (evaluateExpr(args[0], properties) as number) < (evaluateExpr(args[1], properties) as number);
     default:
       throw new Error(`evaluateExpr: unsupported operator ${op}`);
   }
@@ -192,22 +198,14 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     ]);
   });
 
-  it("scales the selected halo width down for small icon_scale shapes, unchanged at/above 1", () => {
-    expect(paint["icon-halo-width"]).toEqual([
-      "case",
+  it("#1806: gives the icon's own halo only to selected icon_scale >= 1 aircraft, at the original fixed values -- unchanged shape, only the gating condition changed", () => {
+    const selectedAtLeastOne = [
+      "all",
       ["boolean", ["get", "selected"], false],
-      ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
-      0,
-    ]);
-  });
-
-  it("scales the selected halo blur down for small icon_scale shapes, unchanged at/above 1", () => {
-    expect(paint["icon-halo-blur"]).toEqual([
-      "case",
-      ["boolean", ["get", "selected"], false],
-      ["*", 0.08, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
-      0,
-    ]);
+      [">=", ["coalesce", ["get", "icon_scale"], 1], 1],
+    ];
+    expect(paint["icon-halo-width"]).toEqual(["case", selectedAtLeastOne, 3, 0]);
+    expect(paint["icon-halo-blur"]).toEqual(["case", selectedAtLeastOne, 0.08, 0]);
   });
 
   it("never gives the unselected halo any width or blur (#1787), regardless of icon_scale", () => {
@@ -218,82 +216,76 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     }
   });
 
-  it("leaves the selected halo exactly at its original fixed value for icon_scale >= 1 (larger aircraft unchanged)", () => {
-    for (const icon_scale of [1, 1.2, 1.433, 1.6]) {
+  it("leaves the selected halo exactly at its original fixed value for icon_scale >= 1 (larger aircraft unchanged, e.g. B77L at 1.435 -- confirmed clean in #1806)", () => {
+    for (const icon_scale of [1, 1.2, 1.433, 1.435, 1.6]) {
       const properties = { selected: true, icon_scale };
       expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(3);
       expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0.08);
     }
   });
 
-  it("scales the selected halo proportionally to icon_scale below 1, across the real generated range (0.6-1.6, clamped in generate-aircraft-shapes.mjs)", () => {
-    // AIRCRAFT_SHAPES.P28A.scale is exactly SCALE_MIN (0.6) -- the smallest
-    // multiplier any real shape uses (generate-aircraft-shapes.mjs).
-    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(1.8);
-    expect(evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale: 0.6 })).toBeCloseTo(0.048);
-
-    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.8 })).toBeCloseTo(2.4);
-    expect(evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale: 0.99 })).toBeCloseTo(2.97);
+  it("#1806: gives selected icon_scale < 1 aircraft NO icon halo at all (width and blur both 0) -- including the issue's own reported cases, E55P/C25B at 0.722 and GALX/GLF6 at 0.989 -- rather than a scaled-down one; selection is shown via AIRCRAFT_SELECTION_RING_LAYER_ID instead (see the describe block below)", () => {
+    for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
+      const properties = { selected: true, icon_scale };
+      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(0);
+      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0);
+    }
   });
 
-  it("documents the #1763 fix: the old 0.5 base icon-halo-blur pushed the shader's smoothstep band well below zero at the reference icon_scale = 1 (the issue's own worked example, ~[-0.163, 0.299]), giving every texel fully outside the SDF shape -- floored at exactly 0, never negative -- nonzero halo alpha (the reported wash); the new value keeps the band's lower bound close to zero instead, at every real icon_scale", () => {
+  it("documents why #1806 stops scaling icon-halo-width/-blur down for icon_scale < 1 instead of tightening the constants further (three prior rounds -- #1705, #1742/#1758, #1763/#1767 -- all tried that): every real icon_scale < 1 is mathematically guaranteed a negative smoothstep-band lower bound (i.e. some wash), and it cannot be pushed back to >= 0 by any icon-halo-width/-blur value, because both only ever add to the band width -- neither can subtract enough to cancel EDGE_GAMMA/fontScale, the one term in the shader's gamma_halo that has no icon_scale factor to cancel against fontScale's", () => {
     // Mirrors the shader math verified against map/frontend/node_modules/
     // maplibre-gl/src/shaders/glsl/symbol_sdf.fragment.glsl: SDF_PX = 8,
     // EDGE_GAMMA = 0.105 / DPR, halo_edge = (6 - halo_width / fontScale) /
     // SDF_PX, gamma_halo = (halo_blur * 1.19 / SDF_PX + EDGE_GAMMA) /
-    // fontScale (u_gamma_scale taken as 1, matching the issue's own worked
-    // example), band = halo_edge -/+ gamma_halo. Only halo_blur's own
-    // contribution to gamma_halo cancels icon_scale out (it carries the
-    // same min(1, icon_scale) factor as fontScale); the fixed EDGE_GAMMA
-    // term does not (fontScale alone shrinks with icon_scale), so the
-    // band is *more* negative for smaller aircraft regardless of
-    // halo_blur -- that residual is the issue's separately-documented,
-    // out-of-scope baseline wash, not something this fix touches. What
-    // this fix controls is the halo_blur-specific delta, checked here as
-    // a comparison against the old value rather than an absolute
-    // threshold that would vary by icon_scale.
+    // fontScale (u_gamma_scale taken as 1, matching prior worked examples
+    // in this file). A background texel gets nonzero halo alpha the moment
+    // `halo_edge - gamma_halo < 0` -- that's the box overflow.
     const SDF_PX = 8;
     const DPR = 2;
     const EDGE_GAMMA = 0.105 / DPR;
     const BASE_ICON_SIZE_MULTIPLIER = 0.55;
-    const OLD_HALO_BLUR = 0.5;
 
-    function bandLowerBound(haloBlur: number, iconScale: number): number {
+    // The *best possible* band lower bound achievable purely by tuning
+    // icon-halo-width/-blur at a given icon_scale, using the #1763/#1767
+    // scaling law (width/blur both carry the same min(1, icon_scale)
+    // factor as fontScale, so their own contributions are already
+    // scale-invariant/minimal -- see the two tests above). Even with
+    // halo_blur pushed all the way to 0 (the smallest it can go), the
+    // fixed EDGE_GAMMA term alone still determines the bound:
+    function bestAchievableLowerBound(iconScale: number): number {
       const fontScale = BASE_ICON_SIZE_MULTIPLIER * iconScale;
-      const haloWidth = 3 * Math.min(1, iconScale);
-      const scaledBlur = haloBlur * Math.min(1, iconScale);
+      const haloWidth = 3 * Math.min(1, iconScale); // #1763/#1767's own-cancelling width law
       const haloEdge = (6 - haloWidth / fontScale) / SDF_PX;
-      const gammaHalo = (scaledBlur * 1.19) / SDF_PX / fontScale + EDGE_GAMMA / fontScale;
+      const gammaHalo = EDGE_GAMMA / fontScale; // halo_blur = 0: only the irreducible term remains
       return haloEdge - gammaHalo;
     }
 
-    // Reference case: reproduces the issue's own numbers almost exactly
-    // (halo_edge ~= 0.068, band ~= [-0.163, 0.299] at the old value).
-    const oldReferenceLowerBound = bandLowerBound(OLD_HALO_BLUR, 1);
-    expect(oldReferenceLowerBound).toBeCloseTo(-0.1625, 3);
-    const newReferenceLowerBound = bandLowerBound(0.08, 1);
-    expect(newReferenceLowerBound).toBeGreaterThan(-0.05);
+    // At the icon_scale = 1 reference point -- the value every prior round
+    // pinned everything else to, and which ships today without further
+    // complaint -- the bound is already negative...
+    expect(bestAchievableLowerBound(1)).toBeLessThan(0);
 
-    // At every real icon_scale, the new value's band lower bound is
-    // strictly closer to zero (less negative, or less far above zero)
-    // than the old value's -- a consistent improvement, even though (per
-    // the comment above) it isn't driven fully to zero for the smallest
-    // aircraft. icon_scale <= 1 (where fontScale is smallest and the
-    // wash is worst) sees a large improvement; icon_scale > 1 already had
-    // little/no wash even at the old value, so the improvement there is
-    // small but still strictly present.
-    for (const icon_scale of [0.6, 0.8, 1, 1.3, 1.6]) {
-      const newHaloBlur = evaluateExpr(paint["icon-halo-blur"], { selected: true, icon_scale }) as number;
-      const oldBound = bandLowerBound(OLD_HALO_BLUR, icon_scale);
-      const newBound = bandLowerBound(newHaloBlur, icon_scale);
-      expect(newBound).toBeGreaterThan(oldBound);
-      if (icon_scale <= 1) {
-        expect(newBound).toBeGreaterThan(oldBound + 0.1);
-      }
+    // ...and it's strictly *increasing* in icon_scale (more headroom at
+    // larger icon_scale), so every icon_scale below 1 -- the issue's own
+    // 0.989 (GALX/GLF6) and 0.722 (E55P/C25B) included, down to the
+    // smallest real shape at 0.6 (P28A) -- is strictly worse than that
+    // already-negative reference, no matter how icon-halo-width/-blur are
+    // retuned. This is the real mathematical floor #1806 asks about: it's
+    // not a matter of finding better constants.
+    const referenceBound = bestAchievableLowerBound(1);
+    for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
+      expect(bestAchievableLowerBound(icon_scale)).toBeLessThan(referenceBound);
+    }
+    // Above 1, no such floor applies -- the bound keeps rising and crosses
+    // zero (a mathematically clean ring, not merely "less negative") well
+    // before B77L's real 1.435, consistent with it being reported clean.
+    expect(bestAchievableLowerBound(1.435)).toBeGreaterThan(0);
+    for (const icon_scale of [1.065, 1.435, 1.6]) {
+      expect(bestAchievableLowerBound(icon_scale)).toBeGreaterThan(referenceBound);
     }
   });
 
-  it("documents the bug this fixes: the old fixed 3px halo width at the smallest real icon_scale (0.6, e.g. P28A) demanded more texture-space distance than the SDF falloff band encodes -- exceeding it is what turned the ring into a solid box", () => {
+  it("documents the bug this fixes: the old fixed 3px halo width at the smallest real icon_scale (0.6, e.g. P28A) demanded more texture-space distance than the SDF falloff band encodes -- exceeding it is what turned the ring into a solid box; #1806 now avoids the icon's own halo there entirely rather than trying to fit a smaller one into it", () => {
     const BASE_ICON_SIZE_MULTIPLIER = 0.55;
     const smallestIconScale = 0.6;
     const oldFixedHaloWidth = 3;
@@ -301,30 +293,16 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     const oldTextureDistance = oldFixedHaloWidth / iconSize;
     expect(oldTextureDistance).toBeGreaterThan(SDF_RADIUS_PX);
 
+    // #1806: icon-halo-width is now exactly 0 at this icon_scale (no
+    // halo drawn at all -- see AIRCRAFT_SELECTION_RING_LAYER_ID for the
+    // replacement selection indicator), not a smaller-but-still-nonzero
+    // value, so there's no texture-space distance to overflow the falloff
+    // band with in the first place.
     const newHaloWidth = evaluateExpr(paint["icon-halo-width"], {
       selected: true,
       icon_scale: smallestIconScale,
     }) as number;
-    const newTextureDistance = newHaloWidth / iconSize;
-    expect(newTextureDistance).toBeLessThan(SDF_RADIUS_PX);
-  });
-
-  it("keeps requested halo texture-space distance constant across icon_scale <= 1, matching the reference (icon_scale = 1) shape MapLibre already renders correctly (symbol_sdf.fragment.glsl: halo_edge = (6.0 - halo_width / fontScale) / SDF_PX, where fontScale is icon-size)", () => {
-    const BASE_ICON_SIZE_MULTIPLIER = 0.55; // MapView.tsx's icon-size expression
-    const referenceIconSize = BASE_ICON_SIZE_MULTIPLIER * 1;
-    const referenceTextureDistance = 3 / referenceIconSize;
-
-    for (const icon_scale of [0.6, 0.65, 0.7, 0.8, 0.9, 1]) {
-      const iconSize = BASE_ICON_SIZE_MULTIPLIER * icon_scale;
-      const haloWidth = evaluateExpr(paint["icon-halo-width"], { selected: true, icon_scale }) as number;
-      const textureDistance = haloWidth / iconSize;
-      expect(textureDistance).toBeCloseTo(referenceTextureDistance, 6);
-      // Comfortably inside the SDF's falloff band (aircraftIcon.ts) -- this
-      // margin is exactly why icon_scale = 1 already renders a correctly
-      // fitted ring today, and why holding every smaller shape to the same
-      // distance fixes them too.
-      expect(textureDistance).toBeLessThan(SDF_RADIUS_PX);
-    }
+    expect(newHaloWidth).toBe(0);
   });
 
   it("leaves icon-color and icon-opacity untouched by the outline change", () => {
@@ -658,5 +636,86 @@ describe("Trace Points circle layer -- inserted below the trail line (#1794)", (
     const callEnd = mapViewSource.indexOf("TRAIL_LAYER_ID,\n      );", idIndex);
     expect(callEnd).toBeGreaterThan(idIndex);
     expect(callEnd - idIndex).toBeLessThan(1000); // same addLayer call, not a later unrelated one
+  });
+});
+
+// Finds the index of the "]" matching the "[" at openIndex, the array
+// counterpart of findMatchingBrace above.
+function findMatchingBracket(text: string, openIndex: number): number {
+  let depth = 0;
+  for (let i = openIndex; i < text.length; i++) {
+    if (text[i] === "[") depth++;
+    else if (text[i] === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  throw new Error("No matching closing bracket found");
+}
+
+// Extracts the `filter: [ ... ]` array literal belonging to the layer whose
+// definition contains `id: <layerIdConstant>`, evaluated into a real
+// MapLibre expression array -- same extraction convention as
+// aircraftLayerPaint/extractLayerPaint above.
+function extractLayerFilter(layerIdConstant: string): unknown {
+  const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
+  if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
+
+  const filterKeyIndex = mapViewSource.indexOf("filter: [", idIndex);
+  if (filterKeyIndex === -1) throw new Error(`Could not find filter after ${layerIdConstant}`);
+
+  const arrayOpenIndex = filterKeyIndex + "filter: ".length;
+  const arrayCloseIndex = findMatchingBracket(mapViewSource, arrayOpenIndex);
+  const filterLiteral = mapViewSource.slice(arrayOpenIndex, arrayCloseIndex + 1);
+
+  // eslint-disable-next-line no-new-func -- evaluating a plain array literal
+  // extracted from our own source, not user input.
+  return new Function(`return (${filterLiteral});`)();
+}
+
+describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- fixed-size selection ring for icon_scale < 1 (#1806)", () => {
+  // #1806: the icon's own icon-halo-width/-blur cannot render a clean
+  // fitted ring below icon_scale = 1 at any value (see the "documents why
+  // #1806 stops scaling..." test above) -- this separate, non-SDF circle
+  // layer is the replacement selection indicator for that range. It has no
+  // texture-space math to overflow: circle-radius/circle-stroke-width are
+  // screen pixels throughout, so it renders identically regardless of
+  // icon_scale.
+
+  it("filters to selected AND icon_scale < 1 -- exactly the range the icon's own halo now skips", () => {
+    const filter = extractLayerFilter("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    expect(filter).toEqual([
+      "all",
+      ["boolean", ["get", "selected"], false],
+      ["<", ["coalesce", ["get", "icon_scale"], 1], 1],
+    ]);
+  });
+
+  it("shares AIRCRAFT_SOURCE_ID rather than a separate source -- no extra data-sync wiring needed", () => {
+    const idIndex = mapViewSource.indexOf("id: AIRCRAFT_SELECTION_RING_LAYER_ID");
+    expect(idIndex).toBeGreaterThan(-1);
+    const sourceIndex = mapViewSource.indexOf("source: AIRCRAFT_SOURCE_ID", idIndex);
+    expect(sourceIndex).toBeGreaterThan(idIndex);
+    expect(sourceIndex - idIndex).toBeLessThan(200);
+  });
+
+  it("draws a transparent-fill, white-stroke ring, dimmed the same way a stale icon is (matching icon-opacity's convention)", () => {
+    const paint = extractLayerPaint("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    expect(paint["circle-color"]).toBe("rgba(0, 0, 0, 0)");
+    expect(paint["circle-stroke-color"]).toBe("#ffffff");
+    expect(paint["circle-stroke-width"]).toBeGreaterThan(0);
+    const staleDimming = ["case", ["boolean", ["get", "stale"], false], 0.4, 1];
+    expect(paint["circle-opacity"]).toEqual(staleDimming);
+    expect(paint["circle-stroke-opacity"]).toEqual(staleDimming);
+  });
+
+  it("worked examples from the issue: E55P/C25B (icon_scale 0.722) and GALX/GLF6 (icon_scale 0.989) both match this layer's filter when selected, while B77L (1.435) and the icon_scale = 1 reference case do not (they stay on the icon's own halo instead)", () => {
+    const filter = extractLayerFilter("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    expect(evaluateExpr(filter, { selected: true, icon_scale: 0.722 })).toBe(true);
+    expect(evaluateExpr(filter, { selected: true, icon_scale: 0.989 })).toBe(true);
+    expect(evaluateExpr(filter, { selected: true, icon_scale: 1.435 })).toBe(false);
+    expect(evaluateExpr(filter, { selected: true, icon_scale: 1 })).toBe(false);
+    // Never shown for an unselected aircraft, regardless of icon_scale.
+    expect(evaluateExpr(filter, { selected: false, icon_scale: 0.722 })).toBe(false);
   });
 });
