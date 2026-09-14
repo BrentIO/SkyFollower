@@ -249,12 +249,16 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
     <div
       className={`flex h-full flex-none items-stretch overflow-hidden ${resizing ? "" : "transition-[width] duration-200"}`}
       // zIndex: this panel is a flex sibling of the map area (MapView.tsx),
-      // which has no z-index of its own and so doesn't scope InfoBoxLayer's
-      // label z-indices (up to MAX_LABEL_Z_INDEX) to within itself -- they
-      // compete directly against this panel in the shared outer stacking
-      // context. Without this, a positioned label painted over this plain
-      // flex child regardless of DOM order (#1790). Matches
-      // AircraftDetailPanel's own MAX_LABEL_Z_INDEX + 1.
+      // which has no z-index of its own. Originally set to outrank
+      // InfoBoxLayer's DOM-positioned label boxes (up to MAX_LABEL_Z_INDEX),
+      // which otherwise painted over this plain flex child regardless of
+      // DOM order (#1790) -- InfoBoxLayer itself is gone as of #1808 (its
+      // labels are now a MapLibre layer inside the map's own canvas, not a
+      // DOM sibling competing for z-index at all), but this stays at the
+      // same value: harmless, and still reuses MAX_LABEL_Z_INDEX rather
+      // than a second magic constant should a future DOM overlay need the
+      // same "always above the map" guarantee. Matches AircraftDetailPanel's
+      // own MAX_LABEL_Z_INDEX + 1.
       style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       {/* Tab stays vertically centered within the drawer's full height --
