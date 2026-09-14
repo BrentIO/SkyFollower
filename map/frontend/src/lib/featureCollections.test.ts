@@ -202,6 +202,31 @@ describe("aircraftFeature -- single-feature builder (#1775)", () => {
   });
 });
 
+describe("aircraftFeature -- lighter-than-air heading override (#1788)", () => {
+  it("forces heading to 0 for a BALL-shaped (balloon/airship) aircraft regardless of reported hdg", () => {
+    const aircraft = applySnapshot([
+      {
+        icao_hex: "A1B2C3",
+        lat: 1,
+        lon: 2,
+        alt: 1000,
+        hdg: 270,
+        aircraft: { icao_hex: "A1B2C3", emitter_category: "B2" },
+      },
+    ]);
+    expect(aircraft.A1B2C3.shape).toBe("BALL");
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(0);
+  });
+
+  it("leaves a non-BALL-shaped aircraft's reported hdg untouched", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft.A1B2C3.hdg = 270;
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(270);
+  });
+});
+
 describe("trailSegmentFeatures -- per-segment builder with stable ids (#1775)", () => {
   it("stamps a stable `${icao_hex}:${index}` id on every segment", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
