@@ -147,7 +147,9 @@ describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)
   });
 
   it("keeps the tab vertically centered within the drawer's own full height, not top-aligned", () => {
-    const tabWrapperIndex = panelSource.indexOf('className="flex h-full flex-none items-center"');
+    const tabWrapperIndex = panelSource.indexOf(
+      'className="flex h-full flex-none items-center bg-white dark:bg-slate-900"',
+    );
     expect(tabWrapperIndex).toBeGreaterThan(-1);
   });
 
@@ -178,6 +180,25 @@ describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)
     const callSite = panelSource.slice(bodyIndex, bodyIndex + 200);
     expect(callSite).not.toContain("/90");
     expect(callSite).toContain("bg-white");
+  });
+
+  it("gives the tab wrapper an opaque background spanning its full height, not just the button (#1803)", () => {
+    // #1803: the outer wrapper's zIndex (MAX_LABEL_Z_INDEX + 1, tested above)
+    // only wins paint order where it actually paints a pixel. InfoBoxLayer's
+    // boxes are absolutely positioned with no overflow clipping on the map
+    // area, so a box anchored near the map's right edge can visually spill
+    // into this h-6-wide tab strip. Previously only the h-12 button (not the
+    // full h-full wrapper around it) had a background, so a label landing
+    // above/below the button -- in the wrapper's unpainted margin -- showed
+    // straight through despite being "under" a higher z-index element.
+    // Giving the wrapper itself an opaque background the button also sits
+    // on top of closes that gap independent of any z-index.
+    const tabWrapperIndex = panelSource.indexOf(
+      'className="flex h-full flex-none items-center bg-white dark:bg-slate-900"',
+    );
+    expect(tabWrapperIndex).toBeGreaterThan(-1);
+    const callSite = panelSource.slice(tabWrapperIndex, tabWrapperIndex + 300);
+    expect(callSite).toContain("style={{ width: TAB_WIDTH_PX }}");
   });
 });
 

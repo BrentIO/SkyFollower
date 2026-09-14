@@ -259,8 +259,22 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
     >
       {/* Tab stays vertically centered within the drawer's full height --
           not top-aligned like tar1090's own handle -- so it can never
-          collide with ControlsPanel's top-right icon column/status dot. */}
-      <div className="flex h-full flex-none items-center" style={{ width: TAB_WIDTH_PX }}>
+          collide with ControlsPanel's top-right icon column/status dot.
+          `bg-white`/`dark:bg-slate-900` here (not just on the button below)
+          is load-bearing, not decorative (#1803): this wrapper's own
+          zIndex (from the outer div above) only wins the paint order where
+          it actually paints a pixel. InfoBoxLayer's boxes are absolutely
+          positioned with no overflow clipping on the map area, so a box
+          anchored near the map's right edge can visually spill into this
+          strip; above/below the h-12 button, an unpainted (transparent)
+          wrapper let that spilled label show straight through even though
+          it was technically stacked underneath. An opaque background
+          spanning the wrapper's full height closes that gap regardless of
+          z-index. */}
+      <div
+        className="flex h-full flex-none items-center bg-white dark:bg-slate-900"
+        style={{ width: TAB_WIDTH_PX }}
+      >
         <button
           type="button"
           onClick={() => setOpen((prev) => !prev)}
