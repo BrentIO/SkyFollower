@@ -625,17 +625,26 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // SELECTABLE_LAYER_IDS -- a trace point dot/label is display-only,
       // never a click target of its own.
       map.addSource(TRACE_POINTS_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
-      map.addLayer({
-        id: TRACE_POINTS_CIRCLE_LAYER_ID,
-        type: "circle",
-        source: TRACE_POINTS_SOURCE_ID,
-        paint: {
-          "circle-color": ["get", "color"],
-          "circle-radius": 4,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": ["get", "strokeColor"],
+      map.addLayer(
+        {
+          id: TRACE_POINTS_CIRCLE_LAYER_ID,
+          type: "circle",
+          source: TRACE_POINTS_SOURCE_ID,
+          paint: {
+            "circle-color": ["get", "color"],
+            "circle-radius": 4,
+            "circle-stroke-width": 1,
+            "circle-stroke-color": ["get", "strokeColor"],
+          },
         },
-      });
+        // Inserted below TRAIL_LAYER_ID (#1794) -- otherwise these 8px dots
+        // paint over the 2.5px trail line, and since both share the same
+        // altitude color, tightly-spaced points (a loitering/holding-pattern
+        // aircraft) merge into a solid blob that reads as "no line" at all.
+        // The trail line now always paints on top, same as a route line over
+        // waypoint markers in any other mapping app.
+        TRAIL_LAYER_ID,
+      );
       map.addLayer({
         id: TRACE_POINTS_LABEL_LAYER_ID,
         type: "symbol",
