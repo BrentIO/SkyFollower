@@ -646,3 +646,17 @@ describe('map "click" handler -- background click deselects (#1792)', () => {
     expect(body).toContain("setSelected((prev) => nextSelection(prev, icaoHex));");
   });
 });
+
+describe("Trace Points circle layer -- inserted below the trail line (#1794)", () => {
+  it("passes TRAIL_LAYER_ID as addLayer's beforeId, so the trail always paints on top of the dots", () => {
+    const idIndex = mapViewSource.indexOf("id: TRACE_POINTS_CIRCLE_LAYER_ID");
+    expect(idIndex).toBeGreaterThan(-1);
+    // The addLayer(...) call this id belongs to must close with a second
+    // argument of TRAIL_LAYER_ID, not a bare `);` -- otherwise MapLibre's
+    // default (stack on top of everything so far) applies, which is
+    // exactly the bug: the 8px dots would paint over the 2.5px trail line.
+    const callEnd = mapViewSource.indexOf("TRAIL_LAYER_ID,\n      );", idIndex);
+    expect(callEnd).toBeGreaterThan(idIndex);
+    expect(callEnd - idIndex).toBeLessThan(1000); // same addLayer call, not a later unrelated one
+  });
+});
