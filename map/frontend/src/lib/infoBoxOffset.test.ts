@@ -1,3 +1,4 @@
+import { createExpression, v8 as styleSpecV8 } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 import {
   infoBoxOffsetForZoom,
@@ -92,11 +93,23 @@ describe("infoBoxTextOffsetZoomExpression", () => {
     }
   });
 
+  // #1815: each stop's output is ["literal", [em, em]], not a bare
+  // [em, em] -- MapLibre's expression parser treats every nested array as
+  // a sub-expression unless wrapped in "literal", so a bare array output
+  // failed style validation entirely and silently dropped the whole
+  // INFO_BOX_LAYER_ID layer (see the "is a valid MapLibre expression"
+  // test below, and infoBoxOffset.ts's own comment on this function).
+  function stopOutput(stopValue: unknown): [number, number] {
+    const [tag, value] = stopValue as ["literal", [number, number]];
+    expect(tag).toBe("literal");
+    return value;
+  }
+
   it("every stop's [dx, dy] em value equals infoBoxOffsetForZoom(zoom)/referencePx, with dx === dy (diagonal down-right offset)", () => {
     const stops = expr.slice(3);
     for (let i = 0; i < stops.length; i += 2) {
       const zoom = stops[i] as number;
-      const [dx, dy] = stops[i + 1] as [number, number];
+      const [dx, dy] = stopOutput(stops[i + 1]);
       const expectedEm = infoBoxOffsetForZoom(zoom) / INFO_BOX_TEXT_OFFSET_REFERENCE_PX;
       expect(dx).toBeCloseTo(expectedEm, 6);
       expect(dy).toBeCloseTo(expectedEm, 6);
@@ -115,9 +128,44 @@ describe("infoBoxTextOffsetZoomExpression", () => {
     const baseStops = expr.slice(3);
     const doubledStops = doubled.slice(3);
     for (let i = 1; i < baseStops.length; i += 2) {
-      const [baseDx] = baseStops[i] as [number, number];
-      const [doubledDx] = doubledStops[i] as [number, number];
+      const [baseDx] = stopOutput(baseStops[i]);
+      const [doubledDx] = stopOutput(doubledStops[i]);
       expect(doubledDx).toBeCloseTo(baseDx / 2, 6);
+    }
+  });
+
+  // #1815: components/MapView.tsx passes this expression straight through
+  // to `map.addLayer(...)` as INFO_BOX_LAYER_ID's `text-offset`. Every
+  // other test in this file only checks the plain-array *shape* of the
+  // return value -- none of them ever asked MapLibre's own parser whether
+  // it's a legal expression, which is exactly how a bare (non-"literal")
+  // array stop output shipped in #1814: `map.addLayer` failed MapLibre's
+  // internal style validation ("Expression name must be a string, but
+  // found number instead. If you wanted a literal array, use ["literal",
+  // [...]].", logged via console.error, not thrown/caught by this app)
+  // and silently skipped adding the layer -- no info box ever rendered,
+  // for any aircraft, regardless of selection/hover/"Labels: All".
+  // Reproduced live via a headless-Chrome + mock-backend harness against
+  // the pre-fix code; this test exercises the same real parser
+  // (@maplibre/maplibre-gl-style-spec, the package maplibre-gl itself
+  // uses internally) without needing a DOM/WebGL context, so it catches
+  // the same class of bug in plain `vitest run`.
+  it("is a valid MapLibre text-offset expression (#1815)", () => {
+    // The style-spec package's own generated .d.ts doesn't match its runtime v8.json shape closely
+    // enough for createExpression's parameter type (missing `transition`, among others) -- the object
+    // itself is correct (it's literally the same v8.json data MapLibre validates real layers against),
+    // so this narrows past a type-only mismatch rather than a real one.
+    const result = createExpression(expr, "layout_symbol.text-offset", styleSpecV8.layout_symbol["text-offset"] as never);
+    expect(result.result).toBe("success");
+  });
+
+  it("documents the #1815 bug: the same expression with bare (non-literal) array stop outputs fails MapLibre's real validation with its own 'use [\"literal\", [...]]' message", () => {
+    const bareArrayStops = expr.slice(3).map((value, i) => (i % 2 === 1 ? (value as ["literal", unknown])[1] : value));
+    const preFixExpr = ["interpolate", ["linear"], ["zoom"], ...bareArrayStops];
+    const result = createExpression(preFixExpr, "layout_symbol.text-offset", styleSpecV8.layout_symbol["text-offset"] as never);
+    expect(result.result).toBe("error");
+    if (result.result === "error") {
+      expect(result.value.some((e) => e.message.includes('use ["literal"'))).toBe(true);
     }
   });
 });

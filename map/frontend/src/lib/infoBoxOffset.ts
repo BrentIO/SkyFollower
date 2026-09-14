@@ -90,12 +90,26 @@ const OFFSET_EXPRESSION_ZOOM_STOPS = [3, 4, 5, 6, 7, 7.5, 8, 8.5, 9, 9.5, 10, 11
  * so this file stays free of a MapLibre type dependency, same as the rest
  * of this module -- MapView.tsx passes it straight through as a style
  * expression, which is just JSON-shaped data.
+ *
+ * #1815: each stop's `[em, em]` output must be wrapped in `["literal",
+ * [em, em]]` -- MapLibre's expression parser treats *every* nested array
+ * as another sub-expression (first element = operator name) unless told
+ * otherwise, so a bare `[em, em]` output failed style validation entirely
+ * ("Expression name must be a string, but found number instead"). That
+ * made `map.addLayer(INFO_BOX_LAYER_ID, ...)` fail MapLibre's own
+ * validation and silently skip adding the layer (logged to console, not
+ * thrown/caught by this app) -- no info box ever rendered, for any
+ * aircraft, regardless of selection/hover/"Labels: All". See
+ * infoBoxOffset.test.ts's own "is a valid MapLibre expression" test, which
+ * exercises MapLibre's real expression parser and would have caught this
+ * -- the removed test only checked the plain-array shape, never asked
+ * MapLibre itself whether it was legal.
  */
 export function infoBoxTextOffsetZoomExpression(referencePx: number = INFO_BOX_TEXT_OFFSET_REFERENCE_PX): unknown[] {
   const stops: unknown[] = [];
   for (const zoom of OFFSET_EXPRESSION_ZOOM_STOPS) {
     const em = infoBoxOffsetForZoom(zoom) / referencePx;
-    stops.push(zoom, [em, em]);
+    stops.push(zoom, ["literal", [em, em]]);
   }
   return ["interpolate", ["linear"], ["zoom"], ...stops];
 }

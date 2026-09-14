@@ -73,6 +73,26 @@ import type { AddLayerObject } from "maplibre-gl";
 // of `any`.
 type SymbolLayout = NonNullable<Extract<AddLayerObject, { type: "symbol" }>["layout"]>;
 
+// #1815: every text symbol layer below (RANGE_RING_LABEL_LAYER_ID,
+// TRACE_POINTS_LABEL_LAYER_ID, INFO_BOX_LAYER_ID) omitted `text-font`,
+// which defaults to MapLibre's own built-in stack, `["Open Sans
+// Regular", "Arial Unicode MS Regular"]` -- a font this app's basemap
+// style (maplibreSetup.ts's MAP_STYLE, openfreemap.org's "positron")
+// doesn't actually serve at its `glyphs` URL. Every glyph range request
+// for that stack 404s, and MapLibre falls back to rendering each
+// codepoint locally rather than from the CDN's font atlas -- a real
+// per-unique-codepoint cost (and a permanent stream of failed network
+// requests) that's easy to mistake for "just how expensive text
+// rendering is" rather than a fixable misconfiguration. The positron
+// style's own layers all use "Noto Sans Regular"/"Bold"/"Italic" (the
+// only stack its glyphs endpoint actually has); using the same one here
+// avoids the 404/local-fallback path entirely. Discovered investigating
+// #1815 (INFO_BOX_LAYER_ID, the highest-text-volume of the three, up to
+// the whole fleet with "Labels: All" on) but applies equally to the
+// other two, which predate #1808/#1814 and had the identical latent
+// issue -- fixed here rather than left inconsistent.
+const BASEMAP_TEXT_FONT = ["Noto Sans Regular"];
+
 // Builds and registers one silhouette's SDF image with MapLibre, once.
 // `shapeKey` is an AIRCRAFT_SHAPES key; an unknown key (a shape the
 // resolver picked but the generated set somehow lacks) falls back to the
@@ -449,6 +469,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
         source: RANGE_RING_LABEL_SOURCE_ID,
         layout: {
           "text-field": ["get", "label"],
+          "text-font": BASEMAP_TEXT_FONT,
           "text-size": 11,
           "text-anchor": "top",
           "text-offset": [0, 0.3],
@@ -695,6 +716,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
         source: TRACE_POINTS_SOURCE_ID,
         layout: {
           "text-field": ["get", "label"],
+          "text-font": BASEMAP_TEXT_FONT,
           "text-size": 11,
           "text-anchor": "bottom-left",
           "text-offset": [0.6, -0.6],
@@ -819,6 +841,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-text-fit-padding": [4, 6, 4, 6],
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
+          "text-font": BASEMAP_TEXT_FONT,
           // Ident line first, larger (font-scale 1.15, roughly matching the
           // DOM box's 12px-vs-10.5px ident/detail size ratio), then the
           // altitude/speed and registration/type lines -- joined with "\n"
