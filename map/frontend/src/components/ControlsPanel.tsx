@@ -1,18 +1,9 @@
 import { RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
-import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
-import type { ProcessorRoster } from "../api/types";
 import { IconButton } from "./IconButton";
 
 export interface ControlsPanelProps {
-  /** The browser's own WebSocket connection to this map backend -- distinct
-   * from `roster`, which is the message-processor liveness roster *that
-   * backend* has derived from UDP traffic. If this is false there is no
-   * live proof of anything, so the indicator renders red regardless of the
-   * last-known roster snapshot. */
-  wsConnected: boolean;
-  roster: ProcessorRoster;
   historyAll: boolean;
   onToggleHistoryAll: () => void;
   labelsAll: boolean;
@@ -47,22 +38,23 @@ export interface ControlsPanelProps {
   fullscreenDisabled: boolean;
 }
 
-// Top-right floating controls: a bare connection-status dot (no card/
-// background of its own -- see the issue that moved the aircraft count out
-// of this component into AircraftListPanel's header, leaving the dot as
-// an independent floating indicator), and -- below that -- one unified
-// vertically stacked column mixing the recenter button (its own
-// separately-styled square control -- a momentary action, not an on/off
-// toggle) with the icon buttons for the "Fullscreen", "Labels", "Trails",
-// "Range Outline", and "Map Labels" toggles, in that top-to-bottom order.
-// Icon buttons share the exact rendering mechanism (IconButton,
-// toggleButtonClass coloring) as AircraftDetailPanel's action row, sized
-// via IconButton's "md" size prop to match the recenter button's own
-// h-9 w-9 -- AircraftDetailPanel's row keeps IconButton's default size and
-// its own horizontal layout, unrelated to this column.
+// Top-right floating controls: one unified vertically stacked column mixing
+// the recenter button (its own separately-styled square control -- a
+// momentary action, not an on/off toggle) with the icon buttons for the
+// "Fullscreen", "Labels", "Trails", "Range Outline", and "Map Labels"
+// toggles, in that top-to-bottom order. Icon buttons share the exact
+// rendering mechanism (IconButton, toggleButtonClass coloring) as
+// AircraftDetailPanel's action row, sized via IconButton's "md" size prop
+// to match the recenter button's own h-9 w-9 -- AircraftDetailPanel's row
+// keeps IconButton's default size and its own horizontal layout, unrelated
+// to this column.
+//
+// The connection-status dot that used to float here (its own top-2/right-2
+// wrapper, independent of this column's top-4/right-4 inset) has moved into
+// AircraftListPanel's header, next to the aircraft count -- see the issue
+// that relocated it after this corner needed repeated z-index/position
+// fixes (#1768, #1789) as the icon column below kept changing shape.
 export function ControlsPanel({
-  wsConnected,
-  roster,
   historyAll,
   onToggleHistoryAll,
   labelsAll,
@@ -78,72 +70,49 @@ export function ControlsPanel({
   onToggleFullscreen,
   fullscreenDisabled,
 }: ControlsPanelProps) {
-  const overallStatus = overallConnectionStatus(wsConnected, roster);
-
   return (
-    <>
-      {/* Bare floating indicator -- no card/background, per the issue that
-          detached this from the aircraft count (now in AircraftListPanel's
-          header). Positioned independently of the icon column below (its
-          own top-2/right-2 inset, half the column's top-4/right-4) so it
-          sits tucked into the true corner -- equidistant from both edges --
-          rather than inheriting the column's shared alignment. The h-8 w-8
-          button gives it a comfortable hover/tap hit area around the
-          visually small 2.5x2.5 dot. */}
-      <span
-        title={connectionTooltip(wsConnected, roster)}
-        // z-10: without this, the icon column below (a later DOM sibling,
-        // also absolutely positioned) paints over this dot wherever their
-        // corner insets overlap (#1789) -- e.g. the Fullscreen button's
-        // semi-opaque background hid it entirely.
-        className="pointer-events-auto absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center"
-      >
-        <span className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`} />
-      </span>
-
-      <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
-        <div className="pointer-events-auto flex flex-col gap-2">
-          <IconButton
-            label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            icon={fullscreenIcon(fullscreen)}
-            active={fullscreen}
-            onClick={onToggleFullscreen}
-            disabled={fullscreenDisabled}
-            size="md"
-          />
-          <button
-            type="button"
-            onClick={onRecenter}
-            disabled={recenterDisabled}
-            title="Return to center"
-            aria-label="Return to center"
-            className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
-            // Same crosshair markup as the on-map center marker -- see
-            // lib/crosshairIcon.ts's docstring for why they must stay
-            // visually identical. "currentColor" lets the button's own
-            // text-color classes (light/dark) drive the icon color, unlike
-            // the center marker which passes a fixed color of its own.
-            dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
-          />
-          <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
-          <IconButton
-            label="Trails"
-            icon={ROUTE_ICON}
-            active={historyAll}
-            onClick={onToggleHistoryAll}
-            size="md"
-          />
-          <IconButton
-            label="Range Outline"
-            icon={RADAR_ICON}
-            active={rangeOutlineVisible}
-            onClick={onToggleRangeOutline}
-            disabled={rangeOutlineDisabled}
-            size="md"
-          />
-          <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
-        </div>
+    <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
+      <div className="pointer-events-auto flex flex-col gap-2">
+        <IconButton
+          label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          icon={fullscreenIcon(fullscreen)}
+          active={fullscreen}
+          onClick={onToggleFullscreen}
+          disabled={fullscreenDisabled}
+          size="md"
+        />
+        <button
+          type="button"
+          onClick={onRecenter}
+          disabled={recenterDisabled}
+          title="Return to center"
+          aria-label="Return to center"
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
+          // Same crosshair markup as the on-map center marker -- see
+          // lib/crosshairIcon.ts's docstring for why they must stay
+          // visually identical. "currentColor" lets the button's own
+          // text-color classes (light/dark) drive the icon color, unlike
+          // the center marker which passes a fixed color of its own.
+          dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
+        />
+        <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
+        <IconButton
+          label="Trails"
+          icon={ROUTE_ICON}
+          active={historyAll}
+          onClick={onToggleHistoryAll}
+          size="md"
+        />
+        <IconButton
+          label="Range Outline"
+          icon={RADAR_ICON}
+          active={rangeOutlineVisible}
+          onClick={onToggleRangeOutline}
+          disabled={rangeOutlineDisabled}
+          size="md"
+        />
+        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
       </div>
-    </>
+    </div>
   );
 }

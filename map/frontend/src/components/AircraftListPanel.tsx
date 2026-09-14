@@ -9,7 +9,9 @@ import { buildAircraftListRows, type AircraftListRow } from "../lib/aircraftList
 import { nextAircraftListSortState, sortAircraftListRows, type AircraftListSortState } from "../lib/aircraftListSort";
 import type { CenterPoint } from "../lib/config";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
+import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
 import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
+import type { ProcessorRoster } from "../api/types";
 import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 
 // Column definitions -- a data-driven array rather than hardcoded per-column
@@ -131,6 +133,16 @@ export interface AircraftListPanelProps {
    * changes" section, which relocates this text rather than recomputing
    * it from a different source. */
   aircraftCount: number;
+  /** The browser's own WebSocket connection to this map backend -- distinct
+   * from `roster`, which is the message-processor liveness roster *that
+   * backend* has derived from UDP traffic. If this is false there is no
+   * live proof of anything, so the indicator renders red regardless of the
+   * last-known roster snapshot. Formerly ControlsPanel's own props -- see
+   * the issue that moved the connection-status dot into this header
+   * alongside the aircraft count, after repeated top-right corner
+   * collisions (#1768, #1789) with ControlsPanel's icon column. */
+  wsConnected: boolean;
+  roster: ProcessorRoster;
   center: CenterPoint | null;
   selected: Set<string>;
   onSelect: (icaoHex: string) => void;
@@ -150,7 +162,16 @@ export interface AircraftListPanelProps {
 // narrower, right edge) and the map keeps its configured center centered
 // in whatever width remains, the same way resizing any MapLibre container
 // does.
-export function AircraftListPanel({ aircraft, aircraftCount, center, selected, onSelect }: AircraftListPanelProps) {
+export function AircraftListPanel({
+  aircraft,
+  aircraftCount,
+  wsConnected,
+  roster,
+  center,
+  selected,
+  onSelect,
+}: AircraftListPanelProps) {
+  const overallStatus = overallConnectionStatus(wsConnected, roster);
   // Closed by default -- an on-demand addition to the view, not something
   // that should claim screen space (and partially occlude the map) on
   // every page load the way the always-selected AircraftDetailPanel does.
@@ -316,7 +337,19 @@ export function AircraftListPanel({ aircraft, aircraftCount, center, selected, o
 
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-700">
           <div className="text-base font-bold">Aircraft List</div>
-          <div className="tabular-nums text-xs text-slate-500 dark:text-slate-400">{aircraftCount} aircraft</div>
+          {/* Connection-status dot, relocated here (from ControlsPanel's
+              top-right corner -- see the issue this implements) as a sibling
+              of the aircraft count, same line, so it only renders while the
+              drawer is open -- matching the count's own existing
+              hide-when-collapsed behavior, rather than needing its own
+              always-visible floating spot. */}
+          <div className="flex items-center gap-1.5 tabular-nums text-xs text-slate-500 dark:text-slate-400">
+            <span>{aircraftCount} aircraft</span>
+            <span
+              title={connectionTooltip(wsConnected, roster)}
+              className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`}
+            />
+          </div>
         </div>
 
         {/* overflow-auto (not just -y): a user-dragged width narrower than

@@ -1050,8 +1050,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
           />
         )}
         <ControlsPanel
-          wsConnected={connected}
-          roster={roster}
           historyAll={historyAll}
           onToggleHistoryAll={() => setHistoryAll((prev) => !prev)}
           labelsAll={labelsAll}
@@ -1071,6 +1069,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
       <AircraftListPanel
         aircraft={aircraft}
         aircraftCount={Object.keys(aircraft).length}
+        wsConnected={connected}
+        roster={roster}
         center={config.center}
         selected={selected}
         onSelect={handleSelectFromList}
