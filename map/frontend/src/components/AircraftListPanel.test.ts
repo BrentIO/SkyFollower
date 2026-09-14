@@ -190,6 +190,58 @@ describe("header -- title, collapse handle, and relocated aircraft count only", 
   });
 });
 
+describe("header -- connection-status dot, relocated from ControlsPanel (issue #1804)", () => {
+  it("imports the same presentation helpers ControlsPanel used to use", () => {
+    expect(panelSource).toContain(
+      'import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus"',
+    );
+    expect(panelSource).toContain('import type { ProcessorRoster } from "../api/types"');
+  });
+
+  it("accepts wsConnected/roster props", () => {
+    expect(panelSource).toContain("wsConnected: boolean;");
+    expect(panelSource).toContain("roster: ProcessorRoster;");
+  });
+
+  it("computes the overall status the same way ControlsPanel did (red whenever wsConnected is false)", () => {
+    expect(panelSource).toContain("overallConnectionStatus(wsConnected, roster)");
+  });
+
+  it("renders the dot as a sibling of the aircraft count, same line, right of the count text", () => {
+    const headerRowIndex = panelSource.indexOf(
+      'className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-700"',
+    );
+    const countIndex = panelSource.indexOf("{aircraftCount} aircraft");
+    const dotIndex = panelSource.indexOf("PROCESSOR_STATUS_DOT_COLOR[overallStatus]");
+    const nextSectionIndex = panelSource.indexOf("overflow-auto");
+    expect(headerRowIndex).toBeGreaterThan(-1);
+    expect(countIndex).toBeGreaterThan(headerRowIndex);
+    // Dot renders after the count, still within the same header row (before
+    // the table section that follows the header).
+    expect(dotIndex).toBeGreaterThan(countIndex);
+    expect(dotIndex).toBeLessThan(nextSectionIndex);
+  });
+
+  it("keeps the dot's existing hover tooltip via connectionTooltip()", () => {
+    expect(panelSource).toContain("title={connectionTooltip(wsConnected, roster)}");
+  });
+
+  it("is only present within the drawer's own header markup, which the wrapper hides entirely when collapsed (matches the aircraft count's own existing hidden-when-collapsed behavior)", () => {
+    // The header (title/count/dot) lives inside the inner panel body div,
+    // which is a sibling of the tab -- the outer wrapper's width collapses
+    // to just TAB_WIDTH_PX when closed (see the width transition test
+    // above), clipping this whole header out of view via overflow-hidden
+    // rather than the dot having any independent visibility logic of its
+    // own.
+    const dotIndex = panelSource.indexOf("PROCESSOR_STATUS_DOT_COLOR[overallStatus]");
+    const panelBodyIndex = panelSource.indexOf(
+      "flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white",
+    );
+    expect(panelBodyIndex).toBeGreaterThan(-1);
+    expect(dotIndex).toBeGreaterThan(panelBodyIndex);
+  });
+});
+
 describe("performance -- throttled row rebuild", () => {
   it("reuses lib/syncThrottle.ts's throttle convention, at MAP_SYNC_THROTTLE_MS", () => {
     expect(panelSource).toContain('import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle"');

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 // checked by reading the actual source text rather than rendering.
 import controlsPanelSource from "./ControlsPanel.tsx?raw";
 
-describe("status box -- bare connection dot only (aircraft count moved to AircraftListPanel)", () => {
+describe("status box -- removed entirely; aircraft count and connection dot both live in AircraftListPanel", () => {
   it("no longer renders any of the five toggle/action buttons as text buttons", () => {
     expect(controlsPanelSource).not.toContain("Trails</button>");
     expect(controlsPanelSource).not.toContain(">Labels<");
@@ -13,46 +13,39 @@ describe("status box -- bare connection dot only (aircraft count moved to Aircra
     expect(controlsPanelSource).not.toContain(">Range Outline<");
   });
 
-  it("still renders the connection dot", () => {
-    expect(controlsPanelSource).toContain("PROCESSOR_STATUS_DOT_COLOR[overallStatus]");
-  });
-
   it("no longer accepts or renders an aircraftCount prop/text", () => {
     expect(controlsPanelSource).not.toContain("aircraftCount");
     expect(controlsPanelSource).not.toContain("aircraft</span>");
   });
 
-  it("no longer wraps the dot in a card (no rounded-md bg-white/90 status box)", () => {
+  it("no longer wraps anything in a card (no rounded-md bg-white/90 status box)", () => {
     expect(controlsPanelSource).not.toContain("rounded-md bg-white/90 p-3");
   });
 
-  it("keeps the dot's hover tooltip via connectionTooltip()", () => {
-    expect(controlsPanelSource).toContain("title={connectionTooltip(wsConnected, roster)}");
+  // The connection-status dot (and its wsConnected/roster props,
+  // processorStatus.ts imports, and hover tooltip) moved into
+  // AircraftListPanel's header -- see the issue that relocated it after
+  // this corner needed repeated z-index/position fixes (#1768, #1789) as
+  // the icon column below kept changing shape. ControlsPanel should carry
+  // none of that anymore.
+  it("no longer renders the connection dot or references its color map", () => {
+    expect(controlsPanelSource).not.toContain("PROCESSOR_STATUS_DOT_COLOR");
   });
 
-  it("positions the dot in its own top-2/right-2 wrapper, independent of the icon column's top-4/right-4, and above it (#1789)", () => {
-    // #1768: the dot used to share the icon column's container (top-4
-    // right-4, items-end), which visually offset it from the true corner.
-    // It now gets its own absolutely-positioned wrapper at half the
-    // column's inset. #1789: that wrapper and the icon column are both
-    // absolutely positioned, overlapping siblings with no shared stacking
-    // context, so without z-10 the later DOM sibling (the icon column)
-    // painted over the dot.
-    expect(controlsPanelSource).toContain(
-      'className="pointer-events-auto absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center"',
-    );
+  it("no longer imports or uses connectionTooltip/overallConnectionStatus", () => {
+    expect(controlsPanelSource).not.toContain("connectionTooltip");
+    expect(controlsPanelSource).not.toContain("overallConnectionStatus");
+    expect(controlsPanelSource).not.toContain("../lib/processorStatus");
   });
 
-  it("no longer nests the dot inside the icon column's own absolute container", () => {
-    const dotIndex = controlsPanelSource.indexOf("title={connectionTooltip(wsConnected, roster)}");
-    const columnContainerIndex = controlsPanelSource.indexOf(
-      'className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2"',
-    );
-    expect(dotIndex).toBeGreaterThan(-1);
-    expect(columnContainerIndex).toBeGreaterThan(-1);
-    // The dot's own wrapper renders before the icon column's container now,
-    // rather than being nested inside it.
-    expect(dotIndex).toBeLessThan(columnContainerIndex);
+  it("no longer accepts wsConnected/roster props", () => {
+    expect(controlsPanelSource).not.toContain("wsConnected");
+    expect(controlsPanelSource).not.toContain("roster");
+    expect(controlsPanelSource).not.toContain("ProcessorRoster");
+  });
+
+  it("no longer positions anything at the bare top-2/right-2 corner inset (only the icon column's top-4/right-4 remains)", () => {
+    expect(controlsPanelSource).not.toContain("top-2 right-2");
   });
 });
 
