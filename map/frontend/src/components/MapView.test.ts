@@ -631,3 +631,18 @@ describe("handleSelectFromList -- AircraftListPanel row click (#1791)", () => {
     expect(body).toContain("setIsolateEnabled(true);");
   });
 });
+
+describe('map "click" handler -- background click deselects (#1792)', () => {
+  it("clears selection instead of a no-op when the click misses every selectable feature", () => {
+    const startIndex = mapViewSource.indexOf('map.on("click", (e) => {');
+    const endIndex = mapViewSource.indexOf('map.on("mousemove"', startIndex);
+    expect(startIndex).toBeGreaterThan(-1);
+    expect(endIndex).toBeGreaterThan(startIndex);
+    const body = mapViewSource.slice(startIndex, endIndex);
+    expect(body).not.toMatch(/if \(!icaoHex\) return;/);
+    expect(body).toContain("if (!icaoHex) {");
+    expect(body).toContain("setSelected(new Set());");
+    // Still selects normally when a feature *is* hit.
+    expect(body).toContain("setSelected((prev) => nextSelection(prev, icaoHex));");
+  });
+});
