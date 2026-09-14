@@ -72,7 +72,13 @@ export function aircraftFeature(
     geometry: { type: "Point", coordinates: [a.lon, a.lat] },
     properties: {
       icao_hex: a.icao_hex,
-      heading: a.hdg ?? 0,
+      // Lighter-than-air aircraft (balloon, and airship/blimp -- aliased to
+      // the same "BALL" shape, see aircraftIconResolver.ts) don't have a
+      // "nose" heading the way fixed-wing/rotary aircraft do; their reported
+      // ADS-B heading reflects drift direction, not an orientation the icon
+      // should rotate to face. Force north-up for that shape regardless of
+      // the reported value (issue #1788).
+      heading: a.shape === "BALL" ? 0 : (a.hdg ?? 0),
       color: altitudeColor(a.alt ?? null),
       selected: selected.has(a.icao_hex),
       // Reuses the existing stale-dims-the-icon paint rule (see
