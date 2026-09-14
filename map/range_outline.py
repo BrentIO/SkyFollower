@@ -2,22 +2,17 @@
 Daily reception range outline for the map service.
 
 "How far can this system hear, per compass bearing, per altitude band" --
-built from the same `position` UDP stream the live map runs on. Buckets at
-720 half-degree bearing resolution -- finer than readsb's own
-actual-range-outline (360 one-degree bearing buckets, per-bucket farthest
-received position), deliberately, since this runs centrally and aggregates
-*every* receiver / external feed rather than one antenna.
+built from the same `position` UDP stream the live map runs on. Mirrors
+readsb's actual-range-outline (360 one-degree bearing buckets, per-bucket
+farthest received position), but run centrally so it aggregates *every*
+receiver / external feed rather than one antenna.
 
 Lifecycle:
 
 - The current UTC day's outline lives in one Redis hash
-  (``map:range:outline``): field ``"{bearing_index}:{band}"``, value JSON
+  (``map:range:outline``): field ``"{bearing}:{band}"``, value JSON
   ``{nm, lat, lon, alt, ts}`` = the single farthest position received in
-  that bucket today. ``bearing_index`` is an integer half-degree index
-  (``0``-``719``; real bearing = ``bearing_index / 2``), kept as a plain
-  integer string rather than a float so downstream `int()`/`.isdigit()`
-  parsing of the field name is unaffected. It accumulates from empty at
-  00:00 UTC.
+  that bucket today. It accumulates from empty at 00:00 UTC.
 - Snapshotted to ``{snapshot_dir}/{YYYY-MM-DD}.json`` -- raw buckets, not
   GeoJSON -- once every MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS when
   it has changed, and once at the UTC-date rollover (which also clears the
@@ -32,6 +27,18 @@ Lifecycle:
 The Redis hash carries a short safety TTL so a dead process can't leave
 stale data in this no-persistence Redis forever; the disk files are the
 real 30-day store, and a live process refreshes the TTL on every write.
+
+Bearing bucket resolution was briefly doubled to a half-degree index
+(0-719, see #1683) and then reverted back to whole degrees (#1805) after
+the finer resolution rendered more jagged rather than smoother. Disk
+snapshots written during that window are keyed under the half-degree
+scheme; a key like ``"47"`` from that period means 23.5 degrees, not 47
+degrees, and this code has no way to tell the two schemes apart. This is
+an accepted limitation, not migrated -- it only affects historical
+``?date=`` lookups against snapshots from that window, for the remainder
+of their MAP_RANGE_OUTLINE_RETENTION_DAYS retention, after which they're
+deleted and the issue disappears on its own. The live in-progress day is
+unaffected, since it clears and rebuilds fresh at every UTC rollover.
 
 Disabled entirely when no "center" reference point is configured
 (MAP_CENTER_LATITUDE/LONGITUDE) -- there is no origin to measure bearing and
@@ -74,12 +81,6 @@ MAX_RANGE_NM = 325.0
 # carries no CPR reliability flags, so this stands in for readsb's
 # odd/even-count check.) The first-ever detection in a direction, into an
 # empty bucket, is always accepted up to MAX_RANGE_NM.
-#
-# This constant is in real degrees. Bearing buckets are keyed by half-degree
-# index (see module docstring), so anywhere this drives a bucket-index
-# offset it must be doubled (_OUTLIER_NEIGHBOUR_DEG * 2) to keep the real
-# angular tolerance at +/-_OUTLIER_NEIGHBOUR_DEG -- doubling the bucket
-# count without doubling the index-space window would silently halve it.
 _OUTLIER_JUMP_NM = 50.0
 _OUTLIER_NEIGHBOUR_DEG = 3
 
@@ -196,17 +197,13 @@ class RangeOutlineStore:
         if nm > MAX_RANGE_NM:
             return
 
-        # Half-degree index, 0-719 (real bearing = bearing_index / 2).
-        bearing_index = round(initial_bearing(center_lat, center_lon, lat, lon) * 2) % 720
+        bearing = int(round(initial_bearing(center_lat, center_lon, lat, lon))) % 360
         band = altitude_band(alt)
-        field = f"{bearing_index}:{band}"
+        field = f"{bearing}:{band}"
 
-        # +/-_OUTLIER_NEIGHBOUR_DEG real degrees -> +/-(_OUTLIER_NEIGHBOUR_DEG * 2)
-        # in index units, since each index step is 0.5 real degrees.
-        neighbour_window = _OUTLIER_NEIGHBOUR_DEG * 2
         neighbour_fields = [
-            f"{(bearing_index + d) % 720}:{band}"
-            for d in range(-neighbour_window, neighbour_window + 1)
+            f"{(bearing + d) % 360}:{band}"
+            for d in range(-_OUTLIER_NEIGHBOUR_DEG, _OUTLIER_NEIGHBOUR_DEG + 1)
             if d != 0
         ]
         current_raw, *neighbours_raw = self._redis.hmget(OUTLINE_KEY, field, *neighbour_fields)
@@ -219,8 +216,8 @@ class RangeOutlineStore:
             neighbour_max = max((self._point_nm(r) for r in neighbours_raw), default=0.0)
             if neighbour_max < nm - _OUTLIER_JUMP_NM:
                 logger.debug(
-                    "Range outline: rejecting outlier %.0f nm at bearing %.1f (current %.0f, neighbours %.0f)",
-                    nm, bearing_index / 2, current_nm, neighbour_max,
+                    "Range outline: rejecting outlier %.0f nm at bearing %d (current %.0f, neighbours %.0f)",
+                    nm, bearing, current_nm, neighbour_max,
                 )
                 return
 
@@ -415,22 +412,19 @@ class RangeOutlineStore:
     # -- geojson ------------------------------------------------------------
 
     def _build_geojson(self, buckets: dict, date: str, band: Optional[str]) -> dict:
-        # Bearing stays an index (0-719) here -- it's only used to order and
-        # de-duplicate points, and each point already carries its own real
-        # lat/lon. Nothing below needs the /2 conversion back to degrees.
         by_band: dict[str, dict[int, dict]] = {label: {} for label in _BAND_LABELS}
         envelope: dict[int, dict] = {}
         for field, point in buckets.items():
             try:
                 bearing_str, band_label = field.split(":", 1)
-                bearing_index = int(bearing_str)
+                bearing = int(bearing_str)
             except (ValueError, AttributeError):
                 continue
             if band_label not in by_band or not isinstance(point, dict):
                 continue
-            by_band[band_label][bearing_index] = point
-            if point.get("nm", 0) > envelope.get(bearing_index, {}).get("nm", -1):
-                envelope[bearing_index] = point
+            by_band[band_label][bearing] = point
+            if point.get("nm", 0) > envelope.get(bearing, {}).get("nm", -1):
+                envelope[bearing] = point
 
         wanted = [band] if band and band != "envelope" else (
             [] if band == "envelope" else list(_BAND_LABELS)
