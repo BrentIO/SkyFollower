@@ -680,7 +680,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
       map.on("click", (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
         const icaoHex = topIcaoHex(features);
-        if (!icaoHex) return;
+        if (!icaoHex) {
+          // A click that misses every selectable feature is a background
+          // click -- closes the detail panel and deselects (#1792), same
+          // as the panel's own close button.
+          setSelected(new Set());
+          return;
+        }
         setSelected((prev) => nextSelection(prev, icaoHex));
       });
       // Hover cursor + transient label-on-hover, consolidated the same
