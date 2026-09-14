@@ -552,3 +552,71 @@ describe("screen-position sync on 'move' -- throttled (#1776)", () => {
     expect(callSite).toContain("syncScreenPositions();");
   });
 });
+
+describe("aircraft/trail source sync -- incremental updateData() diff path (#1775)", () => {
+  it("imports the diff-tracking and diff-building helpers", () => {
+    expect(mapViewSource).toContain('import { diffAircraftMaps } from "../lib/aircraftMapDiff"');
+    expect(mapViewSource).toContain("buildAircraftSourceDiff");
+    expect(mapViewSource).toContain("buildTrailSourceDiff");
+  });
+
+  it("tracks the previous aircraft snapshot and synced trail-segment ids across ticks", () => {
+    expect(mapViewSource).toContain("const prevAircraftRef = useRef<AircraftMap>({});");
+    expect(mapViewSource).toContain("const syncedTrailSegmentIdsRef = useRef<Map<string, string[]>>(new Map());");
+  });
+
+  it("computes visibilityChanged from the previous run's visibility-affecting inputs, not just aircraft", () => {
+    expect(mapViewSource).toContain("const prevVisibilityInputsRef = useRef<{");
+    expect(mapViewSource).toContain("const visibilityChanged =");
+    expect(mapViewSource).toContain("prevInputs.historyAll !== historyAll");
+    expect(mapViewSource).toContain("prevInputs.selected !== selected");
+    expect(mapViewSource).toContain("prevInputs.isolateId !== isolateId");
+    expect(mapViewSource).toContain("prevInputs.followId !== followId");
+    expect(mapViewSource).toContain("prevInputs.protectedId !== selectedIcaoHex");
+    expect(mapViewSource).toContain("prevInputs.tracePointsEnabled !== tracePointsEnabled");
+  });
+
+  it("uses full setData() rebuilds only on the visibilityChanged branch", () => {
+    const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
+    const elseIndex = mapViewSource.indexOf("} else {", ifIndex);
+    expect(ifIndex).toBeGreaterThan(-1);
+    expect(elseIndex).toBeGreaterThan(ifIndex);
+    const ifBranch = mapViewSource.slice(ifIndex, elseIndex);
+    expect(ifBranch).toContain("aircraftSource?.setData(fc)");
+    expect(ifBranch).toContain("trailSource?.setData(");
+    expect(ifBranch).not.toContain("updateData");
+  });
+
+  it("uses diffAircraftMaps + updateData() on the data-only (else) branch, gated on any actual change", () => {
+    const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
+    const elseIndex = mapViewSource.indexOf("} else {", ifIndex);
+    const effectEnd = mapViewSource.indexOf("prevAircraftRef.current = aircraft;", elseIndex);
+    expect(elseIndex).toBeGreaterThan(-1);
+    expect(effectEnd).toBeGreaterThan(elseIndex);
+    const elseBranch = mapViewSource.slice(elseIndex, effectEnd);
+    expect(elseBranch).toContain("diffAircraftMaps(prevAircraftRef.current, aircraft)");
+    expect(elseBranch).toContain("if (changed.size > 0) {");
+    expect(elseBranch).toContain("aircraftSource?.updateData(aircraftDiff)");
+    expect(elseBranch).toContain("trailSource?.updateData(trailResult.diff)");
+    expect(elseBranch).not.toContain("setData");
+  });
+
+  it("registers SDF shape images for newly-added features on both the full and incremental paths", () => {
+    // The full path already registered from `fc.features`, unchanged; the
+    // incremental path must do the same from the diff's own `add` list,
+    // since a changed aircraft can introduce a shape never seen before.
+    expect(mapViewSource).toContain("for (const f of aircraftDiff.add ?? []) {");
+    const registerCallCount = (mapViewSource.match(/registerShapeImage\(map, shape\)/g) ?? []).length;
+    expect(registerCallCount).toBe(2);
+  });
+
+  it("re-syncs the trail-segment-id bookkeeping after a full rebuild, so the next incremental tick starts correctly", () => {
+    expect(mapViewSource).toContain("syncedTrailSegmentIdsRef.current = bySegmentHex;");
+    expect(mapViewSource).toContain("syncedTrailSegmentIdsRef.current = trailResult.syncedSegmentIds;");
+  });
+
+  it("updates prevAircraftRef exactly once per run, after both branches", () => {
+    const occurrences = (mapViewSource.match(/prevAircraftRef\.current = aircraft;/g) ?? []).length;
+    expect(occurrences).toBe(1);
+  });
+});
