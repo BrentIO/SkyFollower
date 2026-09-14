@@ -183,7 +183,7 @@ describe("infoBoxItems -- isolate filtering", () => {
 describe("aircraft layer paint -- icon-halo-*", () => {
   const paint = aircraftLayerPaint();
 
-  it("gives selected aircraft the thick white selection halo, unselected a thin black outline", () => {
+  it("gives selected aircraft the thick white selection halo, unselected aircraft no halo (#1787)", () => {
     expect(paint["icon-halo-color"]).toEqual([
       "case",
       ["boolean", ["get", "selected"], false],
@@ -197,7 +197,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
       "case",
       ["boolean", ["get", "selected"], false],
       ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
-      1,
+      0,
     ]);
   });
 
@@ -210,10 +210,10 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     ]);
   });
 
-  it("never touches the unselected halo (width 1 / blur 0) regardless of icon_scale", () => {
+  it("never gives the unselected halo any width or blur (#1787), regardless of icon_scale", () => {
     for (const icon_scale of [0.6, 0.7, 1, 1.3, 1.6, undefined]) {
       const properties = { selected: false, icon_scale };
-      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(1);
+      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(0);
       expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0);
     }
   });
