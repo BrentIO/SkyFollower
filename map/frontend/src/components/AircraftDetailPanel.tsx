@@ -307,8 +307,13 @@ function FlightRows({
         </div>
       )}
       {data.sources.length > 0 && (
-        <div className={`px-4 py-2 ${divider()}`}>
-          <div className={`${ROW_LABEL} mb-1`}>Sources</div>
+        // flex-wrap (not the plain ROW row layout) so the label shares the
+        // first line with the pills whenever they fit, only wrapping to a
+        // second line when they don't -- matching every other row's
+        // "label, then value" flow instead of always forcing its own line
+        // (#1793).
+        <div className={`flex flex-wrap items-baseline justify-between gap-3 px-4 py-2 ${divider()}`}>
+          <span className={ROW_LABEL}>Sources</span>
           <div className="flex flex-wrap justify-end gap-1.5">
             {data.sources.map((source) => (
               <span key={source} className={TAG_PILL}>
@@ -319,8 +324,8 @@ function FlightRows({
         </div>
       )}
       {data.matchedRules.length > 0 && (
-        <div className={`px-4 py-2 ${divider()}`}>
-          <div className={`${ROW_LABEL} mb-1`}>Matched Rules</div>
+        <div className={`flex flex-wrap items-baseline justify-between gap-3 px-4 py-2 ${divider()}`}>
+          <span className={ROW_LABEL}>Matched Rules</span>
           <div className="flex flex-wrap justify-end gap-1.5">
             {data.matchedRules.map((rule) => (
               <span key={rule} className={TAG_PILL}>
