@@ -49,6 +49,26 @@ describe("Matched Rules / Receiver Sources pill class -- copied verbatim from Fl
   });
 });
 
+describe("Sources / Matched Rules label -- shares the first line with pills (#1793)", () => {
+  it("wraps the Sources label and pills in one flex-wrap row instead of stacking them in separate divs", () => {
+    const sourcesIndex = panelSource.indexOf("data.sources.length > 0");
+    const matchedRulesIndex = panelSource.indexOf("data.matchedRules.length > 0");
+    const block = panelSource.slice(sourcesIndex, matchedRulesIndex);
+    expect(block).toContain("flex flex-wrap items-baseline justify-between gap-3 px-4 py-2");
+    expect(block).toContain("<span className={ROW_LABEL}>Sources</span>");
+    // No longer a standalone label div forced onto its own line.
+    expect(block).not.toContain("mb-1");
+  });
+
+  it("gives Matched Rules the identical treatment", () => {
+    const matchedRulesIndex = panelSource.indexOf("data.matchedRules.length > 0");
+    const block = panelSource.slice(matchedRulesIndex, matchedRulesIndex + 400);
+    expect(block).toContain("flex flex-wrap items-baseline justify-between gap-3 px-4 py-2");
+    expect(block).toContain("<span className={ROW_LABEL}>Matched Rules</span>");
+    expect(block).not.toContain("mb-1");
+  });
+});
+
 describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
   it("renders all four buttons in order: Isolate, Zoom To, Follow, Trace Points", () => {
     const labels = ["Isolate", "Zoom To", "Follow", "Trace Points"];
