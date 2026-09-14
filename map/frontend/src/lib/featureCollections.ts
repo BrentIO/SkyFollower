@@ -21,7 +21,7 @@ import type { GeoJSONSourceDiff } from "maplibre-gl";
 import type { AircraftRecord } from "./aircraftState";
 import { altitudeColor } from "./altitudeColor";
 import { isFollowLost } from "./followTarget";
-import { buildTrailSegments } from "./trailSegments";
+import { buildTrailRuns } from "./trailSegments";
 
 export const EMPTY_FEATURE_COLLECTION: FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -136,23 +136,27 @@ function trailIncluded(a: AircraftRecord, visibleIds: Set<string>, options: Visi
   return !a.hidden || followLost;
 }
 
-// Builds one aircraft's trail-segment features (one two-point LineString
-// per consecutive pair of trail points -- see buildTrailSegments), each
-// with a stable `${icao_hex}:${index}` id. Segment content never changes
-// once drawn (each segment is a fixed pair of historical points), so a
-// data-only diff tick only ever needs to add newly-appended segments and
-// remove stale ones (a trail reseed replacing history wholesale, or the
-// aircraft losing trail visibility) -- see MapView.tsx's sync effect.
+// Builds one aircraft's trail-run features (one multi-point LineString per
+// contiguous same-color run -- see buildTrailRuns, #1820), each with a
+// stable `${icao_hex}:${index}` id. A *closed* run's content never changes
+// once drawn (its coordinates/color are fixed once a later point starts a
+// new run), so a data-only diff tick only ever needs to add the current
+// (possibly just-extended) run plus any newly-started run, and remove
+// stale ones (a trail reseed replacing history wholesale, or the aircraft
+// losing trail visibility) -- see MapView.tsx's sync effect, and
+// buildTrailSourceDiff below for why run indices stay stable across a
+// plain append (recomputing from the full trail always reproduces the
+// same index for every run that hasn't actually changed).
 // Does not itself check trailIncluded -- callers decide inclusion.
 export function trailSegmentFeatures(a: AircraftRecord, dimmed: boolean): Feature[] {
-  return buildTrailSegments(a.trail).map(
-    (segment, index): Feature => ({
+  return buildTrailRuns(a.trail).map(
+    (run, index): Feature => ({
       type: "Feature",
       id: `${a.icao_hex}:${index}`,
-      geometry: { type: "LineString", coordinates: segment.coordinates },
+      geometry: { type: "LineString", coordinates: run.coordinates },
       properties: {
         icao_hex: a.icao_hex,
-        color: segment.color,
+        color: run.color,
         // See MapView.tsx's trail line-opacity paint rule -- dims the
         // Follow-lost/selected-lost aircraft's trail the same way its
         // icon is dimmed above, instead of letting it disappear with the

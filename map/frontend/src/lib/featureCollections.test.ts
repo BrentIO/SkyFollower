@@ -228,16 +228,33 @@ describe("aircraftFeature -- lighter-than-air heading override (#1788)", () => {
   });
 });
 
-describe("trailSegmentFeatures -- per-segment builder with stable ids (#1775)", () => {
-  it("stamps a stable `${icao_hex}:${index}` id on every segment", () => {
+describe("trailSegmentFeatures -- per-run builder with stable ids (#1775, run-grouping per #1820)", () => {
+  it("stamps a stable `${icao_hex}:${index}` id on every run", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
-    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
-    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
-    const segments = trailSegmentFeatures(aircraft.A1B2C3, false);
-    expect(segments.length).toBeGreaterThanOrEqual(2);
-    segments.forEach((segment, index) => {
-      expect(segment.id).toBe(`A1B2C3:${index}`);
+    // Distinct altitudes so each point-to-point step gets its own color and
+    // this genuinely produces multiple runs -- see the dedicated #1820 test
+    // below for the same-altitude (single-run) case.
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1, alt: 5000 });
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2, alt: 35000 });
+    const runs = trailSegmentFeatures(aircraft.A1B2C3, false);
+    expect(runs.length).toBeGreaterThanOrEqual(2);
+    runs.forEach((run, index) => {
+      expect(run.id).toBe(`A1B2C3:${index}`);
     });
+  });
+
+  it("#1820: a steady-altitude trail collapses into a single run, not one feature per point", () => {
+    let aircraft = withOnePositionedAircraft("A1B2C3"); // alt: 1000, at lat 1 / lon 2
+    for (let i = 1; i <= 10; i++) {
+      aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1 + i * 0.01, lon: 2 + i * 0.01 });
+    }
+    // No `alt` on any position event -- merges forward the existing 1000
+    // value every time (aircraftState.ts's field-merge semantics), so
+    // every point shares the same altitudeColor() and this 11-point trail
+    // must produce exactly one run, not 10 individual segment features.
+    const runs = trailSegmentFeatures(aircraft.A1B2C3, false);
+    expect(runs).toHaveLength(1);
+    expect((runs[0].geometry as { coordinates: unknown[] }).coordinates).toHaveLength(11);
   });
 
   it("ids are stable across repeated calls over the same trail (unchanged geometry)", () => {
@@ -251,8 +268,8 @@ describe("trailSegmentFeatures -- per-segment builder with stable ids (#1775)", 
   it("carries the dimmed flag passed in, independent of hidden/follow state", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
-    const segments = trailSegmentFeatures(aircraft.A1B2C3, true);
-    expect(segments.every((f) => f.properties?.dimmed === true)).toBe(true);
+    const runs = trailSegmentFeatures(aircraft.A1B2C3, true);
+    expect(runs.every((f) => f.properties?.dimmed === true)).toBe(true);
   });
 });
 
@@ -362,23 +379,46 @@ describe("buildTrailSourceDiff (#1775)", () => {
     expect(syncedSegmentIds.get("A1B2C3")).toEqual(diff.add?.map((f) => f.id));
   });
 
-  it("a pure append re-upserts every current segment (cheap/harmless) and removes nothing stale", () => {
+  it("a pure same-color append re-upserts the current run in place (#1820: run count does not grow) and removes nothing stale", () => {
     // Deliberately not a suffix-only optimization (see buildTrailSourceDiff's
-    // own doc comment) -- re-adding an unchanged segment is a harmless
-    // upsert, and recomputing fresh every touched-hex tick is what keeps
-    // a reseed (tested separately below) correct without needing extra
-    // state to distinguish "appended" from "replaced".
+    // own doc comment) -- re-adding an unchanged run is a harmless upsert,
+    // and recomputing fresh every touched-hex tick is what keeps a reseed
+    // (tested separately below) correct without needing extra state to
+    // distinguish "appended" from "replaced". No `alt` on either position
+    // event -- both merge forward the same 1000 value, so this stays one
+    // run the whole way through, not two.
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
-    const firstCount = first.syncedSegmentIds.get("A1B2C3")?.length ?? 0;
+    expect(first.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
 
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
     const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
 
     expect(second.diff.remove).toHaveLength(0);
-    expect(second.diff.add).toHaveLength(firstCount + 1);
-    expect(second.syncedSegmentIds.get("A1B2C3")?.length).toBe(firstCount + 1);
+    expect(second.diff.add).toHaveLength(1); // same one run, re-sent with its new (longer) geometry
+    expect(second.diff.add?.[0].id).toBe("A1B2C3:0");
+    expect((second.diff.add?.[0].geometry as { coordinates: unknown[] }).coordinates).toHaveLength(3);
+    expect(second.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
+  });
+
+  it("an append that changes color starts a new run alongside the still-closed prior one", () => {
+    // A segment is colored by its *earlier* point (see trailSegments.ts),
+    // so a color transition only shows up on the segment leading *out of*
+    // the point whose altitude changed -- i.e. one point later than where
+    // the new altitude was received. p0=1000, p1=35000 sets up that
+    // transition (segment0, p0->p1, colored 1000); appending p2 is what
+    // actually materializes segment1 (p1->p2, colored 35000) as a new run.
+    let aircraft = withOnePositionedAircraft("A1B2C3"); // alt: 1000
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1, alt: 35000 });
+    const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+    expect(first.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
+
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+
+    expect(second.diff.remove).toHaveLength(0);
+    expect(second.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0", "A1B2C3:1"]);
   });
 
   it("removes every previously-synced segment id for a hex that's no longer visible", () => {
@@ -403,6 +443,8 @@ describe("buildTrailSourceDiff (#1775)", () => {
     // Reseed with an entirely different (here, longer) server-fetched trail --
     // same mechanism as selecting an aircraft (lib/aircraftState.ts's
     // applyTrailSeed), which replaces trail wholesale rather than appending.
+    // All-null altitude -> every point shares the same (black) color, so
+    // this is one run of 4 coordinates, not one run per point-pair.
     aircraft = applyTrailSeed(aircraft, "A1B2C3", [
       { lat: 9, lon: 9, alt: null },
       { lat: 9.1, lon: 9.1, alt: null },
@@ -411,12 +453,15 @@ describe("buildTrailSourceDiff (#1775)", () => {
     ]);
     const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
 
-    // The reseeded trail's segments must all be (re-)added with their new
-    // geometry -- not silently skipped because the id count happened to
-    // grow, which would leave stale coordinates on screen.
-    expect(second.diff.add?.length).toBe(3);
-    for (const feature of second.diff.add ?? []) {
-      expect((feature.geometry as { coordinates: number[][] }).coordinates[0][0]).toBeGreaterThan(8);
+    // The reseeded trail's run must be (re-)added with its new geometry --
+    // not silently skipped because the id count happened to shrink, which
+    // would leave stale coordinates on screen.
+    expect(second.diff.add?.length).toBe(1);
+    const [feature] = second.diff.add ?? [];
+    const coords = (feature.geometry as { coordinates: number[][] }).coordinates;
+    expect(coords).toHaveLength(4);
+    for (const coord of coords) {
+      expect(coord[0]).toBeGreaterThan(8);
     }
   });
 

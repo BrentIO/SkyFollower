@@ -91,9 +91,11 @@ export interface AircraftRecord extends MapFlight {
 export type AircraftMap = Record<string, AircraftRecord>;
 
 // Caps how many points a client-accumulated trail can hold. The trail is
-// rendered as one two-point LineString feature per consecutive pair of
-// points, so an unbounded trail means unbounded features per aircraft on
-// a long-lived page session. A point-count cap is used rather than a
+// rendered as one multi-point LineString feature per contiguous
+// same-color run (trailSegments.ts's buildTrailRuns, #1820), but even a
+// single steady-altitude run still holds one coordinate per point, so an
+// unbounded trail still means unbounded per-feature geometry size on a
+// long-lived page session. A point-count cap is used rather than a
 // time-window cap because TrailPoint carries no timestamp -- adding one
 // purely to support capping would be a bigger change than the cap itself
 // needs.
@@ -253,20 +255,29 @@ export interface ApplyWsEventsOptions {
   now?: number;
 }
 
-// Applies one WebSocket event on top of existing state. Never mutates
-// its input -- returns a new AircraftMap (or the same reference when the
-// event is a no-op, e.g. `stale`/`remove` for an aircraft not currently
-// tracked). Field-level merge for position/metadata events, mirroring the
-// backend's own merge-never-overwrite semantics (map/state_store.py's
+// One event's effect on a single aircraft's record, independent of how
+// many other hexes/events are in the same batch -- the shared core both
+// applyWsEvent (single-event callers, tests) and applyWsEvents (#1820:
+// one map-wide clone for the whole batch, not one per event -- see that
+// function's own comment) apply against whatever map object they're each
+// working on. "set" upserts `record` at `icaoHex`; "delete" evicts it;
+// "noop" (same reference as `existing`) means this event had nothing new
+// to apply (e.g. `stale` on an already-stale aircraft, or any event for a
+// hex not currently tracked except position/metadata, which always
+// create one). Field-level merge for position/metadata events, mirroring
+// the backend's own merge-never-overwrite semantics (map/state_store.py's
 // apply_update): a field absent from this event leaves the existing
 // value untouched.
-export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: ApplyWsEventsOptions): AircraftMap {
-  const now = options?.now ?? Date.now();
+type EventOutcome =
+  | { kind: "set"; icaoHex: string; record: AircraftRecord }
+  | { kind: "delete"; icaoHex: string }
+  | { kind: "noop" };
+
+function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEvent, now: number, options?: ApplyWsEventsOptions): EventOutcome {
   switch (event.type) {
     case "position":
     case "metadata": {
       const { icao_hex } = event;
-      const existing = state[icao_hex];
       const { type: _type, ...fields } = event;
       const merged: AircraftRecord = {
         ...(existing ?? {
@@ -294,39 +305,88 @@ export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: Ap
         merged.shape = resolveAircraftShape(merged.aircraft);
         merged.iconScale = shapeScale(merged.shape);
       }
-      return { ...state, [icao_hex]: merged };
+      return { kind: "set", icaoHex: icao_hex, record: merged };
     }
     case "stale": {
-      const existing = state[event.icao_hex];
-      if (!existing || existing.stale) return state;
-      return { ...state, [event.icao_hex]: { ...existing, stale: true } };
+      if (!existing || existing.stale) return { kind: "noop" };
+      return { kind: "set", icaoHex: event.icao_hex, record: { ...existing, stale: true } };
     }
     case "hide": {
-      const existing = state[event.icao_hex];
       // Do not delete the record -- its trail must survive so a resumed
       // flight reappears as one continuous track (see AircraftRecord.hidden).
-      if (!existing || existing.hidden) return state;
-      return { ...state, [event.icao_hex]: { ...existing, hidden: true } };
+      if (!existing || existing.hidden) return { kind: "noop" };
+      return { kind: "set", icaoHex: event.icao_hex, record: { ...existing, hidden: true } };
     }
     case "remove": {
-      const existing = state[event.icao_hex];
-      if (!existing) return state;
+      if (!existing) return { kind: "noop" };
       if (options?.protectedIcaoHex === event.icao_hex) {
         // Deferred eviction -- see ApplyWsEventsOptions.protectedIcaoHex.
-        if (existing.pendingRemoval) return state;
-        return { ...state, [event.icao_hex]: { ...existing, pendingRemoval: true } };
+        if (existing.pendingRemoval) return { kind: "noop" };
+        return { kind: "set", icaoHex: event.icao_hex, record: { ...existing, pendingRemoval: true } };
       }
-      const next = { ...state };
-      delete next[event.icao_hex];
-      return next;
+      return { kind: "delete", icaoHex: event.icao_hex };
     }
     default:
-      return state;
+      return { kind: "noop" };
   }
 }
 
+// Applies one WebSocket event on top of existing state. Never mutates
+// its input -- returns a new AircraftMap (or the same reference when the
+// event is a no-op, e.g. `stale`/`remove` for an aircraft not currently
+// tracked). See applyEventToRecord for the actual merge rules; kept as a
+// single-clone-per-call convenience for single-event callers (tests,
+// mainly) -- applyWsEvents below is what a real WS batch goes through.
+export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: ApplyWsEventsOptions): AircraftMap {
+  const outcome = applyEventToRecord(state[eventIcaoHex(event)], event, options?.now ?? Date.now(), options);
+  switch (outcome.kind) {
+    case "noop":
+      return state;
+    case "set":
+      return { ...state, [outcome.icaoHex]: outcome.record };
+    case "delete": {
+      const next = { ...state };
+      delete next[outcome.icaoHex];
+      return next;
+    }
+  }
+}
+
+function eventIcaoHex(event: MapWsEvent): string {
+  return event.icao_hex;
+}
+
+// #1820: applies a whole WebSocket batch against at most *one* working
+// copy of `state`, rather than aircraftState's previous reduce-over-
+// applyWsEvent, which spread the entire map fresh on every individual
+// event -- O(batch size x tracked-fleet size) object-copy work per batch,
+// confirmed via a live DevTools trace as a real contributor to sustained
+// high CPU with the full fleet. The clone is lazy (copy-on-write): a
+// batch whose every event turns out to be a no-op (e.g. a redundant
+// `stale` for an already-stale aircraft) returns the exact same `state`
+// reference untouched, same as a single no-op applyWsEvent call always
+// has -- avoiding a wasted top-level AircraftMap identity change (and the
+// React re-render that would trigger) even though nothing changed.
+// Every untouched aircraft's record reference is still preserved exactly
+// once the draft *does* get created (aircraftMapDiff.ts's diffing
+// depends on this -- see that file's own comment): the clone copies
+// every key by reference, and only hexes an event in this batch actually
+// names are ever reassigned/deleted on it afterward. A hex touched by
+// more than one event in the same batch sees each event applied against
+// the *result* of the previous one, same ordering guarantee the old
+// reduce-based version had.
 export function applyWsEvents(state: AircraftMap, events: MapWsEvent[], options?: ApplyWsEventsOptions): AircraftMap {
-  return events.reduce((acc, event) => applyWsEvent(acc, event, options), state);
+  const now = options?.now ?? Date.now();
+  let draft: AircraftMap | null = null;
+  for (const event of events) {
+    const current = draft ?? state;
+    const outcome = applyEventToRecord(current[eventIcaoHex(event)], event, now, options);
+    if (outcome.kind === "noop") continue;
+    if (!draft) draft = { ...state };
+    if (outcome.kind === "set") draft[outcome.icaoHex] = outcome.record;
+    else delete draft[outcome.icaoHex];
+  }
+  return draft ?? state;
 }
 
 // Applies a `remove` that was previously deferred by protectedIcaoHex (see
