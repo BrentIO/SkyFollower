@@ -92,7 +92,11 @@ export function ControlsPanel({
           visually small 2.5x2.5 dot. */}
       <span
         title={connectionTooltip(wsConnected, roster)}
-        className="pointer-events-auto absolute top-2 right-2 flex h-8 w-8 items-center justify-center"
+        // z-10: without this, the icon column below (a later DOM sibling,
+        // also absolutely positioned) paints over this dot wherever their
+        // corner insets overlap (#1789) -- e.g. the Fullscreen button's
+        // semi-opaque background hid it entirely.
+        className="pointer-events-auto absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center"
       >
         <span className={`h-2.5 w-2.5 rounded-full ${PROCESSOR_STATUS_DOT_COLOR[overallStatus]}`} />
       </span>

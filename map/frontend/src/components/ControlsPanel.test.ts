@@ -30,13 +30,16 @@ describe("status box -- bare connection dot only (aircraft count moved to Aircra
     expect(controlsPanelSource).toContain("title={connectionTooltip(wsConnected, roster)}");
   });
 
-  it("positions the dot in its own top-2/right-2 wrapper, independent of the icon column's top-4/right-4", () => {
+  it("positions the dot in its own top-2/right-2 wrapper, independent of the icon column's top-4/right-4, and above it (#1789)", () => {
     // #1768: the dot used to share the icon column's container (top-4
     // right-4, items-end), which visually offset it from the true corner.
     // It now gets its own absolutely-positioned wrapper at half the
-    // column's inset.
+    // column's inset. #1789: that wrapper and the icon column are both
+    // absolutely positioned, overlapping siblings with no shared stacking
+    // context, so without z-10 the later DOM sibling (the icon column)
+    // painted over the dot.
     expect(controlsPanelSource).toContain(
-      'className="pointer-events-auto absolute top-2 right-2 flex h-8 w-8 items-center justify-center"',
+      'className="pointer-events-auto absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center"',
     );
   });
 
