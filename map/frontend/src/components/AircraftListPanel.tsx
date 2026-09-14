@@ -17,7 +17,7 @@ import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 // implements) is additive later instead of a restructure. `sortKey` reads
 // only the plain, comparable value a column sorts by -- for Ident, that is
 // deliberately just the ident string, never the Military/Special-livery
-// pills `render` prepends, per the issue's "pill is decoration only,
+// pills `render` appends, per the issue's "pill is decoration only,
 // excluded from the sort key" rule.
 interface AircraftListColumn {
   key: string;
@@ -28,7 +28,7 @@ interface AircraftListColumn {
 
 // Reuses AircraftDetailPanel's own BADGE_BASE/BADGE_CLASSES convention
 // exactly (green "M" for military, yellow "S" for special livery), in that
-// order, immediately before the ident text -- see the issue's "Military /
+// order, immediately after the ident text -- see the issue's "Military /
 // Special Livery pill" section.
 const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
   {
@@ -37,9 +37,9 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
     sortKey: (row) => row.ident,
     render: (row) => (
       <span className="flex items-center gap-1">
+        <span>{row.ident ?? ""}</span>
         {row.military && <span className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
         {row.specialLivery != null && <span className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>S</span>}
-        <span>{row.ident ?? ""}</span>
       </span>
     ),
   },

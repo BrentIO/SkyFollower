@@ -40,16 +40,16 @@ describe("Ident column -- Military/Special Livery pills", () => {
     expect(panelSource).toContain("${BADGE_BASE} ${BADGE_CLASSES.yellow}");
   });
 
-  it("renders military (green M) before specialLivery (yellow S) before the ident text", () => {
+  it("renders the ident text before military (green M) before specialLivery (yellow S)", () => {
     const identColumnStart = panelSource.indexOf('key: "ident"');
     const identColumnEnd = panelSource.indexOf('key: "registration"');
     const callSite = panelSource.slice(identColumnStart, identColumnEnd);
+    const identTextIndex = callSite.indexOf("row.ident ?? ");
     const militaryIndex = callSite.indexOf("row.military");
     const liveryIndex = callSite.indexOf("row.specialLivery");
-    const identTextIndex = callSite.indexOf("row.ident ?? ");
-    expect(militaryIndex).toBeGreaterThan(-1);
+    expect(identTextIndex).toBeGreaterThan(-1);
+    expect(militaryIndex).toBeGreaterThan(identTextIndex);
     expect(liveryIndex).toBeGreaterThan(militaryIndex);
-    expect(identTextIndex).toBeGreaterThan(liveryIndex);
   });
 
   it("sorts Ident on the plain ident string only -- the pills never participate", () => {
