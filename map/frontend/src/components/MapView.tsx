@@ -573,11 +573,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
           // icon_scale factor cancels against icon-size's own icon_scale
           // factor above). For icon_scale >= 1 the multiplier is exactly 1,
           // so larger aircraft's halo is untouched.
+          // Unselected aircraft carry no halo at all (issue #1787) -- the
+          // flat 1px halo every icon paid for regardless of selection was a
+          // real per-frame GPU cost across the whole rendered fleet, unlike
+          // the selected-only halo above which only ever costs one icon.
           "icon-halo-width": [
             "case",
             ["boolean", ["get", "selected"], false],
             ["*", 3, ["min", 1, ["coalesce", ["get", "icon_scale"], 1]]],
-            1,
+            0,
           ],
           // A second, independent overflow risk from icon-halo-width's above:
           // symbol_sdf.fragment.glsl's `gamma_halo = (halo_blur * 1.19 /
