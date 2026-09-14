@@ -662,16 +662,36 @@ function extractLayerFilter(layerIdConstant: string): unknown {
   return new Function(`return (${filterLiteral});`)();
 }
 
-describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- fixed-size selection ring for icon_scale < 1 (#1806)", () => {
+// Extracts the `layout: { ... }` object literal belonging to the layer whose
+// definition contains `id: <layerIdConstant>`, evaluated into a real object
+// -- same extraction convention as extractLayerPaint/extractLayerFilter above.
+function extractLayerLayout(layerIdConstant: string): Record<string, unknown> {
+  const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
+  if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
+
+  const layoutKeyIndex = mapViewSource.indexOf("layout: {", idIndex);
+  if (layoutKeyIndex === -1) throw new Error(`Could not find layout block after ${layerIdConstant}`);
+
+  const objectOpenIndex = layoutKeyIndex + "layout: ".length;
+  const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
+  const layoutLiteral = mapViewSource.slice(objectOpenIndex, objectCloseIndex + 1);
+
+  // eslint-disable-next-line no-new-func -- evaluating a plain object literal
+  // extracted from our own source, not user input.
+  return new Function(`return (${layoutLiteral});`)();
+}
+
+describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- dilated-silhouette selection outline for icon_scale < 1 (#1806/#1816)", () => {
   // #1806: the icon's own icon-halo-width/-blur cannot render a clean
   // fitted ring below icon_scale = 1 at any value (see the "documents why
-  // #1806 stops scaling..." test above) -- this separate, non-SDF circle
-  // layer is the replacement selection indicator for that range. It has no
-  // texture-space math to overflow: circle-radius/circle-stroke-width are
-  // screen pixels throughout, so it renders identically regardless of
-  // icon_scale.
+  // #1806 stops scaling..." test above). #1813's first replacement -- a
+  // fixed circle-radius ring -- fixed the box/wash bug but didn't fit a
+  // non-circular airframe (#1816). This layer is a second, enlarged copy
+  // of the same per-shape SDF icon (AIRCRAFT_LAYER_ID's own icon-image
+  // expression), painted white and underneath the real icon, so the
+  // enlarged silhouette's edge reads as a fitted outline.
 
-  it("filters to selected AND icon_scale < 1 -- exactly the range the icon's own halo now skips", () => {
+  it("filters to selected AND icon_scale < 1 -- exactly the range the icon's own halo skips", () => {
     const filter = extractLayerFilter("AIRCRAFT_SELECTION_RING_LAYER_ID");
     expect(filter).toEqual([
       "all",
@@ -688,14 +708,38 @@ describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- fixed-size selection ring for icon
     expect(sourceIndex - idIndex).toBeLessThan(200);
   });
 
-  it("draws a transparent-fill, white-stroke ring, dimmed the same way a stale icon is (matching icon-opacity's convention)", () => {
+  it("is added before AIRCRAFT_LAYER_ID, not merely appended on top -- otherwise the enlarged white copy would paint over the real icon instead of peeking out from underneath it", () => {
+    const ringIdIndex = mapViewSource.indexOf("id: AIRCRAFT_SELECTION_RING_LAYER_ID");
+    const iconIdIndex = mapViewSource.indexOf("id: AIRCRAFT_LAYER_ID");
+    expect(ringIdIndex).toBeGreaterThan(-1);
+    expect(iconIdIndex).toBeGreaterThan(-1);
+    expect(ringIdIndex).toBeLessThan(iconIdIndex);
+  });
+
+  it("uses the same per-shape icon-image and rotation as AIRCRAFT_LAYER_ID -- the outline must be the same silhouette, at the same heading, or it won't line up with the real icon", () => {
+    const layout = extractLayerLayout("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    expect(layout["icon-image"]).toEqual(["concat", "sf-ac-", ["get", "shape"]]);
+    expect(layout["icon-rotate"]).toEqual(["get", "heading"]);
+    expect(layout["icon-rotation-alignment"]).toBe("map");
+  });
+
+  it("icon-size is enlarged relative to AIRCRAFT_LAYER_ID's own icon-size, by the same icon_scale factor, at every real icon_scale in this range", () => {
+    const layout = extractLayerLayout("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
+      const ringSize = evaluateExpr(layout["icon-size"], { icon_scale }) as number;
+      const realSize = 0.55 * icon_scale;
+      expect(ringSize).toBeGreaterThan(realSize);
+      // Same relative enlargement (a fixed multiplier on the real layer's
+      // own icon-size formula) at every icon_scale -- not a fixed pixel
+      // add-on, so it never disappears at the 0.6 floor.
+      expect(ringSize / realSize).toBeCloseTo(1.15, 5);
+    }
+  });
+
+  it("paints white, dimmed the same way a stale icon is (matching AIRCRAFT_LAYER_ID's icon-opacity convention)", () => {
     const paint = extractLayerPaint("AIRCRAFT_SELECTION_RING_LAYER_ID");
-    expect(paint["circle-color"]).toBe("rgba(0, 0, 0, 0)");
-    expect(paint["circle-stroke-color"]).toBe("#ffffff");
-    expect(paint["circle-stroke-width"]).toBeGreaterThan(0);
-    const staleDimming = ["case", ["boolean", ["get", "stale"], false], 0.4, 1];
-    expect(paint["circle-opacity"]).toEqual(staleDimming);
-    expect(paint["circle-stroke-opacity"]).toEqual(staleDimming);
+    expect(paint["icon-color"]).toBe("#ffffff");
+    expect(paint["icon-opacity"]).toEqual(["case", ["boolean", ["get", "stale"], false], 0.4, 1]);
   });
 
   it("worked examples from the issue: E55P/C25B (icon_scale 0.722) and GALX/GLF6 (icon_scale 0.989) both match this layer's filter when selected, while B77L (1.435) and the icon_scale = 1 reference case do not (they stay on the icon's own halo instead)", () => {
