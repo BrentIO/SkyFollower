@@ -15,10 +15,11 @@ import {
   buildAircraftSourceDiff,
   buildTrailSourceDiff,
   EMPTY_FEATURE_COLLECTION,
+  isEmptySourceDiff,
   trailFeatureCollection,
 } from "../lib/featureCollections";
 import { diffAircraftMaps } from "../lib/aircraftMapDiff";
-import type { AircraftMap } from "../lib/aircraftState";
+import type { AircraftMap, TracePoint } from "../lib/aircraftState";
 import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SELECTION_RING_LAYER_ID,
@@ -72,6 +73,10 @@ import type { AddLayerObject } from "maplibre-gl";
 // `["get", "heading"]`) can be cast against the real expected type instead
 // of `any`.
 type SymbolLayout = NonNullable<Extract<AddLayerObject, { type: "symbol" }>["layout"]>;
+
+// Shared "nothing to draw" Trace Points buffer, so an unchanged-while-off
+// state compares equal by reference tick to tick (see the sync effect).
+const NO_TRACE_POINTS: readonly TracePoint[] = [];
 
 // #1815: every text symbol layer below (RANGE_RING_LABEL_LAYER_ID,
 // TRACE_POINTS_LABEL_LAYER_ID, INFO_BOX_LAYER_ID) omitted `text-font`,
@@ -425,6 +430,17 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // MapLibre view in management-ui/frontend.
       pitchWithRotate: false,
       dragRotate: false,
+      // No symbol fade-in/out. With the default 300ms fade, every live
+      // data update (every MAP_SYNC_THROTTLE_MS) starts a new symbol
+      // placement whose fade is still running when the next update
+      // lands, so MapLibre's render loop never goes idle: an instrumented
+      // repro (135 aircraft, trails/labels off, camera still) measured
+      // ~57 full-map redraws/sec with `_placementDirty` re-arming the
+      // loop after nearly every frame, matching a production DevTools
+      // trace (~51 frames/sec, GPU process ~83% busy). With fade off:
+      // ~9 redraws/sec and roughly a third of the Chrome process-tree CPU.
+      // Symbols simply appear/disappear instead of fading.
+      fadeDuration: 0,
       // The basemap style carries its own OSM/CARTO/OpenFreeMap attribution;
       // this adds the aircraft-silhouette credit (GPL-3.0 -- see the repo's
       // THIRD-PARTY-NOTICES.md).
@@ -995,6 +1011,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // buildTrailSourceDiff.
   const prevAircraftRef = useRef<AircraftMap>({});
   const syncedTrailSegmentIdsRef = useRef<Map<string, string[]>>(new Map());
+  // null until the first sync, so that first run always writes the source.
+  const syncedTracePointsRef = useRef<readonly TracePoint[] | null>(null);
 
   // The sync effect's own record of the *visibility-affecting* inputs
   // (everything the full feature-collection builders take besides
@@ -1145,7 +1163,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           const shape = f.properties?.shape;
           if (typeof shape === "string") registerShapeImage(map, shape);
         }
-        aircraftSource?.updateData(aircraftDiff);
+        if (!isEmptySourceDiff(aircraftDiff)) aircraftSource?.updateData(aircraftDiff);
 
         const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
         const trailResult = buildTrailSourceDiff(
@@ -1155,7 +1173,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           syncedTrailSegmentIdsRef.current,
           visibility,
         );
-        trailSource?.updateData(trailResult.diff);
+        if (!isEmptySourceDiff(trailResult.diff)) trailSource?.updateData(trailResult.diff);
         syncedTrailSegmentIdsRef.current = trailResult.syncedSegmentIds;
       }
 
@@ -1177,11 +1195,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // always-present-source convention as the layers above. Small (one
       // aircraft's own sample buffer, capped at MAX_TRACE_POINTS) and only
       // relevant while a detail panel is open, so this stays a plain
-      // setData() on every run rather than joining the diff paths above.
-      const tracePoints = tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? []) : [];
-      (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
-        tracePointsFeatureCollection(tracePoints),
-      );
+      // setData() rather than joining the diff paths above -- but only when
+      // the buffer actually changed (by reference, same contract as
+      // aircraftMapDiff.ts): re-sending an identical/empty collection on
+      // every tick still costs MapLibre a worker round-trip and tile reload.
+      const tracePoints =
+        tracePointsEnabled && selectedIcaoHex ? (aircraft[selectedIcaoHex]?.tracePoints ?? NO_TRACE_POINTS) : NO_TRACE_POINTS;
+      if (tracePoints !== syncedTracePointsRef.current) {
+        (map.getSource(TRACE_POINTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+          tracePointsFeatureCollection(tracePoints),
+        );
+        syncedTracePointsRef.current = tracePoints;
+      }
     });
   }, [
     aircraft,

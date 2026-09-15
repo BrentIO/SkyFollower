@@ -182,6 +182,13 @@ export function trailFeatureCollection(
   return { type: "FeatureCollection", features };
 }
 
+// A diff with nothing in it. MapLibre still does a full worker round-trip
+// and tile reload for an empty updateData() call, so callers skip sending
+// these (e.g. every trail diff while no trails are visible).
+export function isEmptySourceDiff(diff: GeoJSONSourceDiff): boolean {
+  return !diff.removeAll && !diff.add?.length && !diff.remove?.length && !diff.update?.length;
+}
+
 // --- Incremental (GeoJSONSource.updateData()) diff builders -- #1775 ---
 //
 // Used only on a data-only sync tick (no visibility-affecting toggle
