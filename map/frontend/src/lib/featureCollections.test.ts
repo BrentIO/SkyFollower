@@ -6,6 +6,7 @@ import {
   buildAircraftSourceDiff,
   buildTrailSourceDiff,
   isAircraftVisible,
+  isEmptySourceDiff,
   trailFeatureCollection,
   trailSegmentFeatures,
 } from "./featureCollections";
@@ -473,5 +474,22 @@ describe("buildTrailSourceDiff (#1775)", () => {
 
     const { diff } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3", "D4E5F6"]), new Map());
     expect(diff.add?.every((f) => f.properties?.icao_hex === "A1B2C3")).toBe(true);
+  });
+});
+
+describe("isEmptySourceDiff", () => {
+  it("is true only when there is nothing to add, remove, update, or clear", () => {
+    expect(isEmptySourceDiff({})).toBe(true);
+    expect(isEmptySourceDiff({ add: [], remove: [] })).toBe(true);
+    expect(isEmptySourceDiff({ remove: ["A1B2C3"] })).toBe(false);
+    expect(isEmptySourceDiff({ removeAll: true })).toBe(false);
+    expect(isEmptySourceDiff({ add: [{ type: "Feature", id: "x", geometry: { type: "Point", coordinates: [0, 0] }, properties: {} }] })).toBe(false);
+  });
+
+  it("is what an untouched-trail tick produces with no trails visible", () => {
+    let aircraft = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2, alt: 1000 }]);
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const { diff } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(), new Map());
+    expect(isEmptySourceDiff(diff)).toBe(true);
   });
 });

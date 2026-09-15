@@ -76,7 +76,7 @@ export interface TracePointProperties {
 // paint/layout property is cheaper than re-deriving either in an
 // expression.
 export function tracePointsFeatureCollection(
-  points: TracePoint[],
+  points: readonly TracePoint[],
 ): FeatureCollection<Point, TracePointProperties> {
   const features: Feature<Point, TracePointProperties>[] = points.map((point, i) => {
     const color = altitudeColor(point.altitude);

@@ -827,3 +827,21 @@ describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- dilated-silhouette selection outli
     expect(evaluateExpr(filter, { selected: false, icon_scale: 0.722 })).toBe(false);
   });
 });
+
+describe("map render loop (idle redraws)", () => {
+  // Default 300ms symbol fade kept MapLibre's render loop permanently
+  // re-armed under live traffic (~57 redraws/sec with the camera still) --
+  // see the Map constructor's own comment.
+  it("constructs the map with symbol fading disabled", () => {
+    expect(mapViewSource).toContain("fadeDuration: 0,");
+  });
+
+  it("never sends an empty diff to the aircraft or trail source", () => {
+    expect(mapViewSource).toContain("if (!isEmptySourceDiff(aircraftDiff)) aircraftSource?.updateData(aircraftDiff);");
+    expect(mapViewSource).toContain("if (!isEmptySourceDiff(trailResult.diff)) trailSource?.updateData(trailResult.diff);");
+  });
+
+  it("only re-sends Trace Points when the buffer reference changed", () => {
+    expect(mapViewSource).toContain("if (tracePoints !== syncedTracePointsRef.current) {");
+  });
+});
