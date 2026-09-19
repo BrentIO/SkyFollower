@@ -320,7 +320,7 @@ describe("drag-to-resize (#1784)", () => {
   });
 
   it("scrolls horizontally rather than overflowing when dragged narrower than the table's content", () => {
-    expect(panelSource).toContain('className="overflow-auto"');
+    expect(panelSource).toContain('className="flex-1 overflow-auto"');
     expect(panelSource).not.toContain('className="overflow-y-auto"');
   });
 });

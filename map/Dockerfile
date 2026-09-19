@@ -14,6 +14,16 @@ COPY map/frontend/package*.json ./
 RUN npm ci
 
 COPY map/frontend/ ./
+
+# VITE_VERSION must be a real env var before the build runs -- Vite bakes
+# import.meta.env.VITE_* values into the bundle at build time, not runtime.
+ARG VERSION=dev
+ENV VITE_VERSION=$VERSION
+
+# Short commit hash the image was built from; combined with VITE_VERSION for
+# display in the aircraft list footer but never part of the image tag.
+ARG COMMIT=unknown
+ENV VITE_COMMIT=$COMMIT
 RUN npm run build
 
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS base

@@ -10,6 +10,11 @@ interface ImportMetaEnv {
   // GET /api/config instead -- see src/lib/config.ts.
   readonly VITE_CENTER_LATITUDE?: string;
   readonly VITE_CENTER_LONGITUDE?: string;
+  // Build-time version/commit, baked in by map/Dockerfile's frontend-build
+  // stage (same VITE_VERSION/VITE_COMMIT convention as management-ui) --
+  // displayed in AircraftListPanel's footer.
+  readonly VITE_VERSION?: string;
+  readonly VITE_COMMIT?: string;
 }
 
 interface ImportMeta {

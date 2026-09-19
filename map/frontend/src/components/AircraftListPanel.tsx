@@ -358,8 +358,13 @@ export function AircraftListPanel({
 
         {/* overflow-auto (not just -y): a user-dragged width narrower than
             the table's natural content width (#1784) scrolls horizontally
-            instead of visually overflowing the rounded panel card. */}
-        <div className="overflow-auto">
+            instead of visually overflowing the rounded panel card.
+            flex-1 (not just overflow-auto) so this wrapper -- not the
+            version footer below it -- absorbs the panel's remaining
+            height; without it, an unconstrained-height flex child and
+            `mt-auto` on the footer wouldn't produce a sticky footer at
+            all, just two children sized to their content. */}
+        <div className="flex-1 overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
@@ -403,6 +408,19 @@ export function AircraftListPanel({
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* Sticky version/commit footer -- mt-auto pins it to the bottom of
+            this flex column regardless of table content length (see the
+            table wrapper's flex-1 above). Right-aligned since this panel
+            docks at the map's right edge (management-ui's SideNav is the
+            same build-time-injected VITE_VERSION/VITE_COMMIT pattern, but
+            left-aligned there since that's a left-docked nav). */}
+        <div className="mt-auto shrink-0 border-t border-slate-200 px-4 py-1.5 text-right text-[10px] text-slate-400 dark:border-slate-700 dark:text-slate-600">
+          {import.meta.env.VITE_VERSION || "dev"}
+          {import.meta.env.VITE_COMMIT && import.meta.env.VITE_COMMIT !== "unknown"
+            ? ` (${import.meta.env.VITE_COMMIT})`
+            : ""}
         </div>
       </div>
     </div>
