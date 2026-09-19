@@ -17,6 +17,7 @@ import {
   EMPTY_FEATURE_COLLECTION,
   isEmptySourceDiff,
   trailFeatureCollection,
+  type TrailSyncState,
 } from "../lib/featureCollections";
 import { diffAircraftMaps } from "../lib/aircraftMapDiff";
 import type { AircraftMap, TracePoint } from "../lib/aircraftState";
@@ -1003,14 +1004,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // read/written only inside that effect's throttled callback, never
   // rendered from, so plain refs rather than state. `prevAircraftRef`
   // is what diffAircraftMaps() compares each tick's `aircraft` against;
-  // `syncedTrailSegmentIdsRef` is this MapView instance's own record of
-  // which trail-segment feature ids it last pushed per icao_hex, needed
-  // because TRAIL_SOURCE_ID holds a variable number of features per
-  // aircraft (one per trail segment) rather than the aircraft source's
-  // clean one-feature-per-hex mapping -- see featureCollections.ts's
-  // buildTrailSourceDiff.
+  // `trailSyncRef` is this MapView instance's own record (TrailSyncState,
+  // #1838) of which trail-block feature ids it last pushed per icao_hex,
+  // needed because TRAIL_SOURCE_ID holds a variable number of features per
+  // aircraft (one per trail-block color run) rather than the aircraft
+  // source's clean one-feature-per-hex mapping -- see featureCollections.ts's
+  // buildTrailSourceDiff. `labelIdsRef` is the same idea for
+  // INFO_BOX_SOURCE_ID: the set of icao_hexes actually present in that
+  // source right now, so a tick with labels off never sends a remove for
+  // an id that was never added (#1838).
   const prevAircraftRef = useRef<AircraftMap>({});
-  const syncedTrailSegmentIdsRef = useRef<Map<string, string[]>>(new Map());
+  const trailSyncRef = useRef<Map<string, TrailSyncState>>(new Map());
+  const labelIdsRef = useRef<Set<string>>(new Set());
   // null until the first sync, so that first run always writes the source.
   const syncedTracePointsRef = useRef<readonly TracePoint[] | null>(null);
 
@@ -1147,16 +1152,25 @@ function MapViewInner({ config }: { config: AppConfig }) {
         trailSource?.setData(trailFc);
         // Re-sync this MapView instance's own bookkeeping of what's
         // actually in the source now, so the next data-only tick's
-        // incremental diff starts from the right baseline.
-        const bySegmentHex = new Map<string, string[]>();
+        // incremental diff starts from the right baseline. Every block
+        // feature just built for a hex shares that hex's `dimmed` value
+        // (trailFeatureCollection computes it once per aircraft), so it's
+        // read off the first feature seen rather than recomputed here.
+        const nextTrailSync = new Map<string, TrailSyncState>();
+        const byHex = new Map<string, { ids: string[]; dimmed: boolean }>();
         for (const f of trailFc.features) {
           const hex = f.properties?.icao_hex;
           if (typeof hex !== "string" || f.id == null) continue;
-          const ids = bySegmentHex.get(hex) ?? [];
-          ids.push(String(f.id));
-          bySegmentHex.set(hex, ids);
+          const entry = byHex.get(hex) ?? { ids: [], dimmed: Boolean(f.properties?.dimmed) };
+          entry.ids.push(String(f.id));
+          byHex.set(hex, entry);
         }
-        syncedTrailSegmentIdsRef.current = bySegmentHex;
+        for (const [hex, entry] of byHex) {
+          const record = aircraft[hex];
+          if (!record) continue;
+          nextTrailSync.set(hex, { trailRef: record.trail, base: 0, dimmed: entry.dimmed, ids: entry.ids });
+        }
+        trailSyncRef.current = nextTrailSync;
       } else if (changed.size > 0) {
         const aircraftDiff = buildAircraftSourceDiff(changed, aircraft, selected, visibility);
         for (const f of aircraftDiff.add ?? []) {
@@ -1166,15 +1180,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
         if (!isEmptySourceDiff(aircraftDiff)) aircraftSource?.updateData(aircraftDiff);
 
         const visibleTrailIds = historyAll ? new Set(Object.keys(aircraft)) : selected;
-        const trailResult = buildTrailSourceDiff(
-          changed,
-          aircraft,
-          visibleTrailIds,
-          syncedTrailSegmentIdsRef.current,
-          visibility,
-        );
+        const trailResult = buildTrailSourceDiff(changed, aircraft, visibleTrailIds, trailSyncRef.current, visibility);
         if (!isEmptySourceDiff(trailResult.diff)) trailSource?.updateData(trailResult.diff);
-        syncedTrailSegmentIdsRef.current = trailResult.syncedSegmentIds;
+        trailSyncRef.current = trailResult.syncState;
       }
 
       // INFO_BOX_SOURCE_ID: same full-rebuild-vs-diff split as the
@@ -1182,11 +1190,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // instead -- see prevLabelInputsRef's own comment for why this is a
       // separate flag. No per-feature shape image registration needed
       // (unlike the aircraft source): every label feature shares the one
-      // fixed INFO_BOX_ICON_ID, registered once at map load.
+      // fixed INFO_BOX_ICON_ID, registered once at map load. labelIdsRef
+      // tracks which icao_hexes are actually in the source right now, so
+      // the diff path below never sends a no-op remove/updateData call for
+      // a hex that was never labeled in the first place (#1838).
       if (labelVisibilityChanged) {
-        labelSource?.setData(infoBoxLabelFeatureCollection(aircraft, labelFilter, visibility));
+        const labelFc = infoBoxLabelFeatureCollection(aircraft, labelFilter, visibility);
+        labelSource?.setData(labelFc);
+        labelIdsRef.current = new Set(labelFc.features.map((f) => String(f.id)));
       } else if (changed.size > 0) {
-        labelSource?.updateData(buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, visibility));
+        const labelDiff = buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, labelIdsRef.current, visibility);
+        if (!isEmptySourceDiff(labelDiff)) labelSource?.updateData(labelDiff);
+        for (const f of labelDiff.add ?? []) labelIdsRef.current.add(String(f.id));
+        for (const id of labelDiff.remove ?? []) labelIdsRef.current.delete(String(id));
       }
 
       prevAircraftRef.current = aircraft;

@@ -18,7 +18,7 @@
 
 import type { Feature, FeatureCollection } from "geojson";
 import type { GeoJSONSourceDiff } from "maplibre-gl";
-import type { AircraftRecord } from "./aircraftState";
+import type { AircraftRecord, TrailPoint } from "./aircraftState";
 import { altitudeColor } from "./altitudeColor";
 import { isFollowLost } from "./followTarget";
 import { buildTrailRuns } from "./trailSegments";
@@ -136,26 +136,95 @@ function trailIncluded(a: AircraftRecord, visibleIds: Set<string>, options: Visi
   return !a.hidden || followLost;
 }
 
-// Builds one aircraft's trail-run features (one multi-point LineString per
-// contiguous same-color run -- see buildTrailRuns, #1820), each with a
-// stable `${icao_hex}:${index}` id. A *closed* run's content never changes
-// once drawn (its coordinates/color are fixed once a later point starts a
-// new run), so a data-only diff tick only ever needs to add the current
-// (possibly just-extended) run plus any newly-started run, and remove
-// stale ones (a trail reseed replacing history wholesale, or the aircraft
-// losing trail visibility) -- see MapView.tsx's sync effect, and
-// buildTrailSourceDiff below for why run indices stay stable across a
-// plain append (recomputing from the full trail always reproduces the
-// same index for every run that hasn't actually changed).
-// Does not itself check trailIncluded -- callers decide inclusion.
-export function trailSegmentFeatures(a: AircraftRecord, dimmed: boolean): Feature[] {
-  return buildTrailRuns(a.trail).map(
+// --- Trail blocks (#1838) ---------------------------------------------
+//
+// A trail is drawn as fixed-size blocks of TRAIL_BLOCK_SIZE points each,
+// split by *absolute* point index (not array index) -- block `k` covers
+// absolute indices [64k, 64k+64] inclusive, so consecutive blocks share
+// their boundary point and the line stays connected. "Absolute index" is
+// the point's position since the trail was first seeded/reset, which
+// keeps every block's identity (and its feature ids) stable across the
+// cap-triggered front-truncation in aircraftState.ts's pushTrailPoint
+// (MAX_TRAIL_POINTS) -- otherwise every block would be renumbered (and
+// re-sent) on every single trim.
+//
+// This replaced sending the whole trail as one run-per-color-change
+// feature set on every changed tick (buildTrailSourceDiff's previous
+// design): MapLibre's GeoJSONSource.updateData() reloads every tile that
+// intersects an upserted feature's bounding box, old or new geometry, so
+// re-upserting a cruising aircraft's single, ever-growing run reloaded
+// nearly every tile its whole trail crossed, every tick (confirmed via a
+// live DevTools trace -- see the issue this implements). Blocking the
+// trail means a steady-state append tick only ever touches the block(s)
+// actually still growing, at most low tens of nm of tile coverage instead
+// of the trail's entire extent.
+//
+// Within a block, color runs still come from buildTrailRuns (#1820) on
+// that block's point slice -- grouping into blocks is layered on top of,
+// not instead of, that per-color-run grouping. Feature id:
+// `${icao_hex}:${k}:${runInBlock}`.
+export const TRAIL_BLOCK_SIZE = 64;
+
+// Per-aircraft bookkeeping buildTrailSourceDiff needs to diff the next
+// tick's trail against this tick's, and to know exactly which feature ids
+// are currently in TRAIL_SOURCE_ID for that hex (so it can remove exactly
+// the ones that no longer apply). `trailRef` is kept only for its
+// identity (===), not read for content, across ticks -- see
+// buildTrailSourceDiff's append/front-truncation detection.
+export interface TrailSyncState {
+  trailRef: TrailPoint[];
+  /** Absolute index of trailRef[0] (points dropped off the front since seed/reset). */
+  base: number;
+  dimmed: boolean;
+  /** Every feature id currently pushed to the source for this hex, across every block. */
+  ids: string[];
+}
+
+// The half-open-by-inclusive-endpoint array-index range (into `trail`,
+// [start, end] both inclusive) that block `k` covers, given `base`, or
+// null if that range holds fewer than 2 points (nothing to draw -- a run
+// needs at least a from/to pair).
+function trailBlockIndexRange(trailLength: number, base: number, k: number): [number, number] | null {
+  if (trailLength < 1) return null;
+  const absStart = k * TRAIL_BLOCK_SIZE;
+  const absEnd = absStart + TRAIL_BLOCK_SIZE;
+  const trailAbsEnd = base + trailLength - 1;
+  const start = Math.max(absStart, base);
+  const end = Math.min(absEnd, trailAbsEnd);
+  if (end - start < 1) return null;
+  return [start - base, end - base];
+}
+
+function trailFirstBlockIndex(base: number): number {
+  return Math.floor(base / TRAIL_BLOCK_SIZE);
+}
+
+function trailLastBlockIndex(trailLength: number, base: number): number {
+  return Math.floor((base + trailLength - 1) / TRAIL_BLOCK_SIZE);
+}
+
+// Parses the block index `k` back out of a `${icao_hex}:${k}:${run}` id --
+// used by buildTrailSourceDiff to tell which of a hex's *previously*
+// synced ids belong to a block being rebuilt or dropped this tick, without
+// needing a second, redundant per-block index alongside the flat `ids`
+// list TrailSyncState keeps.
+function trailBlockIndexFromId(id: string): number {
+  return Number(id.slice(id.indexOf(":") + 1, id.lastIndexOf(":")));
+}
+
+// Builds one block's run features for one aircraft. Does not itself check
+// trailIncluded -- callers decide inclusion.
+function trailBlockFeatures(icaoHex: string, trail: TrailPoint[], base: number, k: number, dimmed: boolean): Feature[] {
+  const range = trailBlockIndexRange(trail.length, base, k);
+  if (!range) return [];
+  const [start, end] = range;
+  return buildTrailRuns(trail.slice(start, end + 1)).map(
     (run, index): Feature => ({
       type: "Feature",
-      id: `${a.icao_hex}:${index}`,
+      id: `${icaoHex}:${k}:${index}`,
       geometry: { type: "LineString", coordinates: run.coordinates },
       properties: {
-        icao_hex: a.icao_hex,
+        icao_hex: icaoHex,
         color: run.color,
         // See MapView.tsx's trail line-opacity paint rule -- dims the
         // Follow-lost/selected-lost aircraft's trail the same way its
@@ -165,6 +234,24 @@ export function trailSegmentFeatures(a: AircraftRecord, dimmed: boolean): Featur
       },
     }),
   );
+}
+
+// Every block feature for one aircraft's *entire* current trail, as if
+// freshly seeded (base 0) -- used by the full-rebuild path
+// (trailFeatureCollection) and by buildTrailSourceDiff whenever it must
+// fully re-send a hex (no prior sync record, a dimmed change, or anything
+// that isn't a recognized pure-append/front-truncation, e.g. a reseed).
+// Both paths call this same function so they can never drift apart on the
+// actual block-splitting/run-grouping rules (this file's module comment).
+export function trailSegmentFeatures(a: AircraftRecord, dimmed: boolean): Feature[] {
+  const trail = a.trail;
+  if (trail.length < 2) return [];
+  const features: Feature[] = [];
+  const last = trailLastBlockIndex(trail.length, 0);
+  for (let k = 0; k <= last; k++) {
+    features.push(...trailBlockFeatures(a.icao_hex, trail, 0, k, dimmed));
+  }
+  return features;
 }
 
 export function trailFeatureCollection(
@@ -220,51 +307,135 @@ export function buildAircraftSourceDiff(
   return { add, remove };
 }
 
-// TRAIL_SOURCE_ID's diff: per changed hex, removes whichever of its
-// previously-synced segment ids (`syncedSegmentIds`, this MapView
-// instance's own bookkeeping of what it last pushed for that hex -- see
-// the sync effect) no longer appear in that hex's *current* segment set,
-// and (re-)adds every current segment (upsert -- a segment whose content
-// is unchanged from before is a harmless redundant re-write, cheap since
-// buildTrailSegments/trailSegmentFeatures are pure and only run for
-// touched hexes, not the whole fleet). Recomputing "current" fresh and
-// diffing by id-set membership, rather than assuming a trail only ever
-// grows by appending, is what keeps this correct across a trail *reseed*
-// (applyTrailSeed replaces history wholesale) or a cap-triggered
-// front-truncation (aircraftState.ts's MAX_TRAIL_POINTS), not just the
-// steady-state single-point-appended case.
+// TRAIL_SOURCE_ID's diff (#1838): per changed hex, re-sends only the
+// trail block(s) that actually changed, instead of the whole trail --
+// see this file's trail-blocks module comment for why. `syncState` is
+// this MapView instance's own bookkeeping (TrailSyncState) of what it
+// last pushed for that hex; the caller (MapView.tsx) owns storing the
+// returned `syncState` back into its ref for next tick.
 //
-// Returns the diff plus the updated syncedSegmentIds bookkeeping -- the
-// caller (MapView.tsx) owns storing it back into its ref for next tick;
-// this function itself has no side effects.
+// Four cases per changed, still-included hex:
+// - No prior sync record, or `dimmed` changed: full re-send (every
+//   current block), base reset to 0 -- same as a fresh seed.
+// - Pure append (new trail's first/last point is === the previous
+//   trail's first/last point, by reference -- aircraftState.ts's
+//   trail arrays keep point identity across a spread-rebuild): only
+//   the block(s) at or after the previous last point's block can have
+//   changed.
+// - Front truncation at the cap (the new trail's first point is found
+//   later in the previous trail, and the previous trail's last point is
+//   still at the corresponding offset from the new trail's end): `base`
+//   advances by the dropped count; blocks now entirely before the new
+//   `base` are dropped, the block now straddling `base` is rebuilt (its
+//   start was trimmed), and any appended tail is re-sent per the append
+//   case above.
+// - Anything else (a reseed via applyTrailSeed, or any other shape this
+//   doesn't specifically recognize): full re-send, same as the
+//   no-prior-record case.
 export function buildTrailSourceDiff(
   changedIcaoHexes: Iterable<string>,
   aircraft: Record<string, AircraftRecord>,
   visibleIds: Set<string>,
-  syncedSegmentIds: ReadonlyMap<string, string[]>,
+  syncState: ReadonlyMap<string, TrailSyncState>,
   options: VisibilityOptions = {},
-): { diff: GeoJSONSourceDiff; syncedSegmentIds: Map<string, string[]> } {
+): { diff: GeoJSONSourceDiff; syncState: Map<string, TrailSyncState> } {
   const { followId, protectedId } = options;
   const add: Feature[] = [];
   const remove: string[] = [];
-  const nextSynced = new Map(syncedSegmentIds);
+  const next = new Map(syncState);
+
+  const fullResend = (hex: string, record: AircraftRecord, dimmed: boolean, prev: TrailSyncState | undefined) => {
+    if (prev) remove.push(...prev.ids);
+    const features = trailSegmentFeatures(record, dimmed);
+    add.push(...features);
+    const ids = features.map((f) => f.id as string);
+    if (ids.length > 0) next.set(hex, { trailRef: record.trail, base: 0, dimmed, ids });
+    else next.delete(hex);
+  };
 
   for (const hex of changedIcaoHexes) {
     const record = aircraft[hex];
-    const previousIds = syncedSegmentIds.get(hex) ?? [];
+    const prev = syncState.get(hex);
+
     if (!record || !trailIncluded(record, visibleIds, options)) {
-      remove.push(...previousIds);
-      nextSynced.delete(hex);
+      if (prev) remove.push(...prev.ids);
+      next.delete(hex);
       continue;
     }
+
     const dimmed = isFollowLost(record, followId ?? null, protectedId ?? null);
-    const segments = trailSegmentFeatures(record, dimmed);
-    const currentIds = segments.map((f) => f.id as string);
-    const currentIdSet = new Set(currentIds);
-    remove.push(...previousIds.filter((id) => !currentIdSet.has(id)));
-    add.push(...segments);
-    if (currentIds.length > 0) nextSynced.set(hex, currentIds);
-    else nextSynced.delete(hex);
+    const trail = record.trail;
+
+    if (!prev || prev.dimmed !== dimmed) {
+      fullResend(hex, record, dimmed, prev);
+      continue;
+    }
+
+    const P = prev.trailRef;
+    // N[P.length-1] (not N's own last element -- N can be longer than P)
+    // must still equal P's last element for this to be a pure append: the
+    // whole of P is an untouched prefix of N.
+    const isPureAppend =
+      P.length > 0 && trail.length >= P.length && trail[0] === P[0] && trail[P.length - 1] === P[P.length - 1];
+
+    let base = prev.base;
+    // Block indices whose content must be rebuilt fresh this tick --
+    // deliberately a Set of individually-named blocks, not a contiguous
+    // [from, to] range: the front-truncation case touches one block near
+    // the trail's (possibly very distant) start *and* the tail's block(s),
+    // which are almost never adjacent on a long trail.
+    const rebuildTargets = new Set<number>();
+    // Old ids belonging to a block index below this are dropped outright
+    // (that block no longer has any point left in the trail at all) --
+    // -1 (an impossible block index) means "nothing dropped", i.e. the
+    // pure-append case, where base never moves.
+    let dropBefore = -1;
+
+    if (isPureAppend) {
+      rebuildTargets.add(trailFirstBlockIndex(base + P.length - 1));
+    } else {
+      const d = P.length > 0 ? P.indexOf(trail[0]) : -1;
+      const oldLastIdxInNew = P.length - 1 - d;
+      const isFrontTruncation =
+        d > 0 && oldLastIdxInNew >= 0 && oldLastIdxInNew < trail.length && trail[oldLastIdxInNew] === P[P.length - 1];
+      if (!isFrontTruncation) {
+        fullResend(hex, record, dimmed, prev);
+        continue;
+      }
+      const oldLastAbsolute = base + P.length - 1;
+      base += d;
+      dropBefore = trailFirstBlockIndex(base);
+      rebuildTargets.add(dropBefore); // the block now containing `base` -- its start was trimmed.
+      rebuildTargets.add(trailFirstBlockIndex(oldLastAbsolute)); // the appended tail's first block.
+    }
+
+    // The tail can span more than one block in a single tick (a batch of
+    // several points landing before this throttled sync fires) -- extend
+    // from the highest target found so far (always the tail's start, per
+    // the two cases above) through the trail's new last block.
+    const toBlock = trailLastBlockIndex(trail.length, base);
+    for (let k = Math.max(...rebuildTargets); k <= toBlock; k++) rebuildTargets.add(k);
+
+    const rebuiltIdsByBlock = new Map<number, string[]>();
+    for (const k of rebuildTargets) {
+      const features = trailBlockFeatures(hex, trail, base, k, dimmed);
+      const ids = features.map((f) => f.id as string);
+      rebuiltIdsByBlock.set(k, ids);
+      add.push(...features);
+    }
+
+    for (const id of prev.ids) {
+      const k = trailBlockIndexFromId(id);
+      const rebuilt = rebuiltIdsByBlock.get(k);
+      if (k < dropBefore || (rebuilt && !rebuilt.includes(id))) remove.push(id);
+    }
+
+    const untouchedIds = prev.ids.filter((id) => {
+      const k = trailBlockIndexFromId(id);
+      return k >= dropBefore && !rebuiltIdsByBlock.has(k);
+    });
+    next.set(hex, { trailRef: trail, base, dimmed, ids: [...untouchedIds, ...rebuiltIdsByBlock.values()].flat() });
   }
-  return { diff: { add, remove }, syncedSegmentIds: nextSynced };
+
+  return { diff: { add, remove }, syncState: next };
 }

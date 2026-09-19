@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySnapshot, applyTrailSeed, applyWsEvent, type AircraftMap } from "./aircraftState";
+import { applySnapshot, applyTrailSeed, applyWsEvent, MAX_TRAIL_POINTS, type AircraftMap, type TrailPoint } from "./aircraftState";
 import {
   aircraftFeature,
   aircraftFeatureCollection,
@@ -7,9 +7,30 @@ import {
   buildTrailSourceDiff,
   isAircraftVisible,
   isEmptySourceDiff,
+  TRAIL_BLOCK_SIZE,
   trailFeatureCollection,
   trailSegmentFeatures,
 } from "./featureCollections";
+
+// Test-only helper for exercising trail-block behavior directly against
+// TrailPoint[] without going through a full WS event per point (the
+// acceptance criteria's 64-point-boundary and cap-truncation cases need
+// dozens of points, which would be unreadable as individual applyWsEvent
+// calls). Mirrors pushTrailPoint's shape (latitude/longitude/altitude),
+// just without its same-as-last dedupe/cap -- callers here fully control
+// point count.
+function makeTrail(count: number, startLat = 1): TrailPoint[] {
+  return Array.from({ length: count }, (_, i) => ({
+    latitude: startLat + i * 0.001,
+    longitude: 2 + i * 0.001,
+    altitude: 1000,
+  }));
+}
+
+function withTrail(icaoHex: string, trail: TrailPoint[]): AircraftMap {
+  const aircraft = applySnapshot([{ icao_hex: icaoHex, lat: trail[0].latitude, lon: trail[0].longitude, alt: 1000 }]);
+  return { ...aircraft, [icaoHex]: { ...aircraft[icaoHex], trail } };
+}
 
 function withOnePositionedAircraft(icaoHex = "A1B2C3"): AircraftMap {
   return applySnapshot([{ icao_hex: icaoHex, lat: 1, lon: 2, alt: 1000 }]);
@@ -229,8 +250,8 @@ describe("aircraftFeature -- lighter-than-air heading override (#1788)", () => {
   });
 });
 
-describe("trailSegmentFeatures -- per-run builder with stable ids (#1775, run-grouping per #1820)", () => {
-  it("stamps a stable `${icao_hex}:${index}` id on every run", () => {
+describe("trailSegmentFeatures -- per-run builder with stable ids (#1775, run-grouping per #1820, blocked per #1838)", () => {
+  it("stamps a stable `${icao_hex}:${block}:${index}` id on every run", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
     // Distinct altitudes so each point-to-point step gets its own color and
     // this genuinely produces multiple runs -- see the dedicated #1820 test
@@ -239,8 +260,9 @@ describe("trailSegmentFeatures -- per-run builder with stable ids (#1775, run-gr
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2, alt: 35000 });
     const runs = trailSegmentFeatures(aircraft.A1B2C3, false);
     expect(runs.length).toBeGreaterThanOrEqual(2);
+    // A 3-point trail fits entirely in block 0.
     runs.forEach((run, index) => {
-      expect(run.id).toBe(`A1B2C3:${index}`);
+      expect(run.id).toBe(`A1B2C3:0:${index}`);
     });
   });
 
@@ -370,40 +392,42 @@ describe("buildAircraftSourceDiff (#1775)", () => {
   });
 });
 
-describe("buildTrailSourceDiff (#1775)", () => {
-  it("adds every current segment for a newly-touched, visible hex with no prior sync record", () => {
+describe("buildTrailSourceDiff (#1775, blocked per #1838)", () => {
+  it("adds every current block for a newly-touched, visible hex with no prior sync record", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
-    const { diff, syncedSegmentIds } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
+    const { diff, syncState } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
     expect(diff.add?.length).toBeGreaterThan(0);
     expect(diff.remove).toHaveLength(0);
-    expect(syncedSegmentIds.get("A1B2C3")).toEqual(diff.add?.map((f) => f.id));
+    expect(syncState.get("A1B2C3")?.ids).toEqual(diff.add?.map((f) => f.id));
+    expect(syncState.get("A1B2C3")?.base).toBe(0);
   });
 
-  it("a pure same-color append re-upserts the current run in place (#1820: run count does not grow) and removes nothing stale", () => {
-    // Deliberately not a suffix-only optimization (see buildTrailSourceDiff's
-    // own doc comment) -- re-adding an unchanged run is a harmless upsert,
-    // and recomputing fresh every touched-hex tick is what keeps a reseed
-    // (tested separately below) correct without needing extra state to
-    // distinguish "appended" from "replaced". No `alt` on either position
-    // event -- both merge forward the same 1000 value, so this stays one
-    // run the whole way through, not two.
+  it("a pure same-color append re-upserts only the last block's current run in place (#1820: run count does not grow) and removes nothing stale", () => {
+    // Deliberately not a suffix-only optimization within a block (see
+    // buildTrailSourceDiff's own doc comment) -- re-adding an unchanged
+    // run is a harmless upsert, and recomputing fresh every touched-hex
+    // tick is what keeps a reseed (tested separately below) correct
+    // without needing extra state to distinguish "appended" from
+    // "replaced". No `alt` on either position event -- both merge
+    // forward the same 1000 value, so this stays one run the whole way
+    // through, not two.
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
-    expect(first.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
+    expect(first.syncState.get("A1B2C3")?.ids).toEqual(["A1B2C3:0:0"]);
 
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
-    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncState);
 
     expect(second.diff.remove).toHaveLength(0);
     expect(second.diff.add).toHaveLength(1); // same one run, re-sent with its new (longer) geometry
-    expect(second.diff.add?.[0].id).toBe("A1B2C3:0");
+    expect(second.diff.add?.[0].id).toBe("A1B2C3:0:0");
     expect((second.diff.add?.[0].geometry as { coordinates: unknown[] }).coordinates).toHaveLength(3);
-    expect(second.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
+    expect(second.syncState.get("A1B2C3")?.ids).toEqual(["A1B2C3:0:0"]);
   });
 
-  it("an append that changes color starts a new run alongside the still-closed prior one", () => {
+  it("an append that changes color starts a new run alongside the still-closed prior one, in the same block", () => {
     // A segment is colored by its *earlier* point (see trailSegments.ts),
     // so a color transition only shows up on the segment leading *out of*
     // the point whose altitude changed -- i.e. one point later than where
@@ -413,27 +437,104 @@ describe("buildTrailSourceDiff (#1775)", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3"); // alt: 1000
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1, alt: 35000 });
     const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
-    expect(first.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0"]);
+    expect(first.syncState.get("A1B2C3")?.ids).toEqual(["A1B2C3:0:0"]);
 
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.2, lon: 2.2 });
-    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncState);
 
     expect(second.diff.remove).toHaveLength(0);
-    expect(second.syncedSegmentIds.get("A1B2C3")).toEqual(["A1B2C3:0", "A1B2C3:1"]);
+    expect(second.syncState.get("A1B2C3")?.ids).toEqual(["A1B2C3:0:0", "A1B2C3:0:1"]);
   });
 
-  it("removes every previously-synced segment id for a hex that's no longer visible", () => {
+  it("a 64-point boundary crossing only re-sends the new block, leaving the earlier (unchanged) block untouched", () => {
+    const hex = "A1B2C3";
+    // TRAIL_BLOCK_SIZE+1 points (65) is exactly block 0's full [0,64]
+    // range -- one point short of spilling into block 1.
+    let aircraft = withTrail(hex, makeTrail(TRAIL_BLOCK_SIZE + 1));
+    const first = buildTrailSourceDiff([hex], aircraft, new Set([hex]), new Map());
+    const firstIds = first.syncState.get(hex)!.ids;
+    expect(firstIds).toEqual([`${hex}:0:0`]);
+
+    // One more point crosses the boundary into block 1.
+    const grown = [...aircraft[hex].trail, { latitude: 9, longitude: 9, altitude: 1000 }];
+    aircraft = { ...aircraft, [hex]: { ...aircraft[hex], trail: grown } };
+    const second = buildTrailSourceDiff([hex], aircraft, new Set([hex]), first.syncState);
+
+    expect(second.diff.remove).toHaveLength(0);
+    expect(second.diff.add?.map((f) => f.id)).toEqual([`${hex}:1:0`]);
+    expect(second.syncState.get(hex)?.ids.sort()).toEqual([`${hex}:0:0`, `${hex}:1:0`]);
+  });
+
+  it("front truncation at the cap: drops the fully-emptied leading block(s), rebuilds only the trimmed-front block and the appended tail, not every block in between", () => {
+    const hex = "A1B2C3";
+    const full = makeTrail(MAX_TRAIL_POINTS); // already at the cap
+    let aircraft = withTrail(hex, full);
+    const first = buildTrailSourceDiff([hex], aircraft, new Set([hex]), new Map());
+    const firstState = first.syncState.get(hex)!;
+    const totalBlocks = firstState.ids.length; // one run per block here (constant altitude)
+    expect(totalBlocks).toBeGreaterThan(300);
+
+    // Simulate a batch of pushTrailPoint calls that each appended one
+    // point and trimmed one off the front (aircraftState.ts's
+    // MAX_TRAIL_POINTS cap) landing in a single throttled MapView tick --
+    // drop 70 points off the front (more than one block's worth), append
+    // 70 new ones, net length unchanged.
+    const dropped = 70;
+    const trimmed = [...full.slice(dropped), ...makeTrail(dropped, 50)];
+    aircraft = { ...aircraft, [hex]: { ...aircraft[hex], trail: trimmed } };
+
+    const second = buildTrailSourceDiff([hex], aircraft, new Set([hex]), first.syncState);
+    const secondState = second.syncState.get(hex)!;
+    expect(secondState.base).toBe(dropped);
+
+    const removedBlocks = (second.diff.remove ?? []).map((id) => Number(String(id).split(":")[1]));
+    const addedBlocks = new Set(second.diff.add?.map((f) => Number((f.id as string).split(":")[1])) ?? []);
+
+    // At least one whole leading block (block 0) was dropped outright...
+    expect(removedBlocks).toContain(0);
+    // ...only a small number of blocks were touched at all (the trimmed
+    // front block plus the appended tail's block(s)), nowhere near the
+    // ~391 blocks a full re-send would touch.
+    expect(addedBlocks.size).toBeGreaterThan(0);
+    expect(addedBlocks.size).toBeLessThan(10);
+    expect(addedBlocks.size + removedBlocks.length).toBeLessThan(totalBlocks / 2);
+  });
+
+  it("a dimmed change forces a full re-send even though the trail itself didn't change", () => {
+    // isFollowLost (the dimmed rule) requires both a Follow/protectedId
+    // match *and* the aircraft actually being hidden -- see
+    // followTarget.ts -- so the realistic transition is a *followed*
+    // aircraft going hidden (dimmed false -> true) while staying included
+    // throughout via the Follow-lost exception (featureCollections.ts's
+    // trailIncluded).
+    let aircraft = withOnePositionedAircraft("A1B2C3");
+    aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
+    const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map(), { followId: "A1B2C3" });
+    const previousIds = first.syncState.get("A1B2C3")!.ids;
+    expect(first.syncState.get("A1B2C3")?.dimmed).toBe(false);
+
+    aircraft = applyWsEvent(aircraft, { type: "hide", icao_hex: "A1B2C3" });
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncState, {
+      followId: "A1B2C3",
+    });
+    expect(second.diff.remove).toEqual(previousIds);
+    expect(second.diff.add?.length).toBeGreaterThan(0);
+    expect(second.diff.add?.every((f) => f.properties?.dimmed === true)).toBe(true);
+    expect(second.syncState.get("A1B2C3")?.dimmed).toBe(true);
+  });
+
+  it("removes every previously-synced block id for a hex that's no longer visible (losing trail visibility)", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());
-    const previousIds = first.syncedSegmentIds.get("A1B2C3")!;
+    const previousIds = first.syncState.get("A1B2C3")!.ids;
     expect(previousIds.length).toBeGreaterThan(0);
 
     // No longer in the visible-ids set (e.g. deselected while historyAll is off).
-    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(), first.syncedSegmentIds);
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(), first.syncState);
     expect(second.diff.remove).toEqual(previousIds);
     expect(second.diff.add).toHaveLength(0);
-    expect(second.syncedSegmentIds.has("A1B2C3")).toBe(false);
+    expect(second.syncState.has("A1B2C3")).toBe(false);
   });
 
   it("a trail reseed (wholesale replace) correctly removes stale ids and adds the new set, not just a suffix", () => {
@@ -452,7 +553,7 @@ describe("buildTrailSourceDiff (#1775)", () => {
       { lat: 9.2, lon: 9.2, alt: null },
       { lat: 9.3, lon: 9.3, alt: null },
     ]);
-    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncedSegmentIds);
+    const second = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), first.syncState);
 
     // The reseeded trail's run must be (re-)added with its new geometry --
     // not silently skipped because the id count happened to shrink, which
@@ -464,6 +565,7 @@ describe("buildTrailSourceDiff (#1775)", () => {
     for (const coord of coords) {
       expect(coord[0]).toBeGreaterThan(8);
     }
+    expect(second.syncState.get("A1B2C3")?.base).toBe(0);
   });
 
   it("only touches the hexes named in changedIcaoHexes", () => {
@@ -474,6 +576,24 @@ describe("buildTrailSourceDiff (#1775)", () => {
 
     const { diff } = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3", "D4E5F6"]), new Map());
     expect(diff.add?.every((f) => f.properties?.icao_hex === "A1B2C3")).toBe(true);
+  });
+
+  // #1838 acceptance criteria: the setData (full-rebuild) path and the
+  // updateData (incremental diff) path must produce identical feature
+  // sets for the same state -- otherwise the two could silently drift
+  // apart on the actual block-splitting/run-grouping rules.
+  it("the setData full-rebuild path and the incremental diff path produce identical feature sets for the same state", () => {
+    const hex = "A1B2C3";
+    const trail = makeTrail(200); // spans several blocks
+    const aircraft = withTrail(hex, trail);
+
+    const viaDiff = buildTrailSourceDiff([hex], aircraft, new Set([hex]), new Map());
+    const viaFullRebuild = trailFeatureCollection(aircraft, new Set([hex]));
+
+    const sortById = (fs: readonly { id?: string | number | null }[] | undefined) =>
+      [...(fs ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+    expect(sortById(viaDiff.diff.add)).toEqual(sortById(viaFullRebuild.features));
   });
 });
 
