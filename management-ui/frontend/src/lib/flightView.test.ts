@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatTraceLabel,
   lineGradientExpression,
+  squawkPillVariant,
   traceLabelSortKey,
   tracePointsFeatureCollection,
 } from "./flightView";
@@ -349,5 +350,25 @@ describe("tracePointsFeatureCollection", () => {
   it("treats a missing coordTimes/coordSpeeds entry the same as null (index out of range)", () => {
     const fc = tracePointsFeatureCollection([[-84.0, 33.0, 1000]], [], []);
     expect(fc.features[0].properties.label).toBe("1000 ft");
+  });
+});
+
+describe("squawkPillVariant", () => {
+  it("returns null when squawk is absent", () => {
+    expect(squawkPillVariant(undefined)).toBeNull();
+    expect(squawkPillVariant(null)).toBeNull();
+    expect(squawkPillVariant("")).toBeNull();
+  });
+
+  it.each(["7500", "7600", "7700", "7777"])("returns \"alert\" for emergency code %s", (code) => {
+    expect(squawkPillVariant(code)).toBe("alert");
+  });
+
+  it("returns \"vfr\" for the VFR code 1200", () => {
+    expect(squawkPillVariant("1200")).toBe("vfr");
+  });
+
+  it("returns \"neutral\" for an ordinary discrete code", () => {
+    expect(squawkPillVariant("4623")).toBe("neutral");
   });
 });
