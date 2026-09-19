@@ -109,16 +109,24 @@ export function infoBoxLabelFeatureCollection(
 // INFO_BOX_SOURCE_ID's diff: each changed hex either still resolves to a
 // labeled feature (upsert via `add`) or no longer does (no longer tracked,
 // no longer drawn, no longer selected/hovered/showAll-included, or its
-// content emptied out) -- `remove`. Same shape as
-// featureCollections.ts's buildAircraftSourceDiff; callers (MapView.tsx)
-// should pass the same `changedIcaoHexes` (from aircraftMapDiff.ts's
-// diffAircraftMaps) used for the aircraft/trail diff, since a label's
-// content depends only on the aircraft record and the label filter -- not
-// on anything else that would need a separate change-detection pass.
+// content emptied out) -- `remove`, but only when that hex's id is
+// actually `presentIds` (this MapView instance's own bookkeeping of what
+// it last pushed to the source, see the sync effect) -- with labels
+// mostly off (no "Labels: All", nothing selected/hovered), most changed
+// hexes were never added in the first place, and unconditionally
+// `remove`-ing them anyway used to produce a `{add: [], remove:
+// [...]}` diff every single tick for no reason (#1838). Same shape as
+// featureCollections.ts's buildAircraftSourceDiff otherwise; callers
+// (MapView.tsx) should pass the same `changedIcaoHexes` (from
+// aircraftMapDiff.ts's diffAircraftMaps) used for the aircraft/trail
+// diff, since a label's content depends only on the aircraft record and
+// the label filter -- not on anything else that would need a separate
+// change-detection pass.
 export function buildInfoBoxLabelSourceDiff(
   changedIcaoHexes: Iterable<string>,
   aircraft: Record<string, AircraftRecord>,
   filter: LabelFilter,
+  presentIds: ReadonlySet<string>,
   options: VisibilityOptions = {},
 ): GeoJSONSourceDiff {
   const add: Feature[] = [];
@@ -127,7 +135,7 @@ export function buildInfoBoxLabelSourceDiff(
     const record = aircraft[hex];
     const feature = record ? infoBoxLabelFeature(record, filter, options) : null;
     if (feature) add.push(feature);
-    else remove.push(hex);
+    else if (presentIds.has(hex)) remove.push(hex);
   }
   return { add, remove };
 }

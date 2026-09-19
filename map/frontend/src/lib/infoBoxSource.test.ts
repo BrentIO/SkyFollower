@@ -163,32 +163,39 @@ describe("infoBoxLabelFeatureCollection", () => {
   });
 });
 
-describe("buildInfoBoxLabelSourceDiff (#1808)", () => {
+describe("buildInfoBoxLabelSourceDiff (#1808, presentIds guard per #1838)", () => {
   it("adds a changed hex that now qualifies for a label", () => {
     const aircraft = withOnePositionedAircraft("A1B2C3", { ident: "UAL123" });
-    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter({ showAll: true }));
+    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter({ showAll: true }), new Set());
     expect(diff.add).toHaveLength(1);
     expect(diff.add?.[0].id).toBe("A1B2C3");
     expect(diff.remove).toHaveLength(0);
   });
 
-  it("removes a changed hex no longer present in the aircraft map at all", () => {
-    const diff = buildInfoBoxLabelSourceDiff(["GONE123"], {}, noFilter({ showAll: true }));
+  it("removes a changed hex no longer present in the aircraft map at all, if it was actually in the source", () => {
+    const diff = buildInfoBoxLabelSourceDiff(["GONE123"], {}, noFilter({ showAll: true }), new Set(["GONE123"]));
     expect(diff.add).toHaveLength(0);
     expect(diff.remove).toEqual(["GONE123"]);
   });
 
   it("removes a changed hex that's present but no longer qualifies (e.g. its content emptied out, or it's not in the label filter)", () => {
     const aircraft = withOnePositionedAircraft("A1B2C3", { ident: "UAL123" });
-    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter());
+    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter(), new Set(["A1B2C3"]));
     expect(diff.add).toHaveLength(0);
     expect(diff.remove).toEqual(["A1B2C3"]);
+  });
+
+  it("#1838: does not remove a changed hex that never qualified and was never in the source (labels off, no-op tick)", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3", { ident: "UAL123" });
+    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter(), new Set());
+    expect(diff.add).toHaveLength(0);
+    expect(diff.remove).toHaveLength(0);
   });
 
   it("only touches the hexes named in changedIcaoHexes, not the whole fleet", () => {
     let aircraft = withOnePositionedAircraft("A1B2C3", { ident: "ONE" });
     aircraft = { ...aircraft, ...withOnePositionedAircraft("D4E5F6", { ident: "TWO" }) };
-    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter({ showAll: true }));
+    const diff = buildInfoBoxLabelSourceDiff(["A1B2C3"], aircraft, noFilter({ showAll: true }), new Set());
     expect(diff.add).toHaveLength(1);
     expect(diff.add?.[0].id).toBe("A1B2C3");
   });

@@ -431,9 +431,9 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
     expect(mapViewSource).toContain("buildTrailSourceDiff");
   });
 
-  it("tracks the previous aircraft snapshot and synced trail-segment ids across ticks", () => {
+  it("tracks the previous aircraft snapshot and synced trail-block sync state across ticks (#1838)", () => {
     expect(mapViewSource).toContain("const prevAircraftRef = useRef<AircraftMap>({});");
-    expect(mapViewSource).toContain("const syncedTrailSegmentIdsRef = useRef<Map<string, string[]>>(new Map());");
+    expect(mapViewSource).toContain("const trailSyncRef = useRef<Map<string, TrailSyncState>>(new Map());");
   });
 
   it("computes visibilityChanged from the previous run's visibility-affecting inputs, not just aircraft", () => {
@@ -487,9 +487,9 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
     expect(registerCallCount).toBe(2);
   });
 
-  it("re-syncs the trail-segment-id bookkeeping after a full rebuild, so the next incremental tick starts correctly", () => {
-    expect(mapViewSource).toContain("syncedTrailSegmentIdsRef.current = bySegmentHex;");
-    expect(mapViewSource).toContain("syncedTrailSegmentIdsRef.current = trailResult.syncedSegmentIds;");
+  it("re-syncs the trail-block sync-state bookkeeping after a full rebuild, so the next incremental tick starts correctly", () => {
+    expect(mapViewSource).toContain("trailSyncRef.current = nextTrailSync;");
+    expect(mapViewSource).toContain("trailSyncRef.current = trailResult.syncState;");
   });
 
   it("updates prevAircraftRef exactly once per run, after both branches", () => {
@@ -604,12 +604,11 @@ describe("info-box label source sync (#1808)", () => {
     expect(ifIndex).toBeGreaterThan(-1);
     expect(elseIndex).toBeGreaterThan(ifIndex);
     const ifBranch = mapViewSource.slice(ifIndex, elseIndex);
-    expect(ifBranch).toContain(
-      "labelSource?.setData(infoBoxLabelFeatureCollection(aircraft, labelFilter, visibility));",
-    );
+    expect(ifBranch).toContain("labelSource?.setData(labelFc);");
     expect(mapViewSource).toContain(
-      "labelSource?.updateData(buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, visibility));",
+      "buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, labelIdsRef.current, visibility)",
     );
+    expect(mapViewSource).toContain("if (!isEmptySourceDiff(labelDiff)) labelSource?.updateData(labelDiff);");
   });
 
   it("labelFilter is built from selected/labelsAll/hoveredId, matching InfoBoxLayer.tsx's removed filter exactly", () => {
