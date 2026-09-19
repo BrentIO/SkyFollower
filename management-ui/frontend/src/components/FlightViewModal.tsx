@@ -436,9 +436,22 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                   {view.operator && (
                     <div>
                       <SectionLabel>Operator</SectionLabel>
-                      <div className="flex flex-wrap items-baseline gap-2 pl-4 text-sm text-slate-900 dark:text-slate-100">
-                        {view.operator.name && <span>{view.operator.name}</span>}
-                        {view.operator.callsign && <span className="italic">"{view.operator.callsign}"</span>}
+                      <div className="pl-4 text-right">
+                        {view.operator.name && (
+                          <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                            {view.operator.name}
+                          </div>
+                        )}
+                        {view.operator.callsign && (
+                          <div className="mt-0.5 text-xs italic text-slate-900 dark:text-slate-100">
+                            "{view.operator.callsign}"
+                          </div>
+                        )}
+                        {view.operator.country && (
+                          <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                            {view.operator.country}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
