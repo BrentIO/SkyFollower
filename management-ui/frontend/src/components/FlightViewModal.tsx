@@ -3,13 +3,12 @@ import * as maplibregl from "maplibre-gl";
 import { Download, Loader2, MapPinOff, X } from "lucide-react";
 import { MAP_STYLE } from "../lib/maplibreSetup";
 import {
-  EMERGENCY_SQUAWKS,
-  VFR_SQUAWK,
   airportLocation,
   boundsOf,
   flightPathFeature,
   formatDuration,
   lineGradientExpression,
+  squawkPillVariant,
   tracePointsFeatureCollection,
   type Coord,
 } from "../lib/flightView";
@@ -34,6 +33,7 @@ interface FlightViewModalProps {
 const PILL = "rounded px-2 py-0.5 text-xs font-semibold";
 const PILL_GREEN = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
 const PILL_RED = "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
+const PILL_NEUTRAL = "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300";
 
 const TRACE_POINTS_SOURCE = "trace-points";
 const TRACE_POINTS_CIRCLE_LAYER = "trace-points-circle";
@@ -306,8 +306,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
   }
 
   const loading = !view && !error;
-  const hasSquawkAlert = !!view?.squawk && EMERGENCY_SQUAWKS.has(view.squawk);
-  const isVfr = view?.squawk === VFR_SQUAWK;
+  const squawkPill = squawkPillVariant(view?.squawk);
   const hasRoute = !!(view?.origin || view?.destination);
   const hasRegistrantOrOperator = !!(view?.registrant || view?.operator);
   const powerplant = view?.powerplant;
@@ -343,8 +342,15 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                   <span className="text-xl font-semibold text-slate-900 dark:text-slate-100">
                     {view!.ident ?? view!.icao_hex}
                   </span>
-                  {hasSquawkAlert && <span className={`${PILL} ${PILL_RED}`}>{view!.squawk}</span>}
-                  {isVfr && <span className={`${PILL} ${PILL_GREEN}`}>VFR</span>}
+                  {squawkPill && (
+                    <span
+                      className={`${PILL} ${
+                        squawkPill === "alert" ? PILL_RED : squawkPill === "vfr" ? PILL_GREEN : PILL_NEUTRAL
+                      }`}
+                    >
+                      {view!.squawk}
+                    </span>
+                  )}
                   {view!.military && <span className={`${PILL} ${PILL_GREEN}`}>Military</span>}
                 </div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">

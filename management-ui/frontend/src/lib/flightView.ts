@@ -8,6 +8,19 @@ import type { FlightViewAirport } from "../api/archiveSearch";
 export const EMERGENCY_SQUAWKS = new Set(["7500", "7600", "7700", "7777"]);
 export const VFR_SQUAWK = "1200";
 
+export type SquawkPillVariant = "alert" | "vfr" | "neutral";
+
+// Squawk should always be visible when present -- emergency/VFR codes just
+// get emphasis on top of that (red/green vs. a neutral pill), rather than
+// being the only codes shown at all. Returns null when there's nothing to
+// render (squawk absent), so the caller can skip the pill entirely.
+export function squawkPillVariant(squawk: string | null | undefined): SquawkPillVariant | null {
+  if (!squawk) return null;
+  if (EMERGENCY_SQUAWKS.has(squawk)) return "alert";
+  if (squawk === VFR_SQUAWK) return "vfr";
+  return "neutral";
+}
+
 export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 
 // Altitude-to-color lookup table (hue and lightness each interpolated from
