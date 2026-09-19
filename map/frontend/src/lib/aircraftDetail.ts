@@ -126,7 +126,13 @@ export function buildDistanceDisplay(flight: MapFlight, center: CenterPoint | nu
 }
 
 export interface AircraftDetailData {
-  title: string;
+  /** Header title. Null (rendered blank, not the ICAO hex) when the
+   * aircraft's ident/callsign hasn't resolved yet -- the hex is still
+   * available in its own `icaoHex` row below, so this isn't a loss of
+   * information. Deliberately *not* the same convention as
+   * management-ui's FlightViewModal.tsx header (`view.ident ??
+   * view.icao_hex`); see #1843. */
+  title: string | null;
   registration: string | null;
   icaoHex: string | null;
   military: boolean;
@@ -166,10 +172,7 @@ export function buildAircraftDetail(
   const squawk = nonEmpty(flight.squawk);
 
   return {
-    // Header title falls back to icao_hex when ident isn't resolved yet --
-    // same convention as management-ui's FlightViewModal.tsx header
-    // (`view.ident ?? view.icao_hex`) -- so the header is never blank.
-    title: nonEmpty(flight.ident) ?? flight.icao_hex,
+    title: nonEmpty(flight.ident),
     registration: nonEmpty(aircraft?.registration),
     icaoHex: nonEmpty(flight.icao_hex),
     military: !!aircraft?.military,
