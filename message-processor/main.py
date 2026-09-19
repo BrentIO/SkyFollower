@@ -38,7 +38,7 @@ import pyModeS as pms
 import pyModeS978
 import redis as redis_lib
 
-from message_processor.route_resolver import resolve_origin_destination
+from message_processor.route_resolver import haversine_nm, resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
 from shared.redis_client import build_redis_client
@@ -198,6 +198,14 @@ _MIN_LONGITUDE = -180
 _MAX_LONGITUDE = 180
 _MIN_ALTITUDE_FT = -1500
 _MAX_ALTITUDE_FT = 65000
+
+# Diagnostic-only threshold for #1836: an implied groundspeed above this
+# between two consecutive accepted positions for the same aircraft is
+# physically impossible, so it's logged (not rejected) to capture real
+# examples of the mirrored/teleported 1090 CPR decodes #1835 is
+# investigating. Same value #1565 originally proposed for its deferred
+# reject-gate.
+_TELEPORT_DIAGNOSTIC_SPEED_KT = 1500
 
 
 def _short_hash(full: Optional[str]) -> str:
@@ -1417,6 +1425,42 @@ class MessageProcessor:
 
         return data if len(data) > 1 else None
 
+    def _log_if_implausible_speed(
+        self, flight: Flight, data: dict, msg: InboundMessage
+    ) -> None:
+        """Diagnostic-only (#1836): warn when the incoming position implies
+        a physically impossible groundspeed from the last accepted position
+        for this aircraft. Does not alter `data` -- the position still
+        flows through to add_position()/archive/map/rules exactly as
+        today. Purely observational, to capture a real bad frame for
+        #1835's mirrored/teleported 1090 CPR decode investigation."""
+        prev = flight.positions[-1]
+        elapsed_s = msg.received_at - prev.timestamp
+        if elapsed_s <= 0:
+            # A same-or-earlier-timestamp redelivery/duplicate -- nothing
+            # meaningful to compute a speed from.
+            return
+
+        distance_nm = haversine_nm(
+            prev.latitude, prev.longitude, data["latitude"], data["longitude"]
+        )
+        implied_speed_kt = distance_nm / (elapsed_s / 3600.0)
+        if implied_speed_kt <= _TELEPORT_DIAGNOSTIC_SPEED_KT:
+            return
+
+        logger.warning(
+            "Implausible 1090 position for %s (ident=%s): implied speed "
+            "%.0f kt over %.3fs (%.1f nm) exceeds %d kt -- raw=%s "
+            "reference=(%s, %s) decoded=(%.5f, %.5f, alt=%s) "
+            "previous=(%.5f, %.5f) at %s",
+            data["icao_hex"], flight.ident or "unknown",
+            implied_speed_kt, elapsed_s, distance_nm,
+            _TELEPORT_DIAGNOSTIC_SPEED_KT, msg.raw,
+            self._cfg.get("latitude"), self._cfg.get("longitude"),
+            data["latitude"], data["longitude"], data.get("altitude"),
+            prev.latitude, prev.longitude, prev.timestamp,
+        )
+
     def _update_flight(self, data: dict, msg: InboundMessage) -> None:
         self._message_clock = max(self._message_clock, msg.received_at)
 
@@ -1450,6 +1494,8 @@ class MessageProcessor:
         flight.total_messages += 1
 
         if "latitude" in data and "longitude" in data:
+            if flight.positions:
+                self._log_if_implausible_speed(flight, data, msg)
             flight.add_position(Position(
                 timestamp=msg.received_at,
                 latitude=data["latitude"],

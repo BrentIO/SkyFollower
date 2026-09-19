@@ -1097,6 +1097,87 @@ class TestPositionVelocityDedup:
 
 
 # ---------------------------------------------------------------------------
+# #1836 — diagnostic-only logging of implausible-groundspeed 1090 positions
+# (a candidate mirrored/teleported CPR decode, see #1835). No rejection: the
+# position must still flow through to add_position()/data unchanged.
+# ---------------------------------------------------------------------------
+
+class TestImplausibleSpeedDiagnosticLogging:
+    def test_teleported_second_position_logs_warning_first_does_not(self, caplog):
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
+
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            with p._db_lock:
+                # Plausible first sighting -- no prior position to compare
+                # against, must not warn.
+                p._update_flight(
+                    {"icao_hex": icao_hex, "latitude": 28.4749, "longitude": -81.2797},
+                    InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
+                )
+                assert caplog.text == ""
+
+                # ~217 nm away half a second later -- implies well over
+                # 1,000,000 kt, far past the 1500 kt diagnostic threshold.
+                bad_data = {"icao_hex": icao_hex, "latitude": 31.5526, "longitude": -79.1072}
+                p._update_flight(
+                    bad_data,
+                    InboundMessage(raw="8DA8AE7F" + "11" * 10, icao_hex=icao_hex,
+                                    received_at=t + 0.5, source="1090"),
+                )
+
+        assert "Implausible 1090 position" in caplog.text
+        assert icao_hex in caplog.text
+        assert "8DA8AE7F" in caplog.text  # raw frame present for offline replay
+
+        # Diagnostic-only: data dict untouched and the bad position was
+        # still recorded, exactly as it would be without this check.
+        assert bad_data["latitude"] == 31.5526
+        assert bad_data["longitude"] == -79.1072
+        f = Flight(p._db)
+        f.load(icao_hex)
+        assert len(f.positions) == 1  # limit=True load -- most recent only
+        assert f.positions[-1].latitude == 31.5526
+        assert f.positions[-1].longitude == -79.1072
+
+    def test_plausible_second_position_does_not_log(self, caplog):
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+        t = 1_700_000_000.0
+
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            with p._db_lock:
+                p._update_flight(
+                    {"icao_hex": icao_hex, "latitude": 28.4749, "longitude": -81.2797},
+                    InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
+                )
+                # A normal short hop consistent with cruise speed.
+                p._update_flight(
+                    {"icao_hex": icao_hex, "latitude": 28.4756, "longitude": -81.2792},
+                    InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 5.0, source="1090"),
+                )
+
+        assert caplog.text == ""
+
+    def test_no_prior_position_never_logs_regardless_of_value(self, caplog):
+        """First sighting for an aircraft has nothing to compare against --
+        flight.positions is empty, so the check must not run at all (and
+        must not raise trying to look at flight.positions[-1])."""
+        p, _ = _make_processor()
+        icao_hex = "A8AE7F"
+
+        with caplog.at_level(logging.WARNING, logger="message_processor"):
+            with p._db_lock:
+                p._update_flight(
+                    {"icao_hex": icao_hex, "latitude": 89.9, "longitude": 179.9},
+                    InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=1_700_000_000.0, source="1090"),
+                )
+
+        assert caplog.text == ""
+
+
+# ---------------------------------------------------------------------------
 # MessageProcessor._archive — live-path publish, mirroring receiver._publish()'s
 # rmq_connected reset on a basic_publish failure
 # ---------------------------------------------------------------------------
