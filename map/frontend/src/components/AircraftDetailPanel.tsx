@@ -128,7 +128,7 @@ export function AircraftDetailPanel({
     >
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0">
-          <div className="text-xl leading-tight font-bold">{data.title}</div>
+          {data.title != null && <div className="text-xl leading-tight font-bold">{data.title}</div>}
           {hasHeaderSubline && (
             <div className="mt-1 flex flex-wrap items-baseline gap-2">
               {data.registration != null && <span className="text-sm">{data.registration}</span>}

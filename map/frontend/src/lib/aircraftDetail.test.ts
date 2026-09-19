@@ -33,10 +33,10 @@ describe("buildAircraftDetail -- header", () => {
     expect(buildAircraftDetail(baseFlight({ ident: "DAL659" }), null).title).toBe("DAL659");
   });
 
-  it("falls back to icao_hex when ident is unresolved -- same convention as FlightViewModal.tsx's header", () => {
-    expect(buildAircraftDetail(baseFlight({ ident: undefined }), null).title).toBe("A2C9E4");
-    expect(buildAircraftDetail(baseFlight({ ident: "" }), null).title).toBe("A2C9E4");
-    expect(buildAircraftDetail(baseFlight({ ident: "   " }), null).title).toBe("A2C9E4");
+  it("is blank (not the icao_hex) when ident is unresolved -- #1843, unlike FlightViewModal.tsx's header", () => {
+    expect(buildAircraftDetail(baseFlight({ ident: undefined }), null).title).toBeNull();
+    expect(buildAircraftDetail(baseFlight({ ident: "" }), null).title).toBeNull();
+    expect(buildAircraftDetail(baseFlight({ ident: "   " }), null).title).toBeNull();
   });
 
   it("omits registration when unknown, keeps hex", () => {
