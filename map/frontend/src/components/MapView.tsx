@@ -50,6 +50,7 @@ import {
   rangeRingsFeatureCollection,
 } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
+import { isWithinCenterTolerance } from "../lib/mapCentered";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
@@ -238,6 +239,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const isolateId = isolateEnabled ? selectedIcaoHex : null;
   const [followId, setFollowId] = useState<string | null>(null);
   const [tracePointsEnabled, setTracePointsEnabled] = useState(false);
+
+  // Whether the camera is currently centered on `config.center` -- drives
+  // the Center button's active/inactive styling (#1847, ControlsPanel's
+  // `recenterActive` prop). Recomputed on the map's `load` event (so the
+  // button reads active immediately on first render, matching the initial
+  // camera position set from `config.center` below) and on every
+  // subsequent `moveend` (see the mount effect's `updateIsCentered`) --
+  // deliberately *not* on `move`, which fires continuously (up to the
+  // frame rate) during every pan/zoom/animation. This project has real,
+  // repeated perf history around per-frame map-event costs (#1830/#1831's
+  // idle-redraw-loop fix, #1838's trail-diffing rework); `moveend` fires
+  // once when the camera actually settles, which is all this needs.
+  const [isCentered, setIsCentered] = useState(false);
 
   // Kept in a ref so the map's 'dragstart' listener (attached once, on
   // mount) always reads the *current* Follow target, not whatever it was
@@ -475,6 +489,27 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.on("move", throttledSyncScreenPositions);
     syncScreenPositions();
 
+    // #1847: recompute whether the camera is currently centered on
+    // `config.center`, projecting both points through the map's current
+    // transform (see lib/mapCentered.ts's isWithinCenterTolerance for why
+    // pixel distance rather than a lat/lon epsilon). `config.center` is
+    // captured directly from this effect's own closure -- it never changes
+    // while this component is mounted (see this effect's closing comment).
+    // Only attached/evaluated when a center is actually configured; when
+    // it isn't, the Center button stays disabled and there's nothing to be
+    // "centered on" (isCentered stays false, its initial value, and is
+    // simply never recomputed).
+    function updateIsCentered() {
+      if (!config.center) return;
+      const current = map.project(map.getCenter());
+      const target = map.project([config.center.longitude, config.center.latitude]);
+      setIsCentered(isWithinCenterTolerance(current, target));
+    }
+    if (config.center) {
+      map.on("moveend", updateIsCentered);
+    }
+
+
     map.on("load", () => {
       // Discover the basemap's own text-bearing layers once, before any of
       // SkyFollower's own overlay layers are added below -- so this list is
@@ -572,7 +607,29 @@ function MapViewInner({ config }: { config: AppConfig }) {
         paint: { "line-color": "#000000", "line-width": 14, "line-opacity": 0 },
       });
 
-      map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+      // #1844: capped well below the map's typical display zoom (initial
+      // zoom is 9 above; infoBoxOffset.ts's MAX_OFFSET_ZOOM/MIN_OFFSET_ZOOM
+      // (4-10) is this app's documented "normal" operating range). MapLibre's
+      // GeoJSON worker source rebuilds + re-uploads a tile's ENTIRE bucket
+      // whenever any feature inside it changes (geojson_source.ts's
+      // shouldReloadTile checks tile bounds against the diff's affected
+      // bounds, not per-feature) -- every ~500ms sync tick, so with History:
+      // All spreading aircraft across most visible tiles at the default
+      // zoom, most/all of them were getting invalidated and re-uploaded
+      // every tick, each firing its own render (see #1844's traced
+      // burst-then-idle FireAnimationFrame pattern). Capping maxzoom makes
+      // MapLibre "over-zoom" a single cached low-zoom tile instead --
+      // confirmed against the actual vendored `@maplibre/geojson-vt` +
+      // `covering_tiles.ts` behavior in #1844's PR description, not just
+      // reasoned about: at zoom 9 with maxzoom 8, a synthetic 150-aircraft
+      // scatter across a 200nmi scope collapsed from 106 invalidatable
+      // tiles to 36. This is *not* applied to TRAIL_SOURCE_ID, whose
+      // LineStrings would visibly simplify at a low maxzoom -- that source
+      // has its own tile-invalidation fix from #1840. Pure Point geometry
+      // (this source) has no simplification downside, only a small, fixed
+      // position-quantization error (measured ~10.8m worst-case at maxzoom
+      // 8 -- sub-pixel through zoom ~14, a few px only at extreme zoom-in).
+      map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION, maxzoom: 8 });
 
       // #1816 (follow-up to #1806/#1813): dilated-silhouette selection
       // outline for icon_scale < 1, replacing #1813's fixed circle-radius
@@ -857,6 +914,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
         AIRCRAFT_LAYER_ID,
       );
+
+      // The map's initial camera position is already `config.center` (see
+      // this effect's `center`/`zoom` above) -- the Center button must
+      // read active from first render, not only after an explicit click or
+      // the first subsequent `moveend` (#1847).
+      updateIsCentered();
 
       setMapLoaded(true);
     });
@@ -1218,6 +1281,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           rangeOutlineDisabled={!config.center}
           onRecenter={handleRecenter}
           recenterDisabled={!config.center}
+          recenterActive={isCentered}
           fullscreen={fullscreen}
           onToggleFullscreen={handleToggleFullscreen}
           fullscreenDisabled={!fullscreenSupported}
