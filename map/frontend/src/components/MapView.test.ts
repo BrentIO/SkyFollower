@@ -843,4 +843,25 @@ describe("map render loop (idle redraws)", () => {
   it("only re-sends Trace Points when the buffer reference changed", () => {
     expect(mapViewSource).toContain("if (tracePoints !== syncedTracePointsRef.current) {");
   });
+
+  // #1844: AIRCRAFT_SOURCE_ID's untuned default maxzoom (18) meant every
+  // visible tile touched by a moved aircraft got a full worker rebuild +
+  // GPU re-upload each ~500ms sync tick, one render per completed tile --
+  // the source of the traced burst-then-idle frame pattern. Capping it
+  // forces MapLibre to over-zoom a single cached low-zoom tile instead.
+  it("caps AIRCRAFT_SOURCE_ID's maxzoom well below the app's typical display zoom, to collapse per-tick tile invalidation", () => {
+    const addSourceIndex = mapViewSource.indexOf("map.addSource(AIRCRAFT_SOURCE_ID,");
+    expect(addSourceIndex).toBeGreaterThan(-1);
+    const callEnd = mapViewSource.indexOf(");", addSourceIndex);
+    const call = mapViewSource.slice(addSourceIndex, callEnd);
+    expect(call).toContain("maxzoom: 8");
+  });
+
+  it("does not cap TRAIL_SOURCE_ID's maxzoom -- LineStrings would visibly simplify at a low maxzoom (already fixed differently by #1840)", () => {
+    const addSourceIndex = mapViewSource.indexOf("map.addSource(TRAIL_SOURCE_ID,");
+    expect(addSourceIndex).toBeGreaterThan(-1);
+    const callEnd = mapViewSource.indexOf(");", addSourceIndex);
+    const call = mapViewSource.slice(addSourceIndex, callEnd);
+    expect(call).not.toContain("maxzoom");
+  });
 });

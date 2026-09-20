@@ -561,7 +561,29 @@ function MapViewInner({ config }: { config: AppConfig }) {
         paint: { "line-color": "#000000", "line-width": 14, "line-opacity": 0 },
       });
 
-      map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+      // #1844: capped well below the map's typical display zoom (initial
+      // zoom is 9 above; infoBoxOffset.ts's MAX_OFFSET_ZOOM/MIN_OFFSET_ZOOM
+      // (4-10) is this app's documented "normal" operating range). MapLibre's
+      // GeoJSON worker source rebuilds + re-uploads a tile's ENTIRE bucket
+      // whenever any feature inside it changes (geojson_source.ts's
+      // shouldReloadTile checks tile bounds against the diff's affected
+      // bounds, not per-feature) -- every ~500ms sync tick, so with History:
+      // All spreading aircraft across most visible tiles at the default
+      // zoom, most/all of them were getting invalidated and re-uploaded
+      // every tick, each firing its own render (see #1844's traced
+      // burst-then-idle FireAnimationFrame pattern). Capping maxzoom makes
+      // MapLibre "over-zoom" a single cached low-zoom tile instead --
+      // confirmed against the actual vendored `@maplibre/geojson-vt` +
+      // `covering_tiles.ts` behavior in #1844's PR description, not just
+      // reasoned about: at zoom 9 with maxzoom 8, a synthetic 150-aircraft
+      // scatter across a 200nmi scope collapsed from 106 invalidatable
+      // tiles to 36. This is *not* applied to TRAIL_SOURCE_ID, whose
+      // LineStrings would visibly simplify at a low maxzoom -- that source
+      // has its own tile-invalidation fix from #1840. Pure Point geometry
+      // (this source) has no simplification downside, only a small, fixed
+      // position-quantization error (measured ~10.8m worst-case at maxzoom
+      // 8 -- sub-pixel through zoom ~14, a few px only at extreme zoom-in).
+      map.addSource(AIRCRAFT_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION, maxzoom: 8 });
 
       // #1816 (follow-up to #1806/#1813): dilated-silhouette selection
       // outline for icon_scale < 1, replacing #1813's fixed circle-radius
