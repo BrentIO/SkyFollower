@@ -1420,6 +1420,87 @@ class TestPipeDecoderRegressionFixtures:
 
 
 # ---------------------------------------------------------------------------
+# #1880 — surface/taxi position (BDS 0,6) regression from #1841.
+#
+# #1841's PipeDecoder migration was correct for airborne (BDS 0,5) CPR --
+# global pairing needs no external reference at all -- but surface CPR has
+# no equivalent self-bootstrap: PipeDecoder's `surface_ref` constructor
+# argument supplies the nearby known point surface CPR is always resolved
+# relative to, and #1841 left it unset (`PipeDecoder()`, no args). Unset,
+# `_resolve_pair` silently drops every surface pair before it ever reaches
+# a result -- no exception, no log, no stat counter -- so surface positions
+# never decoded at all, with zero test coverage to catch it.
+#
+# EVEN_FRAME/ODD_FRAME below are real captured DF18 BDS 0,6 frames from the
+# jet1090 long_flight.csv corpus (ICAO 3A23FF, a taxiway at LFBO/Toulouse-
+# Blagnac) -- lifted directly from pyModeS 3.6.0's own test suite
+# (tests/test_pipe.py::TestPipeDecoderPairLogic::test_surface_pair_with_
+# surface_ref / test_surface_pair_without_surface_ref_skips_resolution),
+# not hand-crafted. The expected lat/lon and the LFBO reference coordinates
+# (43.62910, 1.36382) also come from that same upstream source (pyModeS's
+# shipped airport database, pyModeS/data/airports.py's "LFBO" entry) --
+# used here as a (lat, lon) tuple, matching how main.py wires the
+# configured receiver LATITUDE/LONGITUDE into `surface_ref` (a bare ICAO
+# code string is also accepted by pyModeS but isn't what this repo passes).
+# ---------------------------------------------------------------------------
+
+class TestSurfacePositionSurfaceRef:
+    ICAO_HEX = "3A23FF"
+    EVEN_FRAME = "903a23ff426a38565950432ebf95"
+    ODD_FRAME = "903a23ff426a4e65f7487a775d17"
+    LFBO_LAT, LFBO_LON = 43.62910, 1.36382
+
+    def _feed_pair_three_times(self, p, t0=0.0):
+        """Real surface traffic naturally repeats the same even/odd pair
+        many times a second; feeding it more than once (rather than just
+        once) is what lets PipeDecoder's bootstrap-cluster logic release a
+        position organically -- no private-state seeding needed, unlike
+        the airborne fixtures above which lean on _position_history/
+        _feed_clean_track for the same purpose. Returns the last result
+        (from the final odd frame)."""
+        result = None
+        for i in range(3):
+            p._decode_1090(InboundMessage(
+                raw=self.EVEN_FRAME, icao_hex=self.ICAO_HEX,
+                received_at=t0 + 2 * i, source="1090",
+            ))
+            result = p._decode_1090(InboundMessage(
+                raw=self.ODD_FRAME, icao_hex=self.ICAO_HEX,
+                received_at=t0 + 2 * i + 1, source="1090",
+            ))
+        return result
+
+    def test_before_fix_no_receiver_location_surface_position_never_decodes(self):
+        # #1841's regressed state: LATITUDE/LONGITUDE not configured ->
+        # surface_ref is None, same as the bare PipeDecoder() this issue
+        # replaces. The real surface pair never produces a position, no
+        # matter how many times it repeats.
+        p, _ = _make_processor()  # _minimal_config(): no latitude/longitude
+        assert p._pipe_decoder._surface_ref is None
+
+        result = self._feed_pair_three_times(p)
+
+        assert result is None or "latitude" not in result
+        assert p._pipe_decoder.stats["local_positions"] == 0
+
+    def test_after_fix_receiver_location_configured_surface_position_decodes(self):
+        # #1880's fix: LATITUDE/LONGITUDE configured wires into
+        # PipeDecoder's surface_ref, and the same real frames now resolve
+        # end-to-end through message-processor's actual decode pipeline
+        # (_decode_1090), not just a direct pyModeS.decode() call.
+        p, _ = _make_processor(
+            _minimal_config() | {"latitude": self.LFBO_LAT, "longitude": self.LFBO_LON}
+        )
+        assert p._pipe_decoder._surface_ref == (self.LFBO_LAT, self.LFBO_LON)
+
+        result = self._feed_pair_three_times(p)
+
+        assert result is not None
+        assert result["latitude"] == pytest.approx(43.62646, abs=0.001)
+        assert result["longitude"] == pytest.approx(1.37476, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
 # #1841 — brand-new-aircraft first-position latency, an intentional
 # behavior change: no fixed reference means a freshly-appeared ICAO's
 # first position is held until a CPR pair or bootstrap cluster resolves,
