@@ -245,6 +245,7 @@ def download_register(session: requests.Session) -> list[dict]:
     logger.info("Downloading Iceland Samgöngustofa aircraft register from %s", API_URL)
     response = session.get(API_URL, timeout=60)
     if response.status_code != 200:
+        logger.error("Response body (truncated): %s", response.text[:500])
         raise RuntimeError(f"Download failed with HTTP {response.status_code}")
 
     data = response.json()
@@ -436,7 +437,13 @@ def main() -> None:
     ttl = ENRICHMENT_TTL_SECONDS
 
     session = requests.Session()
-    session.headers.update({"User-Agent": "P5Software SkyFollower"})
+    # Content-Type is required here, not just descriptive -- island.is's
+    # Apollo Server gateway runs its default CSRF-prevention plugin, which
+    # rejects any request missing a Content-Type outside a small
+    # exemption list (or specific Apollo-only headers CloudFront strips
+    # before they reach the origin). Without this, every request gets a
+    # 400 regardless of the persisted-query hash's validity (#1905).
+    session.headers.update({"User-Agent": "P5Software SkyFollower", "Content-Type": "application/json"})
 
     status = "failure"
     records_imported = 0

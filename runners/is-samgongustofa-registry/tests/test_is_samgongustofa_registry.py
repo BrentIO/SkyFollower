@@ -412,3 +412,53 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/is-samgongustofa-registry"
+
+
+# ---------------------------------------------------------------------------
+# Request headers (#1905) -- island.is's Apollo Server gateway runs its
+# default CSRF-prevention plugin, which 400s any request missing a
+# Content-Type outside a small exemption list, regardless of whether the
+# persisted-query hash is valid. Asserted against the real requests.Session
+# main() builds, not a re-implementation of the header dict, so a
+# regression here fails this test rather than only surfacing in production.
+# ---------------------------------------------------------------------------
+
+class TestRequestHeaders:
+
+    def test_main_sets_content_type_header(self):
+        cfg = {"redis": {"host": "localhost", "port": 6379}, "mqtt": {"host": "localhost", "port": 1883}}
+        captured_session = {}
+
+        real_session_cls = _mod.requests.Session
+
+        def _capturing_session():
+            s = real_session_cls()
+            captured_session["session"] = s
+            return s
+
+        with patch("is_samgongustofa_registry_main.load_config", return_value=cfg), \
+             patch("is_samgongustofa_registry_main.configure_logging"), \
+             patch("is_samgongustofa_registry_main.build_redis_client", return_value=MagicMock()), \
+             patch("is_samgongustofa_registry_main.requests.Session", side_effect=_capturing_session), \
+             patch("is_samgongustofa_registry_main.download_register", return_value=[]), \
+             patch("is_samgongustofa_registry_main._ensure_search_index"), \
+             patch("is_samgongustofa_registry_main.write_to_redis", return_value=0), \
+             patch("is_samgongustofa_registry_main.publish_completion_stats"):
+            _mod.main()
+
+        session = captured_session["session"]
+        assert session.headers["Content-Type"] == "application/json"
+        assert session.headers["User-Agent"] == "P5Software SkyFollower"
+
+    def test_download_register_logs_response_body_on_failure(self, caplog):
+        mock_session = MagicMock()
+        mock_response = MagicMock(status_code=400, text="a" * 1000)
+        mock_session.get.return_value = mock_response
+
+        with pytest.raises(RuntimeError, match="HTTP 400"):
+            with caplog.at_level("ERROR"):
+                _mod.download_register(mock_session)
+
+        logged = "\n".join(caplog.messages)
+        assert "a" * 500 in logged
+        assert "a" * 501 not in logged
