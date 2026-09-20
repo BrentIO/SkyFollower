@@ -34,11 +34,11 @@ from typing import NamedTuple, Optional
 
 import paho.mqtt.client as mqtt
 import pika
-import pyModeS as pms
 import pyModeS978
 import redis as redis_lib
+from pyModeS import PipeDecoder
 
-from message_processor.route_resolver import haversine_nm, resolve_origin_destination
+from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
 from shared.redis_client import build_redis_client
@@ -198,14 +198,6 @@ _MIN_LONGITUDE = -180
 _MAX_LONGITUDE = 180
 _MIN_ALTITUDE_FT = -1500
 _MAX_ALTITUDE_FT = 65000
-
-# Diagnostic-only threshold for #1836: an implied groundspeed above this
-# between two consecutive accepted positions for the same aircraft is
-# physically impossible, so it's logged (not rejected) to capture real
-# examples of the mirrored/teleported 1090 CPR decodes #1835 is
-# investigating. Same value #1565 originally proposed for its deferred
-# reject-gate.
-_TELEPORT_DIAGNOSTIC_SPEED_KT = 1500
 
 
 def _short_hash(full: Optional[str]) -> str:
@@ -967,6 +959,25 @@ class MessageProcessor:
         self._message_latency = _TimeTracker()
         self._db_lock = threading.Lock()
 
+        # Single persistent, stateful 1090 decoder for the life of the
+        # process (#1841) -- replaces the old per-message
+        # pms.decode(raw, reference=<fixed receiver lat/lon>) call in
+        # _decode_1090. PipeDecoder tracks even/odd CPR pairs and a
+        # per-ICAO self-relative position reference internally, which is
+        # what fixes the "far from the fixed receiver reference" and
+        # "isolated CRC-lucky corrupt frame" teleport classes root-caused
+        # in #1835/#1836 -- see _decode_1090 for details. Not thread-safe
+        # (see PipeDecoder's own docstring), but that's fine here: every
+        # message is decoded synchronously on the single _consume_loop()
+        # thread that drives pika's start_consuming() -- no other thread
+        # ever calls into it. Left at pyModeS's own defaults throughout
+        # (pair_window/local_ref_window/motion_margin_km/eviction_ttl) --
+        # eviction_ttl's default of 300s happens to already match
+        # DEFAULT_FLIGHT_TTL_SECONDS below, but the two are independent
+        # and not wired together; no evidence yet that any of these need
+        # to diverge from pyModeS's defaults for this deployment.
+        self._pipe_decoder = PipeDecoder()
+
         # Redis-backed period counters (total_messages_processed,
         # registration_misses, operator_misses) -- pure in-memory
         # accumulation on the hot path, flushed to Redis only from the
@@ -1241,24 +1252,52 @@ class MessageProcessor:
 
     def _decode_1090(self, msg: InboundMessage) -> Optional[dict]:
         """
-        Decode a raw Mode-S hex frame via pyModeS 3.x's unified decode().
+        Decode a raw Mode-S hex frame via the shared, per-process
+        PipeDecoder (self._pipe_decoder) instead of a per-message
+        pms.decode(raw, reference=<fixed receiver lat/lon>) call (#1841).
         Pure field-presence extraction — no DF/typecode dispatch. Message
         types that don't populate any of the fields below (e.g. ACAS RA
         broadcasts) simply produce nothing and get dropped, with no need to
         enumerate which typecodes to skip.
+
+        PipeDecoder resolves airborne CPR positions itself, using
+        even/odd frame pairing plus a per-ICAO self-relative reference
+        (never this receiver's fixed lat/lon) -- see #1835/#1836 for the
+        two real teleport failure classes this replaces: a fixed
+        reference decoding the wrong CPR longitude zone for traffic past
+        ~180nm, and an isolated CRC-lucky corrupted frame producing a
+        phantom position. Both are now handled internally by
+        PipeDecoder's pairing/local-reference resolution and its
+        multi-point motion-consistency + bootstrap-cluster checks, so no
+        `reference=` is passed here at all. A side effect: a brand-new
+        ICAO's first position is held back (returns no latitude/longitude)
+        until a pair or a 3-candidate bootstrap cluster resolves, instead
+        of resolving instantly off a fixed reference -- see #1841.
         """
         raw = msg.raw
         if len(raw) < 14:
             return None
 
-        lat_cfg = self._cfg.get("latitude")
-        lon_cfg = self._cfg.get("longitude")
-        reference = (lat_cfg, lon_cfg) if lat_cfg is not None and lon_cfg is not None else None
-
+        # Read PipeDecoder's internal counters dict directly rather than
+        # through its public `stats` property, which returns a fresh
+        # dict(...) copy on every access -- this runs on every single
+        # decoded message, so two full-dict copies per call is overhead
+        # worth skipping. Relies on PipeDecoder's private `_stats` shape,
+        # acceptable here because pyModeS is pinned to an exact version
+        # (==3.6.0, requirements.txt) rather than a floating one.
+        rejected_before = self._pipe_decoder._stats["position_rejected"]
         try:
-            result = pms.decode(raw, reference=reference)
+            result = self._pipe_decoder.decode(raw, timestamp=msg.received_at)
         except Exception:
             return None
+        # True when *this* message is the one that tripped PipeDecoder's
+        # motion-consistency check (a resolved CPR pair/local decode that
+        # implied an impossible groundspeed from recent position history)
+        # -- distinct from a message simply being held pending a pair or
+        # bootstrap cluster, which never touches this counter. Surfaced to
+        # _update_flight below so it can log with a flight_id -- see
+        # #1836, which this supersedes.
+        position_rejected = self._pipe_decoder._stats["position_rejected"] > rejected_before
 
         # A real corruption check only for DF17/18 (crc_valid there is a
         # genuine crc==0 result). For DF5/20/21, pyModeS can't compute a
@@ -1352,6 +1391,11 @@ class MessageProcessor:
         if result.get("version") is not None:
             data["adsb_version"] = result["version"]
 
+        if position_rejected:
+            # Transient marker, not a real field -- popped and logged (with
+            # a flight_id) by _update_flight, then discarded. See #1841.
+            data["_position_rejected"] = True
+
         return data if len(data) > 1 else None
 
     def _decode_978(self, msg: InboundMessage) -> Optional[dict]:
@@ -1425,42 +1469,6 @@ class MessageProcessor:
 
         return data if len(data) > 1 else None
 
-    def _log_if_implausible_speed(
-        self, flight: Flight, data: dict, msg: InboundMessage
-    ) -> None:
-        """Diagnostic-only (#1836): warn when the incoming position implies
-        a physically impossible groundspeed from the last accepted position
-        for this aircraft. Does not alter `data` -- the position still
-        flows through to add_position()/archive/map/rules exactly as
-        today. Purely observational, to capture a real bad frame for
-        #1835's mirrored/teleported 1090 CPR decode investigation."""
-        prev = flight.positions[-1]
-        elapsed_s = msg.received_at - prev.timestamp
-        if elapsed_s <= 0:
-            # A same-or-earlier-timestamp redelivery/duplicate -- nothing
-            # meaningful to compute a speed from.
-            return
-
-        distance_nm = haversine_nm(
-            prev.latitude, prev.longitude, data["latitude"], data["longitude"]
-        )
-        implied_speed_kt = distance_nm / (elapsed_s / 3600.0)
-        if implied_speed_kt <= _TELEPORT_DIAGNOSTIC_SPEED_KT:
-            return
-
-        logger.warning(
-            "Implausible 1090 position for %s (ident=%s): implied speed "
-            "%.0f kt over %.3fs (%.1f nm) exceeds %d kt -- raw=%s "
-            "reference=(%s, %s) decoded=(%.5f, %.5f, alt=%s) "
-            "previous=(%.5f, %.5f) at %s",
-            data["icao_hex"], flight.ident or "unknown",
-            implied_speed_kt, elapsed_s, distance_nm,
-            _TELEPORT_DIAGNOSTIC_SPEED_KT, msg.raw,
-            self._cfg.get("latitude"), self._cfg.get("longitude"),
-            data["latitude"], data["longitude"], data.get("altitude"),
-            prev.latitude, prev.longitude, prev.timestamp,
-        )
-
     def _update_flight(self, data: dict, msg: InboundMessage) -> None:
         self._message_clock = max(self._message_clock, msg.received_at)
 
@@ -1493,9 +1501,21 @@ class MessageProcessor:
         flight.last_message = msg.received_at
         flight.total_messages += 1
 
+        if data.pop("_position_rejected", False):
+            # PipeDecoder's own motion-consistency check rejected this
+            # message's resolved CPR position as implausible relative to
+            # this aircraft's recent position history (superseded #1836's
+            # log-only implied-groundspeed diagnostic -- this is an actual
+            # rejection, not just an observation, so `data` never carried
+            # a latitude/longitude for this message in the first place).
+            logger.warning(
+                "PipeDecoder rejected an implausible 1090 CPR position for "
+                "%s (flight_id=%s, ident=%s): raw=%s -- see #1841",
+                data["icao_hex"], flight.flight_id, flight.ident or "unknown",
+                msg.raw,
+            )
+
         if "latitude" in data and "longitude" in data:
-            if flight.positions:
-                self._log_if_implausible_speed(flight, data, msg)
             flight.add_position(Position(
                 timestamp=msg.received_at,
                 latitude=data["latitude"],

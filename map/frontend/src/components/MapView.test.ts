@@ -352,6 +352,69 @@ describe("handleRecenter -- cancels Follow before recentering", () => {
   });
 });
 
+// Extracts the body of `function updateIsCentered() { ... }` -- same
+// rationale as handleRecenterBody above: it closes over the real
+// maplibregl.Map/config, so there's no jsdom/component-render setup to
+// mount it through.
+function updateIsCenteredBody(): string {
+  const marker = "function updateIsCentered() {";
+  const startIndex = mapViewSource.indexOf(marker);
+  if (startIndex === -1) throw new Error("Could not find updateIsCentered declaration");
+
+  const bodyOpenIndex = startIndex + marker.length - 1;
+  const bodyCloseIndex = findMatchingBrace(mapViewSource, bodyOpenIndex);
+  return mapViewSource.slice(bodyOpenIndex + 1, bodyCloseIndex);
+}
+
+describe("updateIsCentered / Center button active state (#1847)", () => {
+  const body = updateIsCenteredBody();
+
+  it("bails out without setting state when no center is configured", () => {
+    expect(body).toContain("if (!config.center) return;");
+  });
+
+  it("projects both the current camera center and the configured center through map.project()", () => {
+    expect(body).toContain("map.project(map.getCenter())");
+    expect(body).toContain("map.project([config.center.longitude, config.center.latitude])");
+  });
+
+  it("compares the two projected points via the pixel-distance-tolerance helper, not a lat/lon epsilon", () => {
+    expect(body).toContain("isWithinCenterTolerance(current, target)");
+    expect(mapViewSource).toContain('import { isWithinCenterTolerance } from "../lib/mapCentered"');
+  });
+
+  it("never reads the map's zoom -- centered is a pure position match, independent of zoom", () => {
+    expect(body).not.toMatch(/\bmap\.getZoom\(/);
+    expect(body).not.toContain("zoom");
+  });
+
+  it("is registered on 'moveend' only -- no new per-frame 'move' listener (this project's real perf history, #1830/#1831/#1838)", () => {
+    expect(mapViewSource).toContain('map.on("moveend", updateIsCentered)');
+    expect(mapViewSource).not.toMatch(/map\.on\(\s*"move"\s*,/);
+  });
+
+  it("only attaches the moveend listener when a center is actually configured", () => {
+    const registrationIndex = mapViewSource.indexOf('map.on("moveend", updateIsCentered)');
+    const guardIndex = mapViewSource.lastIndexOf("if (config.center) {", registrationIndex);
+    expect(guardIndex).toBeGreaterThan(-1);
+    // No unrelated code between the guard and the registration.
+    expect(mapViewSource.slice(guardIndex, registrationIndex)).not.toContain("}");
+  });
+
+  it("is also called once inside the 'load' handler, so the button reads active immediately on first render", () => {
+    const loadIndex = mapViewSource.indexOf('map.on("load", () => {');
+    const setMapLoadedIndex = mapViewSource.indexOf("setMapLoaded(true);");
+    const updateCallIndex = mapViewSource.indexOf("updateIsCentered();", loadIndex);
+    expect(loadIndex).toBeGreaterThan(-1);
+    expect(updateCallIndex).toBeGreaterThan(loadIndex);
+    expect(updateCallIndex).toBeLessThan(setMapLoadedIndex);
+  });
+
+  it("passes the resulting isCentered state through to ControlsPanel as recenterActive", () => {
+    expect(mapViewSource).toContain("recenterActive={isCentered}");
+  });
+});
+
 describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
   const paint = trailLayerPaint();
 
@@ -842,5 +905,26 @@ describe("map render loop (idle redraws)", () => {
 
   it("only re-sends Trace Points when the buffer reference changed", () => {
     expect(mapViewSource).toContain("if (tracePoints !== syncedTracePointsRef.current) {");
+  });
+
+  // #1844: AIRCRAFT_SOURCE_ID's untuned default maxzoom (18) meant every
+  // visible tile touched by a moved aircraft got a full worker rebuild +
+  // GPU re-upload each ~500ms sync tick, one render per completed tile --
+  // the source of the traced burst-then-idle frame pattern. Capping it
+  // forces MapLibre to over-zoom a single cached low-zoom tile instead.
+  it("caps AIRCRAFT_SOURCE_ID's maxzoom well below the app's typical display zoom, to collapse per-tick tile invalidation", () => {
+    const addSourceIndex = mapViewSource.indexOf("map.addSource(AIRCRAFT_SOURCE_ID,");
+    expect(addSourceIndex).toBeGreaterThan(-1);
+    const callEnd = mapViewSource.indexOf(");", addSourceIndex);
+    const call = mapViewSource.slice(addSourceIndex, callEnd);
+    expect(call).toContain("maxzoom: 8");
+  });
+
+  it("does not cap TRAIL_SOURCE_ID's maxzoom -- LineStrings would visibly simplify at a low maxzoom (already fixed differently by #1840)", () => {
+    const addSourceIndex = mapViewSource.indexOf("map.addSource(TRAIL_SOURCE_ID,");
+    expect(addSourceIndex).toBeGreaterThan(-1);
+    const callEnd = mapViewSource.indexOf(");", addSourceIndex);
+    const call = mapViewSource.slice(addSourceIndex, callEnd);
+    expect(call).not.toContain("maxzoom");
   });
 });
