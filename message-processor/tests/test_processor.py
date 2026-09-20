@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import math
 import os
 import signal
 import sqlite3
@@ -19,7 +20,11 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pika
+import pyModeS as pms
 import pytest
+from pyModeS._altcode import altcode_to_altitude
+from pyModeS._bits import crc_remainder
+from pyModeS.position._cpr import cprNL
 
 # message-processor/ can't be imported as a normal package -- the hyphen in
 # the directory name isn't a valid Python identifier -- so register it under
@@ -147,6 +152,102 @@ def _make_processor(
 
 
 # ---------------------------------------------------------------------------
+# Synthetic DF17 BDS 0,5 (airborne position) frame builder -- #1841.
+#
+# PipeDecoder's CPR pairing/bootstrap/motion-consistency logic needs a real
+# *track* (several timestamped messages), not a single hand-built result
+# dict, to exercise meaningfully. There's no encode-side API in pyModeS to
+# lean on (it's decode-only), so this builds real, valid-CRC DF17 airborne-
+# position frames from scratch: a standard CPR encoder (the inverse of
+# pyModeS.position._cpr's decode math, using its own cprNL() so zone
+# boundaries always agree), a brute-force search over the 12-bit AC
+# altitude field (small/cached -- only 4096 values, and only Q=1/25ft-step
+# codes decode to a given altitude, so "first match" is deterministic), and
+# pyModeS._bits.crc_remainder for the real PI field. Every frame this
+# produces is independently verified against pyModeS's own pms.decode() in
+# test_synthetic_airborne_frame_round_trips_through_real_pms_decode below,
+# same verification discipline as the hand-crafted frames earlier in this
+# file. Used to build the "clean track" context around the real captured
+# bad frames from #1835/#1836 in TestPipeDecoderRegressionFixtures.
+# ---------------------------------------------------------------------------
+
+_AC12_FOR_ALTITUDE_CACHE: dict[int, int] = {}
+
+
+def _ac12_for_altitude(alt_ft: int) -> int:
+    """Brute-force the 12-bit BDS 0,5 AC field that decodes to alt_ft.
+
+    Inverts pyModeS.decoder.bds.bds05.decode_bds05's altcode assembly
+    (12-bit AC -> 13-bit Gillham/linear altcode -> altcode_to_altitude()).
+    Only Q=1 (25ft linear) codes are considered -- adequate for any
+    round-number test altitude.
+    """
+    if alt_ft in _AC12_FOR_ALTITUDE_CACHE:
+        return _AC12_FOR_ALTITUDE_CACHE[alt_ft]
+    for ac12 in range(4096):
+        altcode = ((ac12 >> 6) << 7) | (ac12 & 0x3F)
+        if altcode_to_altitude(altcode) == alt_ft:
+            _AC12_FOR_ALTITUDE_CACHE[alt_ft] = ac12
+            return ac12
+    raise ValueError(f"no 12-bit AC field decodes to {alt_ft} ft")
+
+
+def _cpr_encode_airborne(lat: float, lon: float, fflag: int) -> tuple[int, int]:
+    """Encode (lat, lon) as 17-bit airborne CPR (lat_cpr, lon_cpr).
+
+    Standard DO-260B CPR encoding, using pyModeS's own cprNL() for the
+    longitude zone count so this always agrees with how pyModeS's decode
+    side will later interpret these same bits.
+    """
+    nb = 17
+    dlat = 360.0 / 60.0 if fflag == 0 else 360.0 / 59.0
+    yz = math.floor(2**nb * ((lat % dlat) / dlat) + 0.5) % (2**nb)
+    rlat = dlat * (yz / 2**nb + math.floor(lat / dlat))
+    nl = cprNL(rlat)
+    n = max(nl - fflag, 1)
+    dlon = 360.0 / n
+    xz = math.floor(2**nb * ((lon % dlon) / dlon) + 0.5) % (2**nb)
+    return yz, xz
+
+
+def _build_df17_airborne_position(
+    icao_hex: str, alt_ft: int, fflag: int, lat: float, lon: float, *, tc: int = 11,
+) -> str:
+    """Build a real, valid-CRC DF17 BDS 0,5 (airborne position) hex frame."""
+    icao = int(icao_hex, 16)
+    ac = _ac12_for_altitude(alt_ft)
+    cpr_lat, cpr_lon = _cpr_encode_airborne(lat, lon, fflag)
+
+    payload = 0
+    payload |= (tc & 0x1F) << 51
+    payload |= (0 & 0x3) << 49  # surveillance status
+    payload |= (0 & 0x1) << 48  # nic_b
+    payload |= (ac & 0xFFF) << 36
+    payload |= (0 & 0x1) << 35  # time-sync bit
+    payload |= (fflag & 0x1) << 34
+    payload |= (cpr_lat & 0x1FFFF) << 17
+    payload |= (cpr_lon & 0x1FFFF)
+
+    df, ca = 17, 5
+    first_88_bits = (df << 27 | ca << 24 | icao) << 56 | payload
+    pi = crc_remainder(first_88_bits << 24, 112)
+    return format((first_88_bits << 24) | pi, "028X")
+
+
+def test_synthetic_airborne_frame_round_trips_through_real_pms_decode():
+    """Independent verification (see module comment above) that
+    _build_df17_airborne_position produces a real, CRC-valid frame whose
+    fields pms.decode() reads back exactly as requested."""
+    raw = _build_df17_airborne_position("A4493F", 34000, fflag=1, lat=28.80629, lon=-80.95075)
+    r = pms.decode(raw)
+    assert r["crc_valid"] is True
+    assert r["icao"] == "A4493F"
+    assert r["bds"] == "0,5"
+    assert r["altitude"] == 34000
+    assert r["cpr_format"] == 1
+
+
+# ---------------------------------------------------------------------------
 # _decode_1090 (pyModeS 3.x migration)
 #
 # These hex frames are hand-crafted with pyModeS's own CRC function
@@ -195,20 +296,26 @@ class TestDecode1090:
         assert data["velocity"] == 250
         assert data["heading"] == 90.0
 
-    def test_position_with_configured_reference(self):
+    def test_configured_reference_no_longer_influences_position(self):
+        # #1841: PipeDecoder never consults the receiver's configured
+        # lat/lon for airborne CPR at all -- unlike the old
+        # pms.decode(raw, reference=...) call, a configured reference now
+        # has zero effect on a single position message. Altitude still
+        # decodes from a single message either way (no pairing needed).
         p, _ = _make_processor(_minimal_config() | {"latitude": 52.2572, "longitude": 3.9198})
         msg = InboundMessage(
             raw="8D40621D58C382D690C8AC2863A7",
             icao_hex="40621D", received_at=1.0, source="1090",
         )
         data = p._decode_1090(msg)
-        assert data["latitude"] == pytest.approx(52.2572, abs=0.001)
-        assert data["longitude"] == pytest.approx(3.9198, abs=0.001)
+        assert "latitude" not in data
+        assert "longitude" not in data
         assert data["altitude"] == 38000
 
     def test_position_without_configured_reference(self):
         # No latitude/longitude in config — altitude still decodes, but
-        # position can't be resolved from a single message without one.
+        # position can't be resolved from a single message without a CPR
+        # pair or an established bootstrap/local reference (#1841).
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="8D40621D58C382D690C8AC2863A7",
@@ -273,7 +380,7 @@ class TestDecode1090:
             raw="8DA8AE7F255054D42166710A1432",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "df": 17, "crc_valid": True, "typecode": 1, "category": 0,
             "callsign": "TEST1",
         }):
@@ -420,7 +527,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "squawk": "1200",
             "altitude": 70000,
@@ -436,7 +543,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "latitude": 95.0,
             "longitude": 10.0,
@@ -450,7 +557,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "latitude": 10.0,
             "longitude": 200.0,
@@ -469,7 +576,7 @@ class TestDecode1090:
             raw="A800030F992252CD453820AD87FB",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": None,
             "squawk": "1200",
             "latitude": 40.0,
@@ -489,7 +596,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "latitude": 40.64,
             "longitude": -73.78,
@@ -510,7 +617,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "latitude": 28.754805225436968,
             "longitude": -81.30412345678901,
@@ -526,7 +633,7 @@ class TestDecode1090:
             raw="8DA8AE7F00000000000000000000",
             icao_hex="A8AE7F", received_at=1.0, source="1090",
         )
-        with patch("message_processor.main.pms.decode", return_value={
+        with patch.object(p._pipe_decoder, "decode", return_value={
             "crc_valid": True,
             "track": 85.69553103949202,
         }):
@@ -1097,51 +1204,53 @@ class TestPositionVelocityDedup:
 
 
 # ---------------------------------------------------------------------------
-# #1836 — diagnostic-only logging of implausible-groundspeed 1090 positions
-# (a candidate mirrored/teleported CPR decode, see #1835). No rejection: the
-# position must still flow through to add_position()/data unchanged.
+# #1841 — _update_flight's replacement for #1836's log-only implied-
+# groundspeed diagnostic: PipeDecoder now actually *rejects* an implausible
+# CPR position (never reaches `data` as latitude/longitude at all) instead
+# of merely logging one that still got recorded. _decode_1090 surfaces the
+# rejection as a transient "_position_rejected" marker in `data`;
+# _update_flight pops it and logs with a flight_id.
 # ---------------------------------------------------------------------------
 
-class TestImplausibleSpeedDiagnosticLogging:
-    def test_teleported_second_position_logs_warning_first_does_not(self, caplog):
+class TestPositionRejectedLogging:
+    def test_rejected_flag_logs_warning_with_flight_id_and_is_not_persisted(self, caplog):
         p, _ = _make_processor()
         icao_hex = "A8AE7F"
         t = 1_700_000_000.0
 
         with caplog.at_level(logging.WARNING, logger="message_processor"):
             with p._db_lock:
-                # Plausible first sighting -- no prior position to compare
-                # against, must not warn.
                 p._update_flight(
                     {"icao_hex": icao_hex, "latitude": 28.4749, "longitude": -81.2797},
                     InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
                 )
                 assert caplog.text == ""
 
-                # ~217 nm away half a second later -- implies well over
-                # 1,000,000 kt, far past the 1500 kt diagnostic threshold.
-                bad_data = {"icao_hex": icao_hex, "latitude": 31.5526, "longitude": -79.1072}
+                # No latitude/longitude -- PipeDecoder already scrubbed
+                # them -- only the transient rejection marker.
+                rejected_data = {"icao_hex": icao_hex, "_position_rejected": True}
                 p._update_flight(
-                    bad_data,
+                    rejected_data,
                     InboundMessage(raw="8DA8AE7F" + "11" * 10, icao_hex=icao_hex,
                                     received_at=t + 0.5, source="1090"),
                 )
 
-        assert "Implausible 1090 position" in caplog.text
+        assert "PipeDecoder rejected" in caplog.text
         assert icao_hex in caplog.text
         assert "8DA8AE7F" in caplog.text  # raw frame present for offline replay
 
-        # Diagnostic-only: data dict untouched and the bad position was
-        # still recorded, exactly as it would be without this check.
-        assert bad_data["latitude"] == 31.5526
-        assert bad_data["longitude"] == -79.1072
+        # The marker is transient -- popped, not left sitting in `data`.
+        assert "_position_rejected" not in rejected_data
+
+        # The rejected message must not have created a second position --
+        # the first (good) sighting is still the only one on record.
         f = Flight(p._db)
         f.load(icao_hex)
-        assert len(f.positions) == 1  # limit=True load -- most recent only
-        assert f.positions[-1].latitude == 31.5526
-        assert f.positions[-1].longitude == -79.1072
+        assert len(f.positions) == 1
+        assert f.positions[-1].latitude == 28.4749
+        assert f.positions[-1].longitude == -81.2797
 
-    def test_plausible_second_position_does_not_log(self, caplog):
+    def test_no_rejection_flag_never_logs(self, caplog):
         p, _ = _make_processor()
         icao_hex = "A8AE7F"
         t = 1_700_000_000.0
@@ -1152,7 +1261,6 @@ class TestImplausibleSpeedDiagnosticLogging:
                     {"icao_hex": icao_hex, "latitude": 28.4749, "longitude": -81.2797},
                     InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t, source="1090"),
                 )
-                # A normal short hop consistent with cruise speed.
                 p._update_flight(
                     {"icao_hex": icao_hex, "latitude": 28.4756, "longitude": -81.2792},
                     InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=t + 5.0, source="1090"),
@@ -1160,21 +1268,173 @@ class TestImplausibleSpeedDiagnosticLogging:
 
         assert caplog.text == ""
 
-    def test_no_prior_position_never_logs_regardless_of_value(self, caplog):
-        """First sighting for an aircraft has nothing to compare against --
-        flight.positions is empty, so the check must not run at all (and
-        must not raise trying to look at flight.positions[-1])."""
+
+# ---------------------------------------------------------------------------
+# #1841 — PipeDecoder integration, verified against real captured fixtures
+# from #1835/#1836's diagnostic logging rather than synthetic data alone.
+#
+# C060C5's real frames are the exact bytes captured live (see #1841's issue
+# body); the A4493F/ABB5E2 bad frames are likewise the real captured bytes.
+# Since PipeDecoder needs a multi-message *track* to exercise its CPR
+# pairing/bootstrap/motion-consistency logic (not just one message), each
+# bad frame is preceded here by a synthetic-but-valid clean track built
+# with _build_df17_airborne_position (see that helper's docstring above)
+# rather than more real capture -- the issue's own text records the bad
+# frame's raw bytes but only the clean track's *decoded* lat/lon/alt, not
+# its raw bytes, so a synthetic (independently pms.decode()-verified)
+# stand-in is the closest available approximation of "enough clean context
+# to pass bootstrap," per the issue's own testing plan.
+# ---------------------------------------------------------------------------
+
+class TestPipeDecoderRegressionFixtures:
+    def test_c060c5_resolves_to_atlantic_not_gulf_coast(self):
+        # Real captured frames from #1841 (flight 06aaede5-640b-7519-8000-
+        # 923eef33355a): the old pms.decode(raw, reference=<fixed receiver
+        # lat/lon>) approach resolved these to two alternating Gulf-coast
+        # points ~7.1nm apart (~29.477,-84.760 / ~29.471,-84.624) because
+        # the aircraft's true position was outside the reference decode's
+        # 180nm validity radius. PipeDecoder's reference-free global
+        # pairing resolves the same bits to a single consistent Atlantic
+        # position instead (~29.47,-77.70) -- matching Brent's own
+        # assessment that this aircraft should have been over the
+        # Atlantic, not the Gulf panhandle.
         p, _ = _make_processor()
-        icao_hex = "A8AE7F"
+        icao_hex = "C060C5"
+        real_frames = [
+            ("8DC060C558CD8752DDFC11838345", 20.139030),  # odd
+            ("8DC060C558CD83A5B18D95A0187A", 23.170847),  # even
+            ("8DC060C558CD875187FC19DD4214", 24.181517),  # odd
+            ("8DC060C558CD83A5078D9801613B", 25.162990),  # even
+        ]
+        results = []
+        for raw, t in real_frames:
+            msg = InboundMessage(raw=raw, icao_hex=icao_hex, received_at=t, source="1090")
+            results.append(p._decode_1090(msg))
 
-        with caplog.at_level(logging.WARNING, logger="message_processor"):
-            with p._db_lock:
-                p._update_flight(
-                    {"icao_hex": icao_hex, "latitude": 89.9, "longitude": 179.9},
-                    InboundMessage(raw="00" * 14, icao_hex=icao_hex, received_at=1_700_000_000.0, source="1090"),
-                )
+        # None of the 4 real frames alone forms a 3-candidate bootstrap
+        # cluster (they yield exactly 2 pairwise pairs), so PipeDecoder
+        # correctly holds every one of them rather than ever emitting the
+        # wrong Gulf-coast point -- the concrete regression this issue
+        # fixes (100% of this flight's archived positions were wrong).
+        for data in results:
+            assert data is None or "latitude" not in data
 
-        assert caplog.text == ""
+        # A synthetic 5th/6th frame near the already-resolving Atlantic
+        # position completes a 3-candidate pairwise-consistent cluster,
+        # locking the bootstrap live -- this is the same real bit-level
+        # CPR pairing math the 4 real frames above feed into, just with
+        # one more corroborating pair so it releases without flush().
+        raw5 = _build_df17_airborne_position(icao_hex, 40000, fflag=0, lat=29.4660, lon=-77.7010)
+        raw6 = _build_df17_airborne_position(icao_hex, 40000, fflag=1, lat=29.4655, lon=-77.7005)
+        p._decode_1090(InboundMessage(raw=raw5, icao_hex=icao_hex, received_at=25.66, source="1090"))
+        data6 = p._decode_1090(InboundMessage(raw=raw6, icao_hex=icao_hex, received_at=26.17, source="1090"))
+
+        assert data6 is not None
+        assert data6["latitude"] == pytest.approx(29.4655, abs=0.01)
+        assert data6["longitude"] == pytest.approx(-77.7005, abs=0.01)
+        # Never the old Gulf-coast longitude band this flight actually
+        # archived (~-84.6 to ~-84.76).
+        assert data6["longitude"] > -80
+
+    def _feed_clean_track(self, p, icao_hex, lat0, lon0, alt_ft, lat_step, lon_step,
+                           count=6, dt=0.5, t0=0.0):
+        """Feed `count` synthetic clean airborne-position messages (see
+        _build_df17_airborne_position) to establish PipeDecoder's bootstrap
+        cluster + airborne position reference for icao_hex before a real
+        captured bad frame is replayed. Returns the timestamp after the
+        last clean message."""
+        t = t0
+        for i in range(count):
+            lat, lon = lat0 + lat_step * i, lon0 + lon_step * i
+            raw = _build_df17_airborne_position(icao_hex, alt_ft, fflag=i % 2, lat=lat, lon=lon)
+            p._decode_1090(InboundMessage(raw=raw, icao_hex=icao_hex, received_at=t, source="1090"))
+            t += dt
+        return t
+
+    def test_a4493f_bad_frame_rejected_not_teleported(self):
+        # Real captured bad frame from #1841 (flight 06aaedcb-ae53-7967-
+        # 8000-442cd2c7bfe1): crc_valid=True, but resolves ~146nm from the
+        # aircraft's established track (a CRC-lucky single-bit-corruption
+        # phantom, per the issue). A synthetic clean track first
+        # establishes PipeDecoder's bootstrap + position history/reference
+        # near the real track's own last-known position (28.806, -80.951)
+        # before the real bad frame is replayed.
+        p, _ = _make_processor()
+        icao_hex = "A4493F"
+        t_after_clean = self._feed_clean_track(
+            p, icao_hex, lat0=28.80629, lon0=-80.95075, alt_ft=34000,
+            lat_step=-0.0004, lon_step=0.00020,
+        )
+
+        bad_msg = InboundMessage(
+            raw="8DA4493F58AF85A51E1F2EF000CB", icao_hex=icao_hex,
+            received_at=t_after_clean + 0.44, source="1090",
+        )
+        data = p._decode_1090(bad_msg)
+        assert data is None or "latitude" not in data
+
+    def test_abb5e2_bad_frame_rejected_not_teleported(self):
+        # Real captured bad frame from #1841 (flight 06aaee2d-e6dd-76bd-
+        # 8000-141be2a0231e) -- same shape as A4493F above: crc_valid=True,
+        # ~146nm from an established clean track.
+        p, _ = _make_processor()
+        icao_hex = "ABB5E2"
+        t_after_clean = self._feed_clean_track(
+            p, icao_hex, lat0=28.55, lon0=-81.35, alt_ft=7375,
+            lat_step=0.0005, lon_step=0.0003,
+        )
+
+        bad_msg = InboundMessage(
+            raw="8DABB5E25829F25D735902FFE884", icao_hex=icao_hex,
+            received_at=t_after_clean + 0.52, source="1090",
+        )
+        data = p._decode_1090(bad_msg)
+        assert data is None or "latitude" not in data
+
+    def test_a4493f_recovers_on_the_next_clean_message(self):
+        # Matches the issue's own narrative: the message immediately after
+        # the bad one lands back on the extrapolated curve and resolves
+        # normally -- PipeDecoder's rejection doesn't poison the track.
+        p, _ = _make_processor()
+        icao_hex = "A4493F"
+        lat0, lon0, lat_step, lon_step = 28.80629, -80.95075, -0.0004, 0.00020
+        t_after_clean = self._feed_clean_track(
+            p, icao_hex, lat0=lat0, lon0=lon0, alt_ft=34000,
+            lat_step=lat_step, lon_step=lon_step,
+        )
+        bad_t = t_after_clean + 0.44
+        p._decode_1090(InboundMessage(
+            raw="8DA4493F58AF85A51E1F2EF000CB", icao_hex=icao_hex,
+            received_at=bad_t, source="1090",
+        ))
+
+        next_lat, next_lon = lat0 + lat_step * 6, lon0 + lon_step * 6
+        raw_next = _build_df17_airborne_position(icao_hex, 34000, fflag=0, lat=next_lat, lon=next_lon)
+        data = p._decode_1090(InboundMessage(
+            raw=raw_next, icao_hex=icao_hex, received_at=bad_t + 0.5, source="1090",
+        ))
+        assert data is not None
+        assert data["latitude"] == pytest.approx(next_lat, abs=0.01)
+        assert data["longitude"] == pytest.approx(next_lon, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# #1841 — brand-new-aircraft first-position latency, an intentional
+# behavior change: no fixed reference means a freshly-appeared ICAO's
+# first position is held until a CPR pair or bootstrap cluster resolves,
+# rather than resolving instantly off a fixed receiver reference.
+# ---------------------------------------------------------------------------
+
+class TestBrandNewAircraftPositionLatency:
+    def test_single_isolated_first_message_holds_position(self):
+        p, _ = _make_processor()
+        icao_hex = "A4493F"
+        raw = _build_df17_airborne_position(icao_hex, 34000, fflag=1, lat=28.80629, lon=-80.95075)
+        msg = InboundMessage(raw=raw, icao_hex=icao_hex, received_at=1.0, source="1090")
+
+        data = p._decode_1090(msg)
+
+        assert data is None or "latitude" not in data
 
 
 # ---------------------------------------------------------------------------
