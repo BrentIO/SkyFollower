@@ -17,14 +17,15 @@ describe("column definitions -- data-driven array, not hardcoded per-column JSX"
     expect(panelSource).not.toMatch(/<td[^>]*>\{row\.ident/);
   });
 
-  it("declares the seven required columns, in order: Flag, Ident, Registration, Type, Desc, Altitude, Distance", () => {
-    const keys = ["flag", "ident", "registration", "type", "desc", "altitude", "distance"];
+  it("declares the eight required columns, in order: Flag, Ident, Tags, Registration, Type, Desc, Altitude, Distance", () => {
+    const keys = ["flag", "ident", "tags", "registration", "type", "desc", "altitude", "distance"];
     const indices = keys.map((key) => panelSource.indexOf(`key: "${key}"`));
     for (const index of indices) expect(index).toBeGreaterThan(-1);
     for (let i = 1; i < indices.length; i++) {
       expect(indices[i]).toBeGreaterThan(indices[i - 1]);
     }
     expect(panelSource).toContain('header: "Ident"');
+    expect(panelSource).toContain('header: "Tags"');
     expect(panelSource).toContain('header: "Registration"');
     expect(panelSource).toContain('header: "Type"');
     expect(panelSource).toContain('header: "Desc"');
@@ -78,30 +79,72 @@ describe("Flag column -- country-of-registration (#1848)", () => {
   });
 });
 
-describe("Ident column -- Military/Special Livery pills", () => {
-  it("reuses AircraftDetailPanel's BADGE_BASE/BADGE_CLASSES convention", () => {
-    expect(panelSource).toContain('import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel"');
-    expect(panelSource).toContain("${BADGE_BASE} ${BADGE_CLASSES.green}");
-    expect(panelSource).toContain("${BADGE_BASE} ${BADGE_CLASSES.yellow}");
-  });
-
-  it("renders the ident text before military (green M) before specialLivery (yellow S)", () => {
+describe("Ident column -- plain identifier text only (#1881: badges moved to Tags)", () => {
+  it("renders just row.ident, with no Military/Special-livery badge JSX", () => {
     const identColumnStart = panelSource.indexOf('key: "ident"');
-    const identColumnEnd = panelSource.indexOf('key: "registration"');
+    const identColumnEnd = panelSource.indexOf('key: "tags"');
+    expect(identColumnStart).toBeGreaterThan(-1);
+    expect(identColumnEnd).toBeGreaterThan(identColumnStart);
     const callSite = panelSource.slice(identColumnStart, identColumnEnd);
-    const identTextIndex = callSite.indexOf("row.ident ?? ");
-    const militaryIndex = callSite.indexOf("row.military");
-    const liveryIndex = callSite.indexOf("row.specialLivery");
-    expect(identTextIndex).toBeGreaterThan(-1);
-    expect(militaryIndex).toBeGreaterThan(identTextIndex);
-    expect(liveryIndex).toBeGreaterThan(militaryIndex);
+    expect(callSite).toContain('render: (row) => row.ident ?? "",');
+    expect(callSite).not.toContain("row.military");
+    expect(callSite).not.toContain("row.specialLivery");
   });
 
-  it("sorts Ident on the plain ident string only -- the pills never participate", () => {
+  it("sorts Ident on the plain ident string only", () => {
     const identColumnStart = panelSource.indexOf('key: "ident"');
-    const identColumnEnd = panelSource.indexOf('key: "registration"');
+    const identColumnEnd = panelSource.indexOf('key: "tags"');
     const callSite = panelSource.slice(identColumnStart, identColumnEnd);
     expect(callSite).toContain("sortKey: (row) => row.ident,");
+  });
+});
+
+describe("Tags column -- Military/Special Livery badges with hover tooltips (#1881)", () => {
+  function tagsColumnSource(): string {
+    const tagsColumnStart = panelSource.indexOf('key: "tags"');
+    const tagsColumnEnd = panelSource.indexOf('key: "registration"');
+    expect(tagsColumnStart).toBeGreaterThan(-1);
+    expect(tagsColumnEnd).toBeGreaterThan(tagsColumnStart);
+    return panelSource.slice(tagsColumnStart, tagsColumnEnd);
+  }
+
+  it("is positioned immediately after Ident, with header 'Tags'", () => {
+    const identColumnStart = panelSource.indexOf('key: "ident"');
+    const tagsColumnStart = panelSource.indexOf('key: "tags"');
+    const registrationColumnStart = panelSource.indexOf('key: "registration"');
+    expect(tagsColumnStart).toBeGreaterThan(identColumnStart);
+    expect(registrationColumnStart).toBeGreaterThan(tagsColumnStart);
+    expect(tagsColumnSource()).toContain('header: "Tags"');
+  });
+
+  it("reuses AircraftDetailPanel's BADGE_BASE/BADGE_CLASSES convention", () => {
+    expect(panelSource).toContain('import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel"');
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain("${BADGE_BASE} ${BADGE_CLASSES.green}");
+    expect(callSite).toContain("${BADGE_BASE} ${BADGE_CLASSES.yellow}");
+  });
+
+  it("renders the military badge with a 'Military' tooltip", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain('row.military && <span title="Military"');
+  });
+
+  it("renders the special-livery badge with the livery name as its tooltip", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain("row.specialLivery != null");
+    expect(callSite).toContain("title={row.specialLivery}");
+  });
+
+  it("ranks sortKey so special-livery rows sort before military-only rows, before untagged rows", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain(
+      "sortKey: (row) => (row.specialLivery != null ? 0 : row.military ? 1 : 2),",
+    );
+  });
+
+  it("applies a narrow fixed width so two badges fit without wrapping", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain('className: "w-16"');
   });
 });
 
