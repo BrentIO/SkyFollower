@@ -6,7 +6,7 @@ Downloads the NZ CAA aircraft register CSV, normalises fields into the
 aircraft:registry:{hex} enrichment shape, writes to Redis with a 14-day TTL,
 publishes MQTT completion stats, then exits.
 
-Data source: https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv
+Data source: https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website.csv
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from shared.country_flags import country_flag
 
 logger = logging.getLogger("nz-caa-registry")
 
-DOWNLOAD_URL = "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv"
+DOWNLOAD_URL = "https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website.csv"
 MQTT_ROOT = "SkyFollower/runner/nz-caa-registry"
 
 # ---------------------------------------------------------------------------
