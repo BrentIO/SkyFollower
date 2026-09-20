@@ -635,7 +635,9 @@ Python backend the same way `management-ui/frontend` sits alongside
 `management-ui/backend`, but unlike that pairing (frontend built into an
 nginx html root, served on its own port), this frontend is built and
 served by the `map` image itself: `map/Dockerfile`'s `frontend-build`
-stage runs `npm ci && npm run build`, and the resulting `frontend/dist/`
+stage runs `npm install --package-lock-only && npm ci && npm run build`
+(the `--package-lock-only` step exists to heal a specific class of lockfile
+corruption -- see the `npm install` note below), and the resulting `frontend/dist/`
 is copied into the final Python-stage image, where `map/main.py` mounts it
 at `/map` (FastAPI/Starlette `StaticFiles`, with SPA-fallback routing so a
 deep link/refresh under `/map/*` doesn't 404). `GET /api/flights` and
@@ -761,6 +763,34 @@ npm test          # vitest -- aircraftState/featureCollections lifecycle rules, 
 
 Every one of the four scripts above (`dev`, `build`, `typecheck`, `test`)
 first runs `generate:shapes` -- see below.
+
+**`npm install` here can rewrite `package-lock.json` in a way that looks like
+harmless noise but breaks the Docker build.** If your local `npm` predates
+11.6.3, running `npm install` prunes `@tailwindcss/oxide-wasm32-wasi`'s
+bundled optional sub-dependencies (`@emnapi/core`, `@emnapi/runtime`,
+`@emnapi/wasi-threads`, `tslib`) out of the lockfile, because that platform
+variant isn't needed locally (macOS/Windows, or any non-`wasm32-wasi`
+target). This is an npm CLI bug -- incorrect peer+optional dependency-flag
+calculation, [npm/cli#8535](https://github.com/npm/cli/issues/8535), fixed
+by [npm/cli#8645](https://github.com/npm/cli/pull/8645) in npm 11.6.3 --
+not a project misconfiguration. If that pruned lockfile then reaches
+`map/Dockerfile`'s `npm ci` (locally via `git diff`-invisible-looking noise
+that gets committed, or just left sitting in a worktree when you later run
+`docker build`), the build fails with a misleading dump of
+workspaces/`--install-links` usage text instead of the real
+`Missing: @emnapi/core@... from lock file` reason -- see GitHub issue
+[#1872](https://github.com/BrentIO/SkyFollower/issues/1872) for the full
+investigation. `map/Dockerfile` runs `npm install --package-lock-only`
+before `npm ci` specifically to heal this: it's a no-op against an
+already-correct lockfile and repairs a pruned one, using the image's own
+npm (`node:26-slim` ships an unaffected version) regardless of what
+version generated the lockfile locally. If you hit this and want to
+double-check locally: `npm --version` (want >= 11.6.3) and
+`git diff map/frontend/package-lock.json` after an `npm install` --
+`libc` fields disappearing on native binary optional deps is normal
+cosmetic noise from npm 11.6.3 itself and is harmless; whole
+`node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/...` entries
+disappearing is the bug.
 
 ### Aircraft silhouettes
 
