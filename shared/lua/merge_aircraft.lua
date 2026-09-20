@@ -33,7 +33,7 @@
 --      (bitmask, significant_bitmask) pair. Checked in the table's own
 --      stored order (pre-sorted descending by significant_bitmask), taking
 --      the first row where (icao_hex AND significant_bitmask) == bitmask —
---      the standard VRS/tar1090-style longest-prefix-bitmask match. The
+--      the standard VRS-style longest-prefix-bitmask match. The
 --      table's CountryISO2 "ZZ" catch-all rows (the two entries that between
 --      them cover the whole address space) are dropped at import time, so
 --      "no row matches" is the genuine, expected outcome for an
