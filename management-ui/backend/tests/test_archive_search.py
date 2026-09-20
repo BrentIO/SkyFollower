@@ -1839,6 +1839,38 @@ class TestFlightView:
         # Nearest-match extrapolation: only one velocity sample, before both positions.
         assert flight_path["properties"]["coordSpeeds"] == [400, 400]
 
+    def test_country_and_country_code_present_when_resolved(self, client, fake_s3):
+        s3_key = "flights/2026/07/31/uuid9.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "3C5C46", "country": "Germany", "country_code": "DE"},
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["country"] == "Germany"
+        assert body["country_code"] == "DE"
+
+    def test_country_and_country_code_absent_when_not_resolved(self, client, fake_s3):
+        """Archives predating the country field (or hexes with no resolvable
+        country) must omit it, not render a null-shaped placeholder."""
+        s3_key = "flights/2026/07/31/uuid10.json.gz"
+        token = _put_flight_record(fake_s3, s3_key, {
+            "aircraft": {"icao_hex": "A8AE7F"},
+            "first_message": "2026-07-31T12:00:00Z",
+            "last_message": "2026-07-31T12:05:00Z",
+            "total_messages": 3,
+        })
+
+        resp = client.get(f"/api/archive/flights/{token}/view")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["country"] is None
+        assert body["country_code"] is None
+
     def test_flight_path_absent_when_fewer_than_two_positions(self, client, fake_s3):
         s3_key = "flights/2026/07/31/uuid8.json.gz"
         token = _put_flight_record(fake_s3, s3_key, {

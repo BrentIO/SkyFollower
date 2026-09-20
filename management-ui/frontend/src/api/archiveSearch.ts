@@ -54,6 +54,8 @@ export interface FlightView {
   ident?: string;
   registration?: string;
   icao_hex: string;
+  country?: string;
+  country_code?: string;
   squawk?: string;
   military?: boolean;
   type_designator?: string;

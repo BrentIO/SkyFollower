@@ -2898,6 +2898,8 @@ class FlightView(BaseModel):
     ident: Optional[str] = None
     registration: Optional[str] = None
     icao_hex: str
+    country: Optional[str] = None        # aircraft's resolved country of registration, distinct from registrant/operator country
+    country_code: Optional[str] = None   # ISO 3166-1 alpha-2, for client-side flag rendering
     squawk: Optional[str] = None
     military: Optional[bool] = None
     type_designator: Optional[str] = None
@@ -2939,6 +2941,8 @@ def get_archive_flight_view(token: str):
         ident=flight.get("ident"),
         registration=aircraft.get("registration"),
         icao_hex=aircraft["icao_hex"],
+        country=aircraft.get("country"),
+        country_code=aircraft.get("country_code"),
         squawk=flight.get("squawk"),
         military=aircraft.get("military"),
         type_designator=aircraft.get("type_designator"),
