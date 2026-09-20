@@ -16,8 +16,8 @@ CLAUDE.md
 *.local.json
 *.local.yaml
 
-# Every real, deployed config/{component}/* file (settings.json,
-# rabbitmq.conf, etc.) carries live credentials or
+# Every real, deployed config/{component}/* file (rabbitmq.conf,
+# phonic_overrides.json, etc.) carries live credentials or
 # host-specific values -- only its checked-in *.example template belongs
 # in the repo. Wildcarded, not enumerated per filename, so a new
 # component's config never needs a line added here (matches docs/.gitignore's
