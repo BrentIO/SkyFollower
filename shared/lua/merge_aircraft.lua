@@ -6,7 +6,14 @@
 --
 -- ARGV[1] : icao_hex (e.g. "A8AE7F")
 --
--- Returns nil only if all three keys are absent for the given icao_hex.
+-- Returns nil if all three keys are absent for the given icao_hex AND the
+-- hex does not resolve via the ICAO hex-range table either (see
+-- apply_country_resolution below) -- otherwise, with all three keys
+-- absent but a hex-range match, a minimal {icao_hex, country, country_code,
+-- data_sources: ["icao-hex-range"]} record is returned instead of nil, so a
+-- hex Mictronics/no registry/no livery has ever heard of but that still
+-- falls in a known country's ICAO address block resolves to something
+-- rather than "No aircraft data found".
 -- Fields win in this priority order, lowest to highest: mictronics,
 -- registry, livery (same semantics as the old deep-merge-on-write pattern,
 -- but performed server-side at read time). In practice registry and livery
@@ -171,7 +178,15 @@ local registry_raw   = redis.call('JSON.GET', 'aircraft:registry:'   .. icao_hex
 local livery_raw     = redis.call('JSON.GET', 'aircraft:livery:'     .. icao_hex)
 
 if not mictronics_raw and not registry_raw and not livery_raw then
-    return nil
+    -- Nothing from any of the three sources -- the hex-range table is the
+    -- only thing left that could still know anything about this hex.
+    local hex_range_only = {icao_hex = icao_hex}
+    apply_country_resolution(hex_range_only, icao_hex)
+    if is_absent(hex_range_only.country_code) then
+        return nil
+    end
+    hex_range_only.data_sources = {'icao-hex-range'}
+    return cjson.encode(hex_range_only)
 end
 
 local mictronics_doc = mictronics_raw and cjson.decode(mictronics_raw) or nil

@@ -550,3 +550,84 @@ class TestCountryResolution:
         result = _merge(redis_client, merge_sha, broad_block_hex)
         assert result["military"] is False
         assert result["country_code"] == "BB"
+
+
+class TestHexRangeOnlyRecord:
+    """Covers #1889 -- when mictronics/registry/livery are all absent, the
+    hex-range table (via apply_country_resolution) is the last remaining
+    source of anything. A hex that resolves there must yield a minimal
+    synthesized record instead of nil, so /api/aircraft returns 200 with a
+    country guess instead of a 404 for a hex nothing else has ever heard
+    of but that still falls in a known ICAO address block."""
+
+    def test_hex_range_match_with_all_three_keys_absent_returns_minimal_record(
+        self, redis_client, merge_sha, broad_block_hex, code_blocks_and_countries,
+    ):
+        result = _merge(redis_client, merge_sha, broad_block_hex)
+        assert result == {
+            "icao_hex": broad_block_hex,
+            "country_code": "BB",
+            "country": "Test Country B",
+            "data_sources": ["icao-hex-range"],
+        }
+
+    def test_no_hex_range_match_with_all_three_keys_absent_still_returns_none(
+        self, redis_client, merge_sha, icao_hex,
+    ):
+        """No lookup:icao-code-blocks key at all (e.g. vrs-standing-data has
+        never run) -- unchanged pre-#1889 behaviour: nil, not a synthesized
+        record with no country in it."""
+        redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
+        assert _merge(redis_client, merge_sha, icao_hex) is None
+
+    def test_hex_range_table_present_but_hex_unallocated_with_all_three_keys_absent_returns_none(
+        self, redis_client, merge_sha, icao_hex,
+    ):
+        """The code-block table's own no-match case, combined with all
+        three keys absent -- must still be nil, not a record with a missing
+        country_code."""
+        redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
+            {"bitmask": 0x000000, "significant_bitmask": 0xFFFFFF, "country_code": "ZZ"},
+        ])
+        redis_client.json().set(_COUNTRIES_KEY, "$", {"ZZ": "Unknown or unassigned country"})
+        try:
+            assert _merge(redis_client, merge_sha, icao_hex) is None
+        finally:
+            redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
+
+    def test_hex_range_match_with_no_countries_entry_still_returns_record_without_country_name(
+        self, redis_client, merge_sha, icao_hex,
+    ):
+        """A hex-range match whose country_code has no row in
+        lookup:icao-countries must still synthesize the record (country_code
+        + data_sources), just without a `country` name -- same "leave the
+        name unresolved rather than invent one" rule apply_country_resolution
+        already applies to the enrichment path."""
+        redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
+            {"bitmask": 0xFFFE00, "significant_bitmask": 0xFFFF00, "country_code": "CC"},
+        ])
+        redis_client.json().set(_COUNTRIES_KEY, "$", {"AA": "Test Country A"})
+        try:
+            result = _merge(redis_client, merge_sha, icao_hex)
+            assert result == {
+                "icao_hex": icao_hex,
+                "country_code": "CC",
+                "data_sources": ["icao-hex-range"],
+            }
+        finally:
+            redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
+
+    def test_any_real_data_present_is_unaffected_even_with_no_hex_range_match(
+        self, redis_client, merge_sha, icao_hex,
+    ):
+        """A hex with real Mictronics data (and no hex-range match at all)
+        must merge exactly as before -- proving this change is additive to
+        the all-absent case only, not a change to the normal enrichment
+        path."""
+        redis_client.json().set(
+            f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics", "registration": "N659DL"},
+        )
+        result = _merge(redis_client, merge_sha, icao_hex)
+        assert result["registration"] == "N659DL"
+        assert result["data_sources"] == ["mictronics"]
+        assert "country_code" not in result
