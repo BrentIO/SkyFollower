@@ -56,6 +56,18 @@ const COORD_PRECISION = 1;
 // pick up a cutout automatically.
 const ACCENT_CUTOUT_RATIO_THRESHOLD = 2;
 
+// EC35's Accent layer is the main-rotor blade cross -- for every other
+// vendored shape the Accent layer is either absent or a thin/cosmetic line,
+// but EC35's crosses the entire fuselage. Carved out as a "destination-out"
+// cutout at icon scale (~70px), it doesn't sit cleanly beside the fuselage:
+// it fragments the cabin into an unrecognizable lattice, reading as small
+// and distorted rather than a clean helicopter silhouette. EC35 clears
+// ACCENT_CUTOUT_RATIO_THRESHOLD (ratio ~2.5) same as BALL, but unlike BALL's
+// gore lines, its Accent geometry doesn't hold up as a cutout -- so it's
+// excluded here rather than by raising the threshold (which would also
+// affect other shapes).
+const ACCENT_CUTOUT_SKIP_KEYS = new Set(["EC35"]);
+
 // Fallback stroke width (source units, in the SVG's 80x80-unit space) for
 // an Accent path whose `style` has no parseable `stroke-width` -- shouldn't
 // happen for the vendored set, but keeps generation from throwing on a
@@ -189,7 +201,7 @@ for (const file of files) {
   let accentD;
   let accentStrokeWidth;
   const rawAccentD = pathTags[1]?.match(/\bd="([^"]+)"/)?.[1];
-  if (rawAccentD) {
+  if (rawAccentD && !ACCENT_CUTOUT_SKIP_KEYS.has(shapeKey(file))) {
     let ratio;
     try {
       const outlineLength = pathLength(rawD);
@@ -248,6 +260,11 @@ const COMPACT_SILHOUETTE_KEYS = new Set([
 for (const key of COMPACT_SILHOUETTE_KEYS) {
   if (!shapes[key]) {
     throw new Error(`COMPACT_SILHOUETTE_KEYS references unknown shape key ${JSON.stringify(key)}`);
+  }
+}
+for (const key of ACCENT_CUTOUT_SKIP_KEYS) {
+  if (!shapes[key]) {
+    throw new Error(`ACCENT_CUTOUT_SKIP_KEYS references unknown shape key ${JSON.stringify(key)}`);
   }
 }
 

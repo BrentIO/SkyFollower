@@ -136,12 +136,15 @@ describe("compact/simple-silhouette shape scale floor", () => {
 
 describe("accent-detail icon cutouts (ACCENT_CUTOUT_RATIO_THRESHOLD)", () => {
   // Mirrors ACCENT_CUTOUT_RATIO_THRESHOLD = 2 in
-  // scripts/generate-aircraft-shapes.mjs, lowered from an original 5: BALL
-  // (balloon) was the sole outlier at threshold 5; lowering to 2
-  // additionally picks up EC35 (helicopter), the next-highest ratio (~2.5)
-  // with a real remaining gap above the continuous decay below it. Keep
-  // this list in sync with the generator script's own threshold.
-  const SHAPES_WITH_ACCENT_CUTOUT = ["BALL", "EC35"];
+  // scripts/generate-aircraft-shapes.mjs: BALL (balloon) is the sole shape
+  // whose Accent/outline ratio crosses the threshold and still renders as a
+  // cutout. EC35 also crosses the ratio threshold (~2.5) but is explicitly
+  // excluded via ACCENT_CUTOUT_SKIP_KEYS in the generator -- its Accent
+  // layer is a rotor-blade cross spanning the whole fuselage, which
+  // fragments the cabin into an unrecognizable lattice as a cutout rather
+  // than reading as detail (see #1884). Keep this list in sync with the
+  // generator script's own threshold/skip-list.
+  const SHAPES_WITH_ACCENT_CUTOUT = ["BALL"];
 
   it("gives exactly the expected shapes an accentD cutout, no others", () => {
     for (const key of SHAPES_WITH_ACCENT_CUTOUT) {
@@ -157,8 +160,8 @@ describe("accent-detail icon cutouts (ACCENT_CUTOUT_RATIO_THRESHOLD)", () => {
     expect(AIRCRAFT_SHAPES.BALL.accentStrokeWidth).toBeGreaterThan(0);
   });
 
-  it("EC35 gets a real accentD path and a parsed positive stroke width", () => {
-    expect(AIRCRAFT_SHAPES.EC35.accentD).toBeTruthy();
-    expect(AIRCRAFT_SHAPES.EC35.accentStrokeWidth).toBeGreaterThan(0);
+  it("EC35 renders as a plain filled silhouette, no accentD cutout", () => {
+    expect(AIRCRAFT_SHAPES.EC35.accentD).toBeUndefined();
+    expect(AIRCRAFT_SHAPES.EC35.accentStrokeWidth).toBeUndefined();
   });
 });
