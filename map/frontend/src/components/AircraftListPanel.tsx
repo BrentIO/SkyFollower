@@ -35,7 +35,7 @@ interface AircraftListColumn {
 // Special Livery pill" section.
 //
 // The country-of-registration flag (#1848) is its own column, to the left
-// of Ident -- tar1090/VRS-style tools that already do this hex-range
+// of Ident -- VRS-style tools that already do this hex-range
 // lookup conventionally lead each row with the flag, but as a distinct
 // column rather than folded into Ident's cell so it lines up in its own
 // vertical strip instead of shifting per-row with ident text width.
@@ -172,11 +172,11 @@ export interface AircraftListPanelProps {
 }
 
 // Right-side flyout: a sortable, columnar list of every currently-tracked,
-// non-hidden aircraft (tar1090-style) -- see the issue this implements for
-// the full design. Opens/closes via its own edge-tab handle, vertically
-// centered on the viewport (not top-aligned like tar1090's own handle) so
-// it can never collide with ControlsPanel's top-right icon column/status
-// dot, both of which are anchored top-right.
+// non-hidden aircraft -- see the issue this implements for the full
+// design. Opens/closes via its own edge-tab handle, vertically centered
+// on the viewport (not top-aligned) so it can never collide with
+// ControlsPanel's top-right icon column/status dot, both of which are
+// anchored top-right.
 //
 // A real flex sibling of the map area (see MapView.tsx's root layout), not
 // an absolute overlay on top of it -- this component's own box width is
@@ -306,8 +306,8 @@ export function AircraftListPanel({
       style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       {/* Tab stays vertically centered within the drawer's full height --
-          not top-aligned like tar1090's own handle -- so it can never
-          collide with ControlsPanel's top-right icon column/status dot.
+          not top-aligned -- so it can never collide with ControlsPanel's
+          top-right icon column/status dot.
           `bg-white`/`dark:bg-slate-900` here (not just on the button below)
           is load-bearing, not decorative (#1803): this wrapper's own
           zIndex (from the outer div above) only wins the paint order where

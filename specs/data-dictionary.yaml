@@ -3671,7 +3671,7 @@ records:
           exact -- the runner IS that country's own CAA); otherwise resolved
           from icao_hex against the ICAO 24-bit (Mode S) address allocation
           table, the same longest-prefix-bitmask matching algorithm
-          dump1090/VRS/tar1090-family tools use. Computed by
+          dump1090/VRS-family tools use. Computed by
           shared/lua/merge_aircraft.lua at read time, never written back to
           any Redis key (#1848).
         persisted: true

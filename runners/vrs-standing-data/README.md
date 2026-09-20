@@ -27,8 +27,8 @@ aircraft, airline, and airport CSVs, but this runner does not import those:
 
 Code-blocks/countries were a distinct oversight from this runner's original
 routes-only scoping, not a deliberate exclusion — see #1848. They're the
-standard ICAO 24-bit (Mode S) address allocation table the dump1090/VRS/
-tar1090 family of tools uses to resolve an aircraft's country of
+standard ICAO 24-bit (Mode S) address allocation table the dump1090/VRS
+family of tools uses to resolve an aircraft's country of
 registration for every hex, not just the ~50 countries a national registry
 runner scrapes a CAA for. The actual per-hex resolution happens server-side
 in `shared/lua/merge_aircraft.lua` at read time, not here — this runner only
@@ -59,7 +59,7 @@ are not carried into Redis at all (`Start` always equals `Bitmask` in the
 source data; `Finish`/`Count` are derivable from the mask; `IsMilitary` is a
 documented non-goal — see #1848, `AircraftRecord.military` stays sourced
 only from Mictronics). Rows are written sorted descending by
-`SignificantBitmask`, matching the standard VRS/tar1090-style
+`SignificantBitmask`, matching the standard VRS-style
 longest-prefix-bitmask matching order. The source's `CountryISO2` "ZZ"
 rows — two entries that together cover the entire 24-bit address space at
 the lowest possible `SignificantBitmask` — are the source's synthetic
