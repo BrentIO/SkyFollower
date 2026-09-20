@@ -1044,7 +1044,22 @@ class MessageProcessor:
         # DEFAULT_FLIGHT_TTL_SECONDS below, but the two are independent
         # and not wired together; no evidence yet that any of these need
         # to diverge from pyModeS's defaults for this deployment.
-        self._pipe_decoder = PipeDecoder()
+        #
+        # Surface/taxi positions (BDS 0,6) are a different story (#1880):
+        # unlike airborne CPR, PipeDecoder has no self-bootstrap for them
+        # -- surface CPR is always resolved relative to *some* nearby
+        # known point, and PipeDecoder's `surface_ref` is exactly that
+        # slot. Left unset (the #1841 regression), `_resolve_pair` silently
+        # drops every surface pair before it ever produces a position --
+        # no exception, no log, no stat counter. The receiver's configured
+        # LATITUDE/LONGITUDE (the same values the pre-#1841 code passed as
+        # `reference=` to the old stateless per-message decode) are close
+        # enough to any local surface traffic to serve this purpose, so
+        # they're wired in here instead of being dropped as unused.
+        lat_cfg = self._cfg.get("latitude")
+        lon_cfg = self._cfg.get("longitude")
+        surface_ref = (lat_cfg, lon_cfg) if lat_cfg is not None and lon_cfg is not None else None
+        self._pipe_decoder = PipeDecoder(surface_ref=surface_ref)
 
         # Redis-backed period counters (total_messages_processed,
         # registration_misses, operator_misses) -- pure in-memory
@@ -1363,10 +1378,18 @@ class MessageProcessor:
         phantom position. Both are now handled internally by
         PipeDecoder's pairing/local-reference resolution and its
         multi-point motion-consistency + bootstrap-cluster checks, so no
-        `reference=` is passed here at all. A side effect: a brand-new
-        ICAO's first position is held back (returns no latitude/longitude)
-        until a pair or a 3-candidate bootstrap cluster resolves, instead
-        of resolving instantly off a fixed reference -- see #1841.
+        airborne `reference=` is passed here at all. A side effect: a
+        brand-new ICAO's first airborne position is held back (returns no
+        latitude/longitude) until a pair or a 3-candidate bootstrap
+        cluster resolves, instead of resolving instantly off a fixed
+        reference -- see #1841.
+
+        Surface/taxi positions (BDS 0,6) are the one case that still
+        needs the receiver's fixed location: PipeDecoder has no
+        self-bootstrap for surface CPR, so self._pipe_decoder is
+        constructed with the configured LATITUDE/LONGITUDE as its
+        `surface_ref` (see __init__) -- without it, surface pairs are
+        silently dropped and never reach `result` at all. See #1880.
         """
         raw = msg.raw
         if len(raw) < 14:
