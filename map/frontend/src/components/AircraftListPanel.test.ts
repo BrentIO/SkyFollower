@@ -17,8 +17,8 @@ describe("column definitions -- data-driven array, not hardcoded per-column JSX"
     expect(panelSource).not.toMatch(/<td[^>]*>\{row\.ident/);
   });
 
-  it("declares the six required columns, in order: Ident, Registration, Type, Desc, Altitude, Distance", () => {
-    const keys = ["ident", "registration", "type", "desc", "altitude", "distance"];
+  it("declares the seven required columns, in order: Flag, Ident, Registration, Type, Desc, Altitude, Distance", () => {
+    const keys = ["flag", "ident", "registration", "type", "desc", "altitude", "distance"];
     const indices = keys.map((key) => panelSource.indexOf(`key: "${key}"`));
     for (const index of indices) expect(index).toBeGreaterThan(-1);
     for (let i = 1; i < indices.length; i++) {
@@ -33,33 +33,48 @@ describe("column definitions -- data-driven array, not hardcoded per-column JSX"
   });
 });
 
-describe("Ident column -- country-of-registration flag (#1848)", () => {
+describe("Flag column -- country-of-registration (#1848)", () => {
   it("imports the client-side flag renderer", () => {
     expect(panelSource).toContain('import { countryFlag } from "../lib/countryFlag"');
   });
 
-  it("renders the flag before the ident text", () => {
+  it("is its own column, to the left of Ident, not folded into Ident's cell", () => {
+    const flagColumnStart = panelSource.indexOf('key: "flag"');
     const identColumnStart = panelSource.indexOf('key: "ident"');
+    expect(flagColumnStart).toBeGreaterThan(-1);
+    expect(identColumnStart).toBeGreaterThan(flagColumnStart);
+
     const identColumnEnd = panelSource.indexOf('key: "registration"');
-    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
-    const flagIndex = callSite.indexOf("countryFlag(row.countryCode)");
-    const identTextIndex = callSite.indexOf("row.ident ?? ");
-    expect(flagIndex).toBeGreaterThan(-1);
-    expect(identTextIndex).toBeGreaterThan(flagIndex);
+    const identCallSite = panelSource.slice(identColumnStart, identColumnEnd);
+    expect(identCallSite).not.toContain("countryFlag(row.countryCode)");
+  });
+
+  it("renders the flag from countryCode", () => {
+    const flagColumnStart = panelSource.indexOf('key: "flag"');
+    const flagColumnEnd = panelSource.indexOf('key: "ident"');
+    const callSite = panelSource.slice(flagColumnStart, flagColumnEnd);
+    expect(callSite).toContain("countryFlag(row.countryCode)");
   });
 
   it("omits the flag element entirely (not a placeholder glyph) when no country resolved", () => {
-    const identColumnStart = panelSource.indexOf('key: "ident"');
-    const identColumnEnd = panelSource.indexOf('key: "registration"');
-    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
-    expect(callSite).toContain("flag != null &&");
+    const flagColumnStart = panelSource.indexOf('key: "flag"');
+    const flagColumnEnd = panelSource.indexOf('key: "ident"');
+    const callSite = panelSource.slice(flagColumnStart, flagColumnEnd);
+    expect(callSite).toContain("if (flag == null) return null;");
   });
 
   it("uses the resolved country name (falling back to the bare code) as the flag's title/tooltip", () => {
-    const identColumnStart = panelSource.indexOf('key: "ident"');
-    const identColumnEnd = panelSource.indexOf('key: "registration"');
-    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
+    const flagColumnStart = panelSource.indexOf('key: "flag"');
+    const flagColumnEnd = panelSource.indexOf('key: "ident"');
+    const callSite = panelSource.slice(flagColumnStart, flagColumnEnd);
     expect(callSite).toContain("title={row.country ?? row.countryCode ?? undefined}");
+  });
+
+  it("sorts on the resolved country name/code, not decoration", () => {
+    const flagColumnStart = panelSource.indexOf('key: "flag"');
+    const flagColumnEnd = panelSource.indexOf('key: "ident"');
+    const callSite = panelSource.slice(flagColumnStart, flagColumnEnd);
+    expect(callSite).toContain("sortKey: (row) => row.country ?? row.countryCode ?? null,");
   });
 });
 

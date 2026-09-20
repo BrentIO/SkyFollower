@@ -34,32 +34,39 @@ interface AircraftListColumn {
 // order, immediately after the ident text -- see the issue's "Military /
 // Special Livery pill" section.
 //
-// The country-of-registration flag (#1848) is rendered first, before the
-// ident text -- tar1090/VRS-style tools that already do this hex-range
-// lookup conventionally lead each row with the flag, and it reads as an
-// at-a-glance icon rather than more badge-like row content. Rendered
-// client-side from countryCode alone via lib/countryFlag.ts (the same
-// regional-indicator-symbol trick as shared/country_flags.py); silently
-// omitted (not a placeholder glyph) when no country has resolved, or when
-// countryCode isn't a syntactically valid 2-letter code.
+// The country-of-registration flag (#1848) is its own column, to the left
+// of Ident -- tar1090/VRS-style tools that already do this hex-range
+// lookup conventionally lead each row with the flag, but as a distinct
+// column rather than folded into Ident's cell so it lines up in its own
+// vertical strip instead of shifting per-row with ident text width.
+// Rendered client-side from countryCode alone via lib/countryFlag.ts (the
+// same regional-indicator-symbol trick as shared/country_flags.py);
+// silently omitted (not a placeholder glyph) when no country has
+// resolved, or when countryCode isn't a syntactically valid 2-letter
+// code. Sorts by the resolved country name/code, same convention as every
+// other column sorting on its own underlying value rather than decoration.
 const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
+  {
+    key: "flag",
+    header: "",
+    sortKey: (row) => row.country ?? row.countryCode ?? null,
+    render: (row) => {
+      const flag = row.countryCode != null ? countryFlag(row.countryCode) : null;
+      if (flag == null) return null;
+      return <span title={row.country ?? row.countryCode ?? undefined}>{flag}</span>;
+    },
+  },
   {
     key: "ident",
     header: "Ident",
     sortKey: (row) => row.ident,
-    render: (row) => {
-      const flag = row.countryCode != null ? countryFlag(row.countryCode) : null;
-      return (
-        <span className="flex items-center gap-1">
-          {flag != null && (
-            <span title={row.country ?? row.countryCode ?? undefined}>{flag}</span>
-          )}
-          <span>{row.ident ?? ""}</span>
-          {row.military && <span className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
-          {row.specialLivery != null && <span className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>S</span>}
-        </span>
-      );
-    },
+    render: (row) => (
+      <span className="flex items-center gap-1">
+        <span>{row.ident ?? ""}</span>
+        {row.military && <span className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
+        {row.specialLivery != null && <span className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>S</span>}
+      </span>
+    ),
   },
   {
     key: "registration",
