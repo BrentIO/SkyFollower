@@ -39,6 +39,7 @@ interpolated by Compose from this host's `.env` (written by
 | `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` | ❌ | `1` | Minimum spacing, per aircraft, between `position` sends (see [Map UDP Publisher](#map-udp-publisher)). Does not throttle `metadata` sends |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
+| `CAPTURE_RAW_FRAMES` | ❌ | `false` | Opt-in forensic raw-frame capture (see [Raw Frame Capture](#raw-frame-capture-forensic) below). Read once at startup; restart to pick up a changed value |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 Timing values -- the MQTT publish cadence, the Redis heartbeat refresh and
@@ -498,6 +499,59 @@ is also logged at `WARNING` at startup, since that combination is always a
 misconfiguration -- either the feed silently stays disabled (`MAP_UDP_PORT`
 set without `MAP_UDP_HOST`) or it enables with a nonsensical port (`MAP_UDP_HOST`
 set without `MAP_UDP_PORT`, which defaults to `0`).
+
+## Raw Frame Capture (Forensic)
+
+`CAPTURE_RAW_FRAMES` (default off) is general-purpose forensic
+infrastructure for investigating a decode anomaly (a bad CPR position, a
+corrupted velocity/altitude/squawk/ident, a burst of CRC failures, a future
+pyModeS regression) after the fact, without needing a bespoke diagnostic
+built for each one. It was motivated by, but is not specific to, the
+#1835/#1836/#1841 CPR-teleport investigation.
+
+When enabled, every message for a tracked (or newly created) flight --
+whether it decodes into usable data or not -- is recorded verbatim as a
+`raw_frames` row alongside that flight's `positions`/`velocities`, tagged
+`decoded: true`/`false`. A decode failure (too short, a raised exception,
+CRC invalid) and a message that decodes cleanly but yields nothing this
+system currently extracts (e.g. an ACAS RA broadcast) are deliberately not
+distinguished -- both are `decoded: false`; the raw hex itself is fully
+replayable offline regardless of which applies. Unlike `positions`/
+`velocities`, `raw_frames` has no uniqueness constraint on
+`(icao_hex, timestamp)`: real, legitimate frames from the same aircraft
+have been observed 75-345 microseconds apart (dual 978+1090 reporting),
+and a capture path that could silently drop one to a timestamp collision
+would defeat its own purpose.
+
+**Edge case worth knowing about:** with the flag on, a completely garbled
+first-ever message from a never-before-seen aircraft now creates a flight
+row too, purely to have somewhere to attach the captured frame -- something
+that never happens with the flag off, where a message that fails to decode
+still short-circuits before any `Flight` is touched.
+
+When a flight completes with the flag on and at least one captured frame,
+the *same* completed-flight object -- `raw_frames` included -- is
+additionally published (best-effort; not routed through the
+fallback/SQLite durability `_archive()` uses) to a second, short-lived
+RabbitMQ queue, `skyfollower-archive-raw-frames`, declared only while
+`CAPTURE_RAW_FRAMES` is on. That queue carries an 8-hour `x-message-ttl`
+and a 100MB `x-max-length-bytes` cap (whichever limit is hit first evicts
+the oldest message) and has no dedicated consumer service of its own --
+it's meant to be manually inspected or drained (the RabbitMQ management
+UI, or an ad hoc script) while actively investigating something, not
+polled continuously. `core-health` deliberately does not publish any Home
+Assistant sensors for it, despite it matching the same
+`SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN` every other SkyFollower-owned queue
+does (required there for RabbitMQ ACL purposes only).
+
+**The permanent archive path never carries raw frames, unconditionally.**
+`_archive()` -- the only code path that can ever reach
+`skyfollower-archive` / S3 -- always serializes with `raw_frames` excluded,
+regardless of `CAPTURE_RAW_FRAMES`'s value. This isn't gated on the
+setting at all: it doesn't matter whether the flag is on, off, or a future
+bug in the capture-side gating left `raw_frames` populated when it
+shouldn't be, this one exclusion always drops the field before anything
+reaches permanent storage.
 
 ## Fault Tolerance
 

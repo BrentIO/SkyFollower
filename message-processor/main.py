@@ -51,6 +51,7 @@ from shared.models import (
     InboundMessage,
     OperatorRecord,
     Position,
+    RawFrame,
     Velocity,
     generate_flight_id,
 )
@@ -58,8 +59,10 @@ from shared.mqtt import build_mqtt_client
 from shared.mqtt_register import publish_register
 from shared.rabbitmq_topology import (
     ARCHIVE_QUEUE_NAME,
+    RAW_FRAMES_QUEUE_NAME,
     bind_adsb_queue,
     declare_adsb_topology,
+    declare_raw_frames_queue,
     message_processor_queue_name,
 )
 from shared.metrics import next_period_boundary
@@ -435,7 +438,21 @@ CREATE TABLE IF NOT EXISTS velocities (
     heading       REAL,
     vertical_speed INTEGER
 );
+CREATE TABLE IF NOT EXISTS raw_frames (
+    icao_hex  TEXT NOT NULL,
+    timestamp REAL NOT NULL,
+    raw       TEXT NOT NULL,
+    source    TEXT NOT NULL,
+    decoded   INTEGER NOT NULL
+);
 """
+# raw_frames deliberately has no unique index on (icao_hex, timestamp), the
+# way positions/velocities do below -- real, legitimate frames from the
+# same aircraft have been observed microseconds apart (dual 978+1090
+# reporting), and a raw-frame capture that could silently drop one of them
+# to a timestamp collision would defeat its own forensic purpose. Only
+# ever written to when CAPTURE_RAW_FRAMES is enabled (see
+# MessageProcessor._capture_raw_frames).
 # positions/velocities' unique index is created in _migrate_schema() rather
 # than here, since an existing database may already hold duplicate
 # (icao_hex, timestamp) rows from past redeliveries that must be cleaned up
@@ -670,7 +687,7 @@ class Flight:
         "aircraft", "ident", "operator", "registrant", "squawk", "origin", "destination",
         "matched_rules", "receiver_sources", "force_archive", "route_resolution_attempted",
         "route_candidate_airports", "pending_squawk", "pending_ident",
-        "map_metadata_hash", "positions", "velocities", "_db",
+        "map_metadata_hash", "positions", "velocities", "raw_frames", "_db",
     )
 
     def __init__(self, db: sqlite3.Connection) -> None:
@@ -715,6 +732,12 @@ class Flight:
         self.map_metadata_hash: Optional[str] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
+        # Only ever populated by add_raw_frame() (CAPTURE_RAW_FRAMES on) or
+        # _load_raw_frames() (see to_completed_flight()) -- unlike
+        # positions/velocities, load() never reloads this on the ordinary
+        # per-message hot path; there's no "just the latest one" need the
+        # way those two have.
+        self.raw_frames: list[RawFrame] = []
 
     # ------------------------------------------------------------------
     # Persistence
@@ -816,6 +839,7 @@ class Flight:
         cur.execute("DELETE FROM flights   WHERE icao_hex=?", (self.icao_hex,))
         cur.execute("DELETE FROM positions WHERE icao_hex=?", (self.icao_hex,))
         cur.execute("DELETE FROM velocities WHERE icao_hex=?", (self.icao_hex,))
+        cur.execute("DELETE FROM raw_frames WHERE icao_hex=?", (self.icao_hex,))
 
     def add_position(self, pos: Position) -> None:
         cur = self._db.cursor()
@@ -841,15 +865,58 @@ class Flight:
         if cur.rowcount:
             self.velocities.append(vel)
 
+    def add_raw_frame(self, frame: RawFrame) -> None:
+        """Plain INSERT, deliberately not "OR IGNORE" like add_position()/
+        add_velocity() -- there is no unique index on raw_frames to collide
+        with (see _SCHEMA's comment), so every call always persists and
+        always appends in memory."""
+        cur = self._db.cursor()
+        cur.execute(
+            "INSERT INTO raw_frames (icao_hex, timestamp, raw, source, decoded) "
+            "VALUES (?,?,?,?,?)",
+            (self.icao_hex, frame.timestamp, frame.raw, frame.source, int(frame.decoded)),
+        )
+        self.raw_frames.append(frame)
+
+    def _load_raw_frames(self) -> None:
+        """Always loads the full history, unlike _load_positions()/
+        _load_velocities() -- raw_frames has no per-message hot-path need
+        for a "just the latest one" variant, so there's no `limit` param to
+        thread through. Called only from to_completed_flight(), and only
+        when the caller asks for it (see that method's `load_raw_frames`
+        parameter) -- never unconditionally, so a deployment with
+        CAPTURE_RAW_FRAMES off never issues this query at all."""
+        cur = self._db.cursor()
+        cur.execute(
+            "SELECT timestamp, raw, source, decoded FROM raw_frames "
+            "WHERE icao_hex=? ORDER BY timestamp",
+            (self.icao_hex,),
+        )
+        self.raw_frames = [
+            RawFrame(timestamp=r["timestamp"], raw=r["raw"], source=r["source"],
+                     decoded=bool(r["decoded"]))
+            for r in cur.fetchall()
+        ]
+
     # ------------------------------------------------------------------
     # Serialisation to CompletedFlight (for archive queue)
     # ------------------------------------------------------------------
 
-    def to_completed_flight(self, load_all: bool = False) -> CompletedFlight:
-        """Reload all positions/velocities then build a CompletedFlight record."""
+    def to_completed_flight(self, load_all: bool = False, load_raw_frames: bool = False) -> CompletedFlight:
+        """Reload all positions/velocities then build a CompletedFlight record.
+
+        `load_raw_frames` is independent of `load_all`: raw_frames is never
+        touched by load() (see its own docstring), so there's no in-memory
+        state to conditionally skip re-reading the way load_all does for
+        positions/velocities -- callers pass True only when
+        CAPTURE_RAW_FRAMES is actually enabled, so a deployment with the
+        flag off never runs this extra query (or ships a raw_frames list
+        that's non-empty only by a stale in-memory accident)."""
         if load_all:
             self._load_positions(limit=False)
             self._load_velocities(limit=False)
+        if load_raw_frames:
+            self._load_raw_frames()
 
         # Build aircraft dict — ensure icao_hex is present. Drop None-valued
         # keys: aircraft is a plain dict, so a top-level exclude_none on the
@@ -902,6 +969,7 @@ class Flight:
             "matched_rules": self.matched_rules,
             "positions": [p.to_dict() for p in self.positions],
             "velocities": [v.to_dict() for v in self.velocities],
+            "raw_frames": [r.to_dict() for r in self.raw_frames],
         })
 
 
@@ -999,6 +1067,18 @@ class MessageProcessor:
         # Redis GET on the hot path. Not hot-reloaded; restart to pick up
         # a changed value.
         self._flight_ttl_seconds: int = DEFAULT_FLIGHT_TTL_SECONDS
+
+        # CAPTURE_RAW_FRAMES: read once at startup (shared.config's
+        # message_processor_config()), same "restart to pick up a change"
+        # contract as everything else read from config here. Controls only
+        # whether raw frames are persisted at reception time -- see
+        # _process()/_update_flight() -- and, downstream of that, whether
+        # the skyfollower-archive-raw-frames queue is declared at all (see
+        # _consume_loop()) and published to (see _maybe_publish_raw_frames()).
+        # Never affects the permanent skyfollower-archive path, which
+        # excludes raw_frames unconditionally regardless of this flag (see
+        # _archive()).
+        self._capture_raw_frames: bool = bool(config.get("capture_raw_frames"))
 
         # MQTT
         self._mqtt: Optional[mqtt.Client] = None
@@ -1099,6 +1179,11 @@ class MessageProcessor:
                 self._rmq_channel = self._rmq_connection.channel()
                 declare_adsb_topology(self._rmq_channel)
                 bind_adsb_queue(self._rmq_channel, self._id)
+                if self._capture_raw_frames:
+                    # Only declared when the feature is actually on -- no
+                    # stray queue on a deployment that never enables it. See
+                    # declare_raw_frames_queue()'s docstring.
+                    declare_raw_frames_queue(self._rmq_channel)
                 # Publisher confirms make basic_publish() synchronous and
                 # raise pika.exceptions.UnroutableError (mandatory=True) if
                 # the archive queue doesn't exist, instead of RabbitMQ
@@ -1227,7 +1312,16 @@ class MessageProcessor:
     def _process(self, msg: InboundMessage) -> None:
         data = self._decode_message(msg)
         if data is None:
-            return
+            if not self._capture_raw_frames:
+                return
+            # CAPTURE_RAW_FRAMES is on: route the decode failure into
+            # _update_flight anyway, with a minimal stand-in `data` dict, so
+            # it's still recorded as a raw frame against whatever flight
+            # this icao_hex belongs to (creating one, exactly as a real
+            # message would, if none exists yet). msg.received_at/icao_hex
+            # are always present regardless of decode outcome, so there's
+            # no timestamp/routing gap to work around here.
+            data = {"icao_hex": msg.icao_hex}
         with self._db_lock:
             self._update_flight(data, msg)
 
@@ -1474,10 +1568,13 @@ class MessageProcessor:
                 # replayed through the backlog (or happened live) means it
                 # ended before this message. Archive it and start fresh
                 # rather than extending a flight that's actually over.
-                completed = flight.to_completed_flight(load_all=True)
+                completed = flight.to_completed_flight(
+                    load_all=True, load_raw_frames=self._capture_raw_frames,
+                )
                 flight.delete()
                 self._db.commit()
                 self._archive(completed)
+                self._maybe_publish_raw_frames(completed)
                 flight = Flight(self._db)
                 exists = False
 
@@ -1486,6 +1583,21 @@ class MessageProcessor:
             flight.flight_id = generate_flight_id()
             flight.first_message = msg.received_at
             self._enrich_aircraft(flight)
+
+        if self._capture_raw_frames:
+            # Right after the flight is loaded/created, unconditional for
+            # every message while the flag is on -- decoded or not. `data`
+            # is always at least {"icao_hex": ...} (see _process()), so
+            # len(data) > 1 means something was actually extracted; exactly
+            # 1 means this message either failed to decode or decoded
+            # cleanly into nothing this system parses out (e.g. an ACAS RA
+            # broadcast) -- deliberately not distinguished (see #1842).
+            flight.add_raw_frame(RawFrame(
+                timestamp=msg.received_at,
+                source=msg.source,
+                raw=msg.raw,
+                decoded=len(data) > 1,
+            ))
 
         if msg.source not in flight.receiver_sources:
             flight.receiver_sources.append(msg.source)
@@ -1829,11 +1941,14 @@ class MessageProcessor:
             flight = Flight(self._db)
             if not flight.load(icao_hex, limit=False):
                 return
-            completed = flight.to_completed_flight(load_all=False)
+            completed = flight.to_completed_flight(
+                load_all=False, load_raw_frames=self._capture_raw_frames,
+            )
             flight.delete()
             self._db.commit()
 
         self._archive(completed)
+        self._maybe_publish_raw_frames(completed)
 
     def _archive(self, flight: CompletedFlight) -> None:
         """Queue a completed flight for the archive processor. May be
@@ -1845,8 +1960,18 @@ class MessageProcessor:
         the calling thread (harmless -- and still safe -- when called from
         the connection's own thread too). The scheduled callback decides
         success/failure and falls back to self._fallback.put() itself,
-        since the caller can no longer observe the outcome synchronously."""
-        payload = flight.model_dump_json(by_alias=True, exclude_none=True)
+        since the caller can no longer observe the outcome synchronously.
+
+        exclude={"raw_frames"} below is unconditional -- not gated on
+        self._capture_raw_frames at all (see #1842). It doesn't matter
+        whether that setting is on, off, or a future bug in the
+        capture-side gating left raw_frames populated when it shouldn't be:
+        this is the one and only code path that can ever reach the
+        permanent archive / S3, and this line always drops the field
+        before anything reaches it. Raw frames headed anywhere at all only
+        ever travel via _maybe_publish_raw_frames()'s separate,
+        short-lived skyfollower-archive-raw-frames queue."""
+        payload = flight.model_dump_json(by_alias=True, exclude_none=True, exclude={"raw_frames"})
 
         def _publish_on_rmq_thread() -> None:
             try:
@@ -1874,6 +1999,50 @@ class MessageProcessor:
                 self._rmq_connected = False
 
         self._fallback.put(payload)
+
+    def _maybe_publish_raw_frames(self, flight: CompletedFlight) -> None:
+        """Companion to _archive(), called right alongside every one of its
+        call sites. A no-op unless CAPTURE_RAW_FRAMES is on and this
+        specific completed flight actually captured any frames -- most
+        flights won't have any beyond an empty default list when the
+        feature is off, and there's no reason to publish an empty
+        raw_frames payload even when it's on."""
+        if self._capture_raw_frames and flight.raw_frames:
+            self._publish_raw_frames(flight)
+
+    def _publish_raw_frames(self, flight: CompletedFlight) -> None:
+        """Best-effort publish of a completed flight -- raw_frames intact,
+        no exclude= at all -- to the short-lived forensic queue
+        skyfollower-archive-raw-frames. Unlike _archive(), a failure here
+        never falls back to self._fallback/SQLite durability and never
+        touches self._rmq_connected: losing a completed flight from the
+        permanent archive is a real loss worth retrying and reconnecting
+        over; losing a raw-frame debug record because RabbitMQ was briefly
+        unavailable is not, so this just logs and moves on. Only ever
+        called when self._capture_raw_frames is True (see
+        _maybe_publish_raw_frames()) -- the queue itself is only declared
+        under that same condition (see _consume_loop())."""
+        payload = flight.model_dump_json(by_alias=True, exclude_none=True)
+
+        def _publish_on_rmq_thread() -> None:
+            try:
+                self._rmq_channel.basic_publish(
+                    exchange="",
+                    routing_key=RAW_FRAMES_QUEUE_NAME,
+                    body=payload.encode(),
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Raw-frames publish failed (best-effort, not retried): %s", exc,
+                )
+
+        if not (self._rmq_connected and self._rmq_connection and self._rmq_channel):
+            logger.debug("Raw-frames publish skipped: RabbitMQ not connected.")
+            return
+        try:
+            self._rmq_connection.add_callback_threadsafe(_publish_on_rmq_thread)
+        except Exception as exc:
+            logger.debug("Raw-frames publish scheduling failed: %s", exc)
 
     def _drain_fallback(self) -> None:
         """FallbackQueue.drain() (shared/fallback_queue.py) calls
@@ -1957,16 +2126,24 @@ class MessageProcessor:
     def _build_flight_notification_payload(self, flight: Flight) -> dict:
         """CompletedFlight-shape payload shared by the MQTT rule
         notification and the map UDP `metadata` message -- same
-        field-dropping logic (positions/velocities/_id popped; empty
-        operator/registrant/origin/destination/force_archive omitted
+        field-dropping logic (positions/velocities/raw_frames/_id popped;
+        empty operator/registrant/origin/destination/force_archive omitted
         rather than published as falsy). Callers add their own extra key
         on top: MQTT adds `rule`, the map UDP metadata message adds
-        `type`."""
+        `type`.
+
+        to_completed_flight() is called here with its defaults
+        (load_raw_frames=False), so raw_frames is never freshly loaded from
+        SQLite for this payload -- but with CAPTURE_RAW_FRAMES on, `flight`
+        may already carry this message's own just-added frame in memory
+        (see _update_flight()), so it's popped explicitly below rather than
+        relied upon to stay empty."""
         notification = flight.to_completed_flight().model_dump(
             by_alias=True, mode="json", exclude_none=True
         )
         notification.pop("positions", None)
         notification.pop("velocities", None)
+        notification.pop("raw_frames", None)
         notification.pop("_id", None)
         if not notification.get("operator"):
             notification.pop("operator", None)

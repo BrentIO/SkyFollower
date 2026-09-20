@@ -18,6 +18,9 @@ must change together.
 
 import re
 
+from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES
+from shared.timing import RAW_FRAMES_QUEUE_TTL_SECONDS
+
 # Every inbound ADS-B/UAT message is published here with the aircraft's ICAO
 # hex as the routing key. The x-consistent-hash type maps that key onto one
 # of the bound queues, which is what keeps an aircraft with a single message
@@ -49,7 +52,7 @@ ADSB_BINDING_WEIGHT = "1"
 # alternation branch exists only because this is shared with an
 # exchange-matching permission, not a queue-only one), so it's a harmless
 # no-op branch here, not a bug.
-SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN = r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$"
+SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN = r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames|amq\.default)$"
 _SKYFOLLOWER_RABBITMQ_RESOURCE_RE = re.compile(SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN)
 
 # The literal queue name completed flights are published to via the default
@@ -57,6 +60,25 @@ _SKYFOLLOWER_RABBITMQ_RESOURCE_RE = re.compile(SKYFOLLOWER_RABBITMQ_RESOURCE_PAT
 # message processor's queue, so it's just a constant rather than a builder
 # function.
 ARCHIVE_QUEUE_NAME = "skyfollower-archive"
+
+# Short-lived, message-processor-declared-and-published-to forensic queue
+# for CAPTURE_RAW_FRAMES (see message-processor/README.md's "Raw Frame
+# Capture" section). Unlike ARCHIVE_QUEUE_NAME, there is no dedicated
+# consumer service -- it exists to be manually inspected/drained (RabbitMQ
+# management UI, or an ad hoc script) while actively investigating a decode
+# anomaly, so message-processor is both its sole declarer and publisher.
+RAW_FRAMES_QUEUE_NAME = "skyfollower-archive-raw-frames"
+
+# Queue arguments for RAW_FRAMES_QUEUE_NAME: an 8-hour TTL and a 100MB size
+# cap (reusing FallbackQueue's DEFAULT_DEAD_LETTER_MAX_BYTES -- the same
+# "bound disk growth for an ops/debug path" concern documented there),
+# whichever limit is hit first evicting the oldest message. Declared only
+# when CAPTURE_RAW_FRAMES is on (see declare_raw_frames_queue()) -- no
+# stray queue on a deployment that never uses this feature.
+RAW_FRAMES_QUEUE_ARGUMENTS = {
+    "x-message-ttl": RAW_FRAMES_QUEUE_TTL_SECONDS * 1000,
+    "x-max-length-bytes": DEFAULT_DEAD_LETTER_MAX_BYTES,
+}
 
 _MESSAGE_PROCESSOR_QUEUE_PREFIX = "skyfollower-message-processor-"
 
@@ -138,3 +160,17 @@ def bind_adsb_queue(channel, message_processor_id: str) -> str:
         routing_key=ADSB_BINDING_WEIGHT,
     )
     return queue_name
+
+
+def declare_raw_frames_queue(channel) -> None:
+    """Declare the short-lived forensic raw-frames queue (see
+    RAW_FRAMES_QUEUE_NAME above). Message-processor calls this itself, only
+    when CAPTURE_RAW_FRAMES is enabled -- unlike declare_adsb_topology()/
+    bind_adsb_queue(), which every message processor declares
+    unconditionally, this queue has no reason to exist on a deployment that
+    never turns the feature on. Message-processor is also this queue's sole
+    publisher; there is no dedicated consumer service to declare it as
+    skyfollower-archive's archive-processor does."""
+    channel.queue_declare(
+        queue=RAW_FRAMES_QUEUE_NAME, durable=True, arguments=RAW_FRAMES_QUEUE_ARGUMENTS,
+    )

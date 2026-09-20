@@ -1873,7 +1873,7 @@ provision_rabbitmq_users() {
   # silently drifts "what SkyFollower owns" apart between the two.
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_username") \
     && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_username" \
-      '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive)$'); then
+      '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames)$'); then
     echo "  ✓ ${rabbitmq_username}: no tags, scoped to SkyFollower's own resources"
   else
     echo "  ✗ Could not scope ${rabbitmq_username}'s tags/permissions -- check manually." >&2

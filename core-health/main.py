@@ -80,6 +80,7 @@ from shared.version_check import get_latest_ghcr_tag
 from shared.rabbitmq_topology import (
     ADSB_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
+    RAW_FRAMES_QUEUE_NAME,
     is_skyfollower_queue,
     message_processor_id_from_queue_name,
 )
@@ -583,7 +584,17 @@ class CoreHealth:
         if not self._rmq_connected:
             return
 
-        skyfollower_queues = [q for q in (queues or []) if is_skyfollower_queue(q.get("name", ""))]
+        # RAW_FRAMES_QUEUE_NAME matches is_skyfollower_queue() (it must, for
+        # RabbitMQ ACL purposes -- see SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN's
+        # docstring) but is deliberately excluded here: it's a short-lived,
+        # manually-drained forensic queue with no consumer service of its
+        # own, and doesn't need (or want) the full HA sensor suite every
+        # other SkyFollower-owned queue gets below. Not an oversight --
+        # see message-processor/README.md's "Raw Frame Capture" section.
+        skyfollower_queues = [
+            q for q in (queues or [])
+            if is_skyfollower_queue(q.get("name", "")) and q.get("name", "") != RAW_FRAMES_QUEUE_NAME
+        ]
         for queue in skyfollower_queues:
             self._publish_queue_stats(queue)
 

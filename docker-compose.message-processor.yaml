@@ -26,6 +26,12 @@ x-message-processor-environment: &message-processor-environment
   # same optional-endpoint convention as MQTT_HOST above.
   MAP_UDP_HOST: ${MAP_UDP_HOST}
   MAP_UDP_PORT: ${MAP_UDP_PORT}
+  # Opt-in forensic raw-frame capture (see message-processor/README.md's
+  # "Raw Frame Capture" section) -- read once at startup, so a changed
+  # value only takes effect on the next `docker compose up -d` recreate.
+  # Defaults off; leave unset unless actively investigating a decode
+  # anomaly.
+  CAPTURE_RAW_FRAMES: ${CAPTURE_RAW_FRAMES:-false}
 
 # Everything identical across instances. What differs per instance is its
 # fleet-wide ID, used verbatim -- with no local/global translation -- as the

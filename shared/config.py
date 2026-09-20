@@ -103,6 +103,16 @@ class ConfigLoader:
             self.problems.append(f"{name} must be a number (got {raw!r})")
             return 0.0
 
+    def boolean(self, name: str, default: bool = False) -> bool:
+        """Case-insensitive "true"/"1"/"yes"/"on" (anything else -- including
+        unset -- is False). No component needs a required boolean today, so
+        unlike string()/integer()/number() there is no _REQUIRED sentinel
+        here."""
+        raw = self._environ.get(name, "").strip().lower()
+        if not raw:
+            return default
+        return raw in ("true", "1", "yes", "on")
+
     def present(self, name: str) -> None:
         """Records a problem if `name` is unset, without returning its value.
 
@@ -356,12 +366,19 @@ def receiver_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
     """Never coerces `MESSAGE_PROCESSOR_ID` to an integer: the consistent-hash
-    exchange makes it any string unique across the deployment, not an ordinal."""
+    exchange makes it any string unique across the deployment, not an ordinal.
+
+    `CAPTURE_RAW_FRAMES` (default off) is read once here, same as everything
+    else in this block -- not hot-reloaded, same as `flight_ttl_seconds`
+    (read from Redis, not the environment, but the same "restart to pick up
+    a change" contract). See message-processor/README.md's "Raw Frame
+    Capture" section for what it does."""
     loader, own = _own_loader(loader)
     block = {
         "message_processor_id": loader.string("MESSAGE_PROCESSOR_ID"),
         "latitude": loader.number("LATITUDE"),
         "longitude": loader.number("LONGITUDE"),
+        "capture_raw_frames": loader.boolean("CAPTURE_RAW_FRAMES", False),
     }
     if own:
         loader.raise_for_problems()
