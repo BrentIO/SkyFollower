@@ -28,6 +28,10 @@ import {
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
+  RADAR_LAYER_ID,
+  RADAR_PLAYBACK_LAYER_ID,
+  RADAR_PLAYBACK_SOURCE_ID,
+  RADAR_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
@@ -51,6 +55,15 @@ import {
 } from "../lib/rangeRings";
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { isWithinCenterTolerance } from "../lib/mapCentered";
+import {
+  RADAR_FRAME_INTERVAL_MS,
+  RADAR_MAX_ZOOM,
+  RADAR_MIN_ZOOM,
+  RADAR_PLAYBACK_OFFSETS_MINUTES,
+  RADAR_REFRESH_INTERVAL_MS,
+  RADAR_TILE_SIZE,
+  radarFrameTileUrl,
+} from "../lib/radar";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
@@ -80,6 +93,16 @@ const NO_TRACE_POINTS: readonly TracePoint[] = [];
 // only stack its glyphs endpoint actually has); using the same one here
 // avoids the 404/local-fallback path entirely.
 const BASEMAP_TEXT_FONT = ["Noto Sans Regular"];
+
+// Always-shown attribution -- the aircraft-silhouette credit (GPL-3.0, see
+// the repo's THIRD-PARTY-NOTICES.md). The basemap style carries its own
+// OSM/CARTO/OpenFreeMap attribution separately.
+const BASE_CUSTOM_ATTRIBUTION =
+  'Aircraft shapes © <a href="https://github.com/RexKramer1/AircraftShapesSVG" target="_blank" rel="noreferrer">RexKramer1</a> (GPL-3.0)';
+// Appended alongside the above only while the radar layer is on (#1896) --
+// public-domain NOAA data via Iowa Environmental Mesonet, see lib/radar.ts.
+const RADAR_CUSTOM_ATTRIBUTION =
+  'Radar © <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noreferrer">Iowa Environmental Mesonet</a>';
 
 // Builds and registers one silhouette's SDF image with MapLibre, once.
 // `shapeKey` is an AIRCRAFT_SHAPES key; an unknown key (a shape the
@@ -175,13 +198,33 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // of the box; turning it off is what hides the basemap's text. Distinct
   // from labelsAll above, which is about aircraft info boxes.
   const [mapLabelsOn, setMapLabelsOn] = useState(() => loadPersistedControls().mapLabelsOn);
+  // Live weather radar overlay (#1896) -- on/off and opacity persist the
+  // same way as the four toggles above; radarPlaying does not (see its
+  // own useState below).
+  const [radarOn, setRadarOn] = useState(() => loadPersistedControls().radarOn);
+  const [radarOpacity, setRadarOpacity] = useState(() => loadPersistedControls().radarOpacity);
 
-  // Persists the four control toggles above to localStorage on every
-  // change, so a reload restores them via the lazy initializers above
-  // instead of resetting to today's hardcoded defaults.
+  // Persists the control toggles above to localStorage on every change, so
+  // a reload restores them via the lazy initializers above instead of
+  // resetting to today's hardcoded defaults.
   useEffect(() => {
-    savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible });
-  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible]);
+    savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity });
+  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity]);
+
+  // Whether the last-30-minutes playback loop is animating -- transient UI
+  // state, not persisted (a reload always starts paused on the current
+  // snapshot, same as every other momentary action in this component,
+  // e.g. isolateEnabled/tracePointsEnabled below). Turning radar off while
+  // playing also stops playback, via handleToggleRadar below -- otherwise
+  // turning it back on later would silently resume animating.
+  const [radarPlaying, setRadarPlaying] = useState(false);
+  function handleToggleRadar() {
+    setRadarOn((prev) => {
+      const next = !prev;
+      if (!next) setRadarPlaying(false);
+      return next;
+    });
+  }
 
   // Whole-page Fullscreen API toggle -- not persisted like the four above,
   // since it's a transient browser-chrome state rather than an operator
@@ -220,6 +263,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // basemapLabelLayerIds) -- the basemap style doesn't gain/lose layers at
   // runtime, so there's no need to recompute this on every toggle.
   const basemapLabelLayerIdsRef = useRef<string[]>([]);
+  // The manually-added AttributionControl instance (see the mount effect
+  // below) -- kept so the radar-attribution effect can remove/replace it,
+  // the only supported way to change `customAttribution` after
+  // construction (#1896).
+  const attributionControlRef = useRef<maplibregl.AttributionControl | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   // InfoBoxLayer.tsx's per-aircraft screen position, kept in sync by the
   // map's "move" listener (mount effect below) and the data-sync effect
@@ -443,15 +491,21 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // ~9 redraws/sec and roughly a third of the Chrome process-tree CPU.
       // Symbols simply appear/disappear instead of fading.
       fadeDuration: 0,
-      // The basemap style carries its own OSM/CARTO/OpenFreeMap attribution;
-      // this adds the aircraft-silhouette credit (GPL-3.0 -- see the repo's
-      // THIRD-PARTY-NOTICES.md).
-      attributionControl: {
-        customAttribution:
-          'Aircraft shapes © <a href="https://github.com/RexKramer1/AircraftShapesSVG" target="_blank" rel="noreferrer">RexKramer1</a> (GPL-3.0)',
-      },
+      // The basemap style carries its own OSM/CARTO/OpenFreeMap attribution.
+      // No `customAttribution` here -- the control itself is added manually
+      // just below (attributionControlRef), not via this constructor
+      // option, because its credit list needs to grow/shrink later (the
+      // radar credit, #1896) and MapLibre's AttributionControl has no
+      // public method to change `customAttribution` after construction;
+      // removeControl()/addControl() with a fresh instance is the only
+      // supported way to do that.
+      attributionControl: false,
     });
     mapRef.current = map;
+    attributionControlRef.current = new maplibregl.AttributionControl({
+      customAttribution: BASE_CUSTOM_ATTRIBUTION,
+    });
+    map.addControl(attributionControlRef.current);
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
@@ -963,6 +1017,157 @@ function MapViewInner({ config }: { config: AppConfig }) {
     );
   }, [rangeOutline, rangeOutlineVisible, mapLoaded]);
 
+  // Radar attribution (#1896) -- swaps in a fresh AttributionControl with
+  // the IEM/NOAA credit appended while radar is on, and back to the base
+  // credit alone once it's off. removeControl()/addControl() with a new
+  // instance is the only supported way to change `customAttribution` after
+  // construction (see the mount effect's own comment on attributionControlRef).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !attributionControlRef.current) return;
+    map.removeControl(attributionControlRef.current);
+    attributionControlRef.current = new maplibregl.AttributionControl({
+      customAttribution: radarOn ? [BASE_CUSTOM_ATTRIBUTION, RADAR_CUSTOM_ATTRIBUTION] : BASE_CUSTOM_ATTRIBUTION,
+    });
+    map.addControl(attributionControlRef.current);
+  }, [radarOn, mapLoaded]);
+
+  // Radar on/off (#1896) -- the current-snapshot source/layer is added and
+  // removed *whole*, not layout-visibility-toggled, so there's a hard
+  // guarantee it never fetches a tile while off, rather than relying on
+  // whether an invisible layer's source still requests tiles. `beforeId:
+  // RANGE_RING_LAYER_ID` -- already added inside the map's "load" handler
+  // by the time `mapLoaded` is true -- lands this immediately above the
+  // base map's own style layers and below every layer this app draws
+  // (range rings first, then everything else), matching #1896's "above
+  // base map, below aircraft outlines." Initial `raster-opacity` here is
+  // whatever `radarOpacity` happens to be at toggle-on time; the dedicated
+  // opacity effect below (same `radarOn` dependency, so it re-runs in the
+  // same pass) is what keeps it correct afterward -- this effect
+  // deliberately does NOT depend on `radarOpacity` itself, or every
+  // opacity-slider drag would tear down and re-add the source, re-fetching
+  // every on-screen tile for no reason.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    if (radarOn) {
+      if (!map.getSource(RADAR_SOURCE_ID)) {
+        map.addSource(RADAR_SOURCE_ID, {
+          type: "raster",
+          tiles: [radarFrameTileUrl(0)],
+          tileSize: RADAR_TILE_SIZE,
+          minzoom: RADAR_MIN_ZOOM,
+          maxzoom: RADAR_MAX_ZOOM,
+        });
+      }
+      if (!map.getLayer(RADAR_LAYER_ID)) {
+        map.addLayer(
+          {
+            id: RADAR_LAYER_ID,
+            type: "raster",
+            source: RADAR_SOURCE_ID,
+            paint: { "raster-opacity": radarOpacity },
+          },
+          RANGE_RING_LAYER_ID,
+        );
+      }
+    } else {
+      if (map.getLayer(RADAR_LAYER_ID)) map.removeLayer(RADAR_LAYER_ID);
+      if (map.getSource(RADAR_SOURCE_ID)) map.removeSource(RADAR_SOURCE_ID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- radarOpacity
+    // intentionally excluded, see comment above.
+  }, [radarOn, mapLoaded]);
+
+  // Radar opacity -- a live `raster-opacity` paint-property update only,
+  // never a tile re-fetch. Re-runs whenever the layer might have just been
+  // (re)created (radarOn/radarPlaying/mapLoaded), so a freshly-added layer
+  // immediately picks up the current slider value rather than whatever
+  // stale default its own addLayer call above used.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    if (map.getLayer(RADAR_LAYER_ID)) {
+      map.setPaintProperty(RADAR_LAYER_ID, "raster-opacity", radarOpacity);
+    }
+    if (map.getLayer(RADAR_PLAYBACK_LAYER_ID)) {
+      map.setPaintProperty(RADAR_PLAYBACK_LAYER_ID, "raster-opacity", radarOpacity);
+    }
+  }, [radarOpacity, radarOn, radarPlaying, mapLoaded]);
+
+  // Current-snapshot auto-refresh, only while radar is on and not
+  // animating (playback takes over the visual slot entirely -- see the
+  // playback effect below). Matches IEM's own `Cache-Control: public,
+  // max-age=300` on the current-tile endpoint (verified against a live
+  // response, see #1896) -- the browser's HTTP cache naturally serves
+  // fresh content again once this window elapses, so re-requesting the
+  // identical URL on this cadence is what actually picks up a new image
+  // rather than a no-op. `setTiles` on the *same* url array is what forces
+  // MapLibre to reload rather than assume nothing changed.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !radarOn || radarPlaying) return;
+    const interval = setInterval(() => {
+      const source = map.getSource(RADAR_SOURCE_ID) as maplibregl.RasterTileSource | undefined;
+      source?.setTiles([radarFrameTileUrl(0)]);
+    }, RADAR_REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [radarOn, radarPlaying, mapLoaded]);
+
+  // Playback (#1896) -- steps through RADAR_PLAYBACK_OFFSETS_MINUTES (last
+  // 30 minutes, oldest to newest, ending on the current frame) on a fixed
+  // interval, looping continuously while `radarPlaying` is true. A single
+  // reused source/layer, retargeted per frame via `setTiles()` rather than
+  // one source per frame -- only ever fetches the one frame currently on
+  // screen, and this whole source/layer only exists for the duration of
+  // an active play session (added here, removed by this same effect's
+  // cleanup), so idle/paused/off state fetches nothing here either. The
+  // snapshot layer is hidden (not removed -- its own effect above owns its
+  // lifecycle) for the duration so the playback layer is what's actually
+  // visible; the cleanup restores it, which is also what "pause reverts to
+  // the current snapshot immediately" (#1896) falls out of.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !radarOn || !radarPlaying) return;
+
+    map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "none");
+
+    let frameIndex = 0;
+    map.addSource(RADAR_PLAYBACK_SOURCE_ID, {
+      type: "raster",
+      tiles: [radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])],
+      tileSize: RADAR_TILE_SIZE,
+      minzoom: RADAR_MIN_ZOOM,
+      maxzoom: RADAR_MAX_ZOOM,
+    });
+    map.addLayer(
+      {
+        id: RADAR_PLAYBACK_LAYER_ID,
+        type: "raster",
+        source: RADAR_PLAYBACK_SOURCE_ID,
+        paint: { "raster-opacity": radarOpacity },
+      },
+      RANGE_RING_LAYER_ID,
+    );
+
+    const interval = setInterval(() => {
+      frameIndex = (frameIndex + 1) % RADAR_PLAYBACK_OFFSETS_MINUTES.length;
+      const source = map.getSource(RADAR_PLAYBACK_SOURCE_ID) as maplibregl.RasterTileSource | undefined;
+      source?.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
+    }, RADAR_FRAME_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      if (map.getLayer(RADAR_PLAYBACK_LAYER_ID)) map.removeLayer(RADAR_PLAYBACK_LAYER_ID);
+      if (map.getSource(RADAR_PLAYBACK_SOURCE_ID)) map.removeSource(RADAR_PLAYBACK_SOURCE_ID);
+      if (map.getLayer(RADAR_LAYER_ID)) map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- radarOpacity
+    // intentionally excluded here too, same reasoning as the on/off effect
+    // above (the dedicated opacity effect keeps this layer's paint
+    // property current without needing to rebuild the source per drag).
+  }, [radarOn, radarPlaying, mapLoaded]);
+
   // Coalesces this component's lifetime worth of sync-effect runs (below)
   // into at most one source update per MAP_SYNC_THROTTLE_MS -- see
   // syncThrottle.ts's module docstring for why (a WebSocket batch arrives
@@ -1285,6 +1490,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
           fullscreen={fullscreen}
           onToggleFullscreen={handleToggleFullscreen}
           fullscreenDisabled={!fullscreenSupported}
+          radarOn={radarOn}
+          onToggleRadar={handleToggleRadar}
+          radarOpacity={radarOpacity}
+          onRadarOpacityChange={setRadarOpacity}
+          radarPlaying={radarPlaying}
+          onToggleRadarPlaying={() => setRadarPlaying((prev) => !prev)}
         />
       </div>
       <AircraftListPanel

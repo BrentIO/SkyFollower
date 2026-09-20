@@ -3,6 +3,8 @@ import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_SELECTION_RING_LAYER_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
+  RADAR_LAYER_ID,
+  RADAR_PLAYBACK_LAYER_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_RING_LABEL_LAYER_ID,
   RANGE_RING_LAYER_ID,
@@ -36,5 +38,10 @@ describe("SELECTABLE_LAYER_IDS", () => {
 
   it("excludes the aircraft selection ring layer (#1806) -- purely decorative, like the trace point dots", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(AIRCRAFT_SELECTION_RING_LAYER_ID);
+  });
+
+  it("excludes the radar overlay layers (#1896)", () => {
+    expect(SELECTABLE_LAYER_IDS).not.toContain(RADAR_LAYER_ID);
+    expect(SELECTABLE_LAYER_IDS).not.toContain(RADAR_PLAYBACK_LAYER_ID);
   });
 });

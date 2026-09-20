@@ -152,6 +152,33 @@ export const RADAR_ICON: IconSpec = {
   circles: [{ cx: 12, cy: 12, r: 2 }],
 };
 
+// WEATHER_RADAR_ICON/PLAY_ICON/PAUSE_ICON are Lucide's "CloudRain"/"Play"/
+// "Pause" glyphs (fetched byte-for-byte from lucide-icons/lucide, same
+// convention as above), for ControlsPanel's weather-radar overlay control
+// (#1896). WEATHER_RADAR_ICON is deliberately distinct from RADAR_ICON
+// above -- that one already means "Range Outline" in this panel, so
+// reusing it for the unrelated weather-radar toggle would put two
+// different features behind the same glyph.
+export const WEATHER_RADAR_ICON: IconSpec = {
+  paths: [
+    { d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" },
+    { d: "M16 14v6" },
+    { d: "M8 14v6" },
+    { d: "M12 16v6" },
+  ],
+};
+
+export const PLAY_ICON: IconSpec = {
+  paths: [{ d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" }],
+};
+
+export const PAUSE_ICON: IconSpec = {
+  rects: [
+    { x: 14, y: 3, width: 5, height: 18, rx: 1 },
+    { x: 5, y: 3, width: 5, height: 18, rx: 1 },
+  ],
+};
+
 export const MAXIMIZE_ICON: IconSpec = {
   paths: [
     { d: "M8 3H5a2 2 0 0 0-2 2v3" },

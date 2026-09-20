@@ -11,23 +11,34 @@
 // loadPersistedControls() below.
 
 const STORAGE_KEY = "skyfollower-map:controls:v1";
-const STORAGE_VERSION = 1;
+// Bumped 1 -> 2 for #1896's radarOn/radarOpacity addition -- a stored
+// payload from before that shape existed fails isPersistedControls below
+// (missing fields) even without the version check, but bumping the
+// version is this file's own documented mechanism for a shape change and
+// costs nothing extra, so it's done on principle rather than relying on
+// the shape check alone.
+const STORAGE_VERSION = 2;
 
 export interface PersistedControls {
   historyAll: boolean;
   labelsAll: boolean;
   mapLabelsOn: boolean;
   rangeOutlineVisible: boolean;
+  radarOn: boolean;
+  radarOpacity: number;
 }
 
 // Today's hardcoded defaults, matching MapView.tsx's own literal
 // useState() defaults -- mapLabelsOn is false per its own basemap-labels
-// history, not true.
+// history, not true. radarOpacity's 0.2 default is Brent's explicit ask
+// (#1896), not an arbitrary "half-visible" guess.
 const DEFAULTS: PersistedControls = {
   historyAll: false,
   labelsAll: false,
   mapLabelsOn: false,
   rangeOutlineVisible: false,
+  radarOn: false,
+  radarOpacity: 0.2,
 };
 
 interface StoredShape {
@@ -39,6 +50,10 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 function isPersistedControls(value: unknown): value is PersistedControls {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
@@ -46,7 +61,9 @@ function isPersistedControls(value: unknown): value is PersistedControls {
     isBoolean(v.historyAll) &&
     isBoolean(v.labelsAll) &&
     isBoolean(v.mapLabelsOn) &&
-    isBoolean(v.rangeOutlineVisible)
+    isBoolean(v.rangeOutlineVisible) &&
+    isBoolean(v.radarOn) &&
+    isFiniteNumber(v.radarOpacity)
   );
 }
 

@@ -4,11 +4,14 @@ import {
   ISOLATE_ICON,
   MAXIMIZE_ICON,
   MINIMIZE_ICON,
+  PAUSE_ICON,
+  PLAY_ICON,
   RADAR_ICON,
   ROUTE_ICON,
   TAGS_ICON,
   TRACE_POINTS_ICON,
   TYPE_ICON,
+  WEATHER_RADAR_ICON,
   ZOOM_TO_ICON,
 } from "./actionIcons";
 
@@ -104,6 +107,39 @@ describe("ROUTE_ICON / TAGS_ICON / TYPE_ICON / RADAR_ICON", () => {
     expect(RADAR_ICON.circles).toEqual([{ cx: 12, cy: 12, r: 2 }]);
     expect(RADAR_ICON.paths).toHaveLength(7);
     expect(RADAR_ICON.paths?.map((p) => p.d)).toContain("m13.41 10.59 5.66-5.66");
+  });
+});
+
+// WEATHER_RADAR_ICON/PLAY_ICON/PAUSE_ICON path/rect data copied
+// byte-for-byte from lucide-icons/lucide's icons/cloud-rain.svg,
+// icons/play.svg, and icons/pause.svg (as of this writing) -- same
+// fetch-don't-guess convention as above.
+describe("WEATHER_RADAR_ICON / PLAY_ICON / PAUSE_ICON", () => {
+  it("WEATHER_RADAR_ICON is Lucide's CloudRain glyph (a cloud outline + three rain-drop strokes)", () => {
+    expect(WEATHER_RADAR_ICON.paths).toEqual([
+      { d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" },
+      { d: "M16 14v6" },
+      { d: "M8 14v6" },
+      { d: "M12 16v6" },
+    ]);
+  });
+
+  it("WEATHER_RADAR_ICON is deliberately distinct from RADAR_ICON, which already means Range Outline in this panel", () => {
+    expect(WEATHER_RADAR_ICON.circles).toBeUndefined();
+    expect(RADAR_ICON.circles).not.toBeUndefined();
+  });
+
+  it("PLAY_ICON is Lucide's Play glyph (single outlined triangle)", () => {
+    expect(PLAY_ICON.paths).toEqual([
+      { d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" },
+    ]);
+  });
+
+  it("PAUSE_ICON is Lucide's Pause glyph (two vertical bars)", () => {
+    expect(PAUSE_ICON.rects).toEqual([
+      { x: 14, y: 3, width: 5, height: 18, rx: 1 },
+      { x: 5, y: 3, width: 5, height: 18, rx: 1 },
+    ]);
   });
 });
 

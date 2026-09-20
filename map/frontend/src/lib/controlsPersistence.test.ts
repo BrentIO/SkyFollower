@@ -32,6 +32,8 @@ const ALL_ON = {
   labelsAll: true,
   mapLabelsOn: true,
   rangeOutlineVisible: true,
+  radarOn: true,
+  radarOpacity: 0.8,
 };
 
 const DEFAULTS = {
@@ -39,6 +41,8 @@ const DEFAULTS = {
   labelsAll: false,
   mapLabelsOn: false,
   rangeOutlineVisible: false,
+  radarOn: false,
+  radarOpacity: 0.2,
 };
 
 let storage: Storage;
@@ -60,10 +64,25 @@ describe("loadPersistedControls/savePersistedControls -- round-trip", () => {
   });
 
   it("round-trips a mix of true/false values", () => {
-    const mixed = { historyAll: true, labelsAll: false, mapLabelsOn: true, rangeOutlineVisible: false };
+    const mixed = {
+      historyAll: true,
+      labelsAll: false,
+      mapLabelsOn: true,
+      rangeOutlineVisible: false,
+      radarOn: true,
+      radarOpacity: 0.5,
+    };
     savePersistedControls(mixed);
 
     expect(loadPersistedControls()).toEqual(mixed);
+  });
+
+  it("round-trips radarOpacity at 0 and 1, the slider's own extremes", () => {
+    savePersistedControls({ ...ALL_ON, radarOpacity: 0 });
+    expect(loadPersistedControls().radarOpacity).toBe(0);
+
+    savePersistedControls({ ...ALL_ON, radarOpacity: 1 });
+    expect(loadPersistedControls().radarOpacity).toBe(1);
   });
 });
 
@@ -87,7 +106,7 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
   });
 
   it("falls back to defaults when controls is missing entirely", () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 1 }));
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 2 }));
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
@@ -95,11 +114,32 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
   it("falls back to defaults when a field has the wrong type", () => {
     storage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ version: 1, controls: { ...ALL_ON, historyAll: "yes" } }),
+      JSON.stringify({ version: 2, controls: { ...ALL_ON, historyAll: "yes" } }),
     );
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
+
+  it("falls back to defaults when radarOn has the wrong type", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: 2, controls: { ...ALL_ON, radarOn: "on" } }),
+    );
+
+    expect(loadPersistedControls()).toEqual(DEFAULTS);
+  });
+
+  it("falls back to defaults when radarOpacity is not a number", () => {
+    for (const badOpacity of ["0.5", null]) {
+      storage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ version: 2, controls: { ...ALL_ON, radarOpacity: badOpacity } }),
+      );
+
+      expect(loadPersistedControls()).toEqual(DEFAULTS);
+    }
+  });
+
 
   it("falls back to defaults when the stored value is a JSON scalar, not an object", () => {
     storage.setItem(STORAGE_KEY, JSON.stringify(42));
@@ -143,8 +183,20 @@ describe("loadPersistedControls -- blocked storage", () => {
 });
 
 describe("loadPersistedControls -- version mismatch", () => {
+  it("treats a pre-#1896 v1 payload (no radar fields) as absent and falls back to defaults, not a partial merge", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        controls: { historyAll: true, labelsAll: true, mapLabelsOn: true, rangeOutlineVisible: true },
+      }),
+    );
+
+    expect(loadPersistedControls()).toEqual(DEFAULTS);
+  });
+
   it("treats a different version as absent and falls back to defaults", () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 2, controls: ALL_ON }));
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 3, controls: ALL_ON }));
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
