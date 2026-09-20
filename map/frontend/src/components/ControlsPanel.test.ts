@@ -239,3 +239,65 @@ describe("Map Labels button -- last in the column", () => {
     expect(mapLabelsIndex).toBeGreaterThan(rangeOutlineIndex);
   });
 });
+
+describe("Radar control (#1896) -- last in the column, after Map Labels", () => {
+  it("renders after Map Labels", () => {
+    const mapLabelsIndex = controlsPanelSource.indexOf('label="Map Labels"');
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    expect(radarIndex).toBeGreaterThan(mapLabelsIndex);
+  });
+
+  it("uses WEATHER_RADAR_ICON, not RADAR_ICON (already Range Outline's icon in this panel)", () => {
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
+    expect(callSite).toContain("icon={WEATHER_RADAR_ICON}");
+  });
+
+  it("the Radar icon's active state reflects radarOn, not whether the popover is expanded", () => {
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
+    expect(callSite).toContain("active={radarOn}");
+  });
+
+  it("the Radar icon's onClick toggles local expand state, not onToggleRadar directly", () => {
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
+    expect(callSite).toContain("setRadarExpanded");
+    expect(callSite).not.toContain("onClick={onToggleRadar}");
+  });
+
+  it("declares local radarExpanded state via useState, not lifted/persisted", () => {
+    expect(controlsPanelSource).toContain('import { useState } from "react"');
+    expect(controlsPanelSource).toContain("useState(false)");
+  });
+
+  it("the expanded popover wires an on/off toggle to onToggleRadar", () => {
+    expect(controlsPanelSource).toContain("onClick={onToggleRadar}");
+    expect(controlsPanelSource).toContain("aria-pressed={radarOn}");
+  });
+
+  it("the opacity slider is a 0-1 range input wired to onRadarOpacityChange, disabled when radar is off", () => {
+    const sliderIndex = controlsPanelSource.indexOf('type="range"');
+    expect(sliderIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(sliderIndex - 50, sliderIndex + 300);
+    expect(callSite).toContain("min={0}");
+    expect(callSite).toContain("max={1}");
+    expect(callSite).toContain("value={radarOpacity}");
+    expect(callSite).toContain("disabled={!radarOn}");
+    expect(callSite).toContain("onRadarOpacityChange");
+  });
+
+  it("the play/pause control swaps icon and label by radarPlaying, and is disabled when radar is off", () => {
+    const playIndex = controlsPanelSource.indexOf("radarPlaying ?");
+    expect(playIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(playIndex, playIndex + 400);
+    expect(callSite).toContain("PAUSE_ICON");
+    expect(callSite).toContain("PLAY_ICON");
+    expect(callSite).toContain("onClick={onToggleRadarPlaying}");
+    expect(callSite).toContain("disabled={!radarOn}");
+  });
+
+  it("only renders the popover's controls when radarExpanded is true", () => {
+    expect(controlsPanelSource).toContain("{radarExpanded && (");
+  });
+});

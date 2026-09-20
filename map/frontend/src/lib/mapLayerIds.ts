@@ -48,6 +48,25 @@ export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
 export const CENTER_POINT_SOURCE_ID = "sf-center-point";
 export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
 
+// Live weather radar overlay (#1896, see lib/radar.ts for the tile-URL/
+// zoom-bounds/frame-sequence logic). RADAR_SOURCE_ID/RADAR_LAYER_ID is the
+// always-current snapshot, added/removed whole (not layout-visibility-
+// toggled) when the operator turns the layer on/off, so there's a hard
+// guarantee it never fetches a tile while off rather than relying on
+// whether an invisible layer's source still requests tiles. Added first
+// inside the map's "load" handler, before any other SkyFollower layer, so
+// every later plain addLayer() (no explicit beforeId) naturally stacks
+// above it -- "above the base map, below everything this app draws."
+export const RADAR_SOURCE_ID = "sf-radar";
+export const RADAR_LAYER_ID = "sf-radar-raster";
+// Single source/layer reused across every playback frame via
+// RasterTileSource.setTiles() rather than one source per frame -- only
+// ever fetches the one frame currently on screen, and only exists for the
+// duration of an active play session (added when play starts, removed on
+// pause/off), so idle/paused state fetches nothing here either.
+export const RADAR_PLAYBACK_SOURCE_ID = "sf-radar-playback";
+export const RADAR_PLAYBACK_LAYER_ID = "sf-radar-playback-raster";
+
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,
 // and their labels are deliberately excluded -- clicking them must never

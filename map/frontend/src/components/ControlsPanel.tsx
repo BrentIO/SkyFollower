@@ -1,4 +1,5 @@
-import { RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON } from "../lib/actionIcons";
+import { useState } from "react";
+import { PAUSE_ICON, PLAY_ICON, RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
 import { toggleButtonClass } from "../lib/toggleButtonStyle";
@@ -44,6 +45,25 @@ export interface ControlsPanelProps {
    * `document.fullscreenEnabled` is false (some embedded/iframe contexts
    * and older Safari versions). */
   fullscreenDisabled: boolean;
+  /** Live weather radar overlay (#1896, see lib/radar.ts). `radarOn` is
+   * the toggle-active state driving the icon's own coloring, distinct from
+   * this component's local `radarExpanded` state (whether the popover
+   * showing the toggle/opacity/play controls is open) -- opening the
+   * popover doesn't itself turn the layer on, matching every other
+   * IconButton's `active` meaning "the feature is on," not "its controls
+   * are visible." */
+  radarOn: boolean;
+  onToggleRadar: () => void;
+  /** 0-1, applied live via `raster-opacity` -- see lib/controlsPersistence.ts
+   * for why 0.2 is the default. */
+  radarOpacity: number;
+  onRadarOpacityChange: (value: number) => void;
+  /** Whether the last-30-minutes playback loop is currently animating.
+   * Disabled (not hidden) whenever `radarOn` is false, matching
+   * `rangeOutlineDisabled`'s convention -- play/pause is meaningless with
+   * no radar layer to animate. */
+  radarPlaying: boolean;
+  onToggleRadarPlaying: () => void;
 }
 
 // Top-right floating controls: one unified vertically stacked column mixing
@@ -84,7 +104,20 @@ export function ControlsPanel({
   fullscreen,
   onToggleFullscreen,
   fullscreenDisabled,
+  radarOn,
+  onToggleRadar,
+  radarOpacity,
+  onRadarOpacityChange,
+  radarPlaying,
+  onToggleRadarPlaying,
 }: ControlsPanelProps) {
+  // Purely local, transient UI state -- whether the radar popover is open.
+  // Not lifted to MapView/persisted: unlike radarOn/radarOpacity, this
+  // isn't an operator preference worth restoring on reload (matching
+  // AircraftListPanel's own open/closed drawer state, which also resets
+  // fresh each load).
+  const [radarExpanded, setRadarExpanded] = useState(false);
+
   return (
     <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
       <div className="pointer-events-auto flex flex-col gap-2">
@@ -129,6 +162,60 @@ export function ControlsPanel({
           size="md"
         />
         <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
+        <div className="relative">
+          <IconButton
+            label="Radar"
+            icon={WEATHER_RADAR_ICON}
+            active={radarOn}
+            onClick={() => setRadarExpanded((prev) => !prev)}
+            size="md"
+          />
+          {radarExpanded && (
+            <div
+              className="absolute top-0 right-full mr-2 flex w-48 flex-col gap-3 rounded-md border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900"
+              // Popover content is its own click surface, independent of
+              // the toggle button beside it -- no outside-click-to-close
+              // handling here, matching this codebase's other disclosure
+              // (AircraftListPanel's drawer also only closes on its own
+              // explicit toggle).
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>
+                <button
+                  type="button"
+                  onClick={onToggleRadar}
+                  aria-pressed={radarOn}
+                  aria-label={radarOn ? "Turn radar off" : "Turn radar on"}
+                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${toggleButtonClass(radarOn)}`}
+                >
+                  {radarOn ? "On" : "Off"}
+                </button>
+              </div>
+              <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
+                <span>Opacity</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={radarOpacity}
+                  disabled={!radarOn}
+                  onChange={(e) => onRadarOpacityChange(Number(e.target.value))}
+                  aria-label="Radar opacity"
+                  className="disabled:opacity-50"
+                />
+              </label>
+              <IconButton
+                label={radarPlaying ? "Pause" : "Play"}
+                icon={radarPlaying ? PAUSE_ICON : PLAY_ICON}
+                active={radarPlaying}
+                onClick={onToggleRadarPlaying}
+                disabled={!radarOn}
+                size="md"
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -842,3 +842,103 @@ describe("map render loop (idle redraws)", () => {
     expect(call).not.toContain("maxzoom");
   });
 });
+
+describe("radar overlay (#1896)", () => {
+  it("inserts both the current-snapshot and playback layers before RANGE_RING_LAYER_ID -- above the base map, below everything this app draws", () => {
+    expect(addLayerBeforeId("RADAR_LAYER_ID")).toBe("RANGE_RING_LAYER_ID");
+    expect(addLayerBeforeId("RADAR_PLAYBACK_LAYER_ID")).toBe("RANGE_RING_LAYER_ID");
+  });
+
+  it("declares both radar sources with the empirically-verified zoom bounds from lib/radar.ts, not hardcoded numbers", () => {
+    const currentSourceIndex = mapViewSource.indexOf("map.addSource(RADAR_SOURCE_ID,");
+    const playbackSourceIndex = mapViewSource.indexOf("map.addSource(RADAR_PLAYBACK_SOURCE_ID,");
+    expect(currentSourceIndex).toBeGreaterThan(-1);
+    expect(playbackSourceIndex).toBeGreaterThan(-1);
+    for (const index of [currentSourceIndex, playbackSourceIndex]) {
+      const call = mapViewSource.slice(index, mapViewSource.indexOf("});", index));
+      expect(call).toContain("minzoom: RADAR_MIN_ZOOM");
+      expect(call).toContain("maxzoom: RADAR_MAX_ZOOM");
+      expect(call).toContain("tileSize: RADAR_TILE_SIZE");
+    }
+  });
+
+  it("the on/off effect adds/removes the current-snapshot source+layer whole, rather than only toggling layout visibility -- the hard tile-fetch guarantee", () => {
+    const effectIndex = mapViewSource.indexOf("if (radarOn) {");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const effectBody = mapViewSource.slice(effectIndex, mapViewSource.indexOf("[radarOn, mapLoaded]);", effectIndex));
+    expect(effectBody).toContain("map.addSource(RADAR_SOURCE_ID,");
+    expect(effectBody).toContain("map.addLayer(");
+    expect(effectBody).toContain("map.removeLayer(RADAR_LAYER_ID)");
+    expect(effectBody).toContain("map.removeSource(RADAR_SOURCE_ID)");
+    expect(effectBody).not.toContain("setLayoutProperty");
+  });
+
+  it("the on/off effect does not depend on radarOpacity -- an opacity change must never re-add the source/re-fetch tiles", () => {
+    const effectIndex = mapViewSource.indexOf("if (radarOn) {");
+    const depsIndex = mapViewSource.indexOf("[radarOn, mapLoaded]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(-1);
+    expect(depsIndex - effectIndex).toBeLessThan(2000);
+  });
+
+  it("opacity changes go through setPaintProperty only, never rebuild a source", () => {
+    const opacityEffectIndex = mapViewSource.indexOf('map.setPaintProperty(RADAR_LAYER_ID, "raster-opacity"');
+    expect(opacityEffectIndex).toBeGreaterThan(-1);
+    expect(mapViewSource).toContain('map.setPaintProperty(RADAR_PLAYBACK_LAYER_ID, "raster-opacity"');
+  });
+
+  it("the current-snapshot refresh interval only runs while radar is on and not playing, and is cleared on cleanup", () => {
+    const guardIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || radarPlaying) return;");
+    expect(guardIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(guardIndex, guardIndex + 400);
+    expect(body).toContain("RADAR_REFRESH_INTERVAL_MS");
+    expect(body).toContain("return () => clearInterval(interval);");
+  });
+
+  it("playback steps through RADAR_PLAYBACK_OFFSETS_MINUTES via setTiles on a single reused source, not one source per frame", () => {
+    expect(mapViewSource).toContain("RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex]");
+    expect(mapViewSource).toContain("RADAR_FRAME_INTERVAL_MS");
+    // Exactly one addSource call for the playback source -- confirms frames
+    // are cycled via setTiles() on that same source, not by adding a new
+    // source per frame.
+    const occurrences = mapViewSource.split("map.addSource(RADAR_PLAYBACK_SOURCE_ID,").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it("playback's cleanup tears down the playback source/layer and restores the snapshot layer's visibility -- pause reverts to the current picture immediately", () => {
+    const frameIndexDeclIndex = mapViewSource.indexOf("let frameIndex = 0;");
+    expect(frameIndexDeclIndex).toBeGreaterThan(-1);
+    const cleanupIndex = mapViewSource.indexOf("clearInterval(interval);", frameIndexDeclIndex);
+    expect(cleanupIndex).toBeGreaterThan(-1);
+    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 400);
+    expect(cleanupBody).toContain("map.removeLayer(RADAR_PLAYBACK_LAYER_ID)");
+    expect(cleanupBody).toContain("map.removeSource(RADAR_PLAYBACK_SOURCE_ID)");
+    expect(cleanupBody).toContain('map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible")');
+  });
+
+  it("turning radar off also stops playback, so turning it back on later doesn't silently resume animating", () => {
+    const handlerIndex = mapViewSource.indexOf("function handleToggleRadar()");
+    expect(handlerIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(handlerIndex, handlerIndex + 300);
+    expect(body).toContain("setRadarPlaying(false)");
+  });
+
+  it("radarOn/radarOpacity are persisted; radarPlaying is not", () => {
+    expect(mapViewSource).toContain(
+      "savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity });",
+    );
+    expect(mapViewSource).not.toContain("radarPlaying: ");
+  });
+
+  it("the attribution control is added manually (not via the Map constructor option), so it can be swapped when radar toggles", () => {
+    expect(mapViewSource).toContain("attributionControl: false,");
+    expect(mapViewSource).toContain("attributionControlRef.current = new maplibregl.AttributionControl(");
+  });
+
+  it("appends the radar credit only while radar is on", () => {
+    const swapIndex = mapViewSource.indexOf("customAttribution: radarOn ?");
+    expect(swapIndex).toBeGreaterThan(-1);
+    const call = mapViewSource.slice(swapIndex, swapIndex + 200);
+    expect(call).toContain("[BASE_CUSTOM_ATTRIBUTION, RADAR_CUSTOM_ATTRIBUTION]");
+    expect(call).toContain("BASE_CUSTOM_ATTRIBUTION");
+  });
+});
