@@ -11,6 +11,22 @@ FROM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1ef
 WORKDIR /frontend
 
 COPY map/frontend/package*.json ./
+
+# `npm install --package-lock-only` before `npm ci` heals a known class of
+# lockfile corruption: an npm CLI bug (npm/cli#8535, fixed by npm/cli#8645 in
+# npm 11.6.3) miscalculates peer+optional dependency flags and, on `npm
+# install`, prunes @tailwindcss/oxide-wasm32-wasi's bundled optional
+# sub-dependencies (@emnapi/*, tslib) from package-lock.json on platforms
+# that don't need that variant (e.g. macOS). If that pruned lockfile is
+# committed or just sitting in a worktree, `npm ci` below fails with a
+# misleading dump of workspaces/--install-links usage instead of the real
+# "Missing: @emnapi/core@... from lock file" reason. Regenerating the lock
+# here, with this image's own unaffected npm, is a no-op against an
+# already-correct lockfile and heals a corrupted one -- so this stage never
+# depends on the npm version a contributor's machine happened to run `npm
+# install` with. See map/README.md's "Frontend" section and GitHub issue
+# #1872 for the full writeup.
+RUN npm install --package-lock-only
 RUN npm ci
 
 COPY map/frontend/ ./
