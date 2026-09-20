@@ -23,6 +23,12 @@ export interface IconButtonProps {
    * toggle row matches the recenter button's own h-9 w-9 square instead of
    * bumping every caller of this shared component. */
   size?: "sm" | "md";
+  /** #1910: when true, renders a spinning ring in place of `icon` and
+   * forces the button disabled -- for an action whose effect isn't ready
+   * yet (radar playback's frame-prefetch phase), so the pause reads as
+   * "loading," not a stalled click. Every other existing caller omits
+   * this and renders exactly as before. */
+  loading?: boolean;
 }
 
 const SIZE_CLASSES: Record<"sm" | "md", string> = {
@@ -30,18 +36,27 @@ const SIZE_CLASSES: Record<"sm" | "md", string> = {
   md: "h-9 w-9",
 };
 
-export function IconButton({ label, icon, active, onClick, disabled = false, size = "sm" }: IconButtonProps) {
+export function IconButton({
+  label,
+  icon,
+  active,
+  onClick,
+  disabled = false,
+  size = "sm",
+  loading = false,
+}: IconButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || loading}
       title={label}
       aria-label={label}
       aria-pressed={active}
+      aria-busy={loading}
       className={`flex ${SIZE_CLASSES[size]} items-center justify-center rounded border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(active)}`}
     >
-      <ActionIcon spec={icon} />
+      {loading ? <LoadingSpinner /> : <ActionIcon spec={icon} />}
     </button>
   );
 }
@@ -75,6 +90,28 @@ export function ActionIcon({ spec }: { spec: IconSpec }) {
       {spec.rects?.map((r, i) => (
         <rect key={`r${i}`} x={r.x} y={r.y} width={r.width} height={r.height} rx={r.rx} />
       ))}
+    </svg>
+  );
+}
+
+// A simple spinning ring -- CSS `animate-spin` rotating an SVG circle with
+// a partial stroke (dasharray leaves a gap), the standard "loading" idiom.
+// `stroke="currentColor"` matches ActionIcon's own convention so it picks
+// up the button's active/inactive color for free.
+function LoadingSpinner() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      className="animate-spin"
+    >
+      <circle cx="12" cy="12" r="9" strokeOpacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" />
     </svg>
   );
 }

@@ -34,6 +34,15 @@ export const RADAR_PLAYBACK_OFFSETS_MINUTES: readonly number[] = [30, 25, 20, 15
 // weather, RainViewer's own reference implementation).
 export const RADAR_FRAME_INTERVAL_MS = 500;
 
+// #1910: safety ceiling on how long playback waits for one frame's tiles
+// to finish loading during the prefetch phase before giving up on that
+// frame and moving on anyway. Prefetching exists so the *visible* step
+// interval never shows a blank/loading tile (the original bug); this
+// timeout exists so a single slow/failed network request can't block
+// playback from starting at all -- matches this app's standing
+// fault-tolerance convention of degrading gracefully rather than hanging.
+export const RADAR_FRAME_LOAD_TIMEOUT_MS = 5000;
+
 // The current-snapshot layer's own auto-refresh cadence while radar is on
 // and not playing. Matches IEM's own `Cache-Control: public, max-age=300`
 // on the current-tile endpoint (verified against a live response) --

@@ -301,6 +301,14 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
     expect(controlsPanelSource).toContain("{radarExpanded && (");
   });
 
+  it("#1910: the play/pause button shows a loading spinner and a distinct label while radarPlaybackLoading is true", () => {
+    const playIndex = controlsPanelSource.indexOf("radarPlaybackLoading ?");
+    expect(playIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(playIndex, playIndex + 400);
+    expect(callSite).toContain('"Loading radar frames"');
+    expect(callSite).toContain("loading={radarPlaybackLoading}");
+  });
+
   it("#1909: the popover pins itself above every InfoBoxLayer label via MAX_LABEL_Z_INDEX + 1", () => {
     expect(controlsPanelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";');
     const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");

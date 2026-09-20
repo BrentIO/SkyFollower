@@ -922,6 +922,41 @@ describe("radar overlay (#1896)", () => {
     expect(body).toContain("setRadarPlaying(false)");
   });
 
+  it("#1910: playback prefetches every frame before starting the visible interval, waiting on isSourceLoaded rather than firing setTiles blind", () => {
+    const prefetchIndex = mapViewSource.indexOf("async function prefetchThenPlay()");
+    expect(prefetchIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(prefetchIndex, mapViewSource.indexOf("prefetchThenPlay();", prefetchIndex));
+    expect(body).toContain("for (const offsetMinutes of RADAR_PLAYBACK_OFFSETS_MINUTES)");
+    expect(body).toContain("await waitForCurrentFrameToLoad()");
+    expect(body).toContain("setRadarPlaybackLoading(true)");
+    expect(body).toContain("setRadarPlaybackLoading(false)");
+  });
+
+  it("#1910: the frame-load wait resolves on isSourceLoaded via the map's idle event, with a timeout fallback so one slow frame can't block playback forever", () => {
+    const waitIndex = mapViewSource.indexOf("function waitForCurrentFrameToLoad()");
+    expect(waitIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(waitIndex, waitIndex + 800);
+    expect(body).toContain("radarMap.isSourceLoaded(RADAR_PLAYBACK_SOURCE_ID)");
+    expect(body).toContain("RADAR_FRAME_LOAD_TIMEOUT_MS");
+    expect(body).toContain('radarMap.on("idle", onIdle)');
+  });
+
+  it("#1910: prefetch is cancelled on cleanup (effect re-run/unmount mid-prefetch never starts a stale loop or leaves the loading spinner stuck)", () => {
+    const radarMapDeclIndex = mapViewSource.indexOf("const radarMap = map;");
+    expect(radarMapDeclIndex).toBeGreaterThan(-1);
+    const cleanupIndex = mapViewSource.indexOf("cancelled = true;", radarMapDeclIndex);
+    expect(cleanupIndex).toBeGreaterThan(-1);
+    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 200);
+    expect(cleanupBody).toContain("setRadarPlaybackLoading(false)");
+  });
+
+  it("#1910: radarPlaybackLoading is passed through to ControlsPanel, alongside the other radar props", () => {
+    const propsIndex = mapViewSource.indexOf("radarPlaying={radarPlaying}");
+    expect(propsIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(propsIndex, propsIndex + 200);
+    expect(body).toContain("radarPlaybackLoading={radarPlaybackLoading}");
+  });
+
   it("radarOn/radarOpacity are persisted; radarPlaying is not", () => {
     expect(mapViewSource).toContain(
       "savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity });",
