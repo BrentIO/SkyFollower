@@ -25,6 +25,10 @@ describe("Badge classes -- copied verbatim from management-ui/frontend/src/views
   it("matches BADGE_CLASSES.yellow (Special Livery) exactly", () => {
     expect(BADGE_CLASSES.yellow).toBe("bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200");
   });
+
+  it("matches BADGE_CLASSES.blue (UAT/External, #1901) exactly", () => {
+    expect(BADGE_CLASSES.blue).toBe("bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200");
+  });
 });
 
 describe("Route pill classes -- copied verbatim from management-ui/frontend/src/components/FlightViewModal.tsx", () => {

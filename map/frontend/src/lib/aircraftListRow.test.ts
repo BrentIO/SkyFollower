@@ -68,6 +68,32 @@ describe("buildAircraftListRow -- Military/Special Livery", () => {
   });
 });
 
+describe("buildAircraftListRow -- isUat/isExternal (#1901)", () => {
+  it("is false/false when receiver_sources is absent", () => {
+    const row = buildAircraftListRow(baseAircraft(), null);
+    expect(row.isUat).toBe(false);
+    expect(row.isExternal).toBe(false);
+  });
+
+  it("is true when receiver_sources includes \"978\"", () => {
+    const row = buildAircraftListRow(baseAircraft({ receiver_sources: ["978"] }), null);
+    expect(row.isUat).toBe(true);
+    expect(row.isExternal).toBe(false);
+  });
+
+  it("is true when receiver_sources includes \"EXTERNAL\"", () => {
+    const row = buildAircraftListRow(baseAircraft({ receiver_sources: ["EXTERNAL"] }), null);
+    expect(row.isUat).toBe(false);
+    expect(row.isExternal).toBe(true);
+  });
+
+  it("carries both independently when receiver_sources includes both", () => {
+    const row = buildAircraftListRow(baseAircraft({ receiver_sources: ["1090", "978", "EXTERNAL"] }), null);
+    expect(row.isUat).toBe(true);
+    expect(row.isExternal).toBe(true);
+  });
+});
+
 describe("buildAircraftListRow -- Country of registration", () => {
   it("is null/null when unknown", () => {
     const row = buildAircraftListRow(baseAircraft(), null);

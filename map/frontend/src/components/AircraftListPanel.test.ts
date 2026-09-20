@@ -99,7 +99,7 @@ describe("Ident column -- plain identifier text only (#1881: badges moved to Tag
   });
 });
 
-describe("Tags column -- Military/Special Livery badges with hover tooltips (#1881)", () => {
+describe("Tags column -- Military/Special Livery/UAT/External badges with hover tooltips (#1881, #1901)", () => {
   function tagsColumnSource(): string {
     const tagsColumnStart = panelSource.indexOf('key: "tags"');
     const tagsColumnEnd = panelSource.indexOf('key: "registration"');
@@ -122,6 +122,7 @@ describe("Tags column -- Military/Special Livery badges with hover tooltips (#18
     const callSite = tagsColumnSource();
     expect(callSite).toContain("${BADGE_BASE} ${BADGE_CLASSES.green}");
     expect(callSite).toContain("${BADGE_BASE} ${BADGE_CLASSES.yellow}");
+    expect(callSite).toContain("${BADGE_BASE} ${BADGE_CLASSES.blue}");
   });
 
   it("renders the military badge with a 'Military' tooltip", () => {
@@ -135,14 +136,26 @@ describe("Tags column -- Military/Special Livery badges with hover tooltips (#18
     expect(callSite).toContain("title={row.specialLivery}");
   });
 
-  it("ranks sortKey so special-livery rows sort before military-only rows, before untagged rows", () => {
+  it("renders the UAT (978) badge with a tooltip, keyed off row.isUat (#1901)", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain("row.isUat &&");
+    expect(callSite).toContain('title="ADS-B (UAT/978)"');
+  });
+
+  it("renders the External-source badge with a tooltip, keyed off row.isExternal (#1901)", () => {
+    const callSite = tagsColumnSource();
+    expect(callSite).toContain("row.isExternal &&");
+    expect(callSite).toContain('title="External source"');
+  });
+
+  it("ranks sortKey: special-livery, then military, then UAT/External, then untagged (#1901 extends #1881's scheme)", () => {
     const callSite = tagsColumnSource();
     expect(callSite).toContain(
-      "sortKey: (row) => (row.specialLivery != null ? 0 : row.military ? 1 : 2),",
+      "sortKey: (row) =>\n      row.specialLivery != null ? 0 : row.military ? 1 : row.isUat || row.isExternal ? 2 : 3,",
     );
   });
 
-  it("applies a narrow fixed width so two badges fit without wrapping", () => {
+  it("applies a narrow fixed width, unchanged by #1901 even with up to 4 badges possible", () => {
     const callSite = tagsColumnSource();
     expect(callSite).toContain('className: "w-16"');
   });

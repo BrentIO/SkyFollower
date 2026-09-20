@@ -65,25 +65,46 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
   // Ident, so Ident stays plain text and the badges get a stable strip that
   // doesn't shift with ident text width. Reuses AircraftDetailPanel's own
   // BADGE_BASE/BADGE_CLASSES convention exactly (green "M" for military,
-  // yellow "S" for special livery), each with a native `title` tooltip --
-  // this codebase's established tooltip convention (see the flag column's
-  // title above, or connectionTooltip() elsewhere in this file) -- since no
-  // dedicated tooltip component exists or should be added for this. Sorts
-  // by a numeric rank -- 0: has specialLivery, 1: military only, 2: neither
-  // -- so special-livery rows sort first, then military-only, then
-  // untagged, per the issue's locked sort order (a row with both tags
-  // sorts under the special-livery group). Fixed narrow width (`w-16`) so
-  // two badges fit side by side without wrapping.
+  // yellow "S" for special livery, blue "U"/"E" for UAT/External source,
+  // #1901), each with a native `title` tooltip -- this codebase's
+  // established tooltip convention (see the flag column's title above, or
+  // connectionTooltip() elsewhere in this file) -- since no dedicated
+  // tooltip component exists or should be added for this.
+  //
+  // Sorts by a numeric rank -- 0: has specialLivery, 1: military, 2: has
+  // isUat or isExternal, 3: none of the above (#1901 extends #1881's
+  // original 0/1/2 scheme by inserting the new source-tag tier ahead of
+  // "untagged" rather than leaving U/E sort-neutral). specialLivery/
+  // military stay the top two tiers -- they mark a notable *aircraft*;
+  // U/E mark a data-source characteristic, a real but lower-priority
+  // signal, so they sort above plain untagged rows without outranking the
+  // two existing tags. isUat and isExternal share one tier rather than
+  // being split into two more ranks -- neither is more "notable" than the
+  // other, and a row can carry both. Fixed narrow width (`w-16`, per the
+  // locked decision on #1901 -- not widened even with up to 4 badges
+  // possible on one row) so badges wrap onto a second line at the widest
+  // combination rather than forcing every other row's cell wider.
   {
     key: "tags",
     header: "Tags",
-    sortKey: (row) => (row.specialLivery != null ? 0 : row.military ? 1 : 2),
+    sortKey: (row) =>
+      row.specialLivery != null ? 0 : row.military ? 1 : row.isUat || row.isExternal ? 2 : 3,
     render: (row) => (
-      <span className="flex items-center gap-1">
+      <span className="flex flex-wrap items-center gap-1">
         {row.military && <span title="Military" className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
         {row.specialLivery != null && (
           <span title={row.specialLivery} className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>
             S
+          </span>
+        )}
+        {row.isUat && (
+          <span title="ADS-B (UAT/978)" className={`${BADGE_BASE} ${BADGE_CLASSES.blue}`}>
+            U
+          </span>
+        )}
+        {row.isExternal && (
+          <span title="External source" className={`${BADGE_BASE} ${BADGE_CLASSES.blue}`}>
+            E
           </span>
         )}
       </span>
