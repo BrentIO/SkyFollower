@@ -49,6 +49,21 @@ describe("buildAircraftDetail -- header", () => {
     const data = buildAircraftDetail(baseFlight({ aircraft: { icao_hex: "A2C9E4", registration: "N727JF" } }), null);
     expect(data.registration).toBe("N727JF");
   });
+
+  it("omits country/countryCode when unresolved", () => {
+    const data = buildAircraftDetail(baseFlight(), null);
+    expect(data.country).toBeNull();
+    expect(data.countryCode).toBeNull();
+  });
+
+  it("includes country and countryCode when resolved", () => {
+    const data = buildAircraftDetail(
+      baseFlight({ aircraft: { icao_hex: "A2C9E4", country: "Germany", country_code: "DE" } }),
+      null,
+    );
+    expect(data.country).toBe("Germany");
+    expect(data.countryCode).toBe("DE");
+  });
 });
 
 describe("buildAircraftDetail -- badges", () => {

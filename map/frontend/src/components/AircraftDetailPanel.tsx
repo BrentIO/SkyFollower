@@ -3,6 +3,7 @@ import type { MapFlight } from "../api/types";
 import { FOLLOW_ICON, ISOLATE_ICON, TRACE_POINTS_ICON, ZOOM_TO_ICON } from "../lib/actionIcons";
 import { buildAircraftDetail, type AircraftDetailData, type AirportBlockData } from "../lib/aircraftDetail";
 import type { CenterPoint } from "../lib/config";
+import { countryFlag } from "../lib/countryFlag";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { formatRelativeTime, relativeTimeTickIntervalMs } from "../lib/relativeTime";
 import { IconButton } from "./IconButton";
@@ -115,6 +116,7 @@ export function AircraftDetailPanel({
   }, [aircraft.icao_hex, data.lastReceivedAt]);
   const lastMessageReceived = data.lastReceivedAt != null ? formatRelativeTime(data.lastReceivedAt, now) : null;
 
+  const flag = data.countryCode != null ? countryFlag(data.countryCode) : null;
   const hasHeaderSubline = data.registration != null || data.icaoHex != null;
   const hasBadges = data.military || data.specialLivery != null;
 
@@ -132,6 +134,7 @@ export function AircraftDetailPanel({
               {data.icaoHex != null && (
                 <span className="font-mono text-xs text-slate-500 dark:text-slate-400">{data.icaoHex}</span>
               )}
+              {flag != null && <span title={data.country ?? data.countryCode ?? undefined}>{flag}</span>}
             </div>
           )}
         </div>

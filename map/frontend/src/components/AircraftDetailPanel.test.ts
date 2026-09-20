@@ -69,6 +69,22 @@ describe("Sources / Matched Rules label -- shares the first line with pills (#17
   });
 });
 
+describe("country-of-registration flag -- header subline, same row as ICAO hex (#1891)", () => {
+  it("imports countryFlag and renders it from data.countryCode, omitted (not a placeholder) when null", () => {
+    expect(panelSource).toContain('import { countryFlag } from "../lib/countryFlag"');
+    expect(panelSource).toContain("data.countryCode != null ? countryFlag(data.countryCode) : null");
+  });
+
+  it("places the flag span immediately after the icaoHex span, using the country/countryCode tooltip", () => {
+    const icaoHexIndex = panelSource.indexOf("data.icaoHex != null &&");
+    const nextRowIndex = panelSource.indexOf("</div>", icaoHexIndex);
+    const block = panelSource.slice(icaoHexIndex, nextRowIndex);
+    expect(block).toContain(
+      "{flag != null && <span title={data.country ?? data.countryCode ?? undefined}>{flag}</span>}",
+    );
+  });
+});
+
 describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
   it("renders all four buttons in order: Isolate, Zoom To, Follow, Trace Points", () => {
     const labels = ["Isolate", "Zoom To", "Follow", "Trace Points"];

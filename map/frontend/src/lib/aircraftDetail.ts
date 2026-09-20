@@ -135,6 +135,13 @@ export interface AircraftDetailData {
   title: string | null;
   registration: string | null;
   icaoHex: string | null;
+  /** Resolved country-of-registration display name, or null if unresolved
+   * (see AircraftInfo.country). Used as the flag emoji's hover tooltip. */
+  country: string | null;
+  /** ISO 3166-1 alpha-2 country-of-registration code, or null if
+   * unresolved (see AircraftInfo.country_code). The component derives the
+   * flag emoji from this via lib/countryFlag.ts. */
+  countryCode: string | null;
   military: boolean;
   specialLivery: string | null;
   route: RouteData | null;
@@ -175,6 +182,8 @@ export function buildAircraftDetail(
     title: nonEmpty(flight.ident),
     registration: nonEmpty(aircraft?.registration),
     icaoHex: nonEmpty(flight.icao_hex),
+    country: nonEmpty(aircraft?.country),
+    countryCode: nonEmpty(aircraft?.country_code),
     military: !!aircraft?.military,
     specialLivery: nonEmpty(aircraft?.special_livery),
     route: buildRoute(flight),
