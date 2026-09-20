@@ -42,7 +42,7 @@ const DEFAULTS = {
   mapLabelsOn: false,
   rangeOutlineVisible: false,
   radarOn: false,
-  radarOpacity: 0.2,
+  radarOpacity: 0.5,
 };
 
 let storage: Storage;
@@ -83,6 +83,18 @@ describe("loadPersistedControls/savePersistedControls -- round-trip", () => {
 
     savePersistedControls({ ...ALL_ON, radarOpacity: 1 });
     expect(loadPersistedControls().radarOpacity).toBe(1);
+  });
+
+  // #1913: a stored radarOpacity of 0.2 (the pre-#1913 default) must
+  // round-trip unchanged -- it's a deliberately-saved value indistinguishable
+  // from a fresh choice, not a marker meaning "no preference was ever set".
+  // Only the *absence* of any stored payload should ever produce the new
+  // 0.5 default; a present-but-old-default-shaped value must never be
+  // silently promoted to the new default.
+  it("preserves a stored radarOpacity of 0.2 (the old default) rather than promoting it to the new 0.5 default", () => {
+    savePersistedControls({ ...ALL_ON, radarOpacity: 0.2 });
+
+    expect(loadPersistedControls().radarOpacity).toBe(0.2);
   });
 });
 
