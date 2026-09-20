@@ -53,6 +53,7 @@ import {
 import { INFO_BOX_TEXT_OFFSET_REFERENCE_PX, infoBoxTextOffsetZoomExpression } from "../lib/infoBoxOffset";
 import { INFO_BOX_ICON_ID, registerInfoBoxIcon } from "../lib/infoBoxIcon";
 import { buildInfoBoxLabelSourceDiff, infoBoxLabelFeatureCollection, type LabelFilter } from "../lib/infoBoxSource";
+import { isWithinCenterTolerance } from "../lib/mapCentered";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
@@ -271,6 +272,19 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const [followId, setFollowId] = useState<string | null>(null);
   const [tracePointsEnabled, setTracePointsEnabled] = useState(false);
 
+  // Whether the camera is currently centered on `config.center` -- drives
+  // the Center button's active/inactive styling (#1847, ControlsPanel's
+  // `recenterActive` prop). Recomputed on the map's `load` event (so the
+  // button reads active immediately on first render, matching the initial
+  // camera position set from `config.center` below) and on every
+  // subsequent `moveend` (see the mount effect's `updateIsCentered`) --
+  // deliberately *not* on `move`, which fires continuously (up to the
+  // frame rate) during every pan/zoom/animation. This project has real,
+  // repeated perf history around per-frame map-event costs (#1830/#1831's
+  // idle-redraw-loop fix, #1838's trail-diffing rework); `moveend` fires
+  // once when the camera actually settles, which is all this needs.
+  const [isCentered, setIsCentered] = useState(false);
+
   // Kept in a ref so the map's 'dragstart' listener (attached once, on
   // mount) always reads the *current* Follow target, not whatever it was
   // when the listener was attached.
@@ -463,6 +477,26 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.on("dragstart", (e) => {
       if (shouldCancelFollowOnDrag(e, followIdRef.current)) cancelFollow();
     });
+
+    // #1847: recompute whether the camera is currently centered on
+    // `config.center`, projecting both points through the map's current
+    // transform (see lib/mapCentered.ts's isWithinCenterTolerance for why
+    // pixel distance rather than a lat/lon epsilon). `config.center` is
+    // captured directly from this effect's own closure -- it never changes
+    // while this component is mounted (see this effect's closing comment).
+    // Only attached/evaluated when a center is actually configured; when
+    // it isn't, the Center button stays disabled and there's nothing to be
+    // "centered on" (isCentered stays false, its initial value, and is
+    // simply never recomputed).
+    function updateIsCentered() {
+      if (!config.center) return;
+      const current = map.project(map.getCenter());
+      const target = map.project([config.center.longitude, config.center.latitude]);
+      setIsCentered(isWithinCenterTolerance(current, target));
+    }
+    if (config.center) {
+      map.on("moveend", updateIsCentered);
+    }
 
     map.on("load", () => {
       // Discover the basemap's own text-bearing layers once, before any of
@@ -942,6 +976,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
         },
       });
 
+      // The map's initial camera position is already `config.center` (see
+      // this effect's `center`/`zoom` above) -- the Center button must
+      // read active from first render, not only after an explicit click or
+      // the first subsequent `moveend` (#1847).
+      updateIsCentered();
+
       setMapLoaded(true);
     });
 
@@ -1320,6 +1360,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           rangeOutlineDisabled={!config.center}
           onRecenter={handleRecenter}
           recenterDisabled={!config.center}
+          recenterActive={isCentered}
           fullscreen={fullscreen}
           onToggleFullscreen={handleToggleFullscreen}
           fullscreenDisabled={!fullscreenSupported}
