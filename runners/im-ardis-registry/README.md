@@ -14,6 +14,10 @@
 
 The ARDIS (Aircraft Registry Data Information System) search page is first GET'd to extract a `__RequestVerificationToken`, then a full-register search is POSTed with that token and a fixed set of "match any" filter parameters requesting up to 50,000 results. The resulting HTML results table is parsed with BeautifulSoup; header cells contain a redundant sort-link label (e.g. `"Sort column by Registration MarkRegistration Mark"`), which a backreference regex strips down to just the column name so it can be used as a dict key per row. Rows whose `Aircraft Status` is `Deregistered` are filtered out, and any row missing a Mode S Number or registration mark is skipped. This registry is business-jet-heavy, which is reflected in the example output below. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+### Deduced ICAO type designator
+
+ARDIS never publishes an ICAO type designator — only a raw manufacturer/model string. This runner deduces one for hexes Mictronics has no entry for by consensus: hexes Mictronics *does* already label become training data, grouped by normalized (manufacturer, model); a group's majority Mictronics designator is applied to that group's other, unlabelled hexes when the group has at least 3 labelled examples and at least 90% agreement, otherwise the gap is left as-is. A deduced designator also gets its matching `description_code`, resolved from the `aircraft:type:{designator}` reference Redis already carries. See `shared/type_designator_consensus.py` and issue #1888 for the method and its measured precision/coverage.
+
 ## Columns
 
 | Source column | Imported | Notes |

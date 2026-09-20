@@ -37,6 +37,12 @@ from shared.mqtt import build_mqtt_client
 from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
+from shared.type_designator_consensus import (
+    build_consensus_table,
+    fetch_mictronics_type_designators,
+    infer_type_designator,
+    resolve_description_code,
+)
 
 logger = logging.getLogger("no-caa-registry")
 
@@ -245,7 +251,27 @@ def download_registry(url: str) -> list[dict]:
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Build records from registry rows and write to Redis. Returns count of records written."""
+    records = [rec for rec in (_build_record(row) for row in rows) if rec is not None]
+
+    # Type-designator consensus (#1888): this register writes manufacturer/
+    # model but never an ICAO type_designator. Hexes Mictronics already
+    # labels are free training data -- see shared/type_designator_consensus.py.
+    mictronics_designators = fetch_mictronics_type_designators(r, (rec["icao_hex"] for rec in records))
+    consensus_table = build_consensus_table(
+        (
+            (rec.get("aircraft") or {}).get("manufacturer"),
+            (rec.get("aircraft") or {}).get("model"),
+            mictronics_designators.get(rec["icao_hex"]),
+        )
+        for rec in records
+    )
+    logger.info(
+        "Type-designator consensus: %d hexes already labelled by Mictronics, %d qualifying make/model groups.",
+        len(mictronics_designators), len(consensus_table),
+    )
+
     count = 0
+    deduced_count = 0
     batch: list[tuple[str, dict]] = []
 
     def _flush() -> None:
@@ -255,12 +281,25 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             pipe.expire(key, ttl)
         pipe.execute()
 
-    for row in rows:
-        record = _build_record(row)
-        if record is None:
-            continue
+    for record in records:
         record["source"] = "no-caa-registry"
         record["country_code"] = "NO"
+
+        aircraft = record.get("aircraft")
+        if (
+            aircraft
+            and aircraft.get("manufacturer")
+            and aircraft.get("model")
+            and record["icao_hex"] not in mictronics_designators
+        ):
+            deduced = infer_type_designator(consensus_table, aircraft["manufacturer"], aircraft["model"])
+            if deduced:
+                aircraft["type_designator"] = deduced
+                description_code = resolve_description_code(r, deduced)
+                if description_code:
+                    aircraft["description_code"] = description_code
+                deduced_count += 1
+
         key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
@@ -271,7 +310,9 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
     if batch:
         _flush()
-    logger.info("Finished writing %d records to Redis.", count)
+    logger.info(
+        "Finished writing %d records to Redis (%d with a deduced type_designator).", count, deduced_count,
+    )
     return count
 
 

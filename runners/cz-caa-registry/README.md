@@ -14,6 +14,12 @@
 
 The list endpoint (`.../avreg/filtered?start=0&length=10000`) returns all records, which are filtered client-side to those with `deletion_date == null` (i.e. still active). Each active record's `id` is then used to fetch a full detail record from a per-aircraft endpoint, with a 0.25s delay between requests and retry-with-backoff (up to 3 attempts) on `403`/`429`/5xx responses and connection errors. Records without a non-empty `transponder` value are skipped, since that field becomes the Redis key. The detail record's `owners` list is used in full (every `display_name` present, not just the first) to populate `registrant.names`; the detail record also carries a distinct `operators` field (e.g. an aeroclub that owns a glider operated by a separate flying school) but it is intentionally not read — only `owners` is tracked for registrant identity. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+All detail records are collected before anything is written to Redis (rather than written as each one is fetched), so the type-designator consensus step below can see every row from this run before deciding which make/model groups qualify.
+
+### Deduced ICAO type designator
+
+This register never publishes an ICAO type designator — only a raw manufacturer/model string. This runner deduces one for hexes Mictronics has no entry for by consensus: hexes Mictronics *does* already label become training data, grouped by normalized (manufacturer, model); a group's majority Mictronics designator is applied to that group's other, unlabelled hexes when the group has at least 3 labelled examples and at least 90% agreement, otherwise the gap is left as-is. A deduced designator also gets its matching `description_code`, resolved from the `aircraft:type:{designator}` reference Redis already carries. See `shared/type_designator_consensus.py` and issue #1888 for the method and its measured precision/coverage.
+
 ## Columns
 
 | Source column | Imported | Notes |

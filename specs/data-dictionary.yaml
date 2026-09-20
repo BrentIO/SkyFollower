@@ -2679,6 +2679,31 @@ records:
               - source: br-anac-registry
                 file: dados_aeronaves.json
                 field: CDTIPOICAO
+              - source: us-faa-registry
+                field: "aircraft.manufacturer + aircraft.model (no source column — consensus-deduced)"
+                transform:
+                  type: consensus_inference
+                  description: "Deduced via shared/type_designator_consensus.py (#1888): only written for a hex Mictronics has no type_designator for. Hexes this registry shares with Mictronics act as labelled training examples, grouped by normalized (manufacturer, model); the group's majority Mictronics designator is applied when the group has >= 3 labelled examples and >= 90% agreement, otherwise the field is omitted entirely."
+              - source: ca-transport-canada-registry
+                field: "aircraft.manufacturer + aircraft.model (no source column — consensus-deduced)"
+                transform:
+                  type: consensus_inference
+                  description: "Same consensus-deduction method as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: cz-caa-registry
+                field: "manufacturer + model (no source column — consensus-deduced)"
+                transform:
+                  type: consensus_inference
+                  description: "Same consensus-deduction method as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: im-ardis-registry
+                field: "Aircraft Manufacturer + Aircraft Type (no source column — consensus-deduced)"
+                transform:
+                  type: consensus_inference
+                  description: "Same consensus-deduction method as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: no-caa-registry
+                field: "Produsent + Type (no source column — consensus-deduced)"
+                transform:
+                  type: consensus_inference
+                  description: "Same consensus-deduction method as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
 
           manufacturer_model:
             type: string
@@ -2789,6 +2814,41 @@ records:
                   lookup_key: "aircraft:type:{type_designator}"
                   lookup_field: description_code
                   description: "field above (CDTIPOICAO) supplies {type_designator} used to build lookup_key; lookup_field is the property read from that looked-up aircraft:type document (see records.aircraft_type) and copied as-is to this field. Unconditional — written regardless of whether mictronics also has a value for the same hex, since registry wins over mictronics on read via merge_aircraft.lua either way"
+              - source: us-faa-registry
+                field: "(no source column — resolved from a consensus-deduced type_designator)"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "{type_designator} here is itself consensus-deduced (see records.aircraft.properties.type_designator, source us-faa-registry, above) rather than read from a source column. Only written alongside a deduced type_designator, never on its own. See shared/type_designator_consensus.py (#1888)."
+              - source: ca-transport-canada-registry
+                field: "(no source column — resolved from a consensus-deduced type_designator)"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "Same as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: cz-caa-registry
+                field: "(no source column — resolved from a consensus-deduced type_designator)"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "Same as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: im-ardis-registry
+                field: "(no source column — resolved from a consensus-deduced type_designator)"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "Same as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
+              - source: no-caa-registry
+                field: "(no source column — resolved from a consensus-deduced type_designator)"
+                transform:
+                  type: redis_lookup
+                  lookup_key: "aircraft:type:{type_designator}"
+                  lookup_field: description_code
+                  description: "Same as us-faa-registry above; see shared/type_designator_consensus.py (#1888)."
 
           serial_number:
             type: string

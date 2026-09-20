@@ -20,6 +20,10 @@ The FAA Releasable Aircraft Database ZIP is downloaded from a fixed URL and extr
 
 This runner supports the 2017+ column layout only. Numeric FAA type codes (engine type, aircraft type, aircraft class, registrant type) are decoded via lookup tables into human-readable strings. Powerplant power is reported as thrust for jet/fan/ramjet engine types and as horsepower for piston/turboprop/turboshaft/2-4-cycle/rotary types. The final Redis write is driven by a single `LEFT JOIN` query across the staged tables and flushed to Redis in batches of 10,000. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+### Deduced ICAO type designator
+
+The FAA register never publishes an ICAO type designator (e.g. `C172`) — only a raw manufacturer/model string. Since Mictronics has no entry at all for a large share of these hexes, this runner deduces a designator for those hexes by consensus: hexes Mictronics *does* already label become training data, grouped by normalized (manufacturer, model); a group's majority Mictronics designator is applied to that group's other, unlabelled hexes when the group has at least 3 labelled examples and at least 90% agreement, otherwise the gap is left as-is. A deduced designator also gets its matching `description_code`, resolved from the `aircraft:type:{designator}` reference Redis already carries. See `shared/type_designator_consensus.py` and issue #1888 for the method and its measured precision/coverage.
+
 ## Columns
 
 The FAA ZIP contains eight files (`ardata.pdf`, `ACFTREF.txt`, `ENGINE.txt`,
