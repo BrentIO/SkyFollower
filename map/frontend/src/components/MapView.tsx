@@ -15,6 +15,7 @@ import {
   buildAircraftSourceDiff,
   buildTrailSourceDiff,
   EMPTY_FEATURE_COLLECTION,
+  hasPosition,
   isEmptySourceDiff,
   trailFeatureCollection,
   type TrailSyncState,
@@ -27,8 +28,6 @@ import {
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
-  INFO_BOX_LAYER_ID,
-  INFO_BOX_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
@@ -44,79 +43,43 @@ import {
   TRAIL_SOURCE_ID,
 } from "../lib/mapLayerIds";
 import { deepLinkAircraftAvailable, deepLinkReadyToZoom } from "../lib/deepLink";
-import { followTargetPosition, shouldCancelFollowOnDrag } from "../lib/followTarget";
+import { followTargetPosition, isFollowLost, shouldCancelFollowOnDrag } from "../lib/followTarget";
 import {
   centerPointFeatureCollection,
   rangeRingLabelsFeatureCollection,
   rangeRingsFeatureCollection,
 } from "../lib/rangeRings";
-import { INFO_BOX_TEXT_OFFSET_REFERENCE_PX, infoBoxTextOffsetZoomExpression } from "../lib/infoBoxOffset";
-import { INFO_BOX_ICON_ID, registerInfoBoxIcon } from "../lib/infoBoxIcon";
-import { buildInfoBoxLabelSourceDiff, infoBoxLabelFeatureCollection, type LabelFilter } from "../lib/infoBoxSource";
+import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { isWithinCenterTolerance } from "../lib/mapCentered";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
 import { readSelectionFromSearch, searchWithSelection } from "../lib/shareUrl";
-import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
+import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS, SCREEN_POSITION_THROTTLE_MS } from "../lib/syncThrottle";
 import { tracePointsFeatureCollection } from "../lib/tracePoints";
 import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
 import { AircraftListPanel } from "./AircraftListPanel";
 import { ControlsPanel } from "./ControlsPanel";
-import type { AddLayerObject } from "maplibre-gl";
-
-// maplibre-gl's public d.ts doesn't itself export a named
-// "SymbolLayerSpecification"/"ExpressionSpecification" type (only the
-// broader `AddLayerObject` union `map.addLayer` accepts) -- this narrows
-// that union down to the symbol-layer's own `layout` shape, just so
-// INFO_BOX_LAYER_ID's dynamically-built `text-field`/`text-offset`
-// expressions below (built by a function call, so TS can't infer their
-// literal array type the way it can for a plain inline expression like
-// `["get", "heading"]`) can be cast against the real expected type instead
-// of `any`.
-type SymbolLayout = NonNullable<Extract<AddLayerObject, { type: "symbol" }>["layout"]>;
+import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
 // Shared "nothing to draw" Trace Points buffer, so an unchanged-while-off
 // state compares equal by reference tick to tick (see the sync effect).
 const NO_TRACE_POINTS: readonly TracePoint[] = [];
 
-// #1815: every text symbol layer below (RANGE_RING_LABEL_LAYER_ID,
-// TRACE_POINTS_LABEL_LAYER_ID, INFO_BOX_LAYER_ID) omitted `text-font`,
-// which defaults to MapLibre's own built-in stack, `["Open Sans
-// Regular", "Arial Unicode MS Regular"]` -- a font this app's basemap
-// style (maplibreSetup.ts's MAP_STYLE, openfreemap.org's "positron")
-// doesn't actually serve at its `glyphs` URL. Every glyph range request
-// for that stack 404s, and MapLibre falls back to rendering each
-// codepoint locally rather than from the CDN's font atlas -- a real
+// #1815: RANGE_RING_LABEL_LAYER_ID and TRACE_POINTS_LABEL_LAYER_ID below
+// omit `text-font`, which defaults to MapLibre's own built-in stack,
+// `["Open Sans Regular", "Arial Unicode MS Regular"]` -- a font this app's
+// basemap style (maplibreSetup.ts's MAP_STYLE, openfreemap.org's
+// "positron") doesn't actually serve at its `glyphs` URL. Every glyph
+// range request for that stack 404s, and MapLibre falls back to rendering
+// each codepoint locally rather than from the CDN's font atlas -- a real
 // per-unique-codepoint cost (and a permanent stream of failed network
 // requests) that's easy to mistake for "just how expensive text
 // rendering is" rather than a fixable misconfiguration. The positron
 // style's own layers all use "Noto Sans Regular"/"Bold"/"Italic" (the
 // only stack its glyphs endpoint actually has); using the same one here
-// avoids the 404/local-fallback path entirely. Discovered investigating
-// #1815 (INFO_BOX_LAYER_ID, the highest-text-volume of the three, up to
-// the whole fleet with "Labels: All" on) but applies equally to the
-// other two, which predate #1808/#1814 and had the identical latent
-// issue -- fixed here rather than left inconsistent.
+// avoids the 404/local-fallback path entirely.
 const BASEMAP_TEXT_FONT = ["Noto Sans Regular"];
-
-// #1819: the removed DOM InfoBoxLayer.tsx used `font-mono` for its whole
-// box (an ATC-style ident/altitude/speed box reads naturally in a
-// fixed-width font) and `font-bold` for its ident line specifically.
-// Confirmed (curl against the glyphs endpoint) that openfreemap's
-// "positron" style -- the only glyph source this app's basemap actually
-// has -- serves just "Noto Sans Regular"/"Bold"/"Italic"; no monospace
-// family is available there at all, so an exact `font-mono` match isn't
-// achievable without hosting a separate glyph source (out of scope here).
-// "Noto Sans Bold" *is* available, though, and restores the one part of
-// the original design MapLibre has no other way to express at all: a
-// bold `text-font` is the only way to get real visual weight on a
-// MapLibre text section, there's no CSS-style `font-weight`. Used only on
-// INFO_BOX_LAYER_ID's ident-line format section (below), not as this
-// file's shared BASEMAP_TEXT_FONT default -- the other two text layers
-// (RANGE_RING_LABEL_LAYER_ID, TRACE_POINTS_LABEL_LAYER_ID) have no
-// bold/regular distinction to preserve.
-const BASEMAP_TEXT_FONT_BOLD = ["Noto Sans Bold"];
 
 // Builds and registers one silhouette's SDF image with MapLibre, once.
 // `shapeKey` is an AIRCRAFT_SHAPES key; an unknown key (a shape the
@@ -242,10 +205,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
   // Fullscreens the whole page (document.documentElement), not
   // mapContainerRef.current -- the map container is a sibling of
-  // ControlsPanel/AircraftDetailPanel, not their parent, so fullscreening
-  // it alone would drop those DOM overlays from the fullscreen view (the
-  // info-box labels are unaffected either way -- they're a MapLibre layer
-  // rendered inside mapContainerRef's own canvas, see INFO_BOX_LAYER_ID).
+  // ControlsPanel/AircraftDetailPanel/InfoBoxLayer, not their parent, so
+  // fullscreening it alone would drop those DOM overlays from the
+  // fullscreen view.
   function handleToggleFullscreen() {
     if (document.fullscreenElement != null) {
       void document.exitFullscreen();
@@ -259,6 +221,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // runtime, so there's no need to recompute this on every toggle.
   const basemapLabelLayerIdsRef = useRef<string[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // InfoBoxLayer.tsx's per-aircraft screen position, kept in sync by the
+  // map's "move" listener (mount effect below) and the data-sync effect
+  // further down.
+  const [screenPositions, setScreenPositions] = useState<
+    Record<string, { x: number; y: number; offset: number }>
+  >({});
 
   // Action-row state (see components/AircraftDetailPanel.tsx). isolateId is
   // *derived* from isolateEnabled + selectedIcaoHex rather than captured
@@ -290,6 +258,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // when the listener was attached.
   const followIdRef = useRef(followId);
   followIdRef.current = followId;
+
+  // Read by the map's "move" listener (mount effect below), which is
+  // attached once and must read *current* aircraft positions rather than
+  // closing over a stale snapshot from whenever it was attached. Same
+  // reason as followIdRef above.
+  const aircraftRef = useRef(aircraft);
+  aircraftRef.current = aircraft;
 
   // Shared by every place a user's manual navigation should cancel Follow
   // -- the mount effect's dragstart handler below, and the Center/recenter
@@ -431,6 +406,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
   }, [historyAll, aircraft, seedTrailFor]);
 
+  // One throttle instance for this component's whole lifetime (not
+  // per-effect-run) so `"move"` -- which fires on every camera-transform
+  // frame, continuously for the duration of any pan/pinch/easeTo -- can't
+  // trigger an unthrottled full-fleet `project()` pass per frame. See
+  // syncThrottle.ts's SCREEN_POSITION_THROTTLE_MS docstring for why this is
+  // a separate, tighter window than the data-source sync's own throttle
+  // below rather than reusing it.
+  const screenPositionThrottleRef = useRef(createTrailingThrottle(SCREEN_POSITION_THROTTLE_MS));
+  useEffect(() => {
+    return () => screenPositionThrottleRef.current.cancel();
+  }, []);
+
   // --- Map construction (once) ---------------------------------------
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -478,6 +465,30 @@ function MapViewInner({ config }: { config: AppConfig }) {
       if (shouldCancelFollowOnDrag(e, followIdRef.current)) cancelFollow();
     });
 
+    // InfoBoxLayer.tsx's per-aircraft screen-position sync.
+    function syncScreenPositions() {
+      const current = aircraftRef.current;
+      const offset = infoBoxOffsetForZoom(map.getZoom());
+      const positions: Record<string, { x: number; y: number; offset: number }> = {};
+      for (const a of Object.values(current)) {
+        if (!hasPosition(a)) continue;
+        const p = map.project([a.lon, a.lat]);
+        positions[a.icao_hex] = { x: p.x, y: p.y, offset };
+      }
+      setScreenPositions(positions);
+    }
+
+    // The throttled wrapper is what's actually registered on "move" below
+    // -- syncScreenPositions() is still called directly, unthrottled, once
+    // right after registration, so the initial paint isn't delayed by the
+    // throttle's own window.
+    function throttledSyncScreenPositions() {
+      screenPositionThrottleRef.current.request(syncScreenPositions);
+    }
+
+    map.on("move", throttledSyncScreenPositions);
+    syncScreenPositions();
+
     // #1847: recompute whether the camera is currently centered on
     // `config.center`, projecting both points through the map's current
     // transform (see lib/mapCentered.ts's isWithinCenterTolerance for why
@@ -497,6 +508,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (config.center) {
       map.on("moveend", updateIsCentered);
     }
+
 
     map.on("load", () => {
       // Discover the basemap's own text-bearing layers once, before any of
@@ -903,101 +915,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
         AIRCRAFT_LAYER_ID,
       );
 
-      // Info-box labels (issue #1808) -- a GPU-rendered symbol layer
-      // replacing the removed DOM-based InfoBoxLayer.tsx component (one
-      // absolutely-positioned <div> per labeled aircraft, restyled up to
-      // 20Hz during pan/zoom/Follow -- the dominant cost behind sustained
-      // >100% CPU with "Labels: All" on). Added last, with no `beforeId`,
-      // so it stacks above every other layer added above (including
-      // AIRCRAFT_LAYER_ID and the trace-point dots/labels) -- matching the
-      // DOM version, which as a sibling overlay always painted above the
-      // whole map canvas regardless of what was drawn on it.
-      registerInfoBoxIcon(map);
-      map.addSource(INFO_BOX_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
-      map.addLayer({
-        id: INFO_BOX_LAYER_ID,
-        type: "symbol",
-        source: INFO_BOX_SOURCE_ID,
-        layout: {
-          // The stretchable rounded-rect background (lib/infoBoxIcon.ts),
-          // resized per feature to fit its own rendered text via
-          // icon-text-fit -- MapLibre's purpose-built "chat bubble behind
-          // text" mechanism (9-slice image + content/stretchX/stretchY
-          // metadata registered on INFO_BOX_ICON_ID). icon-text-fit-padding
-          // approximates the removed DOM box's `px-1.5 py-1` Tailwind
-          // padding (6px horizontal / 4px vertical) as [top, right,
-          // bottom, left].
-          "icon-image": INFO_BOX_ICON_ID,
-          "icon-text-fit": "both",
-          "icon-text-fit-padding": [4, 6, 4, 6],
-          "icon-allow-overlap": true,
-          "icon-ignore-placement": true,
-          "text-font": BASEMAP_TEXT_FONT,
-          // Ident line first, larger and bold (font-scale 1.15, roughly
-          // matching the DOM box's 12px-vs-10.5px ident/detail size ratio;
-          // BASEMAP_TEXT_FONT_BOLD giving it the same real visual weight
-          // the DOM box's `font-bold` had -- #1819, a per-`format`-section
-          // `text-font` override is the only way to get a bold *weight*
-          // out of MapLibre text at all, there is no CSS-style
-          // `font-weight` equivalent), then the altitude/speed and
-          // registration/type lines -- joined with "\n" only when both
-          // halves are actually present (`hasBothLines`), so an aircraft
-          // missing its ident (or missing every detail line) never
-          // renders a stray blank line. See lib/infoBoxSource.ts's
-          // infoBoxLabelFeature for how identLine/detailLines/
-          // hasBothLines are derived from lib/infoBox.ts's
-          // buildInfoBoxLines().
-          "text-field": [
-            "format",
-            ["get", "identLine"],
-            // #1823: a bare array here (`"text-font": BASEMAP_TEXT_FONT_BOLD`)
-            // fails MapLibre's real expression parser -- it treats *any*
-            // nested array as a sub-expression unless wrapped in
-            // ["literal", [...]], the exact same rule (and the exact same
-            // mistake) as #1815's text-offset bug. That one shipped
-            // because every test only checked the plain-array shape; this
-            // one shipped because a TS error on the unwrapped form was
-            // cast through `unknown` instead of fixed. See
-            // MapView.test.ts's "is a valid MapLibre expression" test,
-            // which runs this exact literal through the real parser
-            // (@maplibre/maplibre-gl-style-spec) so this class of bug
-            // fails a plain `vitest run`, not just a live page load.
-            { "font-scale": 1.15, "text-font": ["literal", BASEMAP_TEXT_FONT_BOLD] },
-            ["case", ["get", "hasBothLines"], "\n", ""],
-            {},
-            ["get", "detailLines"],
-            {},
-          ] as unknown as SymbolLayout["text-field"],
-          "text-size": INFO_BOX_TEXT_OFFSET_REFERENCE_PX,
-          // Anchored at the aircraft's own point, offset diagonally
-          // down-right by a zoom-scaled gap (lib/infoBoxOffset.ts) --
-          // same anchor/offset relationship InfoBoxLayer.tsx's removed
-          // `left: x + offset; top: y + offset` had, now expressed as a
-          // MapLibre zoom expression (evaluated GPU/style-engine-side, no
-          // per-frame JS cost) instead of a per-tick JS computation.
-          "text-anchor": "top-left",
-          "text-justify": "left",
-          "text-offset": infoBoxTextOffsetZoomExpression() as SymbolLayout["text-offset"],
-          "text-allow-overlap": true,
-          "text-ignore-placement": true,
-          // Boxes are free to overlap (no collision-avoidance nudging,
-          // same as the removed DOM version) -- where they do, the
-          // higher-altitude aircraft's box should draw on top. MapLibre's
-          // per-feature paint-order control within one layer,
-          // `symbol-sort-key`, replaces the DOM version's inline CSS
-          // z-index (lib/labelStackOrder.ts's altitudeZIndex(), which the
-          // source's `sortKey` property is set from -- see
-          // lib/infoBoxSource.ts). Needs live visual confirmation (see
-          // this PR's description) that ascending sort-key order actually
-          // paints last/on-top for this MapLibre version, rather than
-          // first/underneath.
-          "symbol-sort-key": ["get", "sortKey"],
-        },
-        paint: {
-          "text-color": "#ffffff",
-        },
-      });
-
       // The map's initial camera position is already `config.center` (see
       // this effect's `center`/`zoom` above) -- the Center button must
       // read active from first render, not only after an explicit click or
@@ -1008,6 +925,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     });
 
     return () => {
+      map.off("move", throttledSyncScreenPositions);
       map.remove();
       mapRef.current = null;
     };
@@ -1071,13 +989,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // needed because TRAIL_SOURCE_ID holds a variable number of features per
   // aircraft (one per trail-block color run) rather than the aircraft
   // source's clean one-feature-per-hex mapping -- see featureCollections.ts's
-  // buildTrailSourceDiff. `labelIdsRef` is the same idea for
-  // INFO_BOX_SOURCE_ID: the set of icao_hexes actually present in that
-  // source right now, so a tick with labels off never sends a remove for
-  // an id that was never added (#1838).
+  // buildTrailSourceDiff.
   const prevAircraftRef = useRef<AircraftMap>({});
   const trailSyncRef = useRef<Map<string, TrailSyncState>>(new Map());
-  const labelIdsRef = useRef<Set<string>>(new Set());
   // null until the first sync, so that first run always writes the source.
   const syncedTracePointsRef = useRef<readonly TracePoint[] | null>(null);
 
@@ -1101,55 +1015,37 @@ function MapViewInner({ config }: { config: AppConfig }) {
     tracePointsEnabled: boolean;
   } | null>(null);
 
-  // Same idea as prevVisibilityInputsRef, but for INFO_BOX_SOURCE_ID's own
-  // (different) set of visibility-affecting inputs -- tracked separately
-  // so a "Labels: All"/hover-only change doesn't force a full rebuild of
-  // the aircraft/trail sources too (and vice versa: historyAll/
-  // tracePointsEnabled don't affect which aircraft are labeled, so they're
-  // deliberately absent here). isolateId/followId/protectedId are shared
-  // with the aircraft/trail check above -- a label should never outlive,
-  // or lag behind, its own icon's visibility (see featureCollections.ts's
-  // isAircraftVisible, which both the aircraft and label feature builders
-  // call).
-  const prevLabelInputsRef = useRef<{
-    selected: Set<string>;
-    isolateId: string | null;
-    followId: string | null;
-    protectedId: string | null;
-    labelsAll: boolean;
-    hoveredId: string | null;
-  } | null>(null);
-
-  // --- Keep the aircraft/trail/info-box sources in sync ---------------
+  // --- Keep the aircraft/trail sources and InfoBoxLayer's screen
+  // positions in sync -----------------------------------------------------
   //
-  // Two paths per source, chosen fresh on every throttled run (#1775),
-  // decided *independently* for the aircraft/trail sources vs.
-  // INFO_BOX_SOURCE_ID (issue #1808) -- each has its own visibility-input
-  // comparison (prevVisibilityInputsRef / prevLabelInputsRef) so e.g. a
-  // hover-only change (label-relevant, not aircraft/trail-relevant) never
-  // forces a full aircraft/trail rebuild, and a historyAll toggle
-  // (aircraft/trail-relevant, not label-relevant) never forces a full
-  // label rebuild:
+  // Two paths for the aircraft/trail sources, chosen fresh on every
+  // throttled run (#1775):
   //
-  // - Full rebuild (setData()): the first run ever, or any run where that
-  //   source's own visibility-affecting inputs changed since the last run
-  //   -- see prevVisibilityInputsRef/prevLabelInputsRef's own comments for
-  //   why that case stays a full rebuild rather than trying to diff it too.
+  // - Full rebuild (setData()): the first run ever, or any run where the
+  //   visibility-affecting inputs changed since the last run -- see
+  //   prevVisibilityInputsRef's own comment for why that case stays a full
+  //   rebuild rather than trying to diff it too.
   // - Incremental diff (updateData()): every other run -- only `aircraft`
   //   itself changed, from live WS traffic. diffAircraftMaps() finds
   //   exactly which icao_hexes actually changed (by object reference, see
   //   aircraftMapDiff.ts) against the previous run's snapshot, once, up
-  //   front -- shared by every source's diff path below, since it's the
+  //   front -- shared by both sources' diff paths below, since it's the
   //   same underlying question ("which aircraft records actually changed
-  //   this tick") for all three. featureCollections.ts's
-  //   buildAircraftSourceDiff/buildTrailSourceDiff and lib/infoBoxSource.ts's
-  //   buildInfoBoxLabelSourceDiff turn just those into a GeoJSONSourceDiff
-  //   each -- so cost scales with how much of the fleet moved, not how
-  //   large the fleet is. This is the fix for the profiled root cause:
-  //   setData() reprocessing every feature from scratch on every tick
-  //   regardless of how many aircraft actually changed (see the issue this
-  //   implements), plus (#1808) doing that whole-fleet work even for the
-  //   labeled-only subset InfoBoxLayer.tsx actually rendered.
+  //   this tick") for both. featureCollections.ts's
+  //   buildAircraftSourceDiff/buildTrailSourceDiff turn just those into a
+  //   GeoJSONSourceDiff each -- so cost scales with how much of the fleet
+  //   moved, not how large the fleet is. This is the fix for the profiled
+  //   root cause: setData() reprocessing every feature from scratch on
+  //   every tick regardless of how many aircraft actually changed (see the
+  //   issue this implements).
+  //
+  // InfoBoxLayer.tsx's screen positions (recomputed unconditionally below,
+  // every throttled tick) aren't part of that diff/rebuild split -- they're
+  // plain per-aircraft `map.project()` output, cheap enough that there's no
+  // separate "did visibility change" gate the way the MapLibre sources
+  // need one. This covers position/metadata-only WS updates that the
+  // map's own "move" listener (mount effect above) wouldn't catch on its
+  // own, since that one only fires on camera movement.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
@@ -1175,28 +1071,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
         prevInputs.tracePointsEnabled !== tracePointsEnabled;
       prevVisibilityInputsRef.current = visibilityInputs;
 
-      const labelFilter: LabelFilter = { selected, showAll: labelsAll, hoveredId };
-      const labelInputs = { selected, isolateId, followId, protectedId: selectedIcaoHex, labelsAll, hoveredId };
-      const prevLabelInputs = prevLabelInputsRef.current;
-      const labelVisibilityChanged =
-        !prevLabelInputs ||
-        prevLabelInputs.selected !== selected ||
-        prevLabelInputs.isolateId !== isolateId ||
-        prevLabelInputs.followId !== followId ||
-        prevLabelInputs.protectedId !== selectedIcaoHex ||
-        prevLabelInputs.labelsAll !== labelsAll ||
-        prevLabelInputs.hoveredId !== hoveredId;
-      prevLabelInputsRef.current = labelInputs;
-
-      // Computed once, up front, regardless of which branch(es) below need
-      // it -- cheap (reference comparisons only, see aircraftMapDiff.ts),
-      // and both the aircraft/trail diff path and the label diff path key
-      // off the same changed-hex set.
+      // Computed once, up front -- cheap (reference comparisons only, see
+      // aircraftMapDiff.ts), and both the aircraft and trail diff paths
+      // below key off the same changed-hex set.
       const changed = diffAircraftMaps(prevAircraftRef.current, aircraft);
 
       const aircraftSource = map.getSource(AIRCRAFT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       const trailSource = map.getSource(TRAIL_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-      const labelSource = map.getSource(INFO_BOX_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
 
       if (visibilityChanged) {
         const fc = aircraftFeatureCollection(aircraft, selected, visibility);
@@ -1247,24 +1128,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
         trailSyncRef.current = trailResult.syncState;
       }
 
-      // INFO_BOX_SOURCE_ID: same full-rebuild-vs-diff split as the
-      // aircraft/trail sources above, but gated on labelVisibilityChanged
-      // instead -- see prevLabelInputsRef's own comment for why this is a
-      // separate flag. No per-feature shape image registration needed
-      // (unlike the aircraft source): every label feature shares the one
-      // fixed INFO_BOX_ICON_ID, registered once at map load. labelIdsRef
-      // tracks which icao_hexes are actually in the source right now, so
-      // the diff path below never sends a no-op remove/updateData call for
-      // a hex that was never labeled in the first place (#1838).
-      if (labelVisibilityChanged) {
-        const labelFc = infoBoxLabelFeatureCollection(aircraft, labelFilter, visibility);
-        labelSource?.setData(labelFc);
-        labelIdsRef.current = new Set(labelFc.features.map((f) => String(f.id)));
-      } else if (changed.size > 0) {
-        const labelDiff = buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, labelIdsRef.current, visibility);
-        if (!isEmptySourceDiff(labelDiff)) labelSource?.updateData(labelDiff);
-        for (const f of labelDiff.add ?? []) labelIdsRef.current.add(String(f.id));
-        for (const id of labelDiff.remove ?? []) labelIdsRef.current.delete(String(id));
+      // InfoBoxLayer.tsx screen positions: recomputed every throttled tick
+      // (see this effect's own module comment above for why this doesn't
+      // join the diff/rebuild split above).
+      {
+        const offset = infoBoxOffsetForZoom(map.getZoom());
+        const positions: Record<string, { x: number; y: number; offset: number }> = {};
+        for (const a of Object.values(aircraft)) {
+          if (!hasPosition(a)) continue;
+          const p = map.project([a.lon, a.lat]);
+          positions[a.icao_hex] = { x: p.x, y: p.y, offset };
+        }
+        setScreenPositions(positions);
       }
 
       prevAircraftRef.current = aircraft;
@@ -1346,6 +1221,27 @@ function MapViewInner({ config }: { config: AppConfig }) {
     setIsolateEnabled(true);
   }
 
+  // InfoBoxLayer.tsx's props -- every tracked, positioned aircraft that
+  // should show a label; InfoBoxLayer itself decides which of these
+  // actually render a box (selected/showAll/hoveredId, passed through
+  // below), same contract as before #1808's GPU-layer detour.
+  const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)
+    .filter(hasPosition)
+    // Same bypass as aircraftFeatureCollection/trailFeatureCollection --
+    // a Followed or currently-selected (panel-open) aircraft stays in
+    // the info-box set even once hidden, instead of vanishing while its
+    // panel is still open.
+    .filter((a) => !a.hidden || isFollowLost(a, followId, selectedIcaoHex))
+    .filter((a) => !isolateId || a.icao_hex === isolateId)
+    .filter((a) => screenPositions[a.icao_hex] !== undefined)
+    .map((a) => ({
+      id: a.icao_hex,
+      x: screenPositions[a.icao_hex].x,
+      y: screenPositions[a.icao_hex].y,
+      offset: screenPositions[a.icao_hex].offset,
+      aircraft: a,
+    }));
+
   return (
     // Flex row: the map area (below) and AircraftListPanel are real
     // siblings, not an overlay on top of an unchanged-width map -- so the
@@ -1356,6 +1252,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
     <div className="flex h-full w-full">
       <div className="relative min-w-0 flex-1">
         <div ref={mapContainerRef} className="h-full w-full" />
+        {mapLoaded && (
+          <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
+        )}
         {selectedAircraft && (
           <AircraftDetailPanel
             aircraft={selectedAircraft}

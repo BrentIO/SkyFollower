@@ -317,10 +317,11 @@ describe("trailFeatureCollection -- selected (protectedId, not Followed) lost di
   });
 });
 
-// #1808: extracted out of aircraftFeature so the info-box label feature
-// builder (lib/infoBoxSource.ts) can share the exact same isolate/hidden
-// visibility rule, rather than risking a label ever drifting out of sync
-// with its own aircraft's icon.
+// #1808: extracted out of aircraftFeature so the isolate/hidden visibility
+// rule it encodes can be applied consistently anywhere else that needs to
+// answer "is this aircraft currently drawn on the map" (e.g.
+// components/MapView.tsx's own info-box item filtering), rather than
+// risking a label ever drifting out of sync with its own aircraft's icon.
 describe("isAircraftVisible -- shared aircraft/label visibility rule (#1808)", () => {
   it("a normal (not hidden, not isolated-out) aircraft is visible", () => {
     const aircraft = withOnePositionedAircraft("A1B2C3");

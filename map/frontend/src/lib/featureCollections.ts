@@ -58,11 +58,12 @@ export interface VisibilityOptions {
 // Deliberately *not* checking hasPosition -- callers that need the
 // TypeScript position-narrowing side effect (e.g. aircraftFeature below,
 // which reads `a.lat`/`a.lon`) must still call hasPosition themselves;
-// this only covers the isolate/hidden rules. Shared by aircraftFeature and
-// the info-box label feature builder (lib/infoBoxSource.ts) so "is this
-// aircraft currently drawn on the map" can never drift between an
-// aircraft's icon and its label -- a label should never outlive, or lag
-// behind, its own icon's visibility.
+// this only covers the isolate/hidden rules. Used by aircraftFeature;
+// components/MapView.tsx's own info-box item filtering applies the same
+// isolate/hidden(-unless-Follow/protected) rule inline, so "is this
+// aircraft currently drawn on the map" stays in sync between an aircraft's
+// icon and its label -- a label should never outlive, or lag behind, its
+// own icon's visibility.
 export function isAircraftVisible(a: AircraftRecord, options: VisibilityOptions = {}): boolean {
   const { isolateId, followId, protectedId } = options;
   if (isolateId && a.icao_hex !== isolateId) return false;
