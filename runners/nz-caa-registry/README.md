@@ -5,7 +5,7 @@
 | **Name** | `nz-caa-registry` |
 | **Country** | New Zealand |
 | **Registration prefix** | `ZK-` |
-| **Data source** | https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website-.csv |
+| **Data source** | https://www.aviation.govt.nz/assets/aircraft/aircraft-register/Aircraft-Register-for-website.csv |
 | **Format** | CSV (fixed URL) |
 | **Run frequency** | Weekly (Wednesday, 05:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | No — the CSV publishes its own `Mode S Code HEX` column, so `icao_hex` is read directly from the source data. |
