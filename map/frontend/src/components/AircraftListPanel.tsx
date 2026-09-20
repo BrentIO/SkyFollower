@@ -20,20 +20,18 @@ import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 // implements) is additive later instead of a restructure. `sortKey` reads
 // only the plain, comparable value a column sorts by -- for Ident, that is
 // deliberately just the ident string, never the Military/Special-livery
-// pills `render` appends, per the issue's "pill is decoration only,
-// excluded from the sort key" rule.
+// badges (now the Tags column, see #1881), which sort on their own rank
+// instead. `className` is optional and only set where a column needs a
+// fixed/narrow width (e.g. Tags, #1881) beyond the default per-cell padding
+// applied generically in the <th>/<td> map below.
 interface AircraftListColumn {
   key: string;
   header: string;
   sortKey: (row: AircraftListRow) => string | number | null;
   render: (row: AircraftListRow) => ReactNode;
+  className?: string;
 }
 
-// Reuses AircraftDetailPanel's own BADGE_BASE/BADGE_CLASSES convention
-// exactly (green "M" for military, yellow "S" for special livery), in that
-// order, immediately after the ident text -- see the issue's "Military /
-// Special Livery pill" section.
-//
 // The country-of-registration flag (#1848) is its own column, to the left
 // of Ident -- VRS-style tools that already do this hex-range
 // lookup conventionally lead each row with the flag, but as a distinct
@@ -60,13 +58,37 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
     key: "ident",
     header: "Ident",
     sortKey: (row) => row.ident,
+    render: (row) => row.ident ?? "",
+  },
+  // Tags column (#1881) -- the Military/Special-livery badges used to live
+  // inside the Ident cell; they're their own column now, immediately after
+  // Ident, so Ident stays plain text and the badges get a stable strip that
+  // doesn't shift with ident text width. Reuses AircraftDetailPanel's own
+  // BADGE_BASE/BADGE_CLASSES convention exactly (green "M" for military,
+  // yellow "S" for special livery), each with a native `title` tooltip --
+  // this codebase's established tooltip convention (see the flag column's
+  // title above, or connectionTooltip() elsewhere in this file) -- since no
+  // dedicated tooltip component exists or should be added for this. Sorts
+  // by a numeric rank -- 0: has specialLivery, 1: military only, 2: neither
+  // -- so special-livery rows sort first, then military-only, then
+  // untagged, per the issue's locked sort order (a row with both tags
+  // sorts under the special-livery group). Fixed narrow width (`w-16`) so
+  // two badges fit side by side without wrapping.
+  {
+    key: "tags",
+    header: "Tags",
+    sortKey: (row) => (row.specialLivery != null ? 0 : row.military ? 1 : 2),
     render: (row) => (
       <span className="flex items-center gap-1">
-        <span>{row.ident ?? ""}</span>
-        {row.military && <span className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
-        {row.specialLivery != null && <span className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>S</span>}
+        {row.military && <span title="Military" className={`${BADGE_BASE} ${BADGE_CLASSES.green}`}>M</span>}
+        {row.specialLivery != null && (
+          <span title={row.specialLivery} className={`${BADGE_BASE} ${BADGE_CLASSES.yellow}`}>
+            S
+          </span>
+        )}
       </span>
     ),
+    className: "w-16",
   },
   {
     key: "registration",
@@ -396,7 +418,7 @@ export function AircraftListPanel({
                   return (
                     <th
                       key={column.key}
-                      className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left dark:border-slate-700 dark:bg-slate-800"
+                      className={`sticky top-0 z-10 border-b border-slate-200 bg-slate-100 px-3 py-2 text-left dark:border-slate-700 dark:bg-slate-800 ${column.className ?? ""}`}
                     >
                       <button
                         type="button"
@@ -422,7 +444,10 @@ export function AircraftListPanel({
                     className={`cursor-pointer ${banding} ${selected.has(row.icaoHex) ? "outline outline-1 -outline-offset-1 outline-slate-400 dark:outline-slate-500" : ""}`}
                   >
                     {AIRCRAFT_LIST_COLUMNS.map((column) => (
-                      <td key={column.key} className="px-3 py-1.5 whitespace-nowrap">
+                      <td
+                        key={column.key}
+                        className={`px-3 py-1.5 whitespace-nowrap ${column.className ?? ""}`}
+                      >
                         {column.render(row)}
                       </td>
                     ))}
