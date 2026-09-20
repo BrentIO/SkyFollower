@@ -1,4 +1,3 @@
-import { createExpression, v8 as styleSpecV8 } from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 // Vite's `?raw` suffix (declared by vite/client, referenced in src/vite-env.d.ts)
 // imports a file's contents as a plain string -- used here instead of node:fs so
@@ -6,9 +5,7 @@ import { describe, expect, it } from "vitest";
 // this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
-import { INFO_BOX_ICON_ID } from "../lib/infoBoxIcon";
-import { INFO_BOX_TEXT_OFFSET_REFERENCE_PX, infoBoxTextOffsetZoomExpression } from "../lib/infoBoxOffset";
-import { AIRCRAFT_LAYER_ID, INFO_BOX_LAYER_ID, SELECTABLE_LAYER_IDS, TRAIL_HIT_AREA_LAYER_ID } from "../lib/mapLayerIds";
+import { AIRCRAFT_LAYER_ID, SELECTABLE_LAYER_IDS, TRAIL_HIT_AREA_LAYER_ID } from "../lib/mapLayerIds";
 
 // MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
 // callback that also constructs a real maplibregl.Map and reads several hooks --
@@ -459,16 +456,15 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
   });
 
   it("uses diffAircraftMaps + updateData() on the data-only (else-if) branch, gated on any actual change", () => {
-    // #1808: `changed` is now computed once, up front (shared with the
-    // info-box label source's own diff path below), rather than inside
-    // this branch -- so this branch is now `else if (changed.size > 0)`,
-    // not a nested `if` inside a bare `else`. Bounded at
-    // "// INFO_BOX_SOURCE_ID:" (that source's own, separate full/diff
-    // split starts there) rather than at prevAircraftRef's assignment
-    // further down, which now sits *after* both sources' branches.
+    // `changed` is computed once, up front, rather than inside this branch
+    // -- so this branch is `else if (changed.size > 0)`, not a nested `if`
+    // inside a bare `else`. Bounded at the InfoBoxLayer screen-position
+    // recompute (that block's own separate, unconditional-every-tick logic
+    // starts there) rather than at prevAircraftRef's assignment further
+    // down, which sits *after* it.
     const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
     const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
-    const branchEnd = mapViewSource.indexOf("// INFO_BOX_SOURCE_ID:", elseIndex);
+    const branchEnd = mapViewSource.indexOf("// InfoBoxLayer.tsx screen positions:", elseIndex);
     expect(elseIndex).toBeGreaterThan(-1);
     expect(branchEnd).toBeGreaterThan(elseIndex);
     const elseBranch = mapViewSource.slice(elseIndex, branchEnd);
@@ -498,134 +494,66 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
   });
 });
 
-// #1808: InfoBoxLayer.tsx (a DOM <div> per labeled aircraft, restyled up to
-// 20Hz -- the profiled root cause of sustained >100% CPU with "Labels: All"
-// on) was removed in favor of INFO_BOX_LAYER_ID, a MapLibre symbol layer
-// driven by its own GeoJSON source (INFO_BOX_SOURCE_ID). The filter logic
-// itself (selected/hovered/showAll, altitude sort key, empty-content
-// omission) is covered directly in lib/infoBoxSource.test.ts against real
-// AircraftRecord fixtures -- these tests only check MapView.tsx's own
-// wiring (which can't be exercised without a live map -- see this file's
-// module docstring): that the source/layer are actually added, stack above
-// AIRCRAFT_LAYER_ID, and that the sync effect updates the label source on
-// its own independent full-rebuild-vs-diff schedule.
-describe("info-box label source sync (#1808)", () => {
-  it("no longer imports or renders the removed DOM-based InfoBoxLayer component", () => {
-    // Comments referencing "InfoBoxLayer.tsx" by name (documenting what
-    // this replaced) are expected and fine -- only the actual import and
-    // JSX usage must be gone.
-    expect(mapViewSource).not.toContain('from "./InfoBoxLayer"');
-    expect(mapViewSource).not.toContain("<InfoBoxLayer");
+// #1851: reverts #1808's GPU/MapLibre symbol-layer info box back to the
+// original DOM-based InfoBoxLayer.tsx overlay -- a live CPU trace
+// comparison (see #1851's issue body) found the two roughly a wash now
+// that #1838/#1840 fixed the real dominant cost (trail rendering) #1808's
+// >100% CPU measurement had conflated with the info box's own cost. The
+// GPU symbol layer (INFO_BOX_LAYER_ID/INFO_BOX_SOURCE_ID, lib/infoBoxIcon.ts,
+// lib/infoBoxSource.ts) and the temporary #1837 DOM-vs-GPU toggle
+// (lib/infoBoxImpl.ts, isDomInfoBox) are both removed entirely -- DOM is
+// the only implementation, not a mode. The filter/rendering logic itself
+// (selected/hovered/showAll, altitude sort key, empty-content omission) is
+// covered directly in InfoBoxLayer.tsx's own dependencies (lib/infoBox.ts,
+// lib/labelStackOrder.ts); these tests only check MapView.tsx's own wiring
+// (which can't be exercised without a live map -- see this file's module
+// docstring): screen-position sync and how InfoBoxLayer.tsx's props are
+// built.
+describe("InfoBoxLayer screen-position sync (#1851)", () => {
+  it("imports InfoBoxLayer unconditionally and renders it, gated only on mapLoaded", () => {
+    expect(mapViewSource).toContain('import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer"');
+    const usageIndex = mapViewSource.indexOf("<InfoBoxLayer items=");
+    const returnIndex = mapViewSource.lastIndexOf("  return (", usageIndex);
+    expect(usageIndex).toBeGreaterThan(-1);
+    expect(returnIndex).toBeGreaterThan(-1);
+    const precedingLines = mapViewSource.slice(returnIndex, usageIndex);
+    expect(precedingLines).toContain("{mapLoaded && (");
+    // No leftover toggle -- the only gate is mapLoaded.
+    expect(mapViewSource).not.toContain("isDomInfoBox");
   });
 
-  it("registers the background icon and adds the source/layer once, inside map.on('load')", () => {
-    expect(mapViewSource).toContain("registerInfoBoxIcon(map);");
+  it("registers and cleans up the 'move' screen-position listener unconditionally", () => {
+    expect(mapViewSource).toContain('map.on("move", throttledSyncScreenPositions)');
+    expect(mapViewSource).toContain('map.off("move", throttledSyncScreenPositions)');
+  });
+
+  it("recomputes every tracked, positioned aircraft's screen position via map.project() on both the 'move' listener and the throttled sync effect", () => {
+    const occurrences = (mapViewSource.match(/const p = map\.project\(\[a\.lon, a\.lat\]\);/g) ?? []).length;
+    expect(occurrences).toBe(2);
+    expect(mapViewSource).toContain("setScreenPositions(positions);");
+  });
+
+  it("builds infoBoxItems from every hasPosition aircraft, keeping a Followed/selected-but-hidden aircraft (isFollowLost bypass) and respecting isolateId, same as the aircraft/trail feature builders", () => {
+    const startIndex = mapViewSource.indexOf("const infoBoxItems: InfoBoxLayerItem[] = Object.values(aircraft)");
+    const endIndex = mapViewSource.indexOf(".map((a) => ({", startIndex);
+    expect(startIndex).toBeGreaterThan(-1);
+    expect(endIndex).toBeGreaterThan(startIndex);
+    const body = mapViewSource.slice(startIndex, endIndex);
+    expect(body).toContain(".filter(hasPosition)");
+    expect(body).toContain(".filter((a) => !a.hidden || isFollowLost(a, followId, selectedIcaoHex))");
+    expect(body).toContain(".filter((a) => !isolateId || a.icao_hex === isolateId)");
+    expect(body).toContain(".filter((a) => screenPositions[a.icao_hex] !== undefined)");
+  });
+
+  it("passes selected/showAll/hoveredId straight through to InfoBoxLayer, unchanged from the pre-#1808 contract", () => {
     expect(mapViewSource).toContain(
-      'map.addSource(INFO_BOX_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });',
+      "<InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />",
     );
-    expect(mapViewSource).toContain("id: INFO_BOX_LAYER_ID");
-  });
-
-  it("adds the layer with no beforeId, so it stacks above every other layer added so far (including AIRCRAFT_LAYER_ID and the trace-point layers)", () => {
-    expect(addLayerBeforeId("INFO_BOX_LAYER_ID")).toBe("");
-  });
-
-  it("fits the background icon to the rendered text and pads it to roughly match the removed DOM box's px-1.5 py-1 Tailwind padding", () => {
-    expect(mapViewSource).toContain('"icon-image": INFO_BOX_ICON_ID');
-    expect(mapViewSource).toContain('"icon-text-fit": "both"');
-    expect(mapViewSource).toContain('"icon-text-fit-padding": [4, 6, 4, 6]');
-  });
-
-  it("sorts overlapping boxes by the same altitude-based key InfoBoxLayer.tsx's removed inline z-index used", () => {
-    expect(mapViewSource).toContain('"symbol-sort-key": ["get", "sortKey"]');
-  });
-
-  // #1815 and #1823: two separate bugs, same actual mistake both times --
-  // a bare array (a `text-offset` interpolate stop's [em, em] output,
-  // then a format section's `text-font`) where MapLibre's real expression
-  // parser requires `["literal", [...]]", each shipping because nothing
-  // in this file's tests ever ran the *whole* text-field/layout MapView.tsx
-  // actually builds through that real parser -- only plain-array-shape
-  // assertions, or (for #1823) a TS-level cast that silenced the type
-  // error without checking the runtime value. This validates the whole
-  // `layout` object MapLibre would actually receive for INFO_BOX_LAYER_ID,
-  // the same way `map.addLayer` itself validates it internally --
-  // exercising @maplibre/maplibre-gl-style-spec's real parser, not a
-  // hand-rolled expression evaluator, so a bug of this exact class fails
-  // a plain `vitest run` instead of only showing up as a silent
-  // console.error on a live page load.
-  it("text-field and text-offset -- the two properties this layer builds as real expression trees, not plain literals -- are valid MapLibre expressions (#1815, #1823)", () => {
-    // Scoped to just these two (not every layout property generically):
-    // they're the only ones MapView.tsx constructs as an actual
-    // `["op", ...]` expression tree (format()/interpolate()) rather than a
-    // plain literal value -- and both of #1815/#1823's real bugs were
-    // specifically a bare array *nested inside* one of these trees, where
-    // MapLibre's parser can't tell "literal array" from "sub-expression"
-    // apart without a ["literal", ...] wrapper. A plain top-level literal
-    // property (e.g. icon-text-fit-padding's fixed [4,6,4,6]) doesn't go
-    // through this same disambiguation and isn't what either bug was.
-    const layout = extractLayerLayout("INFO_BOX_LAYER_ID", {
-      INFO_BOX_ICON_ID,
-      INFO_BOX_TEXT_OFFSET_REFERENCE_PX,
-      infoBoxTextOffsetZoomExpression,
-      BASEMAP_TEXT_FONT: extractModuleConst("BASEMAP_TEXT_FONT"),
-      BASEMAP_TEXT_FONT_BOLD: extractModuleConst("BASEMAP_TEXT_FONT_BOLD"),
-    });
-    const layoutSpec = styleSpecV8.layout_symbol as Record<string, unknown>;
-    for (const key of ["text-field", "text-offset"]) {
-      const result = createExpression(layout[key], `layout_symbol.${key}`, layoutSpec[key] as never);
-      if (result.result === "error") {
-        throw new Error(`${key}: ${JSON.stringify(layout[key])} -- ${result.value.map((e) => e.message).join("; ")}`);
-      }
-    }
-  });
-
-  it("both allow-overlap and ignore-placement are set for icon and text, matching the removed DOM version's no-collision-avoidance design (boxes are free to overlap)", () => {
-    expect(mapViewSource).toContain('"icon-allow-overlap": true');
-    expect(mapViewSource).toContain('"icon-ignore-placement": true');
-    expect(mapViewSource).toContain('"text-allow-overlap": true');
-    expect(mapViewSource).toContain('"text-ignore-placement": true');
-  });
-
-  it("computes labelVisibilityChanged from its own visibility inputs, separate from the aircraft/trail sync's prevVisibilityInputsRef", () => {
-    expect(mapViewSource).toContain("const prevLabelInputsRef = useRef<{");
-    expect(mapViewSource).toContain("const labelVisibilityChanged =");
-    expect(mapViewSource).toContain("prevLabelInputs.selected !== selected");
-    expect(mapViewSource).toContain("prevLabelInputs.isolateId !== isolateId");
-    expect(mapViewSource).toContain("prevLabelInputs.followId !== followId");
-    expect(mapViewSource).toContain("prevLabelInputs.protectedId !== selectedIcaoHex");
-    expect(mapViewSource).toContain("prevLabelInputs.labelsAll !== labelsAll");
-    expect(mapViewSource).toContain("prevLabelInputs.hoveredId !== hoveredId");
-  });
-
-  it("full-rebuilds the label source with setData() only when labelVisibilityChanged, diffs with updateData() otherwise (gated on any actual aircraft change)", () => {
-    const ifIndex = mapViewSource.indexOf("if (labelVisibilityChanged) {");
-    const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
-    expect(ifIndex).toBeGreaterThan(-1);
-    expect(elseIndex).toBeGreaterThan(ifIndex);
-    const ifBranch = mapViewSource.slice(ifIndex, elseIndex);
-    expect(ifBranch).toContain("labelSource?.setData(labelFc);");
-    expect(mapViewSource).toContain(
-      "buildInfoBoxLabelSourceDiff(changed, aircraft, labelFilter, labelIdsRef.current, visibility)",
-    );
-    expect(mapViewSource).toContain("if (!isEmptySourceDiff(labelDiff)) labelSource?.updateData(labelDiff);");
-  });
-
-  it("labelFilter is built from selected/labelsAll/hoveredId, matching InfoBoxLayer.tsx's removed filter exactly", () => {
-    expect(mapViewSource).toContain("const labelFilter: LabelFilter = { selected, showAll: labelsAll, hoveredId };");
-  });
-
-  it("includes labelsAll and hoveredId in the sync effect's dependency array, so a hover/showAll-only change still re-runs it", () => {
-    // Anchored on the array's last two (newly-added) entries and its
-    // closing `]);`, rather than the whole array (whitespace-sensitive),
-    // so this doesn't break if an unrelated entry is reordered above them.
-    expect(mapViewSource).toMatch(/labelsAll,\s*\n\s*hoveredId,\s*\n\s*\]\);/);
   });
 });
 
-describe("info-box label layer -- never selectable (#1808)", () => {
-  it("is not in SELECTABLE_LAYER_IDS -- clicking/hovering a label box must not itself trigger selection, same as the removed DOM version's pointer-events-none container", () => {
-    expect(SELECTABLE_LAYER_IDS).not.toContain(INFO_BOX_LAYER_ID);
+describe("SELECTABLE_LAYER_IDS", () => {
+  it("only includes the aircraft icon and trail hit-area layers -- range rings, the center point, and info-box labels (a DOM overlay, not a MapLibre layer at all) are never selection/hover targets", () => {
     expect(SELECTABLE_LAYER_IDS).toEqual([AIRCRAFT_LAYER_ID, TRAIL_HIT_AREA_LAYER_ID]);
   });
 });
@@ -708,12 +636,10 @@ function extractLayerFilter(layerIdConstant: string): unknown {
 // definition contains `id: <layerIdConstant>`, evaluated into a real object
 // -- same extraction convention as extractLayerPaint/extractLayerFilter
 // above. `scope` binds identifiers the layout literal itself references but
-// that aren't defined within the extracted snippet (module-level imports
-// like INFO_BOX_ICON_ID, or a called function like
-// infoBoxTextOffsetZoomExpression()) -- pass the *real* imported
-// values/functions so the evaluated layout is the actual one MapView.tsx
-// builds, not a stand-in. Layers with no such references (the common case)
-// need no scope at all.
+// that aren't defined within the extracted snippet (module-level imports or
+// a called function) -- pass the *real* imported values/functions so the
+// evaluated layout is the actual one MapView.tsx builds, not a stand-in.
+// Layers with no such references (the common case) need no scope at all.
 function extractLayerLayout(layerIdConstant: string, scope: Record<string, unknown> = {}): Record<string, unknown> {
   const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
   if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
@@ -724,9 +650,8 @@ function extractLayerLayout(layerIdConstant: string, scope: Record<string, unkno
   const objectOpenIndex = layoutKeyIndex + "layout: ".length;
   const objectCloseIndex = findMatchingBrace(mapViewSource, objectOpenIndex);
   // Strips a TS `as ...`/`as unknown as ...` type-assertion trailing a
-  // property value (e.g. INFO_BOX_LAYER_ID's `text-field` -- see that
-  // property's own cast) -- valid TS, not valid plain JS, and `new
-  // Function` below only understands the latter.
+  // property value -- valid TS, not valid plain JS, and `new Function`
+  // below only understands the latter.
   const layoutLiteral = mapViewSource
     .slice(objectOpenIndex, objectCloseIndex + 1)
     .replace(/\s+as\s+unknown\s+as\s+[A-Za-z_][\w.]*(\["[^"]+"\])?/g, "")
@@ -737,22 +662,6 @@ function extractLayerLayout(layerIdConstant: string, scope: Record<string, unkno
   // user input.
   const fn = new Function(...Object.keys(scope), `return (${layoutLiteral});`);
   return fn(...Object.values(scope));
-}
-
-// Pulls one module-private `const NAME = ...;` declaration's literal value
-// straight out of mapViewSource -- for identifiers a layout references that
-// aren't exported (BASEMAP_TEXT_FONT/BASEMAP_TEXT_FONT_BOLD), so
-// extractLayerLayout's scope can bind their *real* current value instead of
-// a hand-copied duplicate that could silently drift from the source.
-function extractModuleConst(name: string): unknown {
-  const marker = `const ${name} = `;
-  const startIndex = mapViewSource.indexOf(marker);
-  if (startIndex === -1) throw new Error(`Could not find "${marker}" in MapView.tsx`);
-  const valueStart = startIndex + marker.length;
-  const semicolonIndex = mapViewSource.indexOf(";", valueStart);
-  const literal = mapViewSource.slice(valueStart, semicolonIndex);
-  // eslint-disable-next-line no-new-func -- see extractLayerLayout above.
-  return new Function(`return (${literal});`)();
 }
 
 describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- dilated-silhouette selection outline for icon_scale < 1 (#1806/#1816)", () => {

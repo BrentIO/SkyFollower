@@ -69,18 +69,15 @@ export interface AircraftDetailPanelProps {
 // Persistent left-docked side panel for the single currently-selected
 // aircraft (see lib/selection.ts's single-select nextSelection) -- a
 // different, additional surface from the floating per-aircraft info-box
-// labels (components/MapView.tsx's INFO_BOX_LAYER_ID, a MapLibre symbol
-// layer as of #1808 -- previously InfoBoxLayer.tsx's DOM boxes), not a
-// replacement for them. Same visual language as ControlsPanel (rounded-md,
-// shadow-md), docked left with the matching top-4/left-4 margin so it
-// never collides with that top-right panel. Unlike ControlsPanel, this
-// panel is fully opaque (not /90) and pinned at MAX_LABEL_Z_INDEX + 1 --
-// a value now higher than it strictly needs to be (the info-box labels are
-// GPU-rendered inside the map's own canvas, not DOM siblings competing for
-// z-index at all), but harmless to keep, and it still reuses the same
-// labelStackOrder.ts constant AircraftListPanel.tsx does for its own
-// "always above the map" guarantee, rather than introducing a new magic
-// number.
+// labels (components/InfoBoxLayer.tsx's DOM boxes), not a replacement for
+// them. Same visual language as ControlsPanel (rounded-md, shadow-md),
+// docked left with the matching top-4/left-4 margin so it never collides
+// with that top-right panel. Unlike ControlsPanel, this panel is fully
+// opaque (not /90) and pinned at MAX_LABEL_Z_INDEX + 1 -- above every
+// info-box label, regardless of that aircraft's own altitude-based stack
+// order -- reusing the same labelStackOrder.ts constant AircraftListPanel.tsx
+// does for its own "always above the map" guarantee, rather than
+// introducing a new magic number.
 export function AircraftDetailPanel({
   aircraft,
   center,

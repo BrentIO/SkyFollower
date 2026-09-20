@@ -88,11 +88,17 @@ export function createTrailingThrottle(intervalMs: number, now: () => number = D
 // other purpose -- see that effect's own comment on prevVisibilityInputsRef.
 export const MAP_SYNC_THROTTLE_MS = 500;
 
-// SCREEN_POSITION_THROTTLE_MS (the coalescing window for MapView's former
-// `"move"`-driven screen-position sync, which repositioned InfoBoxLayer's
-// DOM boxes during pan/zoom/Follow) was removed in #1808: InfoBoxLayer.tsx
-// -- the DOM component that needed those per-frame-projected screen
-// positions in the first place -- was replaced by a MapLibre symbol layer,
-// which MapLibre itself repositions every frame as part of normal GPU
-// rendering. There's no more per-tick `project()`-over-the-fleet JS work
-// (or its own throttle) to bound.
+// SCREEN_POSITION_THROTTLE_MS was removed in #1808 (InfoBoxLayer.tsx's
+// `"move"`-driven screen-position sync no longer existed once the DOM info
+// box was replaced by a MapLibre symbol layer), then restored here in #1851
+// when that GPU layer was reverted back to the DOM box -- see #1851's issue
+// body for why the CPU concern behind #1808 no longer holds.
+//
+// Deliberately tighter than MAP_SYNC_THROTTLE_MS: unlike the data-source
+// sync above (which waits on new WebSocket data), this handler only
+// re-projects positions the app already has, so there's no reason to trail
+// the same distance behind -- this just needs to read as instantaneous
+// during continuous camera movement while still bounding the unthrottled
+// per-frame `project()`-over-the-fleet cost `"move"` would otherwise pay on
+// every transform tick. Same value the removed code used.
+export const SCREEN_POSITION_THROTTLE_MS = 50;
