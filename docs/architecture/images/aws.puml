@@ -1,4 +1,10 @@
 @startuml
+' Pure include-fragment: consumed by pipeline.puml via
+' `!includesub aws.puml!COMPONENT`, never displayed as a standalone diagram.
+' generate-diagrams.mjs still renders this file to aws.svg like every other
+' .puml (see that script's comments) — nothing references the standalone
+' SVG, but that's a harmless, intentional side effect of keeping the
+' generator's file-discovery simple, not a bug. See issue #1867.
 !include_once ../../images/common-component.iuml
 
 !startsub COMPONENT

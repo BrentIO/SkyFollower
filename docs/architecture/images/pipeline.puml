@@ -2,6 +2,13 @@
 !include_once ../../images/common-component.iuml
 !include_once ../../images/receiver-instance.iuml
 
+' core-health is deliberately not included here: it's a standalone,
+' always-on RabbitMQ/Redis monitor that polls the broker and Redis on its
+' own connections and republishes telemetry — it never sits in the
+' message's own path (receiver -> message-processor -> archive-processor ->
+' archive-compaction -> S3) the way this diagram depicts, so it has no
+' natural home in a linear pipeline view. See core-health/README.md and
+' issue #1867.
 title Message Pipeline
 
 !includesub ../../../receiver/receiver.puml!COMPONENT
