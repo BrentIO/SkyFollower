@@ -139,7 +139,7 @@ describe("Trails toggle button", () => {
 });
 
 describe("Center (recenter) button -- moved into the unified column", () => {
-  it("keeps its own non-toggle styling rather than using IconButton", () => {
+  it("renders its own crosshair markup rather than using IconButton (dashed-circle icon isn't an IconSpec)", () => {
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const nextIconButtonIndex = controlsPanelSource.indexOf("<IconButton", recenterIndex);
     expect(recenterIndex).toBeGreaterThan(-1);
@@ -150,10 +150,35 @@ describe("Center (recenter) button -- moved into the unified column", () => {
     expect(callSite).toContain("crosshairSvgMarkup(20,");
   });
 
+  // #1847: the button's click is still momentary (onRecenter), but its
+  // appearance now follows the shared toggle-button convention -- active
+  // (light blue) whenever the camera is already centered on config.center.
+  it("drives its className from toggleButtonClass(recenterActive), the same convention every other toggle uses", () => {
+    const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
+    const nextIconButtonIndex = controlsPanelSource.indexOf("<IconButton", recenterIndex);
+    const callSite = controlsPanelSource.slice(recenterIndex, nextIconButtonIndex);
+    expect(controlsPanelSource).toContain('import { toggleButtonClass } from "../lib/toggleButtonStyle"');
+    expect(callSite).toContain("toggleButtonClass(recenterActive)");
+    expect(callSite).toContain("aria-pressed={recenterActive}");
+  });
+
+  it("does not hardcode a bespoke bg-white/90 / shadow-md color scheme anymore", () => {
+    const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
+    const nextIconButtonIndex = controlsPanelSource.indexOf("<IconButton", recenterIndex);
+    const callSite = controlsPanelSource.slice(recenterIndex, nextIconButtonIndex);
+    expect(callSite).not.toContain("bg-white/90");
+    expect(callSite).not.toContain("shadow-md");
+  });
+
   it("keeps its disabled-when-no-center-configured behavior", () => {
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const callSite = controlsPanelSource.slice(recenterIndex - 100, recenterIndex + 100);
     expect(callSite).toContain("disabled={recenterDisabled}");
+  });
+
+  it("wires the click handler unconditionally, same as before", () => {
+    const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
+    const callSite = controlsPanelSource.slice(recenterIndex - 100, recenterIndex + 100);
     expect(callSite).toContain("onClick={onRecenter}");
   });
 
