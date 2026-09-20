@@ -247,6 +247,7 @@ def _build_record(item: dict, icao_hex: str, registration: str) -> dict:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "at-austrocontrol-registry",
+        "country_code": "AT",
         "military": False,
     }
     if aircraft_fields:

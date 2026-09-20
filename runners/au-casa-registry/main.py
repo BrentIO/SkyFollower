@@ -439,6 +439,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         record = _build_record(row, icao_hex, registration)
         _apply_type_lookup(record, r)
         record["source"] = "au-casa-registry"
+        record["country_code"] = "AU"
 
         set_json(pipe, aircraft_registry_key(icao_hex), record)
         pipe.expire(aircraft_registry_key(icao_hex), ttl)

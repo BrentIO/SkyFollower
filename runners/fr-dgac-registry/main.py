@@ -422,6 +422,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             address_raw=group["address_raw"],
         )
         record["source"] = "fr-dgac-registry"
+        record["country_code"] = "FR"
 
         key = aircraft_registry_key(icao_hex)
         set_json(pipe, key, record)

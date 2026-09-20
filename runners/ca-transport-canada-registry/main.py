@@ -478,6 +478,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         owner_rows = owner_cur.fetchall()
         record = build_aircraft_record(acft_row, owner_rows)
         record["source"] = "ca-transport-canada-registry"
+        record["country_code"] = "CA"
         key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1

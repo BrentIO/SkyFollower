@@ -262,6 +262,7 @@ def _build_record(parsed: dict, icao_hex: str) -> dict:
         "icao_hex": icao_hex,
         "registration": parsed["registration"],
         "source": "lu-dac-registry",
+        "country_code": "LU",
         "military": False,
     }
     if aircraft_fields:

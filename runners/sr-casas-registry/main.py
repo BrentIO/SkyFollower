@@ -191,6 +191,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "sr-casas-registry",
+        "country_code": "SR",
         "military": False,
     }
     if aircraft_fields:

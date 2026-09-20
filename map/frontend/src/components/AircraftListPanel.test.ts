@@ -33,6 +33,36 @@ describe("column definitions -- data-driven array, not hardcoded per-column JSX"
   });
 });
 
+describe("Ident column -- country-of-registration flag (#1848)", () => {
+  it("imports the client-side flag renderer", () => {
+    expect(panelSource).toContain('import { countryFlag } from "../lib/countryFlag"');
+  });
+
+  it("renders the flag before the ident text", () => {
+    const identColumnStart = panelSource.indexOf('key: "ident"');
+    const identColumnEnd = panelSource.indexOf('key: "registration"');
+    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
+    const flagIndex = callSite.indexOf("countryFlag(row.countryCode)");
+    const identTextIndex = callSite.indexOf("row.ident ?? ");
+    expect(flagIndex).toBeGreaterThan(-1);
+    expect(identTextIndex).toBeGreaterThan(flagIndex);
+  });
+
+  it("omits the flag element entirely (not a placeholder glyph) when no country resolved", () => {
+    const identColumnStart = panelSource.indexOf('key: "ident"');
+    const identColumnEnd = panelSource.indexOf('key: "registration"');
+    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
+    expect(callSite).toContain("flag != null &&");
+  });
+
+  it("uses the resolved country name (falling back to the bare code) as the flag's title/tooltip", () => {
+    const identColumnStart = panelSource.indexOf('key: "ident"');
+    const identColumnEnd = panelSource.indexOf('key: "registration"');
+    const callSite = panelSource.slice(identColumnStart, identColumnEnd);
+    expect(callSite).toContain("title={row.country ?? row.countryCode ?? undefined}");
+  });
+});
+
 describe("Ident column -- Military/Special Livery pills", () => {
   it("reuses AircraftDetailPanel's BADGE_BASE/BADGE_CLASSES convention", () => {
     expect(panelSource).toContain('import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel"');

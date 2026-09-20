@@ -154,6 +154,7 @@ def _build_record(aircraft: dict, icao_hex: str, registration: str) -> dict:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "is-samgongustofa-registry",
+        "country_code": "IS",
         "military": False,
     }
     if aircraft_fields:

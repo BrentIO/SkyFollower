@@ -127,6 +127,8 @@ class AircraftRecord(BaseModel):
     serial_number: Optional[str] = None
     manufactured_date: Optional[str] = None
     special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
+    country: Optional[str] = None           # resolved country-of-registration name, e.g. "United States" -- see country_code for the raw ISO 3166-1 alpha-2 code; mirrors AirportRecord's country/country_code pattern
+    country_code: Optional[str] = None      # ISO 3166-1 alpha-2 country-of-registration code, e.g. "US" -- a registry runner's own value wins when present, else resolved by merge_aircraft.lua from the ICAO hex-range allocation table (VRS code-blocks); absent if neither resolves
     data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order
 
 

@@ -68,6 +68,33 @@ describe("buildAircraftListRow -- Military/Special Livery", () => {
   });
 });
 
+describe("buildAircraftListRow -- Country of registration", () => {
+  it("is null/null when unknown", () => {
+    const row = buildAircraftListRow(baseAircraft(), null);
+    expect(row.countryCode).toBeNull();
+    expect(row.country).toBeNull();
+  });
+
+  it("carries countryCode and country through independently", () => {
+    const row = buildAircraftListRow(
+      baseAircraft({
+        aircraft: { icao_hex: "A2C9E4", country_code: "US", country: "United States" },
+      }),
+      null,
+    );
+    expect(row.countryCode).toBe("US");
+    expect(row.country).toBe("United States");
+  });
+
+  it("treats a whitespace-only country_code as unknown", () => {
+    const row = buildAircraftListRow(
+      baseAircraft({ aircraft: { icao_hex: "A2C9E4", country_code: "   " } }),
+      null,
+    );
+    expect(row.countryCode).toBeNull();
+  });
+});
+
 describe("buildAircraftListRow -- Altitude trend prefix", () => {
   it("is blank when altitude is unknown", () => {
     const row = buildAircraftListRow(baseAircraft(), null);

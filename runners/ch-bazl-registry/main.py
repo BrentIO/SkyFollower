@@ -320,6 +320,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
 
         _apply_type_lookup(record, r)
         record["source"] = "ch-bazl-registry"
+        record["country_code"] = "CH"
         key = aircraft_registry_key(record["icao_hex"])
         try:
             set_json(r, key, record)

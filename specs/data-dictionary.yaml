@@ -1007,7 +1007,7 @@ sources:
         notes: "Registration cell text is the tail number (also a FlightRadar24 link). Description sometimes packs multiple livery names into one cell separated by ' / ' (~7% of rows), and/or carries a trailing '(sticker)'/'(stickers)' annotation and/or a trailing site-freshness marker like '(#New at 17-Jul-26)' — see the special_livery transform below; at least one real row's annotation itself contains a '/' ('(sticker; underside/belly)'), so annotations must be stripped before splitting on '/', not after"
 
   vrs-standing-data:
-    description: "Virtual Radar Server Standing Data — flight routes only"
+    description: "Virtual Radar Server Standing Data — flight routes, plus the ICAO hex-range country-of-registration lookup tables (code-blocks.csv, countries.csv; #1848)"
     url: "https://github.com/vradarserver/standing-data"
     format: csv
     cadence: daily
@@ -3637,6 +3637,91 @@ records:
             transform:
               type: strip_annotations_then_split_last_segment
               description: "1) Strip any parenthetical group whose contents contain 'sticker' or '#new' case-insensitively (covers '(sticker)', '(stickers)', '(sticker, underside)', '(sticker; underside/belly)', and the site's '(#New at DD-Mon-YY)' freshness marker in whatever exact wording/date format it uses) — this runs BEFORE the split below, not after, because at least one real annotation contains its own '/' ('(sticker; underside/belly)'), which would otherwise be misread as an extra compound-description segment. 2) Split what remains on '/' and take the LAST segment — for the ~7% of rows with a compound description, the last-listed livery is treated as the current/primary one. 3) Collapse whitespace and trim. Other parenthetical content that is genuinely part of the name (e.g. a year like '(2022)') is left untouched. Verified against all 2,074 rows in the live table: the transform never produces an empty result, and this field is only ever written for a row the runner successfully resolves a Registration match for. Examples: 'Rugby's Greatest Rivalry / 2026 NZ v SA rugby tour (#New at 17-Jul-26)' -> '2026 NZ v SA rugby tour'; '50th Anniversary / Air Silk Road / 1 Million Tons, 10 Years (stickers)' -> '1 Million Tons, 10 Years'; 'Amar Bank (sticker) (#New at 17-Jul-26)' -> 'Amar Bank'; 'FedEx founder F W Smith (sticker; underside/belly)' -> 'FedEx founder F W Smith'"
+
+      country:
+        type: string
+        description: >
+          Resolved country-of-registration display name (English). Mirrors
+          AirportRecord's country/country_code pattern (see records.airport
+          below) -- see country_code for the raw ISO 3166-1 alpha-2 code
+          this is resolved from. Computed by shared/lua/merge_aircraft.lua
+          at read time, never written back to any Redis key (#1848).
+        persisted: true
+        sources:
+          - source: message-processor
+            transform:
+              type: table_lookup
+              description: >
+                shared/lua/merge_aircraft.lua resolves country from
+                whatever country_code the merged record ends up with
+                (registry-sourced or hex-range-matched, see country_code
+                below) against lookup:icao-countries -- a flat
+                {iso2: name} object the vrs-standing-data runner imports
+                from VRS's countries/schema-01/countries.csv. One shared
+                table for both sources, so a country's display name is
+                never duplicated per-runner. Absent if country_code itself
+                is absent, or if country_code has no matching row in
+                lookup:icao-countries.
+
+      country_code:
+        type: string
+        description: >
+          ISO 3166-1 alpha-2 country-of-registration code. A country
+          registry runner's own value wins outright when present (it is
+          exact -- the runner IS that country's own CAA); otherwise resolved
+          from icao_hex against the ICAO 24-bit (Mode S) address allocation
+          table, the same longest-prefix-bitmask matching algorithm
+          dump1090/VRS/tar1090-family tools use. Computed by
+          shared/lua/merge_aircraft.lua at read time, never written back to
+          any Redis key (#1848).
+        persisted: true
+        sources:
+          - source: (every country registry runner)
+            transform:
+              type: constant
+              description: >
+                Each of the ~46 country registry runners (at-austrocontrol-registry,
+                au-casa-registry, ba-bhdca-registry, bg-caa-registry,
+                br-anac-registry, bs-caa-registry, bz-bdca-registry,
+                ca-transport-canada-registry, ch-bazl-registry,
+                cy-dca-registry, cz-caa-registry, ee-transpordiamet-registry,
+                es-aesa-registry, fr-dgac-registry, ge-gcaa-registry,
+                gg-2reg-registry, hr-ccaa-registry, hu-kozhaf-registry,
+                im-ardis-registry, is-samgongustofa-registry, jo-carc-registry,
+                kg-caa-registry, kr-koca-registry, ky-caa-registry,
+                lk-caa-registry, lu-dac-registry, lv-caa-registry,
+                md-caa-registry, me-caa-registry, mk-caa-registry,
+                mo-aacm-registry, mv-caa-registry, nl-ilt-registry,
+                no-caa-registry, nz-caa-registry, pg-casapng-registry,
+                rs-cad-registry, sc-scaa-registry, sg-caas-registry,
+                sk-nsat-registry, sr-casas-registry, tc-caa-registry,
+                tg-anac-registry, tt-caa-registry, uk-caa-registry (writes
+                "GB", not "UK"), us-faa-registry) writes its own fixed
+                ISO2 literal into aircraft:registry:{icao_hex}.country_code
+                -- the same literal already passed to that runner's existing
+                country_flag() call (used before #1848 only to decorate its
+                Home Assistant device name/model string). One line per
+                runner; no separate side table to drift out of sync when a
+                runner is added or changes country.
+          - source: vrs-standing-data
+            file: code-blocks.csv
+            field: CountryISO2
+            transform:
+              type: bitmask_match
+              description: >
+                Global fallback for the ~140+ countries no registry runner
+                covers. shared/lua/merge_aircraft.lua matches icao_hex
+                against lookup:icao-code-blocks (a JSON array the
+                vrs-standing-data runner imports from VRS's
+                code-blocks/schema-01/code-blocks.csv, pre-sorted descending
+                by SignificantBitmask), taking the first row where
+                (icao_hex AND significant_bitmask) == bitmask. Only used
+                when no registry runner already wrote a country_code for
+                this hex. The source's CountryISO2 "ZZ" catch-all rows (two
+                entries that together cover the entire 24-bit address
+                space) are excluded at import time, so a genuinely
+                unallocated/reserved hex correctly resolves to no
+                country_code at all, not a fake one.
 
       ident:
         type: string

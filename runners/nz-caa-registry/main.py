@@ -242,6 +242,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         if record is None:
             continue
         record["source"] = "nz-caa-registry"
+        record["country_code"] = "NZ"
         key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1

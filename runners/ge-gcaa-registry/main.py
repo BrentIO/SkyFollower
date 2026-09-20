@@ -196,6 +196,7 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "ge-gcaa-registry",
+        "country_code": "GE",
         "military": False,
     }
     if aircraft_fields:
