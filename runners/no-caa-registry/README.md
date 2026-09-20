@@ -14,6 +14,10 @@
 
 The Norway CAA register is downloaded whole from a fixed URL as a single JSON payload (`{headers, data: [...]}`); no index page or scraping is involved. Each record's ICAO hex is pulled from the `Heksadesimal` field inside the `ICAO 24-bits adresse` array. Aircraft category (`Kategori`) and owner country (`Land`) are decoded via lookup tables — Norwegian names are used for Norway/Sweden/Denmark and English names for everything else — with unmapped values passed through as-is rather than dropped. Owners (`Eier(e)`) is an array that may hold multiple entries; the one flagged `Eier/Kontakt` supplies the registrant's address, while names are collected from every owner entry (contact first, then any others, de-duplicated). Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
+### Deduced ICAO type designator
+
+This register never publishes an ICAO type designator — only a raw manufacturer/model string (`Produsent`/`Type`). This runner deduces one for hexes Mictronics has no entry for by consensus: hexes Mictronics *does* already label become training data, grouped by normalized (manufacturer, model); a group's majority Mictronics designator is applied to that group's other, unlabelled hexes when the group has at least 3 labelled examples and at least 90% agreement, otherwise the gap is left as-is. A deduced designator also gets its matching `description_code`, resolved from the `aircraft:type:{designator}` reference Redis already carries. See `shared/type_designator_consensus.py` and issue #1888 for the method and its measured precision/coverage.
+
 ## Columns
 
 | Source column | Imported | Notes |

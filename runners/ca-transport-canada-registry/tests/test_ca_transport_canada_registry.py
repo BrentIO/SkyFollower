@@ -777,6 +777,110 @@ class TestWriteToRedis:
 
 
 # ---------------------------------------------------------------------------
+# Tests: type-designator consensus deduction (#1888)
+# ---------------------------------------------------------------------------
+
+# Same (manufacturer, model) = ("PIPER", "PA-28-181") across 4 active hexes:
+# 3 Mictronics already labels P28A, 1 Mictronics has never heard of.
+_BIN_P28A_1 = "110000000000000000010001"  # → C00011
+_BIN_P28A_2 = "110000000000000000010010"  # → C00012
+_BIN_P28A_3 = "110000000000000000010011"  # → C00013
+_BIN_P28A_UNLABELLED = "110000000000000000010100"  # → C00014
+
+_ROW_P28A_1 = _acft_row(**{"0": "AAA1", "7": "PIPER", "4": "PA-28-181", "42": _BIN_P28A_1, "46": "AAA1"})
+_ROW_P28A_2 = _acft_row(**{"0": "AAA2", "7": "PIPER", "4": "PA-28-181", "42": _BIN_P28A_2, "46": "AAA2"})
+_ROW_P28A_3 = _acft_row(**{"0": "AAA3", "7": "PIPER", "4": "PA-28-181", "42": _BIN_P28A_3, "46": "AAA3"})
+_ROW_P28A_UNLABELLED = _acft_row(
+    **{"0": "AAA4", "7": "PIPER", "4": "PA-28-181", "42": _BIN_P28A_UNLABELLED, "46": "AAA4"}
+)
+
+_P28A_ACFT_CSV = (
+    _ACFT_HEADER
+    + _ROW_P28A_1 + "\n"
+    + _ROW_P28A_2 + "\n"
+    + _ROW_P28A_3 + "\n"
+    + _ROW_P28A_UNLABELLED + "\n"
+).encode("iso-8859-1")
+
+
+class TestTypeDesignatorConsensusDeduction:
+    def _make_db(self) -> sqlite3.Connection:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            files = {"carscurr.txt": _P28A_ACFT_CSV, "carsownr.txt": b""}
+            return stage_data(files, os.path.join(tmpdir, "staging.db"))
+
+    def _mock_redis(self, mictronics_docs_by_hex: dict, type_docs_by_designator: dict):
+        r = MagicMock()
+
+        def _type_get(key: str):
+            designator = key.split(":")[-1]
+            return type_docs_by_designator.get(designator)
+
+        r.json.return_value.get.side_effect = _type_get
+
+        pipe = MagicMock()
+        pipe_json = MagicMock()
+        r.pipeline.return_value = pipe
+        pipe.json.return_value = pipe_json
+
+        queried_hexes: list[str] = []
+        pipe_json.get.side_effect = lambda key: queried_hexes.append(key.split(":")[-1])
+
+        def _execute():
+            if queried_hexes:
+                docs = [mictronics_docs_by_hex.get(h) for h in queried_hexes]
+                queried_hexes.clear()
+                return docs
+            return []
+
+        pipe.execute.side_effect = _execute
+        return r, pipe, pipe_json
+
+    def test_unlabelled_hex_gets_deduced_designator_and_description_code(self):
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis(
+            mictronics_docs_by_hex={
+                "C00011": {"aircraft": {"type_designator": "P28A"}},
+                "C00012": {"aircraft": {"type_designator": "P28A"}},
+                "C00013": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        write_to_redis(conn, r, REDIS_TTL)
+        conn.close()
+
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        deduced = records["aircraft:registry:C00014"]["aircraft"]
+        assert deduced["type_designator"] == "P28A"
+        assert deduced["description_code"] == "L1P"
+
+    def test_labelled_hex_is_not_overwritten(self):
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis(
+            mictronics_docs_by_hex={
+                "C00011": {"aircraft": {"type_designator": "P28A"}},
+                "C00012": {"aircraft": {"type_designator": "P28A"}},
+                "C00013": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        write_to_redis(conn, r, REDIS_TTL)
+        conn.close()
+
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        assert "type_designator" not in records["aircraft:registry:C00011"]["aircraft"]
+
+    def test_no_labelled_examples_leaves_designator_unset(self):
+        conn = self._make_db()
+        r, _, pipe_json = self._mock_redis(mictronics_docs_by_hex={}, type_docs_by_designator={})
+        write_to_redis(conn, r, REDIS_TTL)
+        conn.close()
+
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        assert "type_designator" not in records["aircraft:registry:C00014"]["aircraft"]
+
+
+# ---------------------------------------------------------------------------
 # Tests: MQTT completion stats (mocked)
 # ---------------------------------------------------------------------------
 

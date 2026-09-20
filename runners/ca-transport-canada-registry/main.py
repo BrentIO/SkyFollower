@@ -44,6 +44,12 @@ from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
 from shared.sqlite_staging import open_staging_db
+from shared.type_designator_consensus import (
+    build_consensus_table,
+    fetch_mictronics_type_designators,
+    infer_type_designator,
+    resolve_description_code,
+)
 
 logger = logging.getLogger("ca-transport-canada-registry")
 
@@ -456,9 +462,24 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     acft_rows = acft_cur.fetchall()
     logger.info("Writing %d active registration records to Redis.", len(acft_rows))
 
+    # Type-designator consensus (#1888): this register writes manufacturer/
+    # model but never an ICAO type_designator. Hexes Mictronics already
+    # labels are free training data -- see shared/type_designator_consensus.py.
+    mictronics_designators = fetch_mictronics_type_designators(r, (row["icao_hex"] for row in acft_rows))
+    consensus_table = build_consensus_table(
+        (row["manufacturer_name"], row["model"], mictronics_designators.get(row["icao_hex"]))
+        for row in acft_rows
+        if row["manufacturer_name"] is not None and row["model"] is not None
+    )
+    logger.info(
+        "Type-designator consensus: %d hexes already labelled by Mictronics, %d qualifying make/model groups.",
+        len(mictronics_designators), len(consensus_table),
+    )
+
     owner_cur = conn.cursor()
 
     count = 0
+    deduced_count = 0
     batch: list[tuple[str, dict]] = []
 
     def _flush():
@@ -479,6 +500,20 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         record = build_aircraft_record(acft_row, owner_rows)
         record["source"] = "ca-transport-canada-registry"
         record["country_code"] = "CA"
+
+        if (
+            acft_row["manufacturer_name"] is not None
+            and acft_row["model"] is not None
+            and acft_row["icao_hex"] not in mictronics_designators
+        ):
+            deduced = infer_type_designator(consensus_table, acft_row["manufacturer_name"], acft_row["model"])
+            if deduced:
+                record["aircraft"]["type_designator"] = deduced
+                description_code = resolve_description_code(r, deduced)
+                if description_code:
+                    record["aircraft"]["description_code"] = description_code
+                deduced_count += 1
+
         key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1
@@ -489,7 +524,9 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
 
     if batch:
         _flush()
-    logger.info("Finished writing %d records to Redis.", count)
+    logger.info(
+        "Finished writing %d records to Redis (%d with a deduced type_designator).", count, deduced_count,
+    )
     return count
 
 

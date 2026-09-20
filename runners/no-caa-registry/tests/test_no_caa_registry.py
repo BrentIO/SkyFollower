@@ -352,6 +352,84 @@ class TestWriteToRedis:
 
 
 # ---------------------------------------------------------------------------
+# Tests: type-designator consensus deduction (#1888)
+# ---------------------------------------------------------------------------
+
+def _make_consensus_redis(mictronics_docs_by_hex: dict, type_docs_by_designator: dict):
+    r = MagicMock()
+
+    def _type_get(key: str):
+        designator = key.split(":")[-1]
+        return type_docs_by_designator.get(designator)
+
+    r.json.return_value.get.side_effect = _type_get
+
+    pipe = MagicMock()
+    pipe_json = MagicMock()
+    r.pipeline.return_value = pipe
+    pipe.json.return_value = pipe_json
+
+    queried_hexes: list[str] = []
+    pipe_json.get.side_effect = lambda key: queried_hexes.append(key.split(":")[-1])
+
+    def _execute():
+        if queried_hexes:
+            docs = [mictronics_docs_by_hex.get(h) for h in queried_hexes]
+            queried_hexes.clear()
+            return docs
+        return []
+
+    pipe.execute.side_effect = _execute
+    return r, pipe_json
+
+
+class TestTypeDesignatorConsensusDeduction:
+    def _rows(self):
+        # Same (manufacturer, model) across 4 hexes: 3 Mictronics already
+        # labels P28A, 1 Mictronics has never heard of.
+        return [
+            _make_row(icao_hex="AAAA01", produsent="Piper", type_="PA-28-181"),
+            _make_row(icao_hex="AAAA02", produsent="Piper", type_="PA-28-181"),
+            _make_row(icao_hex="AAAA03", produsent="Piper", type_="PA-28-181"),
+            _make_row(icao_hex="AAAA04", produsent="Piper", type_="PA-28-181"),
+        ]
+
+    def test_unlabelled_hex_gets_deduced_designator_and_description_code(self):
+        r, pipe_json = _make_consensus_redis(
+            mictronics_docs_by_hex={
+                "AAAA01": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA02": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA03": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        write_to_redis(self._rows(), r, REDIS_TTL)
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        deduced = records["aircraft:registry:AAAA04"]["aircraft"]
+        assert deduced["type_designator"] == "P28A"
+        assert deduced["description_code"] == "L1P"
+
+    def test_labelled_hex_is_not_overwritten(self):
+        r, pipe_json = _make_consensus_redis(
+            mictronics_docs_by_hex={
+                "AAAA01": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA02": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA03": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        write_to_redis(self._rows(), r, REDIS_TTL)
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        assert "type_designator" not in records["aircraft:registry:AAAA01"]["aircraft"]
+
+    def test_no_labelled_examples_leaves_designator_unset(self):
+        r, pipe_json = _make_consensus_redis(mictronics_docs_by_hex={}, type_docs_by_designator={})
+        write_to_redis(self._rows(), r, REDIS_TTL)
+        records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
+        assert "type_designator" not in records["aircraft:registry:AAAA04"]["aircraft"]
+
+
+# ---------------------------------------------------------------------------
 # Tests: publish_completion_stats
 # ---------------------------------------------------------------------------
 

@@ -52,6 +52,12 @@ from shared.mqtt import build_mqtt_client
 from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
 from shared.country_flags import country_flag
+from shared.type_designator_consensus import (
+    build_consensus_table,
+    fetch_mictronics_type_designators,
+    infer_type_designator,
+    resolve_description_code,
+)
 
 logger = logging.getLogger("cz-caa-registry")
 
@@ -223,6 +229,17 @@ def _build_record(row: dict) -> dict:
     if model:
         aircraft_fields["model"] = model
 
+    # Deduced ICAO type designator (#1888) -- set by main() before this
+    # record is built, when the registry's own manufacturer/model matched
+    # a qualifying consensus group. Not present on rows main() didn't
+    # attempt deduction for (no mictronics/consensus module involved here).
+    type_designator = (row.get("type_designator") or "").strip()
+    if type_designator:
+        aircraft_fields["type_designator"] = type_designator
+    description_code = (row.get("description_code") or "").strip()
+    if description_code:
+        aircraft_fields["description_code"] = description_code
+
     serial = row.get("serial", "").strip()
     if serial:
         aircraft_fields["serial_number"] = serial
@@ -265,6 +282,43 @@ def _build_record(row: dict) -> dict:
         record["registrant"] = registrant_fields
 
     return record
+
+
+# ---------------------------------------------------------------------------
+# Type-designator consensus (#1888)
+# ---------------------------------------------------------------------------
+
+def apply_type_designator_consensus(rows: list[dict], r: redis_lib.Redis) -> None:
+    """Mutate `rows` in place: this register writes manufacturer/model but
+    never an ICAO type_designator. Hexes Mictronics already labels are free
+    training data -- for each row whose hex Mictronics has no designator
+    for, fill in a consensus-deduced type_designator/description_code when
+    one qualifies (>= 3 labelled examples, >= 90% agreement). Requires every
+    row up front, since the consensus groups aren't known until all of this
+    run's rows are in hand. See shared/type_designator_consensus.py."""
+    mictronics_designators = fetch_mictronics_type_designators(r, (row["icao_hex"] for row in rows))
+    consensus_table = build_consensus_table(
+        (row.get("manufacturer"), row.get("model"), mictronics_designators.get(row["icao_hex"]))
+        for row in rows
+        if row.get("manufacturer") and row.get("model")
+    )
+    logger.info(
+        "Type-designator consensus: %d hexes already labelled by Mictronics, %d qualifying make/model groups.",
+        len(mictronics_designators), len(consensus_table),
+    )
+
+    for row in rows:
+        if (
+            row.get("manufacturer")
+            and row.get("model")
+            and row["icao_hex"] not in mictronics_designators
+        ):
+            deduced = infer_type_designator(consensus_table, row["manufacturer"], row["model"])
+            if deduced:
+                row["type_designator"] = deduced
+                description_code = resolve_description_code(r, deduced)
+                if description_code:
+                    row["description_code"] = description_code
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +456,10 @@ def main() -> None:
     records_imported = 0
 
     try:
-        for row in download_and_parse(session):
+        rows = list(download_and_parse(session))
+        apply_type_designator_consensus(rows, r)
+
+        for row in rows:
             if write_to_redis(row, r, ttl):
                 records_imported += 1
         status = "success"

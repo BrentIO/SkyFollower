@@ -44,6 +44,7 @@ _build_record = _mod._build_record
 _CATEGORY_MAP = _mod._CATEGORY_MAP
 _ENGINE_TYPE_MAP = _mod._ENGINE_TYPE_MAP
 download_and_parse = _mod.download_and_parse
+apply_type_designator_consensus = _mod.apply_type_designator_consensus
 write_to_redis = _mod.write_to_redis
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
@@ -604,6 +605,22 @@ class TestBuildRecord:
         record = _build_record(row)
         assert "registration" not in record
 
+    def test_deduced_type_designator_included(self):
+        """main() may set row['type_designator']/['description_code'] before
+        calling write_to_redis; _build_record must surface both (#1888)."""
+        row = _make_row()
+        row["type_designator"] = "A320"
+        row["description_code"] = "L2J"
+        record = _build_record(row)
+        assert record["aircraft"]["type_designator"] == "A320"
+        assert record["aircraft"]["description_code"] == "L2J"
+
+    def test_no_deduced_type_designator_omitted(self):
+        row = _make_row()
+        record = _build_record(row)
+        assert "type_designator" not in record["aircraft"]
+        assert "description_code" not in record["aircraft"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: write_to_redis
@@ -646,6 +663,91 @@ class TestWriteToRedis:
         written = r.json.return_value.set.call_args[0][2]
         assert "model" not in written["aircraft"]
         assert "seats" not in written["aircraft"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: apply_type_designator_consensus (#1888)
+# ---------------------------------------------------------------------------
+
+def _make_consensus_redis(mictronics_docs_by_hex: dict, type_docs_by_designator: dict):
+    r = MagicMock()
+
+    def _type_get(key: str):
+        designator = key.split(":")[-1]
+        return type_docs_by_designator.get(designator)
+
+    r.json.return_value.get.side_effect = _type_get
+
+    pipe = MagicMock()
+    pipe_json = MagicMock()
+    r.pipeline.return_value = pipe
+    pipe.json.return_value = pipe_json
+
+    queried_hexes: list[str] = []
+    pipe_json.get.side_effect = lambda key: queried_hexes.append(key.split(":")[-1])
+
+    def _execute():
+        if queried_hexes:
+            docs = [mictronics_docs_by_hex.get(h) for h in queried_hexes]
+            queried_hexes.clear()
+            return docs
+        return []
+
+    pipe.execute.side_effect = _execute
+    return r
+
+
+class TestApplyTypeDesignatorConsensus:
+    def _rows(self):
+        # Same (manufacturer, model) across 4 hexes: 3 Mictronics already
+        # labels P28A, 1 Mictronics has never heard of.
+        return [
+            _make_row(icao_hex="AAAA01", manufacturer="PIPER", model="PA-28-181"),
+            _make_row(icao_hex="AAAA02", manufacturer="PIPER", model="PA-28-181"),
+            _make_row(icao_hex="AAAA03", manufacturer="PIPER", model="PA-28-181"),
+            _make_row(icao_hex="AAAA04", manufacturer="PIPER", model="PA-28-181"),
+        ]
+
+    def test_unlabelled_row_gets_deduced_designator_and_description_code(self):
+        rows = self._rows()
+        r = _make_consensus_redis(
+            mictronics_docs_by_hex={
+                "AAAA01": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA02": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA03": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        apply_type_designator_consensus(rows, r)
+        unlabelled = next(row for row in rows if row["icao_hex"] == "AAAA04")
+        assert unlabelled["type_designator"] == "P28A"
+        assert unlabelled["description_code"] == "L1P"
+
+    def test_labelled_row_is_not_overwritten(self):
+        rows = self._rows()
+        r = _make_consensus_redis(
+            mictronics_docs_by_hex={
+                "AAAA01": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA02": {"aircraft": {"type_designator": "P28A"}},
+                "AAAA03": {"aircraft": {"type_designator": "P28A"}},
+            },
+            type_docs_by_designator={"P28A": {"description_code": "L1P"}},
+        )
+        apply_type_designator_consensus(rows, r)
+        labelled = next(row for row in rows if row["icao_hex"] == "AAAA01")
+        assert "type_designator" not in labelled
+
+    def test_no_labelled_examples_leaves_rows_unset(self):
+        rows = self._rows()
+        r = _make_consensus_redis(mictronics_docs_by_hex={}, type_docs_by_designator={})
+        apply_type_designator_consensus(rows, r)
+        assert all("type_designator" not in row for row in rows)
+
+    def test_rows_without_manufacturer_or_model_are_skipped(self):
+        rows = [_make_row(icao_hex="ZZZZ01", manufacturer="", model="")]
+        r = _make_consensus_redis(mictronics_docs_by_hex={}, type_docs_by_designator={})
+        apply_type_designator_consensus(rows, r)
+        assert "type_designator" not in rows[0]
 
 
 # ---------------------------------------------------------------------------
