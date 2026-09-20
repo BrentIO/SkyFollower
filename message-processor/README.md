@@ -37,8 +37,8 @@ interpolated by Compose from this host's `.env` (written by
 | `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata/heartbeat UDP feed toward the `map` service (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
 | `MAP_UDP_PORT` | ❌ | — | |
 | `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` | ❌ | `1` | Minimum spacing, per aircraft, between `position` sends (see [Map UDP Publisher](#map-udp-publisher)). Does not throttle `metadata` sends |
-| `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees), used for single-message CPR airborne position decoding |
-| `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
+| `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees). No longer used for CPR airborne position decoding as of #1841 (replaced by pyModeS's stateful `PipeDecoder`) -- still required pending confirmation nothing else depends on it |
+| `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees). Same status as `LATITUDE` above |
 | `CAPTURE_RAW_FRAMES` | ❌ | `false` | Opt-in forensic raw-frame capture (see [Raw Frame Capture](#raw-frame-capture-forensic) below). Read once at startup; restart to pick up a changed value |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 

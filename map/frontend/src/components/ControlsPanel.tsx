@@ -1,6 +1,7 @@
 import { RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
+import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import { IconButton } from "./IconButton";
 
 export interface ControlsPanelProps {
@@ -24,6 +25,13 @@ export interface ControlsPanelProps {
   rangeOutlineDisabled: boolean;
   onRecenter: () => void;
   recenterDisabled: boolean;
+  /** True whenever the camera is currently centered on the configured
+   * center point -- see lib/mapCentered.ts's isWithinCenterTolerance, kept
+   * live via MapView.tsx's `load`/`moveend` listeners (#1847). Drives the
+   * button's toggle-active styling via `toggleButtonClass()`, same
+   * convention as every other toggle in this panel; irrelevant (and never
+   * computed) while `recenterDisabled` is true. */
+  recenterActive: boolean;
   /** Whole-page Fullscreen API toggle -- true once
    * `document.fullscreenElement` is set, kept in sync via a
    * `fullscreenchange` listener in MapView.tsx rather than only optimistic
@@ -39,15 +47,21 @@ export interface ControlsPanelProps {
 }
 
 // Top-right floating controls: one unified vertically stacked column mixing
-// the recenter button (its own separately-styled square control -- a
-// momentary action, not an on/off toggle) with the icon buttons for the
-// "Fullscreen", "Labels", "Trails", "Range Outline", and "Map Labels"
-// toggles, in that top-to-bottom order. Icon buttons share the exact
-// rendering mechanism (IconButton, toggleButtonClass coloring) as
-// AircraftDetailPanel's action row, sized via IconButton's "md" size prop
-// to match the recenter button's own h-9 w-9 -- AircraftDetailPanel's row
-// keeps IconButton's default size and its own horizontal layout, unrelated
-// to this column.
+// the recenter button (its click, `onRecenter`, is still a momentary
+// one-shot action, not an on/off toggle -- but its *appearance* now follows
+// this panel's shared toggle-button convention, reflecting whether the
+// camera happens to already be centered; see `recenterActive`, #1847) with
+// the icon buttons for the "Fullscreen", "Labels", "Trails", "Range
+// Outline", and "Map Labels" toggles, in that top-to-bottom order. Icon
+// buttons share the exact rendering mechanism (IconButton, toggleButtonClass
+// coloring) as AircraftDetailPanel's action row, sized via IconButton's "md"
+// size prop to match the recenter button's own h-9 w-9 -- AircraftDetailPanel's
+// row keeps IconButton's default size and its own horizontal layout,
+// unrelated to this column. The recenter button can't use IconButton
+// itself -- its crosshair icon is rendered via `dangerouslySetInnerHTML`
+// (lib/crosshairIcon.ts's dashed-circle markup, not expressible as an
+// IconButton `IconSpec`) -- so it imports `toggleButtonClass()` directly
+// instead, applying the exact same active/inactive classes IconButton does.
 //
 // The connection-status dot that used to float here (its own top-2/right-2
 // wrapper, independent of this column's top-4/right-4 inset) has moved into
@@ -66,6 +80,7 @@ export function ControlsPanel({
   rangeOutlineDisabled,
   onRecenter,
   recenterDisabled,
+  recenterActive,
   fullscreen,
   onToggleFullscreen,
   fullscreenDisabled,
@@ -87,12 +102,14 @@ export function ControlsPanel({
           disabled={recenterDisabled}
           title="Return to center"
           aria-label="Return to center"
-          className="flex h-9 w-9 items-center justify-center rounded-md bg-white/90 text-slate-700 shadow-md hover:bg-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900/90 dark:text-white dark:hover:bg-slate-900"
+          aria-pressed={recenterActive}
+          className={`flex h-9 w-9 items-center justify-center rounded border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toggleButtonClass(recenterActive)}`}
           // Same crosshair markup as the on-map center marker -- see
           // lib/crosshairIcon.ts's docstring for why they must stay
           // visually identical. "currentColor" lets the button's own
-          // text-color classes (light/dark) drive the icon color, unlike
-          // the center marker which passes a fixed color of its own.
+          // text-color classes (toggleButtonClass's active/inactive
+          // variants, light/dark) drive the icon color, unlike the center
+          // marker which passes a fixed color of its own.
           dangerouslySetInnerHTML={{ __html: crosshairSvgMarkup(20, "currentColor") }}
         />
         <IconButton label="Labels" icon={TAGS_ICON} active={labelsAll} onClick={onToggleLabelsAll} size="md" />
