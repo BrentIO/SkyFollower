@@ -406,6 +406,7 @@ def run_pipeline(
 
             _apply_type_lookup(record, r)
             record["source"] = "uk-caa-registry"
+            record["country_code"] = "GB"
             key = aircraft_registry_key(record["icao_hex"])
             set_json(r, key, record)
             r.expire(key, ttl)
@@ -458,6 +459,7 @@ def run_pipeline(
 
                 _apply_type_lookup(record, r)
                 record["source"] = "uk-caa-registry"
+                record["country_code"] = "GB"
                 key = aircraft_registry_key(record["icao_hex"])
                 set_json(r, key, record)
                 r.expire(key, ttl)
@@ -487,6 +489,7 @@ def run_pipeline(
 
             _apply_type_lookup(record, r)
             record["source"] = "uk-caa-registry"
+            record["country_code"] = "GB"
             key = aircraft_registry_key(record["icao_hex"])
             set_json(r, key, record)
             r.expire(key, ttl)

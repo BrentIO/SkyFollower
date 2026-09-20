@@ -33,6 +33,17 @@ export interface AircraftInfo {
    * shared/models.py's AircraftRecord.special_livery) -- a name string,
    * not a boolean; absent when not wearing one. */
   special_livery?: string;
+  /** Resolved country-of-registration display name (see
+   * shared/models.py's AircraftRecord.country) -- a country registry
+   * runner's own value wins when present, else resolved server-side from
+   * icao_hex against the ICAO hex-range allocation table. Absent when
+   * neither resolves. */
+  country?: string;
+  /** ISO 3166-1 alpha-2 country-of-registration code (see
+   * AircraftRecord.country_code) -- see country for the resolved display
+   * name. Drives the aircraft list panel's flag icon
+   * (lib/countryFlag.ts), rendered client-side from this code alone. */
+  country_code?: string;
 }
 
 // Operator/registrant/airport shapes below are the subset of

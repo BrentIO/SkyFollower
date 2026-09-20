@@ -1527,6 +1527,16 @@ components:
           - type: string
           - type: 'null'
           title: Special Livery
+        country:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country
+        country_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Country Code
         data_sources:
           anyOf:
           - items:

@@ -22,6 +22,27 @@
 -- the moment Mictronics later picks up the hex and can never shadow or degrade
 -- a real Mictronics value.
 --
+-- country/country_code (country of registration) are resolved here too, also
+-- never written back:
+--   1. If a country registry runner already wrote country_code onto
+--      aircraft:registry, that value wins outright (it is exact; the runner
+--      IS that country's own CAA).
+--   2. Otherwise, icao_hex is matched against lookup:icao-code-blocks (VRS's
+--      code-blocks.csv, imported by the vrs-standing-data runner) — a table
+--      of ICAO 24-bit address allocation ranges, each row keyed by a
+--      (bitmask, significant_bitmask) pair. Checked in the table's own
+--      stored order (pre-sorted descending by significant_bitmask), taking
+--      the first row where (icao_hex AND significant_bitmask) == bitmask —
+--      the standard VRS/tar1090-style longest-prefix-bitmask match. The
+--      table's CountryISO2 "ZZ" catch-all rows (the two entries that between
+--      them cover the whole address space) are dropped at import time, so
+--      "no row matches" is the genuine, expected outcome for an
+--      unallocated/reserved hex, not a bug.
+--   3. Either way, once a country_code is in hand, lookup:icao-countries
+--      (VRS's countries.csv, same runner) resolves it to an English name —
+--      one shared table for both registry-sourced and hex-range-matched
+--      codes, so a country's display name is never duplicated per-runner.
+--
 -- Each of the three keys carries its own scalar `source` field naming the
 -- runner that wrote it (e.g. "mictronics", "us-faa-registry"). A plain deep_merge
 -- would let later keys silently clobber earlier ones, hiding the fact that
@@ -67,6 +88,56 @@ local function apply_manufacturer_model_fallback(result)
         end
         if #parts > 0 then
             result.aircraft.manufacturer_model = table.concat(parts, ' ')
+        end
+    end
+end
+
+local function resolve_hex_range_country_code(icao_hex)
+    -- lookup:icao-code-blocks is a single JSON array covering all
+    -- (non-catch-all) VRS code-blocks rows, pre-sorted descending by
+    -- significant_bitmask. One JSON.GET, then a linear scan taking the
+    -- first bitwise match -- sub-millisecond at this size (~811 rows).
+    local raw = redis.call('JSON.GET', 'lookup:icao-code-blocks')
+    if not raw then
+        return nil
+    end
+    local icao_int = tonumber(icao_hex, 16)
+    if icao_int == nil then
+        return nil
+    end
+    local blocks = cjson.decode(raw)
+    for _, block in ipairs(blocks) do
+        if bit.band(icao_int, block.significant_bitmask) == block.bitmask then
+            return block.country_code
+        end
+    end
+    return nil
+end
+
+local function resolve_country_name(country_code)
+    local raw = redis.call('JSON.GET', 'lookup:icao-countries')
+    if not raw then
+        return nil
+    end
+    local countries = cjson.decode(raw)
+    local name = countries[country_code]
+    if is_absent(name) then
+        return nil
+    end
+    return name
+end
+
+local function apply_country_resolution(result, icao_hex)
+    if is_absent(result.country_code) then
+        local resolved = resolve_hex_range_country_code(icao_hex)
+        if resolved ~= nil then
+            result.country_code = resolved
+        end
+    end
+    if not is_absent(result.country_code) and is_absent(result.country) then
+        local name = resolve_country_name(result.country_code)
+        if name ~= nil then
+            result.country = name
         end
     end
 end
@@ -142,5 +213,7 @@ if type(result.aircraft) == 'table' then
     end
     result.aircraft = nil
 end
+
+apply_country_resolution(result, icao_hex)
 
 return cjson.encode(result)

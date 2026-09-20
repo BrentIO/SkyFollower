@@ -11,6 +11,7 @@ import type { CenterPoint } from "../lib/config";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { connectionTooltip, overallConnectionStatus, PROCESSOR_STATUS_DOT_COLOR } from "../lib/processorStatus";
 import { createTrailingThrottle, MAP_SYNC_THROTTLE_MS } from "../lib/syncThrottle";
+import { countryFlag } from "../lib/countryFlag";
 import type { ProcessorRoster } from "../api/types";
 import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 
@@ -32,7 +33,29 @@ interface AircraftListColumn {
 // exactly (green "M" for military, yellow "S" for special livery), in that
 // order, immediately after the ident text -- see the issue's "Military /
 // Special Livery pill" section.
+//
+// The country-of-registration flag (#1848) is its own column, to the left
+// of Ident -- tar1090/VRS-style tools that already do this hex-range
+// lookup conventionally lead each row with the flag, but as a distinct
+// column rather than folded into Ident's cell so it lines up in its own
+// vertical strip instead of shifting per-row with ident text width.
+// Rendered client-side from countryCode alone via lib/countryFlag.ts (the
+// same regional-indicator-symbol trick as shared/country_flags.py);
+// silently omitted (not a placeholder glyph) when no country has
+// resolved, or when countryCode isn't a syntactically valid 2-letter
+// code. Sorts by the resolved country name/code, same convention as every
+// other column sorting on its own underlying value rather than decoration.
 const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
+  {
+    key: "flag",
+    header: "",
+    sortKey: (row) => row.country ?? row.countryCode ?? null,
+    render: (row) => {
+      const flag = row.countryCode != null ? countryFlag(row.countryCode) : null;
+      if (flag == null) return null;
+      return <span title={row.country ?? row.countryCode ?? undefined}>{flag}</span>;
+    },
+  },
   {
     key: "ident",
     header: "Ident",

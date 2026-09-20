@@ -330,6 +330,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
             continue
         _apply_type_lookup(record, r)
         record["source"] = "nl-ilt-registry"
+        record["country_code"] = "NL"
         batch.append((aircraft_registry_key(record["icao_hex"]), record))
         count += 1
         if len(batch) == WRITE_BATCH_SIZE:

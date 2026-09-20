@@ -91,6 +91,36 @@ def route_key(ident: str) -> str:
     return f"route:{ident.upper()}"
 
 
+def icao_code_blocks_key() -> str:
+    """
+    ICAO 24-bit (Mode S) address allocation table, written by the
+    vrs-standing-data runner from VRS's code-blocks/schema-01/code-blocks.csv.
+    RedisJSON array of {bitmask, significant_bitmask, country_code} objects
+    (Start/Finish/Count/IsMilitary from the source CSV are not carried —
+    unused by the lookup), pre-sorted by descending significant_bitmask so
+    shared/lua/merge_aircraft.lua's linear scan can take the first match
+    without re-sorting per call. The CountryISO2 "ZZ" catch-all rows (the
+    two entries that between them cover the entire 24-bit address space) are
+    dropped at import time, not stored here — see the runner for why.
+    A single fixed key, not one per hex — 811 rows fits comfortably in one
+    JSON.GET. lookup:icao-code-blocks
+    """
+    return "lookup:icao-code-blocks"
+
+
+def icao_countries_key() -> str:
+    """
+    ISO 3166-1 alpha-2 -> English country name map, written by the
+    vrs-standing-data runner from VRS's countries/schema-01/countries.csv.
+    RedisJSON object, e.g. {"US": "United States", ...}. Used by
+    shared/lua/merge_aircraft.lua to resolve AircraftRecord.country from
+    whichever country_code it ends up with — registry-sourced or
+    hex-range-matched alike — so country names live in exactly one place.
+    lookup:icao-countries
+    """
+    return "lookup:icao-countries"
+
+
 def airport_key(icao_code: str) -> str:
     """Airport metadata record. airport:{icao_code}"""
     return f"airport:{icao_code.upper()}"

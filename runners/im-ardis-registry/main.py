@@ -217,6 +217,7 @@ def _build_record(row: dict) -> dict | None:
         "icao_hex": icao_hex,
         "registration": registration,
         "source": "im-ardis-registry",
+        "country_code": "IM",
         "military": False,
     }
     if aircraft_fields:

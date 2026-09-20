@@ -494,6 +494,7 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         eng_row = engines_by_code.get(row["code_engine"]) if row["code_engine"] else None
         record = build_aircraft_record(row, acft_row, eng_row)
         record["source"] = "us-faa-registry"
+        record["country_code"] = "US"
         key = aircraft_registry_key(record["icao_hex"])
         batch.append((key, record))
         count += 1

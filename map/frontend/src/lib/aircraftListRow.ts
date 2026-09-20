@@ -26,6 +26,13 @@ export interface AircraftListRow {
   descriptionCode: string | null;
   military: boolean;
   specialLivery: string | null;
+  /** ISO 3166-1 alpha-2 country-of-registration code (AircraftInfo.country_code)
+   * -- drives the flag icon rendered next to Ident (lib/countryFlag.ts).
+   * Null when no country has resolved for this aircraft. */
+  countryCode: string | null;
+  /** Resolved country display name (AircraftInfo.country) -- used as the
+   * flag icon's title/tooltip text. */
+  country: string | null;
   /** Raw feet, for sorting -- see altitudeDisplay for the rendered text. */
   altitudeFt: number | null;
   /** "39500", "↓ 22750", "↑ 37000" -- trendArrow()'s ↑/↓ glyph prefixed
@@ -65,6 +72,8 @@ export function buildAircraftListRow(flight: AircraftRecord, center: CenterPoint
     descriptionCode: nonEmpty(aircraft?.description_code),
     military: !!aircraft?.military,
     specialLivery: nonEmpty(aircraft?.special_livery),
+    countryCode: nonEmpty(aircraft?.country_code),
+    country: nonEmpty(aircraft?.country),
     altitudeFt: flight.alt ?? null,
     altitudeDisplay,
     distanceNm: distanceDisplay != null ? Number.parseFloat(distanceDisplay) : null,

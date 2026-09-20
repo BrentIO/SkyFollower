@@ -2868,6 +2868,19 @@ components:
           type: string
           description: Cleaned, TTS-ready livery name if the aircraft is wearing one; omitted when not
           example: Retro
+        country:
+          type: string
+          description: >
+            Resolved country-of-registration display name. A country
+            registry runner's own value wins when present; otherwise
+            resolved from the icao_hex against the ICAO 24-bit address
+            allocation table (VRS code-blocks). Omitted when neither
+            resolves.
+          example: United States
+        country_code:
+          type: string
+          description: Raw ISO 3166-1 alpha-2 country-of-registration code, unresolved; see country
+          example: US
         data_sources:
           type: array
           items:
