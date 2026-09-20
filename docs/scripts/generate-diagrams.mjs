@@ -39,6 +39,16 @@
 //    needed — the reference resolves unchanged. This intentionally does
 //    *not* render on GitHub (the source .svg is gitignored, never
 //    committed) — docs-site only.
+//
+// A handful of .puml files (aws.puml, central-server.puml, and any
+// component diagram that's also `!includesub`'d into pipeline.puml, e.g.
+// archive-compaction.puml) are pure include-fragments: their content only
+// ever reaches the docs site inside another rendered diagram (pipeline.svg),
+// yet they're still rendered standalone here like every other file. That's
+// intentional, not a gap — see issue #1867. Skipping standalone rendering
+// for fragment-only files would need this script to parse every .puml for
+// `!includesub`/`!include` references first, which is more moving parts
+// than the two harmless, unreferenced SVGs it would save.
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readdirSync } from "node:fs";

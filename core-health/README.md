@@ -6,6 +6,8 @@
 | **Run frequency** | Always-on, three independent poll loops (RabbitMQ, Redis, and a once-daily container-registry check for the per-component "update available" entities) |
 | **Reads/writes** | RabbitMQ Management API (read-only), Redis (`INFO`/`MEMORY STATS` plus plain key reads, both via the same default-user credential every other component uses), the container registry's public tags API (read-only, anonymous) — no direct RabbitMQ AMQP connection, no S3 |
 
+![Core health architecture](./core-health.svg)
+
 ## How it works
 
 Two independent background loops, neither blocking the other:

@@ -6,6 +6,8 @@
 | **Run frequency** | Daily, scheduled by `ofelia` |
 | **Reads/writes** | AWS S3, plus a local index-cache volume shared with `archive-processor` (see [Local Index Cache](#local-index-cache)) — no Redis, no RabbitMQ |
 
+![Archive compaction architecture](./archive-compaction.svg)
+
 ## How it works
 
 The archive processor writes one small Parquet index row per flight to
