@@ -4,12 +4,10 @@ This repo is in active development.  Its full of bugs, incomplete implementation
 
 # SkyFollower
 
-SkyFollower is a locally-hosted ADS-B aircraft tracking system. It receives
-raw 1090 MHz and 978 MHz UAT messages from one or more readsb decoders, routes
-them through RabbitMQ for processing, enriches each flight with registration and
-operator data from Redis, evaluates configurable alert rules, archives completed
-flights as gzipped JSON to AWS S3, and publishes real-time metrics and rule
-notifications over MQTT (with Home Assistant autodiscovery).
+SkyFollower is a locally-hosted ADS-B aircraft tracking system. It ingests,
+enriches, and archives flight data from one or more readsb decoders, evaluates
+configurable alert rules, and publishes notifications over MQTT — alongside a
+live map and web UI for watching traffic in real time.
 
 **Full documentation: [brentio.github.io/SkyFollower](https://brentio.github.io/SkyFollower/)**
 
@@ -19,16 +17,6 @@ notifications over MQTT (with Home Assistant autodiscovery).
 - [Rules & Areas](https://brentio.github.io/SkyFollower/rules-and-areas/) — condition types, example `rules.json`/`areas.json`
 - [Data Runners](https://brentio.github.io/SkyFollower/runners/) — settings fields for every registration/airport data source
 - [MQTT Reference](https://brentio.github.io/SkyFollower/specs/asyncapi) — every topic published, including Home Assistant autodiscovery behavior
-
-## Development
-
-Run the test suite:
-
-```bash
-python -m pytest
-```
-
-This runs every component's test suite, discovered from the repo root.
 
 ## License
 

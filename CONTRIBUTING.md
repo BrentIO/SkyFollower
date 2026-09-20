@@ -13,3 +13,11 @@ If a contribution vendors third-party material, that material must be under a
 license compatible with `GPL-3.0-or-later`, and it must be recorded in
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) with its origin, license,
 and attribution.
+
+## Running the test suite
+
+```bash
+python -m pytest
+```
+
+This runs every component's test suite, discovered from the repo root.
