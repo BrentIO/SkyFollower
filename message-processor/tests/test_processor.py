@@ -69,11 +69,12 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     main as processor_main,
 )
 from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES  # noqa: E402
-from shared.models import InboundMessage, Position, Velocity
+from shared.models import InboundMessage, Position, RawFrame, Velocity
 from shared.rabbitmq_topology import (  # noqa: E402
     ADSB_EXCHANGE,
     ADSB_UNROUTABLE_EXCHANGE,
     ARCHIVE_QUEUE_NAME,
+    RAW_FRAMES_QUEUE_NAME,
 )
 from shared.redis_keys import (
     message_processor_heartbeat_key,
@@ -5315,3 +5316,626 @@ class TestFlightMetadataSnapshot:
         f.matched_rules.append("rule_a")
         after = _flight_metadata_snapshot(f)
         assert before != after
+
+
+# ---------------------------------------------------------------------------
+# #1842: CAPTURE_RAW_FRAMES -- Flight.add_raw_frame()/_load_raw_frames()/
+# to_completed_flight(load_raw_frames=...)
+# ---------------------------------------------------------------------------
+
+class TestFlightRawFrames:
+    def _saved_flight(self, db, icao_hex="A8AE7F") -> Flight:
+        f = Flight(db)
+        f.icao_hex = icao_hex
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        return f
+
+    def test_add_raw_frame_persists_and_appends_in_memory(self):
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="8DC060C558CD8752DDFC11838345", decoded=True))
+
+        assert len(f.raw_frames) == 1
+        assert f.raw_frames[0].raw == "8DC060C558CD8752DDFC11838345"
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM raw_frames WHERE icao_hex=?", (f.icao_hex,))
+        assert cur.fetchone()[0] == 1
+
+    def test_add_raw_frame_records_decoded_false_for_a_failed_decode(self):
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="8DC060C599", decoded=False))
+
+        assert f.raw_frames[0].decoded is False
+
+    def test_add_raw_frame_allows_duplicate_timestamps(self):
+        """Unlike add_position()/add_velocity(), there is no unique index on
+        (icao_hex, timestamp) here -- real dual 978+1090 sightings of the
+        same aircraft microseconds apart must never be silently dropped
+        (see _SCHEMA's raw_frames comment / #1842)."""
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=5.0, source="1090", raw="AAAA", decoded=True))
+        f.add_raw_frame(RawFrame(timestamp=5.0, source="978", raw="BBBB", decoded=True))
+
+        assert len(f.raw_frames) == 2
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM raw_frames WHERE icao_hex=? AND timestamp=5.0", (f.icao_hex,))
+        assert cur.fetchone()[0] == 2
+
+    def test_load_raw_frames_reads_full_history_in_timestamp_order(self):
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=2.0, source="1090", raw="SECOND", decoded=True))
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="FIRST", decoded=False))
+
+        f2 = Flight(db)
+        f2.load(f.icao_hex)
+        assert f2.raw_frames == []  # load() itself never touches raw_frames
+        f2._load_raw_frames()
+        assert [r.raw for r in f2.raw_frames] == ["FIRST", "SECOND"]
+
+    def test_delete_removes_raw_frames_rows(self):
+        db = _make_db()
+        f = self._saved_flight(db, "CCCCCC")
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        f.delete()
+
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM raw_frames WHERE icao_hex='CCCCCC'")
+        assert cur.fetchone()[0] == 0
+
+    def test_to_completed_flight_default_does_not_load_raw_frames(self):
+        """Zero-overhead-when-unused: without load_raw_frames=True, a
+        flight's persisted raw_frames rows (e.g. added in a prior process
+        lifetime) are never queried or surfaced."""
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+
+        f2 = Flight(db)
+        f2.load(f.icao_hex)
+        cf = f2.to_completed_flight()
+        assert cf.raw_frames == []
+
+    def test_to_completed_flight_load_raw_frames_true_loads_full_history(self):
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        f.add_raw_frame(RawFrame(timestamp=2.0, source="1090", raw="BBBB", decoded=False))
+
+        f2 = Flight(db)
+        f2.load(f.icao_hex)
+        cf = f2.to_completed_flight(load_raw_frames=True)
+        assert [r["raw"] for r in cf.raw_frames] == ["AAAA", "BBBB"]
+        assert cf.raw_frames[1]["decoded"] is False
+
+    def test_to_completed_flight_load_raw_frames_independent_of_load_all(self):
+        """load_raw_frames=True must reload raw_frames even when
+        load_all=False (the _evict_flight() shape: positions/velocities
+        already loaded in full by flight.load(icao_hex, limit=False), no
+        reason to reload those, but raw_frames was never touched by load()
+        at all regardless)."""
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+
+        f2 = Flight(db)
+        f2.load(f.icao_hex, limit=False)
+        cf = f2.to_completed_flight(load_all=False, load_raw_frames=True)
+        assert [r["raw"] for r in cf.raw_frames] == ["AAAA"]
+
+    def test_to_completed_flight_raw_frames_use_to_dict_shape(self):
+        from datetime import datetime as _dt
+
+        db = _make_db()
+        f = self._saved_flight(db)
+        f.add_raw_frame(RawFrame(timestamp=1717100000.0, source="1090", raw="AAAA", decoded=True))
+
+        cf = f.to_completed_flight(load_raw_frames=True)
+        entry = cf.raw_frames[0]
+        assert entry["timestamp"] == _dt.fromtimestamp(1717100000.0, tz=timezone.utc)
+        assert entry["source"] == "1090"
+        assert entry["decoded"] is True
+
+
+# ---------------------------------------------------------------------------
+# #1842: CAPTURE_RAW_FRAMES off (default) -- fully inert
+# ---------------------------------------------------------------------------
+
+class TestCaptureRawFramesOffByDefault:
+    def test_defaults_to_false(self):
+        p, _ = _make_processor()
+        assert p._capture_raw_frames is False
+
+    def test_config_true_is_wired_through(self):
+        cfg = _minimal_config()
+        cfg["capture_raw_frames"] = True
+        p, _ = _make_processor(cfg=cfg)
+        assert p._capture_raw_frames is True
+
+    def test_decode_failure_still_short_circuits_in_process(self):
+        """The exact pre-#1842 behavior: a message that fails to decode
+        never reaches _update_flight, so no Flight row is created."""
+        p, mock_redis = _make_processor()
+        with patch.object(p, "_decode_message", return_value=None), \
+             patch.object(p, "_update_flight") as mock_update:
+            msg = InboundMessage(raw="00", icao_hex="A8AE7F", received_at=1.0, source="1090")
+            p._process(msg)
+
+        mock_update.assert_not_called()
+        assert Flight(p._db).load("A8AE7F") is False
+
+    def test_no_raw_frames_table_writes_for_a_decoded_message(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+        data = {"icao_hex": "A8AE7F", "squawk": "1200", "verified": True}
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        cur = p._db.cursor()
+        cur.execute("SELECT COUNT(*) FROM raw_frames")
+        assert cur.fetchone()[0] == 0
+
+    def test_no_raw_frames_queue_declared_on_connect(self):
+        p, _ = _make_processor()
+        channel = MagicMock()
+        channel.start_consuming.side_effect = lambda: p._shutdown.set()
+        with patch("message_processor.main.pika.BlockingConnection") as MockConnection:
+            MockConnection.return_value.channel.return_value = channel
+            p._consume_loop()
+
+        declared = {c.kwargs.get("queue") for c in channel.queue_declare.call_args_list}
+        assert RAW_FRAMES_QUEUE_NAME not in declared
+
+    def test_completed_flight_never_carries_raw_frames_regardless_of_archive_path(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+        completed = f.to_completed_flight(load_raw_frames=p._capture_raw_frames)
+        assert completed.raw_frames == []
+
+
+# ---------------------------------------------------------------------------
+# #1842: CAPTURE_RAW_FRAMES on -- capture at reception time
+# ---------------------------------------------------------------------------
+
+class TestCaptureRawFramesOn:
+    def _processor(self):
+        cfg = _minimal_config()
+        cfg["capture_raw_frames"] = True
+        p, mock_redis = _make_processor(cfg=cfg)
+        mock_redis.evalsha.return_value = None
+        return p, mock_redis
+
+    def test_decoded_message_captured_with_decoded_true(self):
+        p, _ = self._processor()
+        msg = InboundMessage(raw="8D" + "00" * 12, icao_hex="A8AE7F", received_at=1.0, source="1090")
+        data = {"icao_hex": "A8AE7F", "squawk": "1200", "verified": True}
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        f._load_raw_frames()
+        assert len(f.raw_frames) == 1
+        assert f.raw_frames[0].decoded is True
+        assert f.raw_frames[0].raw == msg.raw
+        assert f.raw_frames[0].source == "1090"
+
+    def test_process_routes_a_decode_failure_into_update_flight(self):
+        """The core #1842 behavior change while the flag is on: a message
+        that fails to decode no longer short-circuits in _process() -- it's
+        still recorded, tagged decoded=False, against whatever flight this
+        icao_hex belongs to."""
+        p, _ = self._processor()
+        msg = InboundMessage(raw="8DBADBAD", icao_hex="A8AE7F", received_at=1.0, source="1090")
+
+        with patch.object(p, "_decode_message", return_value=None):
+            p._process(msg)
+
+        f = Flight(p._db)
+        assert f.load("A8AE7F") is True
+        f._load_raw_frames()
+        assert len(f.raw_frames) == 1
+        assert f.raw_frames[0].decoded is False
+        assert f.raw_frames[0].raw == msg.raw
+
+    def test_garbled_first_sighting_creates_a_flight_row(self):
+        """Documented edge case from #1842: with the flag on, a completely
+        garbled first-ever message from a never-before-seen aircraft now
+        creates a flight row too, purely to have somewhere to attach the
+        captured frame -- this never happens with the flag off."""
+        p, _ = self._processor()
+        msg = InboundMessage(raw="8DBADBAD", icao_hex="FFFFFF", received_at=1.0, source="1090")
+
+        with patch.object(p, "_decode_message", return_value=None):
+            p._process(msg)
+
+        assert Flight(p._db).load("FFFFFF") is True
+
+    def test_decoded_cleanly_but_nothing_extracted_is_also_decoded_false(self):
+        """A message that decodes cleanly but yields nothing this system
+        currently parses out (e.g. an ACAS RA broadcast) is indistinguishable,
+        by design, from a genuine decode failure -- both collapse to
+        data == {"icao_hex": ...} by the time _update_flight sees them."""
+        p, _ = self._processor()
+        msg = InboundMessage(raw="8DBADBAD", icao_hex="A8AE7F", received_at=1.0, source="1090")
+        data = {"icao_hex": "A8AE7F"}  # exactly what _decode_1090 would return if len(data) == 1
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        f._load_raw_frames()
+        assert f.raw_frames[0].decoded is False
+
+    def test_no_unique_constraint_dual_source_sightings_both_captured(self):
+        """Real scenario from the #1835/#1836 investigation: 978 and 1090
+        sightings of the same aircraft microseconds apart must both be
+        captured, not collide on a shared unique index."""
+        p, _ = self._processor()
+        t = 1_700_000_000.000345
+        msg_1090 = InboundMessage(raw="8D" + "11" * 12, icao_hex="A8AE7F", received_at=t, source="1090")
+        msg_978 = InboundMessage(raw="8D" + "22" * 12, icao_hex="A8AE7F", received_at=t, source="978")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "1200", "verified": True}, msg_1090)
+            p._update_flight({"icao_hex": "A8AE7F", "squawk": "1200", "verified": True}, msg_978)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        f._load_raw_frames()
+        assert len(f.raw_frames) == 2
+
+    def test_raw_frames_queue_declared_on_connect(self):
+        p, _ = self._processor()
+        channel = MagicMock()
+        channel.start_consuming.side_effect = lambda: p._shutdown.set()
+        with patch("message_processor.main.pika.BlockingConnection") as MockConnection:
+            MockConnection.return_value.channel.return_value = channel
+            p._consume_loop()
+
+        channel.queue_declare.assert_any_call(
+            queue=RAW_FRAMES_QUEUE_NAME,
+            durable=True,
+            arguments={"x-message-ttl": 8 * 3600 * 1000, "x-max-length-bytes": DEFAULT_DEAD_LETTER_MAX_BYTES},
+        )
+
+    def _connected_processor(self):
+        p, _ = self._processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        p._rmq_connected = True
+        return p, mock_channel, mock_connection
+
+    def test_maybe_publish_raw_frames_publishes_when_flight_has_frames(self):
+        p, mock_channel, _ = self._connected_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        completed = f.to_completed_flight(load_raw_frames=True)
+
+        p._maybe_publish_raw_frames(completed)
+
+        mock_channel.basic_publish.assert_called_once()
+        assert mock_channel.basic_publish.call_args.kwargs["routing_key"] == RAW_FRAMES_QUEUE_NAME
+        body = json.loads(mock_channel.basic_publish.call_args.kwargs["body"])
+        assert body["raw_frames"][0]["raw"] == "AAAA"
+
+    def test_maybe_publish_raw_frames_is_a_no_op_when_flight_has_no_frames(self):
+        """Most flights (even with the flag on) will simply never have hit
+        a capture-worthy event -- no reason to publish an empty payload."""
+        p, mock_channel, _ = self._connected_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        completed = f.to_completed_flight(load_raw_frames=True)
+
+        p._maybe_publish_raw_frames(completed)
+
+        mock_channel.basic_publish.assert_not_called()
+
+    def test_publish_raw_frames_is_best_effort_on_publish_failure(self):
+        """Unlike _archive(), a raw-frames publish failure must never touch
+        _rmq_connected or the SQLite fallback -- losing a debug record to a
+        transient RabbitMQ hiccup is an accepted loss for this opt-in
+        feature, not a data-loss incident."""
+        p, mock_channel, _ = self._connected_processor()
+        mock_channel.basic_publish.side_effect = RuntimeError("boom")
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        completed = f.to_completed_flight(load_raw_frames=True)
+
+        p._maybe_publish_raw_frames(completed)  # must not raise
+
+        assert p._rmq_connected is True
+        assert p._fallback.depth() == 0
+
+    def test_publish_raw_frames_is_a_no_op_when_not_connected(self):
+        p, _ = self._processor()
+        p._rmq_connected = False
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        completed = f.to_completed_flight(load_raw_frames=True)
+
+        p._maybe_publish_raw_frames(completed)  # must not raise, no fallback
+
+        assert p._fallback.depth() == 0
+
+    def test_publish_raw_frames_does_not_set_mandatory(self):
+        """Best-effort: no publisher-confirm-driven UnroutableError handling
+        needed the way _archive() has, since there is nothing to fall back
+        to here."""
+        p, mock_channel, _ = self._connected_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+        completed = f.to_completed_flight(load_raw_frames=True)
+
+        p._maybe_publish_raw_frames(completed)
+
+        assert "mandatory" not in mock_channel.basic_publish.call_args.kwargs
+
+    def test_gap_beyond_ttl_publishes_raw_frames_for_the_completed_flight(self):
+        """Integration through _update_flight's gap-triggered re-archive
+        path: the old flight's captured frames must reach the raw-frames
+        queue, not just the ordinary eviction path."""
+        p, mock_channel, _ = self._connected_processor()
+        old_time = 1_700_000_000.0
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "old-flight-id"
+        f.first_message = old_time - 100
+        f.last_message = old_time
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=old_time, source="1090", raw="OLDFRAME", decoded=True))
+
+        ttl = p._flight_ttl_seconds
+        new_time = old_time + ttl + 50
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=new_time, source="1090")
+        data = {"icao_hex": "A8AE7F"}
+
+        with p._db_lock:
+            p._update_flight(data, msg)
+
+        raw_frames_calls = [
+            c for c in mock_channel.basic_publish.call_args_list
+            if c.kwargs.get("routing_key") == RAW_FRAMES_QUEUE_NAME
+        ]
+        assert len(raw_frames_calls) == 1
+        body = json.loads(raw_frames_calls[0].kwargs["body"])
+        assert body["raw_frames"][0]["raw"] == "OLDFRAME"
+
+    def test_eviction_publishes_raw_frames_for_the_completed_flight(self):
+        p, mock_channel, _ = self._connected_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = p._message_clock - 10
+        f.last_message = p._message_clock - 10
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=p._message_clock - 10, source="1090", raw="EVICTFRAME", decoded=True))
+        p._message_clock += p._flight_ttl_seconds + 1
+
+        p._evict_stale()
+
+        raw_frames_calls = [
+            c for c in mock_channel.basic_publish.call_args_list
+            if c.kwargs.get("routing_key") == RAW_FRAMES_QUEUE_NAME
+        ]
+        assert len(raw_frames_calls) == 1
+        body = json.loads(raw_frames_calls[0].kwargs["body"])
+        assert body["raw_frames"][0]["raw"] == "EVICTFRAME"
+
+    def test_notification_payload_never_includes_raw_frames(self):
+        """MQTT rule notifications / map UDP metadata must be unaffected by
+        this feature -- _build_flight_notification_payload() must drop
+        raw_frames even though `flight` may carry this message's own
+        just-added frame in memory."""
+        p, _ = self._processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="AAAA", decoded=True))
+
+        notification = p._build_flight_notification_payload(f)
+
+        assert "raw_frames" not in notification
+
+
+# ---------------------------------------------------------------------------
+# #1842 acceptance criterion, verified explicitly and in isolation: the
+# permanent archive path (_archive() -> skyfollower-archive) must NEVER
+# carry raw frames, unconditionally -- regardless of CAPTURE_RAW_FRAMES.
+# ---------------------------------------------------------------------------
+
+class TestArchiveNeverCarriesRawFrames:
+    def _flight_with_raw_frames(self, p) -> "CompletedFlight":
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=1.0, source="1090", raw="SECRET-RAW-FRAME", decoded=True))
+        return f.to_completed_flight(load_raw_frames=True)
+
+    def _connected_processor(self):
+        cfg = _minimal_config()
+        cfg["capture_raw_frames"] = True
+        p, mock_redis = _make_processor(cfg=cfg)
+        mock_redis.evalsha.return_value = None
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        p._rmq_connected = True
+        return p, mock_channel
+
+    def test_archive_payload_excludes_raw_frames_even_when_present_and_flag_on(self):
+        """The central invariant: CAPTURE_RAW_FRAMES=True, a completed
+        flight with non-empty raw_frames, published through the real
+        _archive() path -- the payload that reaches skyfollower-archive
+        must contain zero trace of the captured frame, by key or by value."""
+        p, mock_channel = self._connected_processor()
+        completed = self._flight_with_raw_frames(p)
+        assert completed.raw_frames  # sanity: the flight really did capture something
+
+        p._archive(completed)
+
+        archive_calls = [
+            c for c in mock_channel.basic_publish.call_args_list
+            if c.kwargs.get("routing_key") == ARCHIVE_QUEUE_NAME
+        ]
+        assert len(archive_calls) == 1
+        raw_body = archive_calls[0].kwargs["body"]
+        assert b"raw_frames" not in raw_body
+        assert b"SECRET-RAW-FRAME" not in raw_body
+        parsed = json.loads(raw_body)
+        assert "raw_frames" not in parsed
+
+    def test_archive_payload_excludes_raw_frames_when_flag_off_too(self):
+        """Unconditional means unconditional: even a flight that somehow
+        carries raw_frames while CAPTURE_RAW_FRAMES is off (e.g. a stale
+        in-memory object, or a future bug in the capture-side gating) must
+        never leak it into the archive payload -- _archive()'s exclude is
+        not gated on the setting at all."""
+        p, _ = _make_processor()
+        mock_channel = MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.add_callback_threadsafe.side_effect = lambda cb: cb()
+        p._rmq_channel = mock_channel
+        p._rmq_connection = mock_connection
+        p._rmq_connected = True
+
+        db = _make_db()
+        f = Flight(db)
+        f.icao_hex = "A8AE7F"
+        f.first_message = 1.0
+        f.last_message = 1.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        # Force raw_frames into the in-memory object directly -- simulating
+        # exactly the "stale object / future gating bug" scenario the
+        # invariant must survive even though normal code never does this
+        # while the flag is off.
+        f.raw_frames = [RawFrame(timestamp=1.0, source="1090", raw="LEAKED-FRAME", decoded=True)]
+        completed = f.to_completed_flight()
+        completed.raw_frames = ["should never reach the archive"]
+
+        p._archive(completed)
+
+        raw_body = mock_channel.basic_publish.call_args.kwargs["body"]
+        assert b"raw_frames" not in raw_body
+        assert b"LEAKED-FRAME" not in raw_body
+
+    def test_fallback_payload_also_excludes_raw_frames(self):
+        """The SQLite fallback path (RabbitMQ unavailable) serializes the
+        same excluded payload -- not a second, unguarded serialization that
+        could reintroduce raw_frames."""
+        cfg = _minimal_config()
+        cfg["capture_raw_frames"] = True
+        p, mock_redis = _make_processor(cfg=cfg)
+        mock_redis.evalsha.return_value = None
+        p._rmq_connected = False
+        completed = self._flight_with_raw_frames(p)
+
+        p._archive(completed)
+
+        assert p._fallback.depth() == 1
+        published = []
+        p._fallback.drain(lambda payload: published.append(payload))
+        assert published
+        assert "raw_frames" not in published[0]
+        assert "SECRET-RAW-FRAME" not in published[0]
+
+    def test_end_to_end_process_flag_on_archive_excludes_but_raw_frames_queue_includes(self):
+        """Full-stack check through _process()/_update_flight()'s gap path:
+        with the flag on, the same completed flight ends up on both queues,
+        but only one of them ever sees the raw frame."""
+        p, mock_channel = self._connected_processor()
+
+        old_time = 1_700_000_000.0
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "old-flight-id"
+        f.first_message = old_time - 100
+        f.last_message = old_time
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+        f.add_raw_frame(RawFrame(timestamp=old_time, source="1090", raw="SECRET-RAW-FRAME", decoded=True))
+
+        ttl = p._flight_ttl_seconds
+        new_time = old_time + ttl + 50
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=new_time, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        archive_body = next(
+            c.kwargs["body"] for c in mock_channel.basic_publish.call_args_list
+            if c.kwargs.get("routing_key") == ARCHIVE_QUEUE_NAME
+        )
+        raw_frames_body = next(
+            c.kwargs["body"] for c in mock_channel.basic_publish.call_args_list
+            if c.kwargs.get("routing_key") == RAW_FRAMES_QUEUE_NAME
+        )
+        assert b"SECRET-RAW-FRAME" not in archive_body
+        assert b"SECRET-RAW-FRAME" in raw_frames_body

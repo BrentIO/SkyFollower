@@ -28,7 +28,7 @@ if _REPO_ROOT not in sys.path:
 # via the is_skyfollower_queue regex rather than an exact-name comparison),
 # so it isn't importable off the loaded module below like ARCHIVE_QUEUE_NAME
 # and ADSB_EXCHANGE are -- pull it straight from the shared constant.
-from shared.rabbitmq_topology import ADSB_UNROUTABLE_QUEUE  # noqa: E402
+from shared.rabbitmq_topology import ADSB_UNROUTABLE_QUEUE, RAW_FRAMES_QUEUE_NAME  # noqa: E402
 
 
 def _load_main():
@@ -903,6 +903,48 @@ class TestPollRabbitmqOnce:
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/adsb_exchange_publish_out_rate"] == "510.1"
         # The archive queue is present in this poll's queue list.
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "False"
+
+    def test_raw_frames_queue_matches_pattern_but_gets_no_ha_sensors(self):
+        """skyfollower-archive-raw-frames must match
+        SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN (is_skyfollower_queue()) for
+        RabbitMQ ACL purposes, but core-health deliberately excludes it from
+        _publish_queue_stats() -- it's a short-lived, manually-drained
+        forensic queue with no consumer service of its own and shouldn't
+        get a full HA sensor suite just because it shares SkyFollower's
+        naming convention. See #1842."""
+        app = _wired_app()
+
+        def _get(url, auth, timeout):
+            response = MagicMock()
+            if url.endswith("/api/overview"):
+                response.json.return_value = {}
+            elif url.endswith("/api/nodes"):
+                response.json.return_value = []
+            elif url.endswith("/api/queues/%2F"):
+                response.json.return_value = [
+                    {"name": ARCHIVE_QUEUE_NAME, "consumers": 1, "messages_ready": 0,
+                     "messages_unacknowledged": 0, "state": "running"},
+                    {"name": RAW_FRAMES_QUEUE_NAME, "consumers": 0, "messages_ready": 3,
+                     "messages_unacknowledged": 0, "state": "running"},
+                ]
+            elif url.endswith(f"/api/exchanges/%2F/{ADSB_EXCHANGE}"):
+                response.json.return_value = {}
+            response.raise_for_status = MagicMock()
+            return response
+
+        app._session.get.side_effect = _get
+        app._redis.smembers.return_value = set()
+
+        app._poll_rabbitmq_once()
+
+        published = _state_publishes(app._mqtt)
+        # The archive queue (a real dashboard target) still gets its stats.
+        assert f"{MQTT_ROOT}/archive/statistic/consumers" in published
+        # Nothing published anywhere carries the raw-frames queue's own
+        # name -- no per-queue topic, no HA discovery config.
+        assert not any(RAW_FRAMES_QUEUE_NAME in topic for topic in published)
+        discovery = _discovery_payloads(app._mqtt)
+        assert not any(RAW_FRAMES_QUEUE_NAME in topic for topic in discovery)
 
     def test_archive_queue_absent_publishes_missing_flag(self):
         app = _wired_app()

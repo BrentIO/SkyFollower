@@ -62,6 +62,33 @@ class Position(BaseModel):
         return {k: v for k, v in d.items() if v is not None}
 
 
+class RawFrame(BaseModel):
+    """Single captured Mode-S/UAT hex frame -- decoded or not -- recorded
+    only when message-processor's CAPTURE_RAW_FRAMES is enabled (see
+    message-processor/README.md's "Raw Frame Capture" section). Deliberately
+    forensic, not a permanent-archive field: CompletedFlight.raw_frames is
+    unconditionally stripped before anything reaches the S3-bound
+    `skyfollower-archive` queue (see message-processor's _archive()) and
+    only ever travels intact to the separate, short-lived
+    `skyfollower-archive-raw-frames` queue."""
+
+    timestamp: float                              # Unix timestamp (msg.received_at)
+    source: Literal[RECEIVER_SOURCE_TAGS]
+    raw: str                                       # the raw hex frame, verbatim
+    decoded: bool                                  # True if this message produced usable `data`
+
+    def to_dict(self) -> dict:
+        """Return legacy-compatible dict with UTC datetime timestamp, same
+        convention as Position.to_dict()/Velocity.to_dict() -- but every
+        field here is always present (no None-dropping needed)."""
+        return {
+            "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
+            "source": self.source,
+            "raw": self.raw,
+            "decoded": self.decoded,
+        }
+
+
 class Velocity(BaseModel):
     """Single aircraft velocity report."""
 
@@ -208,3 +235,8 @@ class CompletedFlight(BaseModel):
     matched_rules: list[str] = []
     positions: list[dict] = []               # Position.to_dict() output
     velocities: list[dict] = []              # Velocity.to_dict() output
+    raw_frames: list[dict] = []              # RawFrame.to_dict() output; only ever non-empty when
+                                              # CAPTURE_RAW_FRAMES was on -- see message-processor's
+                                              # _archive(), which unconditionally excludes this field
+                                              # before publishing to the permanent archive queue,
+                                              # regardless of that setting.

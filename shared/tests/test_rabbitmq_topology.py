@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, call
 
+from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES
 from shared.rabbitmq_topology import (
     ADSB_BINDING_WEIGHT,
     ADSB_EXCHANGE,
@@ -7,13 +8,17 @@ from shared.rabbitmq_topology import (
     ADSB_UNROUTABLE_EXCHANGE,
     ADSB_UNROUTABLE_QUEUE,
     ARCHIVE_QUEUE_NAME,
+    RAW_FRAMES_QUEUE_ARGUMENTS,
+    RAW_FRAMES_QUEUE_NAME,
     SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN,
     bind_adsb_queue,
     declare_adsb_topology,
+    declare_raw_frames_queue,
     is_skyfollower_queue,
     message_processor_id_from_queue_name,
     message_processor_queue_name,
 )
+from shared.timing import RAW_FRAMES_QUEUE_TTL_SECONDS
 
 
 class TestMessageProcessorQueueName:
@@ -103,7 +108,8 @@ class TestIsSkyfollowerQueue:
         one automated check that the value hasn't silently changed here
         without a human also updating the shell script."""
         assert SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN == (
-            r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|amq\.default)$"
+            r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|"
+            r"skyfollower-archive-raw-frames|amq\.default)$"
         )
 
     def test_adsb_prefixed_queue_matches(self):
@@ -115,6 +121,12 @@ class TestIsSkyfollowerQueue:
     def test_archive_queue_matches(self):
         assert is_skyfollower_queue(ARCHIVE_QUEUE_NAME) is True
 
+    def test_raw_frames_queue_matches(self):
+        """Must match for RabbitMQ ACL purposes even though core-health
+        deliberately excludes it from HA sensor publishing -- see
+        core-health/main.py's _poll_rabbitmq_once()."""
+        assert is_skyfollower_queue(RAW_FRAMES_QUEUE_NAME) is True
+
     def test_unrelated_queue_does_not_match(self):
         assert is_skyfollower_queue("some-other-teams-queue") is False
 
@@ -124,6 +136,36 @@ class TestIsSkyfollowerQueue:
         exist -- included for parity with install.sh, not because a real
         queue is expected to match it."""
         assert is_skyfollower_queue("amq.default") is True
+
+
+class TestDeclareRawFramesQueue:
+    def test_declares_with_ttl_and_max_length_bytes_arguments(self):
+        channel = MagicMock()
+
+        declare_raw_frames_queue(channel)
+
+        channel.queue_declare.assert_called_once_with(
+            queue=RAW_FRAMES_QUEUE_NAME,
+            durable=True,
+            arguments=RAW_FRAMES_QUEUE_ARGUMENTS,
+        )
+
+    def test_ttl_argument_is_eight_hours_in_milliseconds(self):
+        assert RAW_FRAMES_QUEUE_ARGUMENTS["x-message-ttl"] == RAW_FRAMES_QUEUE_TTL_SECONDS * 1000
+        assert RAW_FRAMES_QUEUE_ARGUMENTS["x-message-ttl"] == 8 * 3600 * 1000
+
+    def test_max_length_bytes_argument_matches_fallback_queue_dead_letter_cap(self):
+        """Same 100MB "bound disk growth for an ops/debug path" precedent
+        DEFAULT_DEAD_LETTER_MAX_BYTES already sets for FallbackQueue's own
+        dead-letter/retryable tables -- see shared/fallback_queue.py."""
+        assert RAW_FRAMES_QUEUE_ARGUMENTS["x-max-length-bytes"] == DEFAULT_DEAD_LETTER_MAX_BYTES
+
+    def test_is_idempotent_across_repeated_connects(self):
+        first, second = MagicMock(), MagicMock()
+        declare_raw_frames_queue(first)
+        declare_raw_frames_queue(second)
+
+        assert first.mock_calls == second.mock_calls
 
 
 class TestMessageProcessorIdFromQueueName:

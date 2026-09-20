@@ -10,6 +10,7 @@ from shared.models import (
     InboundMessage,
     OperatorRecord,
     Position,
+    RawFrame,
     Velocity,
     generate_flight_id,
 )
@@ -119,6 +120,42 @@ class TestVelocity:
         payload = json.loads(vel.model_dump_json(exclude_none=True))
         assert "heading" not in payload
         assert "vertical_speed" not in payload
+
+
+class TestRawFrame:
+    def test_to_dict_has_datetime(self):
+        frame = RawFrame(timestamp=0.0, source="1090", raw="8DC060C558CD8752DDFC11838345", decoded=True)
+        d = frame.to_dict()
+        assert isinstance(d["timestamp"], datetime)
+        assert d["source"] == "1090"
+        assert d["raw"] == "8DC060C558CD8752DDFC11838345"
+        assert d["decoded"] is True
+
+    def test_decoded_false(self):
+        frame = RawFrame(timestamp=0.0, source="1090", raw="8DC060C599", decoded=False)
+        assert frame.to_dict()["decoded"] is False
+
+    def test_timestamp_conversion(self):
+        frame = RawFrame(timestamp=1717100000.0, source="978", raw="deadbeef", decoded=True)
+        d = frame.to_dict()
+        assert d["timestamp"] == datetime.fromtimestamp(1717100000.0, tz=timezone.utc)
+
+    def test_external_source_accepted(self):
+        frame = RawFrame(timestamp=0.0, source="EXTERNAL", raw="deadbeef", decoded=True)
+        assert frame.source == "EXTERNAL"
+
+    def test_invalid_source_rejected(self):
+        with pytest.raises(ValidationError):
+            RawFrame(timestamp=0.0, source="bogus", raw="deadbeef", decoded=True)
+
+    def test_no_none_droppable_fields(self):
+        """Unlike Position/Velocity, every RawFrame field is always
+        present -- to_dict() never has anything to drop."""
+        import json
+
+        frame = RawFrame(timestamp=0.0, source="1090", raw="deadbeef", decoded=False)
+        payload = json.loads(frame.model_dump_json(exclude_none=True))
+        assert set(payload) == {"timestamp", "source", "raw", "decoded"}
 
 
 class TestGenerateFlightId:
@@ -355,6 +392,47 @@ class TestCompletedFlight:
         payload = json.loads(flight.model_dump_json(by_alias=True, exclude_none=True))
         for key in ("ident", "operator", "registrant", "squawk", "origin", "destination"):
             assert key not in payload
+
+    def test_raw_frames_defaults_empty(self):
+        flight = self._make()
+        assert flight.raw_frames == []
+
+    def test_raw_frames_field_present(self):
+        flight = self._make(
+            raw_frames=[
+                RawFrame(timestamp=0.0, source="1090", raw="deadbeef", decoded=True).to_dict(),
+            ],
+        )
+        assert len(flight.raw_frames) == 1
+        assert flight.raw_frames[0]["raw"] == "deadbeef"
+
+    def test_raw_frames_excluded_when_serializer_asks(self):
+        """Mirrors message-processor's _archive(), which unconditionally
+        passes exclude={"raw_frames"} regardless of CAPTURE_RAW_FRAMES --
+        the model itself must actually honor that exclude, or the
+        never-carries-raw-frames invariant has nothing to stand on."""
+        import json
+
+        flight = self._make(
+            raw_frames=[
+                RawFrame(timestamp=0.0, source="1090", raw="deadbeef", decoded=True).to_dict(),
+            ],
+        )
+        payload = json.loads(
+            flight.model_dump_json(by_alias=True, exclude_none=True, exclude={"raw_frames"})
+        )
+        assert "raw_frames" not in payload
+
+    def test_raw_frames_included_without_the_exclude(self):
+        import json
+
+        flight = self._make(
+            raw_frames=[
+                RawFrame(timestamp=0.0, source="1090", raw="deadbeef", decoded=True).to_dict(),
+            ],
+        )
+        payload = json.loads(flight.model_dump_json(by_alias=True, exclude_none=True))
+        assert payload["raw_frames"][0]["raw"] == "deadbeef"
 
     def test_positions_and_velocities_entries_omit_none_keys(self):
         import json

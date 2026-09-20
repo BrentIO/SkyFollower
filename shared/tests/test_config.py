@@ -242,6 +242,82 @@ class TestMessageProcessorId:
 
 
 # ---------------------------------------------------------------------------
+# CAPTURE_RAW_FRAMES
+# ---------------------------------------------------------------------------
+
+
+class TestCaptureRawFrames:
+    def test_defaults_to_false_when_unset(self):
+        env = _env(_MESSAGE_PROCESSOR)
+        env.pop("CAPTURE_RAW_FRAMES", None)
+        cfg = load_config("message_processor", environ=env)
+        assert cfg["capture_raw_frames"] is False
+
+    def test_true_is_parsed(self):
+        cfg = load_config(
+            "message_processor",
+            environ=_env(_MESSAGE_PROCESSOR, CAPTURE_RAW_FRAMES="true"),
+        )
+        assert cfg["capture_raw_frames"] is True
+
+    def test_case_insensitive(self):
+        cfg = load_config(
+            "message_processor",
+            environ=_env(_MESSAGE_PROCESSOR, CAPTURE_RAW_FRAMES="TRUE"),
+        )
+        assert cfg["capture_raw_frames"] is True
+
+    def test_false_is_parsed(self):
+        cfg = load_config(
+            "message_processor",
+            environ=_env(_MESSAGE_PROCESSOR, CAPTURE_RAW_FRAMES="false"),
+        )
+        assert cfg["capture_raw_frames"] is False
+
+    def test_garbage_value_is_false_not_an_error(self):
+        """Unlike integer()/number(), boolean() never rejects a value --
+        anything that isn't a recognized truthy spelling is just False."""
+        cfg = load_config(
+            "message_processor",
+            environ=_env(_MESSAGE_PROCESSOR, CAPTURE_RAW_FRAMES="yeah sure"),
+        )
+        assert cfg["capture_raw_frames"] is False
+
+
+# ---------------------------------------------------------------------------
+# ConfigLoader.boolean()
+# ---------------------------------------------------------------------------
+
+
+class TestConfigLoaderBoolean:
+    def test_unset_returns_default(self):
+        loader = ConfigLoader({})
+        assert loader.boolean("SOME_FLAG") is False
+        assert loader.boolean("SOME_FLAG", default=True) is True
+
+    def test_blank_returns_default(self):
+        loader = ConfigLoader({"SOME_FLAG": "   "})
+        assert loader.boolean("SOME_FLAG") is False
+
+    @pytest.mark.parametrize("raw", ["true", "True", "TRUE", "1", "yes", "on"])
+    def test_truthy_spellings(self, raw):
+        loader = ConfigLoader({"SOME_FLAG": raw})
+        assert loader.boolean("SOME_FLAG") is True
+
+    @pytest.mark.parametrize("raw", ["false", "0", "no", "off", "nope"])
+    def test_falsy_and_unrecognized_spellings(self, raw):
+        loader = ConfigLoader({"SOME_FLAG": raw})
+        assert loader.boolean("SOME_FLAG") is False
+
+    def test_never_adds_a_problem(self):
+        """Unlike integer()/number(), an unparseable boolean is never a
+        ConfigError -- there's no invalid spelling, just "not truthy"."""
+        loader = ConfigLoader({"SOME_FLAG": "not-a-bool"})
+        loader.boolean("SOME_FLAG")
+        assert loader.problems == []
+
+
+# ---------------------------------------------------------------------------
 # RECEIVER_SOURCES
 # ---------------------------------------------------------------------------
 

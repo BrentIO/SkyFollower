@@ -274,6 +274,19 @@ MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS = 60
 RULE_TRIGGER_DAY_TTL_SECONDS = 31 * 86400
 
 
+# --- Raw frame capture (forensic, CAPTURE_RAW_FRAMES) --------------------
+
+# TTL on the skyfollower-archive-raw-frames queue (an `x-message-ttl` queue
+# argument, so message-processor multiplies this by 1000 for RabbitMQ's
+# millisecond units) -- a short-lived, manually-drained forensic queue, not
+# the permanent archive. Long enough to comfortably investigate an incident
+# noticed the same day, short enough that an unattended queue with no
+# consumer service of its own can never accumulate indefinitely. Not
+# operator-tunable -- a fixed policy, same rationale as
+# MAP_RANGE_OUTLINE_TTL_SECONDS above.
+RAW_FRAMES_QUEUE_TTL_SECONDS = 8 * 3600
+
+
 # --- Cross-file invariants ------------------------------------------------
 # Checked at import so a later edit to one value cannot silently break the
 # contract it shares with another.
