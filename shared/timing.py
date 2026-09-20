@@ -114,9 +114,33 @@ FALLBACK_RETRY_BACKOFF_SECONDS = 30
 RATE_WINDOW_SECONDS = 30
 
 # Trailing window over which the message processor requires repeated
-# sightings before trusting a reserved squawk / an ident sourced from a
-# message it could not CRC-verify.
+# sightings before trusting a reserved squawk sourced from a message it
+# could not CRC-verify (#900). Ident used to share this constant too, but
+# was split out (#1915) with its own, independently-derived values below --
+# do not reuse this one for ident.
 PARITY_ERROR_CONFIRM_WINDOW_SECONDS = 30
+
+# Repeated-sightings confirmation for an ident sourced from a message the
+# message processor could not CRC-verify (DF20/21 Comm-B BDS 2,0 -- the
+# only ident source for an aircraft with no ADS-B Out). Deliberately much
+# more lenient than squawk's (#1915): squawk's 5-in-30s bar was tuned for a
+# tiny, corruption-attractor-prone value space (4 reserved codes reachable
+# by a few bit flips), which ident's ~8-character alphanumeric space isn't
+# -- two independent corrupted decodes landing on the exact same wrong
+# string by chance is vanishingly unlikely, so 2 sightings is already far
+# stronger evidence than squawk's threshold ever was for its own value
+# space. The window is set far larger than any realistic single flight
+# (DF20/21 Comm-B replies are interrogation-driven, not periodic, so a
+# tight rolling window can simply never see 2 sightings fall inside it for
+# an aircraft that isn't under frequent SSR polling -- see #1915's SAM087
+# case). This value only needs to outlast one flight's total duration, not
+# bound anything itself: `Flight.pending_ident` is per-flight-row state
+# that's destroyed when the flight is evicted (DEFAULT_FLIGHT_TTL_SECONDS-
+# gated inactivity, message-processor's _evict_stale()), so the window
+# never actually has to expire a sighting in practice -- 24 hours safely
+# exceeds even the longest realistic flight, civil or military.
+IDENT_CONFIRM_COUNT = 2
+IDENT_CONFIRM_WINDOW_SECONDS = 24 * 60 * 60
 
 # --- Message-age gating -----------------------------------------------------
 
