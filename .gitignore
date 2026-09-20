@@ -28,3 +28,6 @@ config/*/*
 # Bind-mounted runtime data for every stateful service, on every host role --
 # host-local persisted state, not something to check in.
 data/
+
+# Claude Code's local working directory (worktrees, settings, task locks).
+.claude/
