@@ -165,8 +165,6 @@ else -- no telemetry.
 
 | Variable | Required | Default |
 |---|---|---|
-| `LATITUDE` | ✅ | — |
-| `LONGITUDE` | ✅ | — |
 | `RABBITMQ_HOST` | ✅ | — |
 | `RABBITMQ_PORT` | ❌ | `5672` |
 | `RABBITMQ_USERNAME` | ✅ | — |

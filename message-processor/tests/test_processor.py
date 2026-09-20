@@ -297,26 +297,13 @@ class TestDecode1090:
         assert data["velocity"] == 250
         assert data["heading"] == 90.0
 
-    def test_configured_reference_no_longer_influences_position(self):
-        # #1841: PipeDecoder never consults the receiver's configured
-        # lat/lon for airborne CPR at all -- unlike the old
-        # pms.decode(raw, reference=...) call, a configured reference now
-        # has zero effect on a single position message. Altitude still
-        # decodes from a single message either way (no pairing needed).
-        p, _ = _make_processor(_minimal_config() | {"latitude": 52.2572, "longitude": 3.9198})
-        msg = InboundMessage(
-            raw="8D40621D58C382D690C8AC2863A7",
-            icao_hex="40621D", received_at=1.0, source="1090",
-        )
-        data = p._decode_1090(msg)
-        assert "latitude" not in data
-        assert "longitude" not in data
-        assert data["altitude"] == 38000
-
     def test_position_without_configured_reference(self):
-        # No latitude/longitude in config — altitude still decodes, but
-        # position can't be resolved from a single message without a CPR
-        # pair or an established bootstrap/local reference (#1841).
+        # #1841: PipeDecoder derives position from odd/even CPR frame pairs
+        # and never consults a receiver reference point at all -- there is
+        # no config surface for one any more (#1871). Altitude still decodes
+        # from a single message either way (no pairing needed); position
+        # can't be resolved from a single message without a CPR pair or an
+        # established bootstrap/local reference.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="8D40621D58C382D690C8AC2863A7",
@@ -2263,8 +2250,6 @@ class TestMessageProcessorIdentity:
             "MQTT_HOST": "localhost",
             "MQTT_USERNAME": "u",
             "MQTT_PASSWORD": "p",
-            "LATITUDE": "0",
-            "LONGITUDE": "0",
             "MESSAGE_PROCESSOR_ID": "",
         }
         with patch.dict(os.environ, env), pytest.raises(SystemExit):

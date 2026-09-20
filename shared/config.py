@@ -376,8 +376,6 @@ def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
     loader, own = _own_loader(loader)
     block = {
         "message_processor_id": loader.string("MESSAGE_PROCESSOR_ID"),
-        "latitude": loader.number("LATITUDE"),
-        "longitude": loader.number("LONGITUDE"),
         "capture_raw_frames": loader.boolean("CAPTURE_RAW_FRAMES", False),
     }
     if own:
@@ -424,8 +422,7 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     shared between two components' `.env` files instead of two independent
     ones that must simply be kept in agreement operationally."""
     loader, own = _own_loader(loader)
-    # Optional -- unlike message_processor_config()'s LATITUDE/LONGITUDE
-    # (required there), a stock deployment with neither set is expected and
+    # Optional -- a stock deployment with neither set is expected and
     # supported: the frontend's center marker/recenter button are simply
     # unavailable (see map/main.py's GET /api/config and
     # map/frontend/src/lib/config.ts). Range-validated by hand rather than

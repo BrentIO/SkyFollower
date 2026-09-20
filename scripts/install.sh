@@ -1519,8 +1519,6 @@ collect_message_processor_env() {
     done
   fi
 
-  LATITUDE="$(prompt_number_range LATITUDE "Receiver reference latitude (decimal degrees)" "$(existing_env_value "$env_file" LATITUDE)" -90 90)"
-  LONGITUDE="$(prompt_number_range LONGITUDE "Receiver reference longitude (decimal degrees)" "$(existing_env_value "$env_file" LONGITUDE)" -180 180)"
   RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST)")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(shared_conn_default "$env_file" RABBITMQ_PORT SHARED_CONN_RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(shared_conn_default "$env_file" RABBITMQ_USERNAME SHARED_CONN_RABBITMQ_USERNAME skyfollower)")"
@@ -1571,11 +1569,6 @@ collect_message_processor_env() {
 # Which processors run on this node -- and each one's MESSAGE_PROCESSOR_ID
 # -- lives in docker-compose.message-processor.yaml as generated service
 # blocks, not here. Re-run install.sh for this role to add more.
-
-# Receiver's reference position, used to decode locally-referenced CPR
-# positions. Decimal degrees.
-LATITUDE=${LATITUDE}
-LONGITUDE=${LONGITUDE}
 
 RABBITMQ_HOST=${RABBITMQ_HOST}
 RABBITMQ_PORT=${RABBITMQ_PORT}

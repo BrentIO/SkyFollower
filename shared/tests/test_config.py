@@ -55,8 +55,6 @@ _RECEIVER = {
 }
 _MESSAGE_PROCESSOR = {
     "MESSAGE_PROCESSOR_ID": "turing-node-3-1",
-    "LATITUDE": "40.7",
-    "LONGITUDE": "-73.9",
 }
 _MONGO = {"MONGO_URI": "mongodb://legacy.example.com/skyfollower"}
 _LEGACY_MIGRATION_S3 = {
@@ -193,26 +191,12 @@ class TestNumericCoercion:
             "REDIS_PORT must be a whole number (got 'six-thousand')"
         ]
 
-    def test_non_numeric_latitude_is_reported(self):
-        with pytest.raises(ConfigError) as excinfo:
-            load_config(
-                "message_processor",
-                environ=_env(_MESSAGE_PROCESSOR, LATITUDE="north"),
-            )
-
-        assert excinfo.value.problems == ["LATITUDE must be a number (got 'north')"]
-
     def test_numeric_problems_accumulate_with_missing_ones(self):
         with pytest.raises(ConfigError) as excinfo:
             load_config("redis", "mqtt", environ={"REDIS_PORT": "abc"})
 
         assert "REDIS_HOST is required but is not set" in excinfo.value.problems
         assert "REDIS_PORT must be a whole number (got 'abc')" in excinfo.value.problems
-
-    def test_float_latitude_is_parsed(self):
-        cfg = load_config("message_processor", environ=_env(_MESSAGE_PROCESSOR))
-        assert cfg["latitude"] == pytest.approx(40.7)
-        assert cfg["longitude"] == pytest.approx(-73.9)
 
 
 # ---------------------------------------------------------------------------
