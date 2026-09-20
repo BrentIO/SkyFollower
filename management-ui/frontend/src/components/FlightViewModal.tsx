@@ -22,6 +22,7 @@ import {
 import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { formatManufacturedDate } from "../lib/manufacturedDate";
+import { countryFlag } from "../lib/countryFlag";
 
 interface FlightViewModalProps {
   // null means closed -- rendered unconditionally by the parent view rather
@@ -312,6 +313,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
   const powerplant = view?.powerplant;
   const hasPowerplant = !!(powerplant?.count || powerplant?.type || powerplant?.manufacturer || powerplant?.model);
   const manufacturedDate = view?.manufactured_date ? formatManufacturedDate(view.manufactured_date) : undefined;
+  const countryFlagEmoji = view?.country_code != null ? countryFlag(view.country_code) : null;
   const hasAircraftSection = !!(
     view?.category ||
     view?.aircraft_type ||
@@ -474,6 +476,9 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                         </span>
                       )}
                       <span className="font-mono text-sm text-slate-700 dark:text-slate-300">{view.icao_hex}</span>
+                      {countryFlagEmoji != null && (
+                        <span title={view.country ?? view.country_code ?? undefined}>{countryFlagEmoji}</span>
+                      )}
                     </div>
                     <div className="mt-1 flex flex-col gap-1 text-sm text-slate-900 dark:text-slate-100">
                       {view.category && (

@@ -16,6 +16,7 @@ import { useToast } from "../hooks/useToast";
 import { MAP_STYLE } from "../lib/maplibreSetup";
 import { categoriesToQuery, type LookupCategory } from "../lib/lookupClassifier";
 import { formatManufacturedDate } from "../lib/manufacturedDate";
+import { countryFlag } from "../lib/countryFlag";
 
 // Every lookup type the single search field accepts is alphanumeric plus, at most,
 // a space or hyphen (registrations like "VP-CKA", idents, designators) --
@@ -137,6 +138,9 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
   const icaoHex = displayStr(data.icao_hex);
   const military = displayBool(data.military);
   const specialLivery = displayStr(data.special_livery);
+  const country = displayStr(data.country);
+  const countryCode = displayStr(data.country_code);
+  const flag = countryCode != null ? countryFlag(countryCode) : null;
 
   const registrant = displayObj(data.registrant);
   const names = displayArray(registrant?.names);
@@ -195,6 +199,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
           <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{registration}</span>
         )}
         {icaoHex && <Mono>{icaoHex}</Mono>}
+        {flag != null && <span title={country ?? countryCode ?? undefined}>{flag}</span>}
         {military && <Badge color="green">Military</Badge>}
         {specialLivery && <Badge color="yellow">{specialLivery}</Badge>}
       </div>
