@@ -1,5 +1,5 @@
 fastapi==0.141.1
-uvicorn==0.52.4
+uvicorn==0.53.0
 boto3==1.43.93
 cryptography==50.0.1
 shapely==2.1.2
