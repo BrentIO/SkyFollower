@@ -29,7 +29,7 @@
 // path, reading as "every flight's path"; square-text = a rounded square
 // containing three text lines, reading as "aircraft info-box labels" --
 // TAGS_ICON was originally Lucide's "Tags" glyph, swapped to square-text
-// per Brent's preference with no functional change; Type = a stylized "A",
+// as a deliberate style choice with no functional change; Type = a stylized "A",
 // deliberately distinct from square-text so the two label toggles don't
 // look identical; Radar = concentric arcs + sweep needle, reading directly
 // as reception range/coverage).
