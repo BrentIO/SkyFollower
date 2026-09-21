@@ -32,7 +32,7 @@ services:
   # ---------------------------------------------------------------------------
 
   rabbitmq:
-    image: rabbitmq:4.3-management-alpine@sha256:b3b8b7f95f5382a19f9ea33540e604f30aad081d37ad9aba72255135765373a1
+    image: rabbitmq:4.3-management-alpine@sha256:b839b492a91788a1d9406ef3ec0e1d8a8448032c48148a54a9e0c68ed66cde9b
     restart: unless-stopped
     ports:
       - "5672:5672"
