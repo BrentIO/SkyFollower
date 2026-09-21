@@ -30,15 +30,17 @@ export interface PersistedControls {
 
 // Today's hardcoded defaults, matching MapView.tsx's own literal
 // useState() defaults -- mapLabelsOn is false per its own basemap-labels
-// history, not true. radarOpacity's 0.2 default is Brent's explicit ask
-// (#1896), not an arbitrary "half-visible" guess.
+// history, not true. radarOpacity's 0.5 default is a deliberate product
+// decision (raised from an earlier 0.2) -- applies only when no stored
+// payload exists at all; an existing stored value (0.2 or anything else)
+// is never overwritten just because it matches the old default.
 const DEFAULTS: PersistedControls = {
   historyAll: false,
   labelsAll: false,
   mapLabelsOn: false,
   rangeOutlineVisible: false,
   radarOn: false,
-  radarOpacity: 0.2,
+  radarOpacity: 0.5,
 };
 
 interface StoredShape {
