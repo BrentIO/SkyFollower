@@ -33,3 +33,24 @@ export function greatCircleNm(from: CenterPoint, to: CenterPoint): number {
 
   return 2 * EARTH_RADIUS_NM * Math.asin(Math.min(1, Math.sqrt(a)));
 }
+
+// Ported verbatim from map/geo.py's initial_bearing(lat1, lon1, lat2, lon2)
+// (#1950) -- same great-circle bearing formula, same [0, 360) normalisation.
+// Two identical points return 0 (atan2(0, 0) == 0 in both Python and JS),
+// which callers relying on a minimum-separation gate before calling this
+// (see #1950's trail-heading correction in featureCollections.ts) should
+// never actually hit in practice.
+/**
+ * Initial great-circle bearing from `from` to `to`, in degrees clockwise
+ * from true north, normalised to [0, 360).
+ */
+export function initialBearing(from: CenterPoint, to: CenterPoint): number {
+  const phi1 = toRadians(from.latitude);
+  const phi2 = toRadians(to.latitude);
+  const dLambda = toRadians(to.longitude - from.longitude);
+
+  const y = Math.sin(dLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360;
+}
