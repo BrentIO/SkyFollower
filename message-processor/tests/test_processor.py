@@ -1296,9 +1296,9 @@ class TestPipeDecoderRegressionFixtures:
         # the aircraft's true position was outside the reference decode's
         # 180nm validity radius. PipeDecoder's reference-free global
         # pairing resolves the same bits to a single consistent Atlantic
-        # position instead (~29.47,-77.70) -- matching Brent's own
-        # assessment that this aircraft should have been over the
-        # Atlantic, not the Gulf panhandle.
+        # position instead (~29.47,-77.70), consistent with this
+        # aircraft's known route being over the Atlantic, not the
+        # Gulf panhandle.
         p, _ = _make_processor()
         icao_hex = "C060C5"
         real_frames = [
