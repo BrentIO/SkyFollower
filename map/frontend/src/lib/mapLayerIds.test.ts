@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AIRCRAFT_LAYER_ID,
-  AIRCRAFT_SELECTION_RING_LAYER_ID,
+  AIRCRAFT_OUTLINE_LAYER_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   RADAR_LAYER_ID,
   RANGE_OUTLINE_LAYER_ID,
@@ -35,8 +35,8 @@ describe("SELECTABLE_LAYER_IDS", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(CENTER_POINT_CIRCLE_LAYER_ID);
   });
 
-  it("excludes the aircraft selection ring layer (#1806) -- purely decorative, like the trace point dots", () => {
-    expect(SELECTABLE_LAYER_IDS).not.toContain(AIRCRAFT_SELECTION_RING_LAYER_ID);
+  it("excludes the aircraft outline layer (#1806/#1912) -- purely decorative, like the trace point dots", () => {
+    expect(SELECTABLE_LAYER_IDS).not.toContain(AIRCRAFT_OUTLINE_LAYER_ID);
   });
 
   it("excludes the radar overlay's current-snapshot layer (#1896)", () => {

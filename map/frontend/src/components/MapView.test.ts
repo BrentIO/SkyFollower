@@ -118,18 +118,24 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     ]);
   });
 
-  it("#1806: gives the icon's own halo only to selected icon_scale >= 1 aircraft, at the original fixed values -- unchanged shape, only the gating condition changed", () => {
+  it("#1806/#1912: gives selected icon_scale >= 1 aircraft the bold selection halo, unselected icon_scale >= 1 aircraft a thin permanent outline, and icon_scale < 1 aircraft (either selection state) no halo at all -- unchanged shape, only the gating/else values changed", () => {
     const selectedAtLeastOne = [
       "all",
       ["boolean", ["get", "selected"], false],
       [">=", ["coalesce", ["get", "icon_scale"], 1], 1],
     ];
-    expect(paint["icon-halo-width"]).toEqual(["case", selectedAtLeastOne, 3, 0]);
-    expect(paint["icon-halo-blur"]).toEqual(["case", selectedAtLeastOne, 0.08, 0]);
+    const atLeastOne = [">=", ["coalesce", ["get", "icon_scale"], 1], 1];
+    expect(paint["icon-halo-width"]).toEqual(["case", selectedAtLeastOne, 3, ["case", atLeastOne, 1, 0]]);
+    expect(paint["icon-halo-blur"]).toEqual(["case", selectedAtLeastOne, 0.08, ["case", atLeastOne, 0.02, 0]]);
   });
 
-  it("never gives the unselected halo any width or blur (#1787), regardless of icon_scale", () => {
-    for (const icon_scale of [0.6, 0.7, 1, 1.3, 1.6, undefined]) {
+  it("#1912: gives an unselected icon_scale >= 1 aircraft a thin permanent black outline (not the old 0/0), and still nothing at icon_scale < 1 (that range is AIRCRAFT_OUTLINE_LAYER_ID's job instead)", () => {
+    for (const icon_scale of [1, 1.2, 1.6, undefined]) {
+      const properties = { selected: false, icon_scale };
+      expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(1);
+      expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0.02);
+    }
+    for (const icon_scale of [0.6, 0.7, 0.999]) {
       const properties = { selected: false, icon_scale };
       expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(0);
       expect(evaluateExpr(paint["icon-halo-blur"], properties)).toBe(0);
@@ -144,7 +150,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     }
   });
 
-  it("#1806: gives selected icon_scale < 1 aircraft NO icon halo at all (width and blur both 0) -- including the issue's own reported cases, E55P/C25B at 0.722 and GALX/GLF6 at 0.989 -- rather than a scaled-down one; selection is shown via AIRCRAFT_SELECTION_RING_LAYER_ID instead (see the describe block below)", () => {
+  it("#1806: gives selected icon_scale < 1 aircraft NO icon halo at all (width and blur both 0) -- including the issue's own reported cases, E55P/C25B at 0.722 and GALX/GLF6 at 0.989 -- rather than a scaled-down one; selection is shown via AIRCRAFT_OUTLINE_LAYER_ID instead (see the describe block below)", () => {
     for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
       const properties = { selected: true, icon_scale };
       expect(evaluateExpr(paint["icon-halo-width"], properties)).toBe(0);
@@ -214,7 +220,7 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     expect(oldTextureDistance).toBeGreaterThan(SDF_RADIUS_PX);
 
     // #1806: icon-halo-width is now exactly 0 at this icon_scale (no
-    // halo drawn at all -- see AIRCRAFT_SELECTION_RING_LAYER_ID for the
+    // halo drawn at all -- see AIRCRAFT_OUTLINE_LAYER_ID for the
     // replacement selection indicator), not a smaller-but-still-nonzero
     // value, so there's no texture-space distance to overflow the falloff
     // band with in the first place.
@@ -732,75 +738,87 @@ function extractLayerLayout(layerIdConstant: string, scope: Record<string, unkno
   return fn(...Object.values(scope));
 }
 
-describe("AIRCRAFT_SELECTION_RING_LAYER_ID -- dilated-silhouette selection outline for icon_scale < 1 (#1806/#1816)", () => {
+describe("AIRCRAFT_OUTLINE_LAYER_ID -- dilated-silhouette outline for icon_scale < 1 (#1806/#1816/#1912)", () => {
   // #1806: the icon's own icon-halo-width/-blur cannot render a clean
   // fitted ring below icon_scale = 1 at any value (see the "documents why
   // #1806 stops scaling..." test above). #1813's first replacement -- a
   // fixed circle-radius ring -- fixed the box/wash bug but didn't fit a
   // non-circular airframe (#1816). This layer is a second, enlarged copy
   // of the same per-shape SDF icon (AIRCRAFT_LAYER_ID's own icon-image
-  // expression), painted white and underneath the real icon, so the
-  // enlarged silhouette's edge reads as a fitted outline.
+  // expression), painted underneath the real icon, so the enlarged
+  // silhouette's edge reads as a fitted outline.
+  //
+  // #1912: broadened from selected-only (a selection ring) to every
+  // icon_scale < 1 aircraft -- a permanent thin black outline for
+  // unselected aircraft, the original larger white ring unchanged for
+  // selected ones, both via data-driven icon-size/icon-color instead of
+  // the layer's filter requiring selection.
 
-  it("filters to selected AND icon_scale < 1 -- exactly the range the icon's own halo skips", () => {
-    const filter = extractLayerFilter("AIRCRAFT_SELECTION_RING_LAYER_ID");
-    expect(filter).toEqual([
-      "all",
-      ["boolean", ["get", "selected"], false],
-      ["<", ["coalesce", ["get", "icon_scale"], 1], 1],
-    ]);
+  it("filters to icon_scale < 1 alone -- every aircraft in that range, not just a selected one", () => {
+    const filter = extractLayerFilter("AIRCRAFT_OUTLINE_LAYER_ID");
+    expect(filter).toEqual(["<", ["coalesce", ["get", "icon_scale"], 1], 1]);
   });
 
   it("shares AIRCRAFT_SOURCE_ID rather than a separate source -- no extra data-sync wiring needed", () => {
-    const idIndex = mapViewSource.indexOf("id: AIRCRAFT_SELECTION_RING_LAYER_ID");
+    const idIndex = mapViewSource.indexOf("id: AIRCRAFT_OUTLINE_LAYER_ID");
     expect(idIndex).toBeGreaterThan(-1);
     const sourceIndex = mapViewSource.indexOf("source: AIRCRAFT_SOURCE_ID", idIndex);
     expect(sourceIndex).toBeGreaterThan(idIndex);
     expect(sourceIndex - idIndex).toBeLessThan(200);
   });
 
-  it("is added before AIRCRAFT_LAYER_ID, not merely appended on top -- otherwise the enlarged white copy would paint over the real icon instead of peeking out from underneath it", () => {
-    const ringIdIndex = mapViewSource.indexOf("id: AIRCRAFT_SELECTION_RING_LAYER_ID");
+  it("is added before AIRCRAFT_LAYER_ID, not merely appended on top -- otherwise the enlarged copy would paint over the real icon instead of peeking out from underneath it", () => {
+    const outlineIdIndex = mapViewSource.indexOf("id: AIRCRAFT_OUTLINE_LAYER_ID");
     const iconIdIndex = mapViewSource.indexOf("id: AIRCRAFT_LAYER_ID");
-    expect(ringIdIndex).toBeGreaterThan(-1);
+    expect(outlineIdIndex).toBeGreaterThan(-1);
     expect(iconIdIndex).toBeGreaterThan(-1);
-    expect(ringIdIndex).toBeLessThan(iconIdIndex);
+    expect(outlineIdIndex).toBeLessThan(iconIdIndex);
   });
 
   it("uses the same per-shape icon-image and rotation as AIRCRAFT_LAYER_ID -- the outline must be the same silhouette, at the same heading, or it won't line up with the real icon", () => {
-    const layout = extractLayerLayout("AIRCRAFT_SELECTION_RING_LAYER_ID");
+    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID");
     expect(layout["icon-image"]).toEqual(["concat", "sf-ac-", ["get", "shape"]]);
     expect(layout["icon-rotate"]).toEqual(["get", "heading"]);
     expect(layout["icon-rotation-alignment"]).toBe("map");
   });
 
-  it("icon-size is enlarged relative to AIRCRAFT_LAYER_ID's own icon-size, by the same icon_scale factor, at every real icon_scale in this range", () => {
-    const layout = extractLayerLayout("AIRCRAFT_SELECTION_RING_LAYER_ID");
+  it("#1912: icon-size enlargement is data-driven -- 1.075x (thin outline) when unselected, 1.15x (the original selection ring, unchanged) when selected -- at every real icon_scale in this range", () => {
+    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID");
     for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
-      const ringSize = evaluateExpr(layout["icon-size"], { icon_scale }) as number;
       const realSize = 0.55 * icon_scale;
-      expect(ringSize).toBeGreaterThan(realSize);
-      // Same relative enlargement (a fixed multiplier on the real layer's
-      // own icon-size formula) at every icon_scale -- not a fixed pixel
-      // add-on, so it never disappears at the 0.6 floor.
-      expect(ringSize / realSize).toBeCloseTo(1.15, 5);
+
+      const unselectedSize = evaluateExpr(layout["icon-size"], { icon_scale, selected: false }) as number;
+      expect(unselectedSize).toBeGreaterThan(realSize);
+      expect(unselectedSize / realSize).toBeCloseTo(1.075, 5);
+
+      const selectedSize = evaluateExpr(layout["icon-size"], { icon_scale, selected: true }) as number;
+      expect(selectedSize).toBeGreaterThan(realSize);
+      expect(selectedSize / realSize).toBeCloseTo(1.15, 5);
+
+      // Selected still gets the more prominent enlargement -- the two
+      // states must stay visually distinguishable from each other.
+      expect(selectedSize).toBeGreaterThan(unselectedSize);
     }
   });
 
-  it("paints white, dimmed the same way a stale icon is (matching AIRCRAFT_LAYER_ID's icon-opacity convention)", () => {
-    const paint = extractLayerPaint("AIRCRAFT_SELECTION_RING_LAYER_ID");
-    expect(paint["icon-color"]).toBe("#ffffff");
+  it("#1912: icon-color is data-driven -- black (permanent thin outline) when unselected, white (the original selection ring, unchanged) when selected", () => {
+    const paint = extractLayerPaint("AIRCRAFT_OUTLINE_LAYER_ID");
+    expect(paint["icon-color"]).toEqual(["case", ["boolean", ["get", "selected"], false], "#ffffff", "#000000"]);
+  });
+
+  it("dims the same way a stale icon is (matching AIRCRAFT_LAYER_ID's icon-opacity convention)", () => {
+    const paint = extractLayerPaint("AIRCRAFT_OUTLINE_LAYER_ID");
     expect(paint["icon-opacity"]).toEqual(["case", ["boolean", ["get", "stale"], false], 0.4, 1]);
   });
 
-  it("worked examples from the issue: E55P/C25B (icon_scale 0.722) and GALX/GLF6 (icon_scale 0.989) both match this layer's filter when selected, while B77L (1.435) and the icon_scale = 1 reference case do not (they stay on the icon's own halo instead)", () => {
-    const filter = extractLayerFilter("AIRCRAFT_SELECTION_RING_LAYER_ID");
-    expect(evaluateExpr(filter, { selected: true, icon_scale: 0.722 })).toBe(true);
-    expect(evaluateExpr(filter, { selected: true, icon_scale: 0.989 })).toBe(true);
-    expect(evaluateExpr(filter, { selected: true, icon_scale: 1.435 })).toBe(false);
-    expect(evaluateExpr(filter, { selected: true, icon_scale: 1 })).toBe(false);
-    // Never shown for an unselected aircraft, regardless of icon_scale.
-    expect(evaluateExpr(filter, { selected: false, icon_scale: 0.722 })).toBe(false);
+  it("worked examples from #1806: E55P/C25B (icon_scale 0.722) and GALX/GLF6 (icon_scale 0.989) both match this layer's filter regardless of selection, while B77L (1.435) and the icon_scale = 1 reference case do not (they stay on the icon's own halo instead)", () => {
+    const filter = extractLayerFilter("AIRCRAFT_OUTLINE_LAYER_ID");
+    expect(evaluateExpr(filter, { icon_scale: 0.722 })).toBe(true);
+    expect(evaluateExpr(filter, { icon_scale: 0.989 })).toBe(true);
+    expect(evaluateExpr(filter, { icon_scale: 1.435 })).toBe(false);
+    expect(evaluateExpr(filter, { icon_scale: 1 })).toBe(false);
+    // #1912: unlike before, an unselected aircraft in range matches too.
+    expect(evaluateExpr(filter, { icon_scale: 0.722, selected: false })).toBe(true);
   });
 });
 
