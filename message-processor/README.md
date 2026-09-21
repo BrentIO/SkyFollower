@@ -484,6 +484,14 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
 than `MAX_MESSAGE_LAG_SECONDS` at emit time is suppressed rather than sent
 (logged at debug level). `heartbeat` is exempt -- see above.
 
+`position` additionally skips a message that's out of order for its
+aircraft (#1956), independent of `MAX_MESSAGE_LAG_SECONDS`: that gate only
+catches a message that's stale in absolute wall-clock terms, but a message
+can be well within it and still be older than a position already sent for
+the same `icao_hex` (cross-receiver skew -- see "Out-of-order messages
+don't regress `last_message`" above). Sending it anyway would visibly snap
+a currently-displayed aircraft backward on the map.
+
 A slow, unreachable, or misconfigured `MAP_UDP_HOST`/`MAP_UDP_PORT` can never
 affect the rest of the pipeline -- `_MapUdpPublisher.send()` wraps the
 underlying `socket.sendto()` call and swallows any exception rather than
@@ -679,6 +687,23 @@ MQTT rule notifications for messages older than
 (logged at debug) to avoid flooding MQTT the instant a message processor
 reconnects after downtime; the rule still fires and is still recorded in
 `matched_rules`/the eventual archived flight.
+
+**Out-of-order messages don't regress `last_message`.** A message can
+still arrive out of order for a given aircraft even with the receiver's
+own publish-ordering guarantee in place (#1956) — cross-receiver skew (a
+1090 and a 978 receiver, or redundant antennas, each publishing
+independently) is expected, if rare. `_update_flight()` only ever
+advances `flight.last_message` forward; a message older than what's
+already stored still counts toward `total_messages` and is still
+persisted (positions/velocities sort correctly on load regardless of
+processing order), but it cannot roll `last_message` backward. Without
+that guard, a single out-of-order message could make the *next*,
+perfectly ordinary message compute a gap that appears to exceed
+`flight_ttl_seconds` against the wrongly-rolled-back value, force-archiving
+and splitting a flight that never actually ended. The same message is also
+skipped for the map UDP `position` send (see below) — even though it may
+be well under `max_message_lag_seconds`, publishing it would visibly snap
+a currently-displayed aircraft backward on the map.
 
 Because `active_flights.db` only depends on `MESSAGE_PROCESSOR_ID` (which
 determines the RabbitMQ queue consumed,

@@ -40,7 +40,7 @@ import redis as redis_lib
 
 from shared.adsb_1090 import parse_tcp_stream
 from shared.config import DATA_DIR, ConfigError, load_config
-from shared.fallback_queue import DRAIN_PROGRESSED, FallbackQueue
+from shared.fallback_queue import DRAIN_EMPTY, DRAIN_PROGRESSED, FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
 from shared.models import InboundMessage
@@ -390,16 +390,38 @@ class Receiver:
         self._rmq_connected = False
         self._rmq_lock = threading.Lock()
 
+        # The single ordering gate (#1956): clear while caught up, set the
+        # instant a message can't go straight out (live queue full, or a
+        # publish failed). While set, _enqueue_live() routes every new
+        # message to the overflow queue instead of the live queue, so the
+        # live queue can never be topped up with content newer than
+        # whatever is still waiting in queue.db -- see _enqueue_live() and
+        # _rmq_publish_loop(). A plain threading.Event rather than a bool:
+        # cheap to read on the hot path (is_set()), and set()/clear() from
+        # either the source threads or the rabbitmq thread need no
+        # additional locking of their own.
+        self._backlogged = threading.Event()
+        # Informational only -- never consulted for routing. Snapshot of
+        # "how old was the last message this thread published", refreshed
+        # each time the rabbitmq thread actually publishes something (live
+        # or backlog). Trends to ~0 while caught up; grows while draining
+        # an old backlog. Exposed via telemetry (see _publish_telemetry).
+        self._staleness_seconds: float = 0.0
+
         # Live messages parsed off the source sockets, waiting for the
         # "rabbitmq" thread to publish them -- see _LIVE_QUEUE_MAXSIZE.
-        self._live_queue: queue.Queue[tuple[str, str]] = queue.Queue(
+        # Each item carries the message's own received_at alongside
+        # (routing_key, payload) purely so the rabbitmq thread can compute
+        # _staleness_seconds without re-parsing the JSON payload.
+        self._live_queue: queue.Queue[tuple[str, str, float]] = queue.Queue(
             maxsize=_LIVE_QUEUE_MAXSIZE
         )
 
-        # Overflow parsed while _live_queue is full, waiting for the
+        # Overflow -- fed either when _live_queue is full, or whenever
+        # self._backlogged is set (see _enqueue_live) -- waiting for the
         # "overflow-writer" thread to batch it into the SQLite fallback --
         # see _OVERFLOW_QUEUE_MAXSIZE.
-        self._overflow_queue: queue.Queue[tuple[str, str]] = queue.Queue(
+        self._overflow_queue: queue.Queue[tuple[str, str, float]] = queue.Queue(
             maxsize=_OVERFLOW_QUEUE_MAXSIZE
         )
 
@@ -792,26 +814,44 @@ class Receiver:
         payload = msg.model_dump_json()
 
         rate_tracker.record()
-        self._enqueue_live(icao_hex, payload)
+        self._enqueue_live(icao_hex, payload, received_at)
 
-    def _enqueue_live(self, routing_key: str, payload: str) -> None:
-        """Hand a parsed message to the in-memory publish queue and return
-        at once -- the source thread never blocks on RabbitMQ and never
-        does a disk write. If the live queue is full (the broker has been
-        unreachable long enough that even that buffer backed up), the
-        message goes to the overflow queue, which the overflow-writer thread
-        batches into the durable SQLite fallback. Only if the overflow queue
-        is ALSO full does this take a direct synchronous fallback write --
-        the last-resort pressure valve, not the path a normal outage uses."""
+    def _enqueue_live(self, routing_key: str, payload: str, received_at: float) -> None:
+        """Hand a parsed message off for publishing and return at once --
+        the source thread never blocks on RabbitMQ and never does a disk
+        write.
+
+        Routing is gated on self._backlogged, not merely on whether the
+        live queue happens to be full right now (#1956): while a real
+        backlog exists, EVERY new message -- no matter how much room the
+        live queue has -- goes to the overflow queue instead, so it can
+        never be published ahead of an older row still sitting in
+        queue.db. This is what makes it safe for the rabbitmq thread to
+        always drain the live queue first (see _rmq_publish_loop): once
+        backlogged, nothing new can land there, so it can only ever hold
+        content that predates the backlog.
+
+        The live queue is only ever the target while backlogged is clear.
+        If it's unexpectedly full at that moment (the broker has been
+        unreachable long enough that even that buffer backed up, or
+        publishing simply can't keep pace), that's the trigger that SETS
+        backlogged -- from the very next message on, every source thread
+        follows the overflow path instead, until the rabbitmq thread
+        confirms a full drain.
+
+        Either way, if the overflow queue is ALSO full, this takes a
+        direct synchronous fallback write -- the last-resort pressure
+        valve, not the path a normal outage uses."""
+        if not self._backlogged.is_set():
+            try:
+                self._live_queue.put_nowait((routing_key, payload, received_at))
+                return
+            except queue.Full:
+                self._backlogged.set()
         try:
-            self._live_queue.put_nowait((routing_key, payload))
-            return
+            self._overflow_queue.put_nowait((routing_key, payload, received_at))
         except queue.Full:
-            pass
-        try:
-            self._overflow_queue.put_nowait((routing_key, payload))
-        except queue.Full:
-            self._fallback_put(routing_key, payload)
+            self._fallback_put(routing_key, payload, received_at)
 
     def _overflow_writer_loop(self) -> None:
         """Sole consumer of self._overflow_queue. Batches overflow messages
@@ -831,12 +871,12 @@ class Receiver:
         # Final drain -- flush whatever the source threads left buffered.
         self._flush_overflow_batch(None)
 
-    def _flush_overflow_batch(self, first: Optional[tuple[str, str]]) -> None:
+    def _flush_overflow_batch(self, first: Optional[tuple[str, str, float]]) -> None:
         """Collect up to _OVERFLOW_WRITE_BATCH_MAX queued overflow messages
         (starting with `first`, if the caller already dequeued one) and
         persist them in a single FallbackQueue.put_many() -- one commit for
         the whole batch."""
-        batch: list[tuple[str, str]] = []
+        batch: list[tuple[str, str, float]] = []
         if first is not None:
             batch.append(first)
         while len(batch) < _OVERFLOW_WRITE_BATCH_MAX:
@@ -847,7 +887,8 @@ class Receiver:
         if not batch:
             return
         wrapped = [
-            json.dumps({"routing_key": rk, "payload": p}) for rk, p in batch
+            json.dumps({"routing_key": rk, "payload": p, "received_at": ra})
+            for rk, p, ra in batch
         ]
         try:
             self._fallback.put_many(wrapped)
@@ -925,11 +966,19 @@ class Receiver:
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _rmq_publish_loop(self, conn: pika.BlockingConnection, ch) -> None:
-        """Inner loop while a connection is up: pump pika, publish live
-        messages with strict priority, then -- only if the live queue is
+        """Inner loop while a connection is up: pump pika, drain whatever
+        the live queue already holds, then -- only once it's observed
         empty -- advance the fallback backlog by one bounded batch
         (_FALLBACK_DRAIN_BATCH_MAX rows). Returns (so _rmq_loop reconnects)
-        on shutdown or any publish/connection failure."""
+        on shutdown or any publish/connection failure.
+
+        Ordering is guaranteed at the enqueue side (_enqueue_live), not
+        here (#1956): while self._backlogged is set, every new message
+        routes to the overflow queue instead of the live queue, so the
+        live queue can only ever hold content that predates the backlog --
+        nothing newer can be topped up into it while an older row is still
+        waiting in queue.db. That invariant is what makes it safe to drain
+        the live queue first on every pass, exactly as before this fix."""
         while not self._shutdown.is_set():
             # A publish failure latches _rmq_connected False without the
             # connection necessarily raising (broker blocking publishers on
@@ -951,8 +1000,6 @@ class Receiver:
             except Exception:
                 return
 
-            # Strict priority: everything queued off the sockets goes out
-            # before a single backlog row is touched.
             published_live = self._publish_live_batch(ch)
             with self._rmq_lock:
                 if not self._rmq_connected:
@@ -960,13 +1007,22 @@ class Receiver:
             if published_live:
                 continue
 
-            # Nothing waiting live -- move the backlog forward by one
-            # bounded batch, then loop straight back to re-check the live
-            # queue before the next batch.
+            # Live queue observed empty this pass -- move the backlog
+            # forward by one bounded batch, then loop straight back to
+            # re-check the live queue before the next batch.
             step = self._fallback.drain_batch(
                 lambda wrapped: self._publish_fallback_row(ch, wrapped),
                 _FALLBACK_DRAIN_BATCH_MAX,
             )
+            if step == DRAIN_EMPTY and self._backlogged.is_set():
+                # Confirmed empty on both sides in the same pass (the live
+                # queue was observed empty above, and this SELECT just
+                # found zero rows) -- only now is it safe to let new
+                # messages resume entering the live queue directly.
+                # Clearing on anything short of a confirmed empty drain
+                # (e.g. "queue.db is merely small") would reopen the exact
+                # ordering bug this flag exists to prevent (#1956).
+                self._backlogged.clear()
             if step == DRAIN_PROGRESSED:
                 continue
 
@@ -977,18 +1033,28 @@ class Receiver:
                 if not self._rmq_connected:
                     continue
 
-            # Fully idle, or the head-of-queue row is in its retry cooldown.
-            # Wait for the next live message rather than busy-spinning, but
-            # wake often enough to keep pika's heartbeat serviced.
             if self._shutdown.is_set():
                 return
+
+            if self._backlogged.is_set():
+                # The head-of-queue backlog row is in its retry cooldown --
+                # nothing will arrive on the live queue right now (see
+                # _enqueue_live), so there is nothing useful to block on
+                # there. Wait rather than busy-spinning, but wake often
+                # enough to keep pika's heartbeat serviced.
+                time.sleep(_RMQ_IDLE_POLL_SECONDS)
+                continue
+
+            # Fully idle: nothing live, nothing backlogged. Wait for the
+            # next live message rather than busy-spinning, but wake often
+            # enough to keep pika's heartbeat serviced.
             try:
-                routing_key, payload = self._live_queue.get(
+                routing_key, payload, received_at = self._live_queue.get(
                     timeout=_RMQ_IDLE_POLL_SECONDS
                 )
             except queue.Empty:
                 continue
-            self._publish_one(ch, routing_key, payload)
+            self._publish_one(ch, routing_key, payload, received_at)
 
     def _publish_live_batch(self, ch) -> bool:
         """Publish up to _LIVE_PUBLISH_BATCH_MAX queued live messages,
@@ -999,19 +1065,20 @@ class Receiver:
         published = 0
         while published < _LIVE_PUBLISH_BATCH_MAX:
             try:
-                routing_key, payload = self._live_queue.get_nowait()
+                routing_key, payload, received_at = self._live_queue.get_nowait()
             except queue.Empty:
                 break
             published += 1
-            if not self._publish_one(ch, routing_key, payload):
+            if not self._publish_one(ch, routing_key, payload, received_at):
                 break
         return published > 0
 
-    def _publish_one(self, ch, routing_key: str, payload: str) -> bool:
+    def _publish_one(self, ch, routing_key: str, payload: str, received_at: float) -> bool:
         """basic_publish one message directly on the rabbitmq thread. On
-        failure, latch the connection unhealthy and persist the message to
-        the SQLite fallback so it is never dropped. Returns False on
-        failure."""
+        failure, latch the connection unhealthy, set self._backlogged (this
+        is one of the two triggers -- see _enqueue_live), and persist the
+        message to the SQLite fallback so it is never dropped. Returns
+        False on failure."""
         try:
             ch.basic_publish(
                 exchange=ADSB_EXCHANGE,
@@ -1019,20 +1086,22 @@ class Receiver:
                 body=payload.encode(),
                 properties=pika.BasicProperties(delivery_mode=2),
             )
+            self._staleness_seconds = time.time() - received_at
             return True
         except Exception as exc:
             logger.debug("RabbitMQ publish failed: %s — writing to fallback.", exc)
             with self._rmq_lock:
                 self._rmq_connected = False
-            self._fallback_put(routing_key, payload)
+            self._backlogged.set()
+            self._fallback_put(routing_key, payload, received_at)
             return False
 
     def _publish_fallback_row(self, ch, wrapped: str) -> None:
         """process_fn for FallbackQueue.drain_batch: unwrap the stored
-        {routing_key, payload} and publish it on the rabbitmq thread.
-        Raises on failure so the row stays queued (drain_batch owns the
-        retry/dead-letter accounting and stops the batch here) and latches
-        the connection unhealthy so the publish loop reconnects."""
+        {routing_key, payload, received_at} and publish it on the rabbitmq
+        thread. Raises on failure so the row stays queued (drain_batch owns
+        the retry/dead-letter accounting and stops the batch here) and
+        latches the connection unhealthy so the publish loop reconnects."""
         item = json.loads(wrapped)
         try:
             ch.basic_publish(
@@ -1041,20 +1110,31 @@ class Receiver:
                 body=item["payload"].encode(),
                 properties=pika.BasicProperties(delivery_mode=2),
             )
+            # .get(), not [...]: a row already sitting in queue.db from
+            # before this field existed (mid-upgrade) has no "received_at"
+            # -- skip the staleness update for that one row rather than
+            # raising and getting stuck retrying it forever.
+            received_at = item.get("received_at")
+            if received_at is not None:
+                self._staleness_seconds = time.time() - received_at
         except Exception:
             with self._rmq_lock:
                 self._rmq_connected = False
             raise
 
-    def _fallback_put(self, routing_key: str, payload: str) -> None:
+    def _fallback_put(self, routing_key: str, payload: str, received_at: float) -> None:
         """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
         has no routing_key column of its own, unlike this component's
         previous hand-rolled fallback queue. Persisting the routing key
         alongside the payload keeps the drain path identical to the live
         publish path, with no need to re-parse a stored message body to
         work out where it was going -- so it's wrapped into one JSON string
-        here and unwrapped again in _publish_fallback_row."""
-        self._fallback.put(json.dumps({"routing_key": routing_key, "payload": payload}))
+        here and unwrapped again in _publish_fallback_row. received_at
+        rides along too, purely for the informational staleness signal
+        (see _staleness_seconds) -- never consulted for ordering."""
+        self._fallback.put(json.dumps(
+            {"routing_key": routing_key, "payload": payload, "received_at": received_at}
+        ))
 
     # ------------------------------------------------------------------
     # MQTT
@@ -1214,6 +1294,13 @@ class Receiver:
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )
         self._mqtt.publish(f"{base}/rabbitmq_connected", str(rmq_connected), retain=True)
+        # #1956: informational only -- how old was the last message the
+        # rabbitmq thread actually published, as of its most recent
+        # publish. Near zero while caught up; grows while draining a
+        # backlog. Never consulted for routing (see self._backlogged).
+        self._mqtt.publish(
+            f"{base}/backlog_age_seconds", str(round(self._staleness_seconds, 1)), retain=True
+        )
 
     # ------------------------------------------------------------------
     # Docker healthcheck (heartbeat file)
@@ -1300,6 +1387,8 @@ class Receiver:
              "mdi:skull-crossbones", "measurement", None, None),
             ("rabbitmq_connected", "RabbitMQ Connected",
              "mdi:rabbit", None, None, None),
+            ("backlog_age_seconds", "Backlog Age",
+             "mdi:history", "measurement", "s", None),
         ]
 
         for field, desc, icon, state_class, unit, json_attributes_topic in sensors:

@@ -113,9 +113,15 @@ RabbitMQ being unreachable. The threads reading the readsb sockets never
 publish directly — they drop each parsed message on a bounded in-memory
 queue and return straight to the socket, so intake is never blocked by the
 broker or by backlog drain. A single dedicated thread publishes from that
-queue, always draining live traffic before advancing the on-disk backlog by
-one row; a publish that fails buffers to a local `queue.db` (SQLite WAL) and
-the backlog drains oldest-first once RabbitMQ is reachable again.
+queue. Routing is gated by one shared in-memory flag, `backlogged`: while
+clear, new messages go straight to the fast in-memory queue; the moment a
+publish fails or that queue is full, the flag is set and every subsequent
+message — from every source thread — spills to a local `queue.db` (SQLite
+WAL) instead, so nothing new can leapfrog an older row still waiting there.
+The flag only clears once both the in-memory queue and `queue.db` are
+confirmed fully drained, and the backlog itself always drains oldest-first.
+See [#1956](https://github.com/BrentIO/SkyFollower/issues/1956) for why a
+simpler "always drain live traffic first" rule isn't sufficient.
 
 [![Receiver — RabbitMQ offline fallback](./images/receiver-offline-fallback-sequence.svg)](./images/receiver-offline-fallback-sequence.svg)
 

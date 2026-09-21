@@ -3779,6 +3779,134 @@ class TestPerMessageGapCheck:
 
 
 # ---------------------------------------------------------------------------
+# Out-of-order message guard (#1956) -- a message can arrive out of order
+# for a given aircraft even after the receiver's own ordering fix, via
+# cross-receiver skew (a 1090 and a 978 receiver, or redundant antennas,
+# each publishing independently). last_message must only ever advance
+# forward, never regress, or the *next* (correctly-ordered) message's
+# gap/TTL check would see a bogus inflated gap computed against a
+# wrongly-rolled-back last_message.
+# ---------------------------------------------------------------------------
+
+class TestOutOfOrderMessageGuard:
+    def test_older_message_does_not_regress_last_message(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        t = 1_700_000_000.0
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t, source="1090")
+        msg2 = InboundMessage(
+            raw="00" * 14, icao_hex="A8AE7F", received_at=t - 5, source="978",
+        )
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+            p._update_flight({"icao_hex": "A8AE7F"}, msg2)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.last_message == pytest.approx(t)
+        assert f.total_messages == 2  # still counted, just doesn't advance last_message
+
+    def test_older_message_does_not_cause_a_bogus_gap_archive_on_the_next_message(self):
+        """The actual failure mode this guard exists for: without it, an
+        out-of-order message rolls last_message back far enough that a
+        perfectly ordinary follow-up message computes a gap that appears
+        to exceed the TTL, force-archiving/splitting a flight that never
+        actually ended."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+        ttl = p._flight_ttl_seconds
+
+        t = 1_700_000_000.0
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t, source="1090")
+        # Arrives out of order, old enough that regressing last_message to
+        # it would blow the TTL on the next, perfectly ordinary message.
+        msg2 = InboundMessage(
+            raw="00" * 14, icao_hex="A8AE7F", received_at=t - ttl - 50, source="978",
+        )
+        msg3 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t + 50, source="1090")
+
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg1)
+            after_msg1 = Flight(p._db)
+            after_msg1.load("A8AE7F")
+            first_flight_id = after_msg1.flight_id
+
+            p._update_flight({"icao_hex": "A8AE7F"}, msg2)
+            p._update_flight({"icao_hex": "A8AE7F"}, msg3)
+
+        assert p._fallback.depth() == 0, "no flight should have been force-archived"
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.flight_id == first_flight_id, "the flight must not have been split"
+        assert f.total_messages == 3
+
+    def test_new_flight_is_not_out_of_order_against_its_own_default_last_message(self):
+        """A brand-new flight's last_message defaults to 0.0 -- the guard
+        must not treat every first message as "older" than that sentinel."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=1.0, source="1090")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "A8AE7F"}, msg)
+
+        f = Flight(p._db)
+        f.load("A8AE7F")
+        assert f.last_message == pytest.approx(1.0)
+
+    def test_out_of_order_message_skips_the_map_udp_position_send(self):
+        """A message under MAX_MESSAGE_LAG_SECONDS still must not visibly
+        snap a currently-displayed aircraft's position backward on the map
+        -- that gate only filters messages stale in absolute terms, not
+        messages merely older than one already shown for this aircraft."""
+        p, mock_redis = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        mock_redis.evalsha.return_value = None
+
+        t = time.time()
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t, source="1090")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t - 2, source="978")
+
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}, msg1,
+            )
+            mock_sock.reset_mock()
+            p._update_flight(
+                {"icao_hex": "A8AE7F", "latitude": 1.1, "longitude": 2.1}, msg2,
+            )
+
+        sent = [json.loads(c.args[0].decode("utf-8")) for c in mock_sock.sendto.call_args_list]
+        assert not [s for s in sent if s["type"] == "position"]
+
+    def test_out_of_order_message_still_stores_its_position_for_the_archive(self):
+        """Historical accuracy is unaffected -- only the map's *live*
+        representation and last_message/gap tracking are guarded. The
+        position row is still persisted, sorted correctly on load by
+        to_completed_flight()'s ORDER BY timestamp."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        t = 1_700_000_000.0
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t, source="1090")
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=t - 5, source="978")
+
+        with p._db_lock:
+            p._update_flight(
+                {"icao_hex": "A8AE7F", "latitude": 1.0, "longitude": 2.0}, msg1,
+            )
+            p._update_flight(
+                {"icao_hex": "A8AE7F", "latitude": 0.9, "longitude": 1.9}, msg2,
+            )
+
+        f = Flight(p._db)
+        f.load("A8AE7F", limit=False)
+        assert [pos.timestamp for pos in f.positions] == [t - 5, t]
+
+
+# ---------------------------------------------------------------------------
 # receiver_sources accumulation + force_archive
 # ---------------------------------------------------------------------------
 

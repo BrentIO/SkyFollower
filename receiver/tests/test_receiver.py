@@ -33,6 +33,7 @@ from receiver.main import (
     _sanitize_mqtt_id,
     parse_978_line,
 )
+from shared.fallback_queue import DRAIN_STOP
 from shared.rabbitmq_topology import (
     ADSB_EXCHANGE,
     ADSB_UNROUTABLE_EXCHANGE,
@@ -502,7 +503,7 @@ class TestIcaoRoutingIntegration:
         # A real DF17 ADS-B message — pyModeS should extract ICAO from it
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         r._handle_message(raw_hex, "1090", r._rates["1090"], ("localhost", 30002))
@@ -525,7 +526,7 @@ class TestIcaoRoutingIntegration:
 
         raw_hex = "8D4840D6202CC371C32CE0576098"
         published: list[tuple] = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["EXTERNAL"] = _RateTracker()
 
         r._handle_message(raw_hex, "EXTERNAL", r._rates["EXTERNAL"], ("localhost", 30002))
@@ -547,7 +548,7 @@ class TestIcaoRoutingIntegration:
             "-00a3d3e328a71f8c647004e9009c2d401a00;rs=6;rssi=0.3;t=1782561034.334;"
         )
         published: list[tuple] = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
         r._handle_978_message(raw_hex, icao_hex, received_at, "978", r._rates["978"], ("localhost", 30002))
@@ -566,7 +567,7 @@ class TestIcaoRoutingIntegration:
     def test_handle_978_message_discards_bad_icao_length(self):
         r = self._make_receiver()
         published: list = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["978"] = _RateTracker()
 
         r._handle_978_message("-BAD", "SHORT", time.time(), "978", r._rates["978"], ("localhost", 30002))
@@ -576,7 +577,7 @@ class TestIcaoRoutingIntegration:
         """Messages that yield no ICAO are discarded silently."""
         r = self._make_receiver()
         published: list = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         # Garbage hex — pyModeS.icao returns None
@@ -590,7 +591,7 @@ class TestIcaoRoutingIntegration:
         raw_hex = "8D4840D6202CC371C32CE0576098"
 
         published: list[tuple] = []
-        r._enqueue_live = lambda q, p: published.append((q, p))
+        r._enqueue_live = lambda q, p, ra=0.0: published.append((q, p))
         r._rates["1090"] = _RateTracker()
 
         for _ in range(5):
@@ -624,7 +625,7 @@ class TestIcaoRoutingIntegration:
 
     def test_handle_message_sets_last_message_at(self):
         r = self._make_receiver()
-        r._enqueue_live = lambda q, p: None
+        r._enqueue_live = lambda q, p, ra=0.0: None
         key = ("localhost", 30002)
         r._last_message_at[key] = None
 
@@ -637,7 +638,7 @@ class TestIcaoRoutingIntegration:
         connection is alive and emitting frames -- last_message_at tracks
         traffic seen, not traffic successfully routed."""
         r = self._make_receiver()
-        r._enqueue_live = lambda q, p: None
+        r._enqueue_live = lambda q, p, ra=0.0: None
         key = ("localhost", 30002)
         r._last_message_at[key] = None
 
@@ -647,7 +648,7 @@ class TestIcaoRoutingIntegration:
 
     def test_handle_978_message_sets_last_message_at(self):
         r = self._make_receiver()
-        r._enqueue_live = lambda q, p: None
+        r._enqueue_live = lambda q, p, ra=0.0: None
         key = ("localhost", 30978)
         r._last_message_at[key] = None
         raw_hex, icao_hex, received_at = parse_978_line(
@@ -682,7 +683,7 @@ class TestUnparseableLineLogging:
         }
         with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
             r = Receiver(cfg)
-        r._enqueue_live = lambda q, p: None
+        r._enqueue_live = lambda q, p, ra=0.0: None
         return r
 
     def _run_978(self, r, data: bytes):
@@ -770,10 +771,11 @@ class TestUnparseableLineLogging:
 
 class TestEnqueueLive:
     """_enqueue_live() is the entire live path off the source threads:
-    drop the message on the in-memory queue and return. A full queue
-    spills to the durable SQLite fallback rather than blocking the caller,
-    so getting messages off the TCP socket is never delayed by the broker
-    or by backlog drain."""
+    drop the message on the in-memory queue and return. Routing is gated
+    on self._backlogged (#1956), not merely on whether the live queue
+    happens to be full right now -- see TestBacklogFlag below for the
+    ordering guarantee that gate provides. This class covers the plain
+    nominal (not backlogged) path plus the two triggers that set the flag."""
 
     def _make_receiver(self):
         from receiver.main import Receiver
@@ -786,9 +788,10 @@ class TestEnqueueLive:
 
     def test_hands_message_to_the_in_memory_queue(self):
         r = self._make_receiver()
-        r._enqueue_live("4B1900", '{"raw": "AA"}')
-        assert r._live_queue.get_nowait() == ("4B1900", '{"raw": "AA"}')
+        r._enqueue_live("4B1900", '{"raw": "AA"}', 1.0)
+        assert r._live_queue.get_nowait() == ("4B1900", '{"raw": "AA"}', 1.0)
         assert r._fallback.depth() == 0
+        assert not r._backlogged.is_set()
 
     def test_never_touches_rabbitmq(self):
         """No connection, no channel, broker unreachable -- the source
@@ -797,23 +800,24 @@ class TestEnqueueLive:
         r._rmq_connection = None
         r._rmq_channel = None
         r._rmq_connected = False
-        r._enqueue_live("4B1900", "x")
+        r._enqueue_live("4B1900", "x", 1.0)
         assert r._live_queue.qsize() == 1
         assert r._fallback.depth() == 0
 
-    def test_full_live_queue_spills_to_the_overflow_queue_not_disk(self):
+    def test_full_live_queue_spills_to_the_overflow_queue_and_sets_backlogged(self):
         """A full live queue hands the message to the in-memory overflow
-        queue -- the SQLite write is the overflow-writer thread's job, never
-        the source thread's."""
+        queue -- the SQLite write is the overflow-writer thread's job,
+        never the source thread's -- and sets self._backlogged, the
+        trigger that routes every subsequent message to overflow too."""
         r = self._make_receiver()
         r._live_queue = queue.Queue(maxsize=2)
-        r._enqueue_live("A", "1")
-        r._enqueue_live("B", "2")
+        r._enqueue_live("A", "1", 1.0)
+        r._enqueue_live("B", "2", 2.0)
 
         completed = threading.Event()
 
         def _enqueue_third():
-            r._enqueue_live("C", "3")  # live queue full -- goes to overflow
+            r._enqueue_live("C", "3", 3.0)  # live queue full -- goes to overflow
             completed.set()
 
         t = threading.Thread(target=_enqueue_third)
@@ -822,8 +826,9 @@ class TestEnqueueLive:
 
         assert completed.is_set(), "_enqueue_live blocked on a full queue"
         assert r._live_queue.qsize() == 2
-        assert r._overflow_queue.get_nowait() == ("C", "3")
+        assert r._overflow_queue.get_nowait() == ("C", "3", 3.0)
         assert r._fallback.depth() == 0
+        assert r._backlogged.is_set()
 
     def test_both_queues_full_falls_back_to_a_direct_disk_write(self):
         """Last-resort pressure valve: only when the overflow queue has
@@ -832,13 +837,13 @@ class TestEnqueueLive:
         r = self._make_receiver()
         r._live_queue = queue.Queue(maxsize=1)
         r._overflow_queue = queue.Queue(maxsize=1)
-        r._enqueue_live("A", "1")  # fills live queue
-        r._enqueue_live("B", "2")  # fills overflow queue
+        r._enqueue_live("A", "1", 1.0)  # fills live queue
+        r._enqueue_live("B", "2", 2.0)  # fills overflow queue
 
         completed = threading.Event()
 
         def _enqueue_third():
-            r._enqueue_live("C", "3")
+            r._enqueue_live("C", "3", 3.0)
             completed.set()
 
         t = threading.Thread(target=_enqueue_third)
@@ -849,17 +854,18 @@ class TestEnqueueLive:
         assert r._fallback.depth() == 1
         captured: list[str] = []
         r._fallback.drain(captured.append)
-        assert json.loads(captured[0]) == {"routing_key": "C", "payload": "3"}
+        assert json.loads(captured[0]) == {"routing_key": "C", "payload": "3", "received_at": 3.0}
 
     def test_route_message_uses_enqueue_live(self):
         r = self._make_receiver()
         seen = []
-        r._enqueue_live = lambda q, p: seen.append((q, p))
+        r._enqueue_live = lambda q, p, ra: seen.append((q, p, ra))
         r._route_message(
             "8D4840D6202CC371C32CE0576098", "4CA1FA", 1.0, "1090", _RateTracker()
         )
         assert len(seen) == 1
         assert seen[0][0] == "4CA1FA"
+        assert seen[0][2] == 1.0
 
     def test_source_read_loop_does_not_block_when_broker_is_gone(self):
         """A full read of a socket's worth of frames completes even with no
@@ -887,6 +893,106 @@ class TestEnqueueLive:
         assert r._live_queue.qsize() == 50
 
 
+# ---------------------------------------------------------------------------
+# self._backlogged -- the single ordering gate (#1956). While clear, new
+# messages go straight to the fast in-memory live queue (nominal path, no
+# disk I/O, no behavior change from before this fix). The instant it's
+# set -- live queue full, or a publish failed -- every subsequent message,
+# no matter how much room the live queue has, routes to the overflow queue
+# instead, so nothing can ever be published ahead of an older row still
+# waiting in queue.db. It only clears once both are confirmed drained to
+# zero in the same rabbitmq-thread pass.
+# ---------------------------------------------------------------------------
+
+class TestBacklogFlag:
+    def _make_receiver(self):
+        from receiver.main import Receiver
+        cfg = {
+            "sources": [{"host": "localhost", "port": 30002, "source": "1090"}],
+            "rabbitmq": {"host": "localhost", "username": "u", "password": "p"},
+        }
+        with patch("receiver.main.DATA_DIR", tempfile.mkdtemp()):
+            return Receiver(cfg)
+
+    def test_nominal_path_never_touches_the_overflow_queue_or_disk(self):
+        """The whole point of the gate: while caught up, enqueue costs
+        exactly what it does today -- one in-memory put, nothing else."""
+        r = self._make_receiver()
+        for i in range(50):
+            r._enqueue_live(f"HEX{i:04d}", str(i), float(i))
+        assert r._live_queue.qsize() == 50
+        assert r._overflow_queue.qsize() == 0
+        assert r._fallback.depth() == 0
+
+    def test_set_backlogged_routes_new_messages_to_overflow_even_with_live_queue_room(self):
+        """The core fix: plenty of room in the live queue does not matter
+        once backlogged is set -- every new message still goes to
+        overflow, so it can never leapfrog an older row already queued."""
+        r = self._make_receiver()
+        # Live queue has room for thousands more, but a real backlog
+        # already exists (e.g. a prior publish failure).
+        r._backlogged.set()
+        r._enqueue_live("NEW", "fresh", 100.0)
+
+        assert r._live_queue.qsize() == 0
+        assert r._overflow_queue.get_nowait() == ("NEW", "fresh", 100.0)
+
+    def test_publish_failure_sets_backlogged(self):
+        r = self._make_receiver()
+        r._rmq_connected = True
+        ch = MagicMock()
+        ch.basic_publish.side_effect = RuntimeError("boom")
+
+        assert not r._backlogged.is_set()
+        r._publish_one(ch, "4B1900", "x", 1.0)
+        assert r._backlogged.is_set()
+
+    def test_ordering_preserved_across_a_live_and_backlog_interleaving(self):
+        """End-to-end proof of the fix's actual purpose: a message that
+        arrives while backlogged is set can never publish ahead of an
+        older row still sitting in queue.db, even though both eventually
+        reach RabbitMQ through the same rabbitmq thread."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+
+        # An older backlog already exists (simulating messages that
+        # accumulated during a prior outage).
+        r._backlogged.set()
+        for i in range(5):
+            r._enqueue_live(f"OLD{i}", f"old-{i}", float(i))
+        r._flush_overflow_batch(None)  # overflow-writer's job, done inline here
+        assert r._fallback.depth() == 5
+
+        # Fresh "live" traffic arrives while still backlogged.
+        r._enqueue_live("NEW0", "new-0", 100.0)
+        r._enqueue_live("NEW1", "new-1", 101.0)
+        r._flush_overflow_batch(None)  # overflow-writer's job, done inline here
+        assert r._fallback.depth() == 7
+
+        published = []
+        ch = MagicMock()
+        ch.basic_publish.side_effect = lambda **kw: published.append(kw["routing_key"])
+        r._rmq_connected = True
+
+        t = threading.Thread(target=r._rmq_publish_loop, args=(MagicMock(), ch))
+        t.start()
+        try:
+            # Let the loop run past the point where both queues empty out
+            # and it self-clears the flag, rather than stopping it the
+            # instant the 7th message publishes -- that clear only happens
+            # on a *subsequent* pass that observes both confirmed empty.
+            deadline = time.time() + 3
+            while r._backlogged.is_set() and time.time() < deadline:
+                time.sleep(0.02)
+        finally:
+            r._shutdown.set()
+            t.join(timeout=3)
+
+        # Nothing newer ever reached the wire ahead of the older backlog.
+        assert published == ["OLD0", "OLD1", "OLD2", "OLD3", "OLD4", "NEW0", "NEW1"]
+        assert not r._backlogged.is_set(), "flag must clear once both queues are confirmed empty"
+
+
 class TestOverflowWriter:
     """The overflow-writer thread is the sole consumer of _overflow_queue:
     it batches overflow messages into the durable SQLite fallback with one
@@ -905,7 +1011,7 @@ class TestOverflowWriter:
     def test_flush_batches_the_whole_queue_into_one_put_many(self):
         r = self._make_receiver()
         for i in range(2000):
-            r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i)))
+            r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i), float(i)))
 
         with patch.object(r._fallback, "put_many", wraps=r._fallback.put_many) as pm:
             r._flush_overflow_batch(None)
@@ -916,23 +1022,23 @@ class TestOverflowWriter:
 
     def test_flush_preserves_order_and_the_routing_key_wrap(self):
         r = self._make_receiver()
-        r._overflow_queue.put_nowait(("AAA111", "first"))
-        r._overflow_queue.put_nowait(("BBB222", "second"))
+        r._overflow_queue.put_nowait(("AAA111", "first", 1.0))
+        r._overflow_queue.put_nowait(("BBB222", "second", 2.0))
 
         r._flush_overflow_batch(None)
 
         captured: list[str] = []
         r._fallback.drain(captured.append)
         assert [json.loads(c) for c in captured] == [
-            {"routing_key": "AAA111", "payload": "first"},
-            {"routing_key": "BBB222", "payload": "second"},
+            {"routing_key": "AAA111", "payload": "first", "received_at": 1.0},
+            {"routing_key": "BBB222", "payload": "second", "received_at": 2.0},
         ]
 
     def test_flush_caps_a_single_pass_at_the_batch_max(self):
         r = self._make_receiver()
         with patch("receiver.main._OVERFLOW_WRITE_BATCH_MAX", 10):
             for i in range(25):
-                r._overflow_queue.put_nowait((f"H{i}", str(i)))
+                r._overflow_queue.put_nowait((f"H{i}", str(i), float(i)))
             r._flush_overflow_batch(None)
 
         assert r._fallback.depth() == 10
@@ -948,7 +1054,7 @@ class TestOverflowWriter:
         """Nothing buffered in RAM is dropped on a clean stop -- the loop
         makes one last flush pass after _shutdown is set."""
         r = self._make_receiver()
-        r._overflow_queue.put_nowait(("LATE01", "x"))
+        r._overflow_queue.put_nowait(("LATE01", "x", 1.0))
         r._shutdown.set()
 
         r._overflow_writer_loop()  # returns at once: _shutdown already set
@@ -962,7 +1068,7 @@ class TestOverflowWriter:
         t.start()
         try:
             for i in range(500):
-                r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i)))
+                r._overflow_queue.put_nowait((f"HEX{i:04d}", str(i), float(i)))
             deadline = time.time() + 3
             while r._fallback.depth() < 500 and time.time() < deadline:
                 time.sleep(0.02)
@@ -1000,20 +1106,30 @@ class TestPublishOne:
     def test_publishes_with_expected_args(self):
         r = self._make_receiver()
         ch = MagicMock()
-        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}') is True
+        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}', 1.0) is True
         kwargs = ch.basic_publish.call_args.kwargs
         assert kwargs["exchange"] == ADSB_EXCHANGE
         assert kwargs["routing_key"] == "4B1900"
         assert kwargs["body"] == b'{"raw": "AA"}'
+
+    def test_publish_updates_the_staleness_signal(self):
+        """Informational only (#1956) -- never consulted for routing, but
+        refreshed on every successful publish."""
+        r = self._make_receiver()
+        ch = MagicMock()
+        with patch("receiver.main.time.time", return_value=1010.0):
+            r._publish_one(ch, "4B1900", "x", 1000.0)
+        assert r._staleness_seconds == pytest.approx(10.0)
 
     def test_failure_routes_to_fallback_and_latches_disconnected(self):
         r = self._make_receiver()
         r._rmq_connected = True
         ch = MagicMock()
         ch.basic_publish.side_effect = RuntimeError("boom")
-        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}') is False
+        assert r._publish_one(ch, "4B1900", '{"raw": "AA"}', 1.0) is False
         assert r._fallback.depth() == 1
         assert r._rmq_connected is False
+        assert r._backlogged.is_set()
 
     def test_fallback_row_publish_failure_reraises_and_latches(self):
         r = self._make_receiver()
@@ -1043,21 +1159,27 @@ class TestFallbackPutWrapsRoutingKey:
 
     def test_fallback_put_wraps_routing_key_and_payload(self):
         r = self._make_receiver()
-        r._fallback_put("4B1900", '{"raw": "AA"}')
+        r._fallback_put("4B1900", '{"raw": "AA"}', 1.0)
         assert r._fallback.depth() == 1
 
         captured = []
         r._fallback.drain(captured.append)
         item = json.loads(captured[0])
-        assert item == {"routing_key": "4B1900", "payload": '{"raw": "AA"}'}
+        assert item == {"routing_key": "4B1900", "payload": '{"raw": "AA"}', "received_at": 1.0}
 
 
 # ---------------------------------------------------------------------------
-# _rmq_publish_loop — the sole publishing thread. Strict priority for live
-# messages off the sockets; the fallback backlog is advanced one bounded
-# batch (_FALLBACK_DRAIN_BATCH_MAX rows) at a time, and only when nothing
-# is waiting to go out live. The live queue is re-checked between batches,
-# never mid-batch.
+# _rmq_publish_loop — the sole publishing thread. It always drains whatever
+# the live queue currently holds before touching a single fallback-backlog
+# row, exactly as before #1956 -- that raw mechanic didn't change. What
+# changed is upstream, at the enqueue side (see TestBacklogFlag): while
+# self._backlogged is set, nothing new can ever land in the live queue, so
+# in production this loop only ever finds pre-backlog leftovers there, not
+# a continuous stream of fresh arrivals leapfrogging an older backlog. The
+# tests below that put items directly into _live_queue (bypassing
+# _enqueue_live) are exercising this loop's raw drain mechanics in
+# isolation -- they deliberately violate the invariant _enqueue_live
+# enforces in production, which is fine for testing the mechanic itself.
 # ---------------------------------------------------------------------------
 
 class TestRmqPublishLoop:
@@ -1073,7 +1195,7 @@ class TestRmqPublishLoop:
     def test_publishes_queued_live_messages(self):
         r = self._make_receiver()
         r._rmq_connected = True
-        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}'))
+        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}', 1.0))
 
         published = []
         ch = MagicMock()
@@ -1088,15 +1210,19 @@ class TestRmqPublishLoop:
         assert published == ["4B1900"]
         assert ch.basic_publish.call_args.kwargs["exchange"] == ADSB_EXCHANGE
 
-    def test_live_messages_publish_before_any_backlog_row(self):
-        """Strict priority: everything queued off the sockets goes out
-        before a single fallback-backlog row is touched."""
+    def test_live_queue_drains_before_any_backlog_row(self):
+        """The live queue always drains first, on every pass -- this raw
+        mechanic is unchanged by #1956. What actually prevents a real
+        backlog from being leapfrogged is that _enqueue_live never lets a
+        fresh arrival reach the live queue once self._backlogged is set
+        (see TestBacklogFlag) -- so in production, whatever's in the live
+        queue when this loop runs can only be pre-backlog leftovers."""
         r = self._make_receiver()
         r._rmq_connected = True
         for i in range(3):
-            r._fallback_put(f"BACK{i}", "x")
-        r._live_queue.put_nowait(("LIVE0", "y"))
-        r._live_queue.put_nowait(("LIVE1", "y"))
+            r._fallback_put(f"BACK{i}", "x", float(i))
+        r._live_queue.put_nowait(("LIVE0", "y", 10.0))
+        r._live_queue.put_nowait(("LIVE1", "y", 11.0))
 
         published = []
         ch = MagicMock()
@@ -1113,15 +1239,19 @@ class TestRmqPublishLoop:
         assert set(published[2:]) == {"BACK0", "BACK1", "BACK2"}
 
     def test_live_message_arriving_mid_drain_jumps_ahead_of_the_next_batch(self):
-        """A large backlog is draining, no live traffic -- then one live
-        message arrives partway through a batch. It publishes before the
-        *next* batch starts (the live queue is re-checked between batches),
-        but not mid-batch: whatever rows the current batch already selected
-        still go out first."""
+        """Raw loop mechanic, exercised directly (see class docstring): a
+        large backlog is draining, no live traffic -- then one item is
+        placed directly on _live_queue partway through a batch. It
+        publishes before the *next* batch starts (the live queue is
+        re-checked between batches), but not mid-batch: whatever rows the
+        current batch already selected still go out first. In production
+        this exact interleaving can't happen once self._backlogged is
+        set -- _enqueue_live would have routed that item to the overflow
+        queue instead (see TestBacklogFlag)."""
         r = self._make_receiver()
         r._rmq_connected = True
         for i in range(5):
-            r._fallback_put(f"BACK{i}", "x")
+            r._fallback_put(f"BACK{i}", "x", float(i))
 
         published = []
         ch = MagicMock()
@@ -1131,7 +1261,7 @@ class TestRmqPublishLoop:
             published.append(rk)
             # Arrives during the first batch (batch size patched to 2).
             if rk == "BACK0":
-                r._live_queue.put_nowait(("LIVE", "y"))
+                r._live_queue.put_nowait(("LIVE", "y", 100.0))
             if len(published) >= 4:
                 r._shutdown.set()
 
@@ -1149,7 +1279,7 @@ class TestRmqPublishLoop:
         r = self._make_receiver()
         r._rmq_connected = True
         for i in range(10):
-            r._fallback_put(f"BACK{i}", "x")
+            r._fallback_put(f"BACK{i}", "x", float(i))
 
         published = []
         ch = MagicMock()
@@ -1166,10 +1296,54 @@ class TestRmqPublishLoop:
         assert published == [f"BACK{i}" for i in range(10)]
         assert r._fallback.depth() == 0
 
+    def test_backlogged_does_not_clear_while_a_backlog_row_is_still_cooling_down(self):
+        """A backlog row that just failed goes into retry cooldown --
+        drain_batch reports DRAIN_STOP, not DRAIN_EMPTY, for that pass.
+        self._backlogged must stay set: there is still an unconfirmed,
+        undelivered row sitting in queue.db, even though the live queue is
+        empty at the same moment."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._backlogged.set()
+        r._fallback_put("BACK0", "x", 1.0)
+
+        def _stop_after_one_pass(*_a, **_kw):
+            r._shutdown.set()
+            return DRAIN_STOP
+
+        with patch.object(r._fallback, "drain_batch", side_effect=_stop_after_one_pass):
+            r._rmq_publish_loop(MagicMock(), MagicMock())
+
+        assert r._backlogged.is_set()
+
+    def test_idle_wait_sleeps_rather_than_blocking_on_the_live_queue_while_backlogged(self):
+        """While backlogged (here: a row perpetually in its retry cooldown,
+        so drain_batch reports DRAIN_STOP every pass), nothing will ever
+        arrive on the live queue (see _enqueue_live) -- the idle branch
+        must sleep and retry rather than blocking on the live queue,
+        which is what the pre-#1956 code did in this branch."""
+        r = self._make_receiver()
+        r._rmq_connected = True
+        r._backlogged.set()
+
+        call_count = {"n": 0}
+
+        def _sleep_then_stop(_seconds):
+            call_count["n"] += 1
+            if call_count["n"] >= 2:
+                r._shutdown.set()
+
+        with patch.object(r._fallback, "drain_batch", return_value=DRAIN_STOP), \
+             patch("receiver.main.time.sleep", side_effect=_sleep_then_stop):
+            r._rmq_publish_loop(MagicMock(), MagicMock())
+
+        assert call_count["n"] >= 2
+        assert r._backlogged.is_set()
+
     def test_publish_failure_returns_and_persists_the_message(self):
         r = self._make_receiver()
         r._rmq_connected = True
-        r._live_queue.put_nowait(("4B1900", "y"))
+        r._live_queue.put_nowait(("4B1900", "y", 1.0))
         ch = MagicMock()
         ch.basic_publish.side_effect = RuntimeError("boom")
 
@@ -1178,6 +1352,7 @@ class TestRmqPublishLoop:
 
         assert r._rmq_connected is False
         assert r._fallback.depth() == 1
+        assert r._backlogged.is_set()
 
     def test_returns_when_rmq_connected_is_latched_false(self):
         r = self._make_receiver()
@@ -1200,7 +1375,7 @@ class TestRmqPublishLoop:
 
         def _feed():
             time.sleep(0.05)
-            r._live_queue.put_nowait(("LATE", "y"))
+            r._live_queue.put_nowait(("LATE", "y", 1.0))
 
         with patch("receiver.main._RMQ_IDLE_POLL_SECONDS", 0.5):
             threading.Thread(target=_feed).start()
@@ -1229,7 +1404,7 @@ class TestRmqLoopRecoversFromLatchedDisconnect:
 
     def test_publish_failure_on_healthy_connection_forces_reconnect_and_recovers(self):
         r = self._make_receiver()
-        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}'))
+        r._live_queue.put_nowait(("4B1900", '{"raw": "AA"}', 1.0))
 
         state: dict = {"connects": 0}
 
