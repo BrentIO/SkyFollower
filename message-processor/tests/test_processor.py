@@ -2628,14 +2628,44 @@ class TestProcessorEnrichment:
         p._enrich_operator(f)
         mock_redis.json.return_value.get.assert_not_called()
 
-    def test_enrich_operator_skips_military(self):
+    def test_enrich_operator_attempts_lookup_for_military_aircraft(self):
+        # A military-flagged aircraft is no longer blanket-skipped -- some
+        # government/special-use operators (FAA telephony Section 4: state
+        # fire departments, FEMA, the Commemorative Air Force's "TORA TORA
+        # TORA") are plausibly flown by aircraft flagged military in the
+        # registry, and previously could never resolve an operator even
+        # when a real match existed. See runners/us-faa-telephony-designators.
         p, mock_redis = self._make_processor()
+        mock_redis.json.return_value.get.return_value = {
+            "airline_designator": "FEMA", "name": "Federal Emergency Management Agency",
+        }
+
         f = Flight(p._db)
         f.icao_hex = "A8AE7F"
-        f.ident = "DAL659"
+        f.ident = "FEMA1"
         f.aircraft = {"military": True}
+        f.operator = {}
         p._enrich_operator(f)
-        mock_redis.json.return_value.get.assert_not_called()
+
+        assert f.operator["airline_designator"] == "FEMA"
+        mock_redis.json.return_value.get.assert_called_once_with(operator_key("FEMA"))
+
+    def test_enrich_operator_military_aircraft_still_misses_when_no_match(self):
+        # No correctness regression for the common case: a military
+        # aircraft whose ident prefix matches no operator:{designator} key
+        # just misses like any other lookup, counted the same way.
+        p, mock_redis = self._make_processor()
+        mock_redis.json.return_value.get.return_value = None
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.ident = "RCH123"
+        f.aircraft = {"military": True}
+        f.operator = {}
+        p._enrich_operator(f)
+
+        assert f.operator == {}
+        assert p._operator_misses.flush_and_reset() == 1
 
     def test_enrich_operator_extracts_prefix(self):
         # operator:{designator} is a RedisJSON document -- .json().get()

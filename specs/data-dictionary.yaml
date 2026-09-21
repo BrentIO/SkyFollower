@@ -117,6 +117,28 @@ sources:
           4: HORSEPOWER
           5: THRUST
 
+  us-faa-telephony-designators:
+    description: "FAA Order 7340.2 — ICAO airline company designators and US special telephony/call signs; backfills operator:{designator} gaps Mictronics' operators.json does not cover. Additive-only: writes only when the key is absent, never overrides an existing entry from any source; must run after Mictronics"
+    url: "https://www.faa.gov/air_traffic/publications/atpubs/cnt_html/chap3_section_3.html and .../chap3_section_4.html"
+    format: html
+    cadence: weekly_tuesday
+    notes: "Section 3's ~5,700-row designator table is split across ~26 separate <table> elements sharing the same header row on the page — every matching table is parsed and combined, not just the first found; Section 4's Identifier column is not always 3 letters (e.g. ARSIX, NASA, FEMA); Section 4 has no country column — defaulted to 'United States'; Section 4 rows whose Expiration Date has passed are skipped at runtime; standard 14-day TTL, refreshed on every run independently of the NX content write, including for designators this runner never wrote the content of — see runners/us-faa-telephony-designators/README.md"
+    files:
+      - name: chap3_section_3.html
+        format: html_table
+        columns:
+          "3-Ltr":     ICAO 3-letter airline company designator
+          Company:     Company/operator name
+          Country:     Country of registration
+          Telephony:   Radio telephony callsign; may be empty
+      - name: chap3_section_4.html
+        format: html_table
+        columns:
+          "Telephony/Call Sign": Radio telephony callsign
+          Identifier:            "Callsign prefix a flight files under; not always 3 letters"
+          "Company or Operating Agency": Company/agency name
+          "Expiration Date":     "'D-Mon-YYYY' or 'N/A' (permanent); used only to gate import, not stored"
+
   ca-transport-canada-registry:
     description: "Transport Canada Civil Aircraft Register — Canadian C- registrations"
     url: "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/ReleaseAccessEN.aspx"

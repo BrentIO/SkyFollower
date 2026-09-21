@@ -1803,10 +1803,6 @@ class MessageProcessor:
         if _US_REG_RE.match(ident):
             return
 
-        # Skip military aircraft
-        if flight.aircraft.get("military"):
-            return
-
         # Skip if ident matches registration
         if _ident_matches_registration(ident, flight.aircraft):
             return

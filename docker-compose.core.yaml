@@ -185,6 +185,16 @@ services:
       ofelia.job-run.runner-mictronics.environment: *ofelia-runner-environment
       ofelia.job-run.runner-mictronics.delete: *ofelia-runner-delete
 
+      # Must run after runner-mictronics (above) -- see
+      # runners/us-faa-telephony-designators/README.md's "Additive-only,
+      # never overrides" section for why ordering, not a merge script, is
+      # what keeps Mictronics authoritative.
+      ofelia.job-run.runner-us-faa-telephony-designators.schedule: "0 10 6 * * 2"
+      ofelia.job-run.runner-us-faa-telephony-designators.image: "ghcr.io/brentio/skyfollower-runner-us-faa-telephony-designators:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.runner-us-faa-telephony-designators.network: *ofelia-runner-network
+      ofelia.job-run.runner-us-faa-telephony-designators.environment: *ofelia-runner-environment
+      ofelia.job-run.runner-us-faa-telephony-designators.delete: *ofelia-runner-delete
+
       ofelia.job-run.runner-nz-caa-registry.schedule: "0 10 5 * * 3"
       ofelia.job-run.runner-nz-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-nz-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-nz-caa-registry.network: *ofelia-runner-network
@@ -483,6 +493,12 @@ services:
   runner-mictronics:
     image: ghcr.io/brentio/skyfollower-runner-mictronics:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-runner-mictronics
+    profiles: ["runners"]
+    environment: *runner-environment
+
+  runner-us-faa-telephony-designators:
+    image: ghcr.io/brentio/skyfollower-runner-us-faa-telephony-designators:${SKYFOLLOWER_VERSION:-latest}
+    container_name: skyfollower-runner-us-faa-telephony-designators
     profiles: ["runners"]
     environment: *runner-environment
 
