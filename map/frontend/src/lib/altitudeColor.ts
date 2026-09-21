@@ -1,15 +1,14 @@
 // Originally ported verbatim from management-ui/frontend/src/lib/
 // flightView.ts's altitudeColor()/darkenColor() -- this is a separate,
 // standalone frontend project, so it carries its own copy rather than
-// importing across the two. The l breakpoints for h 60-140 have since
-// diverged from that source (#1912, see the table below) -- management-ui
-// still has the original, un-darkened values as of this change; whether it
-// needs the same fix is a separate call, not made here. altitudeColor is
-// used for the aircraft icon fill (MapView.tsx's symbol layer
-// `icon-color`), the live trail color (MapView.tsx's trail `line-color`),
-// and the Trace Points dot color (lib/tracePoints.ts), all driven off an
-// altitude value -- same mechanism throughout, per design. darkenColor is
-// used only by Trace Points, for the dot's stroke.
+// importing across the two. The l breakpoints for h 60-140 were darkened
+// (#1912, see the table below) and the same darkening was ported into
+// management-ui's copy in lockstep, so the two tables stay identical.
+// altitudeColor is used for the aircraft icon fill (MapView.tsx's symbol
+// layer `icon-color`), the live trail color (MapView.tsx's trail
+// `line-color`), and the Trace Points dot color (lib/tracePoints.ts), all
+// driven off an altitude value -- same mechanism throughout, per design.
+// darkenColor is used only by Trace Points, for the dot's stroke.
 
 // Altitude-to-color lookup table (hue and lightness each interpolated from
 // their own set of breakpoints below), giving a smooth climb/cruise/descent

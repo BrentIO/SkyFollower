@@ -28,6 +28,20 @@ export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 // color ramp. Only an "air" table is needed here: null altitude is handled
 // separately as pure black (see altitudeColor below) rather than through a
 // ground/unknown table entry.
+//
+// The l breakpoints for h 60-140 (roughly the 6,000-11,000ft altitude band
+// -- see the h table below) are darkened ~13-16 points relative to their
+// neighbors (#1912, ported from map/frontend's copy of this same table):
+// that hue range is a yellow-green-through-green that reads as low-contrast
+// against NEXRAD weather-radar reflectivity, which conventionally also
+// shades light/moderate precipitation in the same green family. Hue is left
+// untouched: shifting it risked colliding with the already-blue cruise-
+// altitude band (h 200-266, roughly 18,500-27,000ft) further up this same
+// table. The darkening is isolated to h 60-140 -- h 50 and h 160, its
+// boundary breakpoints, are unchanged, so the dip tapers smoothly in from
+// the lighter neighboring bands on both sides rather than creating a hard
+// edge. Every altitude outside roughly 6,000-15,000ft renders byte-for-byte
+// identically to before this change.
 const COLOR_BY_ALT_AIR = {
   s: 88,
   h: [
@@ -48,11 +62,11 @@ const COLOR_BY_ALT_AIR = {
     { h: 40, val: 52 },
     { h: 46, val: 51 },
     { h: 50, val: 46 },
-    { h: 60, val: 43 },
-    { h: 80, val: 41 },
-    { h: 100, val: 41 },
-    { h: 120, val: 41 },
-    { h: 140, val: 41 },
+    { h: 60, val: 30 },
+    { h: 80, val: 25 },
+    { h: 100, val: 24 },
+    { h: 120, val: 25 },
+    { h: 140, val: 28 },
     { h: 160, val: 40 },
     { h: 180, val: 40 },
     { h: 190, val: 44 },

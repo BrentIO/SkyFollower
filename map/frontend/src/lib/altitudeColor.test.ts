@@ -3,12 +3,11 @@ import { altitudeColor, darkenColor } from "./altitudeColor";
 
 // Reference values mirrored from
 // management-ui/frontend/src/lib/flightView.test.ts's altitudeColor
-// suite -- this was originally a verbatim port of the same function, so
-// most input/output pairs still hold here too. The 6,000-15,000ft range
-// has since diverged (#1912, see altitudeColor.ts's own comment) -- every
-// value below is deliberately chosen outside that range so this suite's
-// existing "matches management-ui" guarantee stays meaningful; the
-// diverged range gets its own dedicated tests further down.
+// suite -- this is a verbatim port of the same function (including the
+// #1912 darkening, ported into management-ui's copy in lockstep so both
+// stay identical), so the same input/output pairs hold here too. Every
+// value below is outside the #1912-darkened 6,000-15,000ft range, which
+// gets its own dedicated tests further down.
 describe("altitudeColor", () => {
   it("returns pure black for unknown/null altitude", () => {
     expect(altitudeColor(null)).toBe("hsl(0, 0%, 0%)");
