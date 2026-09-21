@@ -40,6 +40,7 @@ download_section_4 = _mod.download_section_4
 is_expired = _mod.is_expired
 build_record = _mod.build_record
 write_to_redis = _mod.write_to_redis
+ENRICHMENT_TTL_SECONDS = _mod.ENRICHMENT_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -231,10 +232,13 @@ class _FakeRedisJson:
     """Minimal fake reproducing real JSON.SET NX semantics: writes only
     when the key is absent, returns None (no-op) when NX blocks the write,
     matching what shared.redis_json.set_json() returns from the real
-    redis-py client."""
+    redis-py client. Also tracks EXPIRE calls (key -> most recent TTL
+    seconds), so tests can assert the TTL-refresh behavior independently
+    of whether the content write itself happened."""
 
     def __init__(self, existing: dict[str, dict] | None = None):
         self._store: dict[str, dict] = dict(existing or {})
+        self.expired: dict[str, int] = {}
 
     def json(self, encoder=None):
         return self
@@ -244,6 +248,10 @@ class _FakeRedisJson:
             return None
         self._store[key] = obj
         return "OK"
+
+    def expire(self, key, seconds):
+        self.expired[key] = seconds
+        return True
 
 
 class TestWriteToRedis:
@@ -293,3 +301,30 @@ class TestWriteToRedis:
         rows = [{"airline_designator": "NASA", "name": "National Aeronautics and Space Administration"}]
         write_to_redis(rows, r)
         assert "operator:NASA" in r._store
+
+    def test_ttl_refreshed_on_a_newly_written_designator(self):
+        r = _FakeRedisJson()
+        rows = [{"airline_designator": "KMM", "name": "KM MALTA AIRLINES"}]
+        write_to_redis(rows, r)
+        assert r.expired["operator:KMM"] == ENRICHMENT_TTL_SECONDS
+
+    def test_ttl_refreshed_on_an_already_existing_entry_this_runner_never_wrote(self):
+        """The whole point of refreshing independently of the content write:
+        an existing mictronics-owned entry gets its TTL kept alive by this
+        runner too, even though its content is never touched."""
+        r = _FakeRedisJson(existing={"operator:AAL": {"airline_designator": "AAL", "name": "Pre-existing Mictronics value"}})
+        rows = [{"airline_designator": "AAL", "name": "Should not overwrite"}]
+        count = write_to_redis(rows, r)
+        assert count == 0
+        assert r._store["operator:AAL"]["name"] == "Pre-existing Mictronics value"
+        assert r.expired["operator:AAL"] == ENRICHMENT_TTL_SECONDS
+
+    def test_ttl_refreshed_for_every_row_in_a_mixed_batch(self):
+        r = _FakeRedisJson(existing={"operator:AAL": {"airline_designator": "AAL", "name": "Existing"}})
+        rows = [
+            {"airline_designator": "AAL", "name": "Should not overwrite"},
+            {"airline_designator": "KMM", "name": "New entry"},
+        ]
+        write_to_redis(rows, r)
+        assert r.expired["operator:AAL"] == ENRICHMENT_TTL_SECONDS
+        assert r.expired["operator:KMM"] == ENRICHMENT_TTL_SECONDS

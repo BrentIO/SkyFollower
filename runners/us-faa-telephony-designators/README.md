@@ -24,9 +24,9 @@ Mictronics is the preferred source (better name capitalization, actively maintai
 
 Correctness against a future Mictronics update falls out of **scheduling order, not a merge script**: `mictronics`'s own writer already overwrites `operator:{designator}` unconditionally on every run. If Mictronics later adds a designator this runner already backfilled, Mictronics' next scheduled run simply replaces it — which is exactly why this runner must run *after* `mictronics` in the schedule, the same dependency convention `bz-bdca-registry`/`is-samgongustofa-registry` already use for a different reason (resolving ICAO hex against Mictronics' own data).
 
-## No TTL on the records this runner writes
+## TTL is refreshed independently of the content write
 
-Every other enrichment key in this repo gets `ENRICHMENT_TTL_SECONDS` (14 days), refreshed on every write. This runner's writes are deliberately different: a given designator is written **at most once, ever** — every subsequent run finds the key already present and the `NX` write is a no-op, so a TTL's clock would never get refreshed after that first write. With a 14-day TTL and this runner's weekly cadence, the record would expire and vanish from Redis between runs, then reappear on the next run — a real, avoidable gap. FAA's published designator table is static reference data, not perishable per-run enrichment, so these records are written without an expiry.
+`operator:{designator}` gets the standard `ENRICHMENT_TTL_SECONDS` (14 days), same as every other enrichment key — but the TTL refresh is separate from the NX content write. Content is written at most once, ever (every subsequent run finds the key already present and NX is a no-op) — so if the TTL were only ever set at write time, the record would expire and vanish from Redis between runs, then reappear on the next run, a real, avoidable gap. Instead, this runner refreshes the TTL on **every** designator it processes on every run — written or not, including designators it never wrote the content of (e.g. an existing Mictronics-sourced entry). That makes this runner a second, independent keep-alive heartbeat for the whole `operator:{designator}` keyspace: a record only expires if every runner that touches its key stops running for 14 days, matching every other enrichment key's failure mode, rather than never expiring at all regardless of whether the underlying data is still correct.
 
 ## Section 4 handling
 
@@ -88,7 +88,7 @@ docker run --rm --network host redis:latest redis-cli JSON.GET operator:FEMA
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. Unlike most runners, this one writes `operator:{designator}` with **no TTL** (see above).
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `operator:{designator}` with the standard 14-day TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`), refreshed independently of the content write (see above).
 
 ## MQTT
 

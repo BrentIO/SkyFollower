@@ -42,15 +42,20 @@ already overwrites operator:{designator} unconditionally on every run, so
 if it ever gains a designator this runner backfilled, mictronics' own
 next scheduled run simply replaces it.
 
-Deliberately no TTL on the records this runner writes, unlike most other
-enrichment keys. A given designator is written at most once ever -- every
-run after that first write finds the key already present and NX skips it,
-so the key's TTL clock (if it had one) would never get refreshed. With
-the usual ENRICHMENT_TTL_SECONDS (14 days) and this runner's weekly
-cadence, the record would still expire and vanish from Redis between
-runs, then reappear on the next run -- a real, avoidable gap this
-additive-only design has no reason to accept for what is a static,
-FAA-published reference table, not perishable per-run enrichment data.
+Uses the standard ENRICHMENT_TTL_SECONDS (14 days), same as every other
+enrichment key -- but refreshed independently of the NX content write.
+Content is written at most once ever (NX skips every run after the
+first), so if the TTL were only ever set at write time, it would expire
+and the record would vanish from Redis between runs, then reappear on
+the next run -- a real, avoidable gap. Instead, every designator this
+runner processes -- written or not, including ones it never wrote the
+content of (e.g. an existing mictronics-sourced entry) -- gets its TTL
+refreshed on every run. This makes the runner a second, independent
+keep-alive heartbeat for the whole operator:{designator} keyspace: a
+record only expires if every runner that touches its key stops running
+for 14 days, the same failure mode every other enrichment key already
+has, rather than a no-TTL design's single point of failure (a bad/wrong
+designator staying in Redis forever with nothing to ever clear it).
 
 Data sources:
   https://www.faa.gov/air_traffic/publications/atpubs/cnt_html/chap3_section_3.html
@@ -79,6 +84,7 @@ from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import operator_key
 from shared.redis_json import set_json
+from shared.timing import ENRICHMENT_TTL_SECONDS
 from shared.mqtt import build_mqtt_client
 from shared.mqtt_register import publish_register
 from shared.logging_setup import configure_logging
@@ -233,9 +239,22 @@ def build_record(row: dict, *, default_country: Optional[str] = None) -> dict:
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis) -> int:
     """Write operator:{designator} for every row, only when that key does
-    not already exist. Returns the count of designators actually newly
-    written (not the count attempted -- a row skipped because the key
-    already exists doesn't count)."""
+    not already exist -- content is strictly additive, per the module
+    docstring. The TTL is a separate concern from the content write: this
+    runner refreshes ENRICHMENT_TTL_SECONDS on every designator it
+    processes, on every run, regardless of whether the NX write above
+    actually happened -- including designators this runner has never
+    written the content of (e.g. an existing mictronics-sourced entry).
+    That makes this runner a second, independent keep-alive heartbeat for
+    the whole operator:{designator} keyspace, not just for its own
+    backfilled entries -- a designator's TTL clock only ever stops
+    getting refreshed if BOTH mictronics and this runner stop running,
+    same failure mode as every other enrichment key, rather than the
+    single-point-of-failure a no-TTL design would otherwise trade for.
+
+    Returns the count of designators actually newly written (not the
+    count attempted -- a row whose key already existed doesn't count,
+    even though its TTL was still refreshed)."""
     written = 0
     skipped_existing = 0
     for row in rows:
@@ -245,11 +264,13 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis) -> int:
             written += 1
         else:
             skipped_existing += 1
+        r.expire(key, ENRICHMENT_TTL_SECONDS)
 
     logger.info(
-        "Finished: %d designators newly written, %d already present (left untouched).",
+        "Finished: %d designators newly written, %d already present (TTL refreshed on all %d).",
         written,
         skipped_existing,
+        written + skipped_existing,
     )
     return written
 
