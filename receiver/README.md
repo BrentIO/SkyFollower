@@ -252,40 +252,68 @@ safe to call concurrently from more than one thread. Exactly one thread,
 it owns `process_data_events()` **and** every `basic_publish()` call.
 
 The source threads (one per configured `sources[]` connection) don't
-publish, and never do a disk write. Each parses a frame, drops
-`(routing_key, payload)` on a bounded in-memory `queue.Queue`, and
+publish, and never do a disk write. Each parses a frame and hands
+`(routing_key, payload, received_at)` off for publishing, then
 immediately returns to `sock.recv()`. It never calls a pika method and
 never waits on the broker, so a slow, blocked or unreachable RabbitMQ
 cannot back-pressure the TCP socket and make readsb shed messages
 upstream.
 
-If the live queue is full (the broker has been unreachable long enough
-that even that few-second buffer backed up), the source thread hands the
-message to a second bounded in-memory queue — the **overflow queue** —
-with the same non-blocking `put_nowait`, and still returns to the socket
-at once. A dedicated `overflow-writer` thread is the sole consumer: it
-batches overflow messages into the SQLite fallback with one
-`executemany` + one commit per pass, so the fsync-class disk write stays
-off every socket-read thread — the disk analogue of what the `rabbitmq`
-thread does for the live queue. Only if the overflow queue *also* fills
-(the writer somehow can't keep pace) does a source thread take a direct
-synchronous fallback write itself — a last-resort pressure valve that a
-sustained outage does not normally reach, not the steady state it settles
-into.
+### Ordering: the `self._backlogged` gate (#1956)
+
+Where a message actually lands is decided by one shared, in-memory flag,
+`self._backlogged` — not by whether the live queue happens to have room
+right now:
+
+- **Clear** (the common case): a fresh message goes straight onto the
+  bounded in-memory `queue.Queue` — the **live queue** — no disk touched.
+- **Set**: *every* new message, no matter how much room the live queue
+  has, is routed to a second bounded in-memory queue — the **overflow
+  queue** — with the same non-blocking `put_nowait`, and the source
+  thread still returns to the socket at once. A dedicated
+  `overflow-writer` thread is the sole consumer of the overflow queue: it
+  batches messages into the SQLite fallback (`queue.db`) with one
+  `executemany` + one commit per pass, so the fsync-class disk write
+  stays off every socket-read thread. Only if the overflow queue *also*
+  fills (the writer somehow can't keep pace) does a source thread take a
+  direct synchronous fallback write itself — a last-resort pressure valve
+  that a sustained outage does not normally reach, not the steady state
+  it settles into.
+
+The flag is **set** the instant a message can't go straight out — the
+live queue is unexpectedly full, or a `basic_publish()` call fails — and
+is only **cleared** once the `rabbitmq` thread confirms, in the same
+pass, that both the live queue and `queue.db` are fully drained to zero.
+Clearing on anything short of a confirmed empty drain (e.g. "queue.db is
+merely small now") would let a fresh message publish ahead of a handful
+of older rows still waiting there.
+
+This is what prevents a backlog from being leapfrogged: once the flag is
+set, the live queue can never be topped up with content newer than
+whatever is still sitting in `queue.db`, so it only ever holds content
+that predates the backlog. That's what makes it safe for the `rabbitmq`
+thread to keep unconditionally draining the live queue first, exactly as
+it always has (see below) — nothing new can land there while a backlog
+exists to be leapfrogged in the first place. Before this gate existed,
+routing was decided purely by whether the live queue was full *at that
+instant*, which let ordinary post-recovery live traffic — freshly
+arriving, and therefore newer than anything left in `queue.db` — refill
+the live queue and publish ahead of the older backlog rows still queued
+behind it.
 
 The `rabbitmq` thread's inner loop, while the connection is up:
 
 1. Pumps `process_data_events(time_limit=0)` — heartbeats, and the
    broker's `Connection.Blocked`/`Unblocked` signals.
-2. Publishes **everything** waiting on the in-memory queue (bounded per
-   pass only so step 1 keeps running under sustained load).
+2. Publishes **everything** currently waiting on the live queue (bounded
+   per pass only so step 1 keeps running under sustained load).
 3. Only when nothing is waiting live, advances the SQLite fallback backlog
    by **one bounded batch** (`_FALLBACK_DRAIN_BATCH_MAX` rows, default
    100), in one `SELECT` + one `DELETE`/`commit` for the batch, then loops
-   straight back to step 2.
+   straight back to step 2. A batch that empties `queue.db` while the live
+   queue was also observed empty this same pass clears `self._backlogged`.
 
-This is a strict priority, not a time-slice or a fair share: a backlog
-drain of any size can never delay a live message by more than
+A backlog drain of any size can never delay a live message by more than
 `_FALLBACK_DRAIN_BATCH_MAX` `basic_publish()` calls, because backlog rows
 are only ever pulled on a pass where the live queue was observed empty,
 and the live queue is re-checked between every batch (never mid-batch).
@@ -297,6 +325,12 @@ capped post-outage catch-up at roughly one SQLite commit per message.
 can still stall in — the broker holding publishers blocked on a resource
 alarm while the socket stays up — by tearing the connection down so the
 loop reconnects and re-validates.
+
+A separate, purely informational signal — `backlog_age_seconds`, published
+in telemetry — tracks how old the last published message was at publish
+time. It never gates routing; it exists only so an operator (or the map
+service, or the message processor) can see how far behind the receiver
+currently is.
 
 ## Fault Tolerance
 
@@ -389,6 +423,7 @@ All topics use the root `SkyFollower`.
 | `local_queue_depth` | Integer as string | Messages queued in the local SQLite fallback (`queue.db`) plus any still buffered in memory — the live queue awaiting the publisher thread and the overflow queue awaiting the `overflow-writer` thread |
 | `dead_letter_queue_depth` | Integer as string | Messages dead-lettered after repeatedly failing to publish (see [Dead-Lettering Poison Messages](#dead-lettering-poison-messages)) |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
+| `backlog_age_seconds` | Float as string | How old the last message published to RabbitMQ was, at the moment it was published. Near `0` while caught up; grows while draining a backlog. Informational only -- see [Ordering: the `self._backlogged` gate](#ordering-the-selfbacklogged-gate-1956) -- never consulted for routing |
 | `started_at` | UTC ISO-8601 timestamp | Process start time |
 | `version` | String | Running image version (`VERSION` env var, `"dev"` if unset) |
 

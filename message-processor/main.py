@@ -1639,7 +1639,18 @@ class MessageProcessor:
         if msg.source not in flight.receiver_sources:
             flight.receiver_sources.append(msg.source)
 
-        flight.last_message = msg.received_at
+        # #1956: a message can still arrive out of order for this aircraft
+        # -- cross-receiver skew (a 1090 and a 978 receiver, or redundant
+        # antennas, each publishing independently) is the expected residual
+        # source once the receiver's own ordering fix is in place; rare,
+        # not eliminated. Only ever advance last_message forward. Letting
+        # an older message regress it would corrupt the *next*
+        # (correctly-ordered) message's gap/TTL check above -- an inflated
+        # gap computed against a wrongly-rolled-back last_message could
+        # force-archive/split a flight that never actually ended.
+        out_of_order = exists and msg.received_at < flight.last_message
+        if not out_of_order:
+            flight.last_message = msg.received_at
         flight.total_messages += 1
 
         if data.pop("_position_rejected", False):
@@ -1674,8 +1685,14 @@ class MessageProcessor:
 
         # Map UDP `position` message -- throttled per aircraft to at most
         # one per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS; no-op when
-        # MAP_UDP_HOST is unset.
-        self._publish_map_position(flight, data, msg.received_at)
+        # MAP_UDP_HOST is unset. Skipped entirely for an out-of-order
+        # message (#1956): unlike MAX_MESSAGE_LAG_SECONDS (which only
+        # catches a message that's stale in absolute terms), this message
+        # could well be "fresh enough" and still be older than a position
+        # already shown for this aircraft -- sending it would visibly snap
+        # a currently-displayed aircraft backward on the map.
+        if not out_of_order:
+            self._publish_map_position(flight, data, msg.received_at)
 
         if "squawk" in data and not flight.squawk:
             squawk = str(data["squawk"])
