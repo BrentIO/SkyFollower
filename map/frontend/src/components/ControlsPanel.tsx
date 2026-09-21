@@ -65,6 +65,11 @@ export interface ControlsPanelProps {
    * no radar layer to animate. */
   radarPlaying: boolean;
   onToggleRadarPlaying: () => void;
+  /** #1910: true only while playback's frame-prefetch phase is in
+   * progress -- shows a spinner on the Play button instead of the
+   * play/pause icon, and disables it, so the pause before the loop
+   * visibly starts reads as "loading," not a stalled click. */
+  radarPlaybackLoading: boolean;
 }
 
 // Top-right floating controls: one unified vertically stacked column mixing
@@ -111,6 +116,7 @@ export function ControlsPanel({
   onRadarOpacityChange,
   radarPlaying,
   onToggleRadarPlaying,
+  radarPlaybackLoading,
 }: ControlsPanelProps) {
   // Purely local, transient UI state -- whether the radar popover is open.
   // Not lifted to MapView/persisted: unlike radarOn/radarOpacity, this
@@ -214,11 +220,12 @@ export function ControlsPanel({
                 />
               </label>
               <IconButton
-                label={radarPlaying ? "Pause" : "Play"}
+                label={radarPlaybackLoading ? "Loading radar frames" : radarPlaying ? "Pause" : "Play"}
                 icon={radarPlaying ? PAUSE_ICON : PLAY_ICON}
                 active={radarPlaying}
                 onClick={onToggleRadarPlaying}
                 disabled={!radarOn}
+                loading={radarPlaybackLoading}
                 size="md"
               />
             </div>

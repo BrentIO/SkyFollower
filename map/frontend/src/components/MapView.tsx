@@ -57,6 +57,7 @@ import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { isWithinCenterTolerance } from "../lib/mapCentered";
 import {
   RADAR_FRAME_INTERVAL_MS,
+  RADAR_FRAME_LOAD_TIMEOUT_MS,
   RADAR_MAX_ZOOM,
   RADAR_MIN_ZOOM,
   RADAR_PLAYBACK_OFFSETS_MINUTES,
@@ -218,6 +219,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // playing also stops playback, via handleToggleRadar below -- otherwise
   // turning it back on later would silently resume animating.
   const [radarPlaying, setRadarPlaying] = useState(false);
+  // #1910: true only during the playback effect's frame-prefetch phase
+  // (below) -- surfaced on the Play button as a loading spinner so the
+  // pause before the loop visibly starts reads as "loading," not a
+  // stalled click. Transient, like radarPlaying itself.
+  const [radarPlaybackLoading, setRadarPlaybackLoading] = useState(false);
   function handleToggleRadar() {
     setRadarOn((prev) => {
       const next = !prev;
@@ -1114,28 +1120,47 @@ function MapViewInner({ config }: { config: AppConfig }) {
     return () => clearInterval(interval);
   }, [radarOn, radarPlaying, mapLoaded]);
 
-  // Playback (#1896) -- steps through RADAR_PLAYBACK_OFFSETS_MINUTES (last
-  // 30 minutes, oldest to newest, ending on the current frame) on a fixed
-  // interval, looping continuously while `radarPlaying` is true. A single
-  // reused source/layer, retargeted per frame via `setTiles()` rather than
-  // one source per frame -- only ever fetches the one frame currently on
-  // screen, and this whole source/layer only exists for the duration of
-  // an active play session (added here, removed by this same effect's
-  // cleanup), so idle/paused/off state fetches nothing here either. The
-  // snapshot layer is hidden (not removed -- its own effect above owns its
-  // lifecycle) for the duration so the playback layer is what's actually
-  // visible; the cleanup restores it, which is also what "pause reverts to
-  // the current snapshot immediately" (#1896) falls out of.
+  // Playback (#1896, prefetch behavior fixed in #1910) -- steps through
+  // RADAR_PLAYBACK_OFFSETS_MINUTES (last 30 minutes, oldest to newest,
+  // ending on the current frame) on a fixed interval, looping continuously
+  // while `radarPlaying` is true. A single reused source/layer, retargeted
+  // per frame via `setTiles()` rather than one source per frame -- only
+  // ever fetches frames for the one viewport currently on screen, and this
+  // whole source/layer only exists for the duration of an active play
+  // session (added here, removed by this same effect's cleanup), so idle/
+  // paused/off state fetches nothing here either. The snapshot layer is
+  // hidden (not removed -- its own effect above owns its lifecycle) for
+  // the duration so the playback layer is what's actually visible; the
+  // cleanup restores it, which is also what "pause reverts to the current
+  // snapshot immediately" (#1896) falls out of.
+  //
+  // #1910: the original version retargeted this source straight onto the
+  // fixed 500ms interval with nothing prefetched, so most steps displayed
+  // a blank/loading tile mid-fetch -- it read as "flashing," not animating.
+  // Fixed by prefetching every frame sequentially first (waiting for each
+  // one's tiles to actually finish loading, via `map.isSourceLoaded()`,
+  // not just firing the request) before starting the visible interval --
+  // by the time the fast loop runs, every frame's tiles are already warm
+  // in the browser's own HTTP cache, so each `setTiles()` during the loop
+  // resolves instantly instead of triggering a fresh network fetch.
+  // `radarPlaybackLoading` surfaces this prefetch phase on the Play button
+  // as a spinner (ControlsPanel.tsx) so the pause reads as "loading."
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !radarOn || !radarPlaying) return;
+    // TS doesn't carry the null-narrowing above into the nested `function`
+    // declarations below (they're not treated as immediately-invoked) --
+    // this re-binding gives them a non-nullable reference to close over.
+    const radarMap = map;
+
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | undefined;
 
     map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "none");
 
-    let frameIndex = 0;
     map.addSource(RADAR_PLAYBACK_SOURCE_ID, {
       type: "raster",
-      tiles: [radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])],
+      tiles: [radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[0])],
       tileSize: RADAR_TILE_SIZE,
       minzoom: RADAR_MIN_ZOOM,
       maxzoom: RADAR_MAX_ZOOM,
@@ -1150,14 +1175,56 @@ function MapViewInner({ config }: { config: AppConfig }) {
       RANGE_RING_LAYER_ID,
     );
 
-    const interval = setInterval(() => {
-      frameIndex = (frameIndex + 1) % RADAR_PLAYBACK_OFFSETS_MINUTES.length;
-      const source = map.getSource(RADAR_PLAYBACK_SOURCE_ID) as maplibregl.RasterTileSource | undefined;
-      source?.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
-    }, RADAR_FRAME_INTERVAL_MS);
+    // Resolves once RADAR_PLAYBACK_SOURCE_ID's tiles are loaded for the
+    // current viewport, or after RADAR_FRAME_LOAD_TIMEOUT_MS -- whichever
+    // comes first. The timeout means one slow/failed frame during prefetch
+    // degrades (that frame plays back not-yet-cached) rather than blocking
+    // playback from ever starting.
+    function waitForCurrentFrameToLoad(): Promise<void> {
+      return new Promise((resolve) => {
+        if (radarMap.isSourceLoaded(RADAR_PLAYBACK_SOURCE_ID)) {
+          resolve();
+          return;
+        }
+        const timeout = setTimeout(() => {
+          radarMap.off("idle", onIdle);
+          resolve();
+        }, RADAR_FRAME_LOAD_TIMEOUT_MS);
+        function onIdle() {
+          if (!radarMap.isSourceLoaded(RADAR_PLAYBACK_SOURCE_ID)) return;
+          clearTimeout(timeout);
+          radarMap.off("idle", onIdle);
+          resolve();
+        }
+        radarMap.on("idle", onIdle);
+      });
+    }
+
+    async function prefetchThenPlay() {
+      setRadarPlaybackLoading(true);
+      const source = radarMap.getSource(RADAR_PLAYBACK_SOURCE_ID) as maplibregl.RasterTileSource;
+      for (const offsetMinutes of RADAR_PLAYBACK_OFFSETS_MINUTES) {
+        if (cancelled) return;
+        source.setTiles([radarFrameTileUrl(offsetMinutes)]);
+        await waitForCurrentFrameToLoad();
+      }
+      if (cancelled) return;
+      setRadarPlaybackLoading(false);
+
+      let frameIndex = 0;
+      source.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
+      interval = setInterval(() => {
+        frameIndex = (frameIndex + 1) % RADAR_PLAYBACK_OFFSETS_MINUTES.length;
+        source.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
+      }, RADAR_FRAME_INTERVAL_MS);
+    }
+
+    prefetchThenPlay();
 
     return () => {
-      clearInterval(interval);
+      cancelled = true;
+      setRadarPlaybackLoading(false);
+      if (interval) clearInterval(interval);
       if (map.getLayer(RADAR_PLAYBACK_LAYER_ID)) map.removeLayer(RADAR_PLAYBACK_LAYER_ID);
       if (map.getSource(RADAR_PLAYBACK_SOURCE_ID)) map.removeSource(RADAR_PLAYBACK_SOURCE_ID);
       if (map.getLayer(RADAR_LAYER_ID)) map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible");
@@ -1496,6 +1563,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
           onRadarOpacityChange={setRadarOpacity}
           radarPlaying={radarPlaying}
           onToggleRadarPlaying={() => setRadarPlaying((prev) => !prev)}
+          radarPlaybackLoading={radarPlaybackLoading}
         />
       </div>
       <AircraftListPanel
