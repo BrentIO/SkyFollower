@@ -126,7 +126,18 @@ export function ControlsPanel({
   const [radarExpanded, setRadarExpanded] = useState(false);
 
   return (
-    <div className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2">
+    <div
+      className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2"
+      // #1953: pinned above every InfoBoxLayer label box, same
+      // MAX_LABEL_Z_INDEX + 1 convention AircraftDetailPanel/
+      // AircraftListPanel use -- without this, an info box with a high
+      // altitude-derived z-index (up to MAX_LABEL_Z_INDEX itself) paints
+      // over whichever button in this column it happens to overlap.
+      // #1909 fixed only the radar popover this way; this covers the
+      // whole column (including the popover, whose own zIndex below is
+      // now redundant but harmless).
+      style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
+    >
       <div className="pointer-events-auto flex flex-col gap-2">
         <IconButton
           label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
@@ -184,14 +195,8 @@ export function ControlsPanel({
               // the toggle button beside it -- no outside-click-to-close
               // handling here, matching this codebase's other disclosure
               // (AircraftListPanel's drawer also only closes on its own
-              // explicit toggle).
-              //
-              // #1909: pinned above every InfoBoxLayer label box, same
-              // MAX_LABEL_Z_INDEX + 1 convention AircraftDetailPanel/
-              // AircraftListPanel already use -- without this, an
-              // info box with a high altitude-derived z-index (up to
-              // MAX_LABEL_Z_INDEX itself) paints over this popover.
-              style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
+              // explicit toggle). No zIndex needed here (#1953) -- the
+              // outer wrapper above already covers this popover.
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>
