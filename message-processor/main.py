@@ -86,6 +86,8 @@ from shared.timing import (
     HEALTHCHECK_INTERVAL_SECONDS,
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
+    IDENT_CONFIRM_COUNT,
+    IDENT_CONFIRM_WINDOW_SECONDS,
     MAP_HEARTBEAT_INTERVAL_SECONDS,
     MAP_METADATA_RESEND_INTERVAL_SECONDS,
     MAX_MESSAGE_LAG_SECONDS,
@@ -211,10 +213,14 @@ def _short_hash(full: Optional[str]) -> str:
     return full[-8:] if full else "unknown"
 
 
-# Repeat-sighting count for confirming a reserved squawk or an ident
-# sourced from an unverifiable message -- matches SkyFollower-legacy's
-# mitigation for the same false-positive pattern. The trailing time window
-# it is measured over is PARITY_ERROR_CONFIRM_WINDOW_SECONDS (shared/timing.py).
+# Repeat-sighting count for confirming a reserved squawk sourced from an
+# unverifiable message -- matches SkyFollower-legacy's mitigation for the
+# same false-positive pattern. The trailing time window it is measured
+# over is PARITY_ERROR_CONFIRM_WINDOW_SECONDS (shared/timing.py). Ident
+# used this same constant until #1915 split it out with its own,
+# independently-derived values (IDENT_CONFIRM_COUNT/
+# IDENT_CONFIRM_WINDOW_SECONDS, shared/timing.py) -- do not reuse this one
+# for ident.
 _PARITY_ERROR_CONFIRM_COUNT = 5
 
 
@@ -1708,9 +1714,15 @@ class MessageProcessor:
                 else:
                     # DF20/21 Comm-B BDS 2,0 -- unlike squawk there's no
                     # "safe" subset of ident values to exempt, so every
-                    # unverified ident needs confirmation (see #900).
+                    # unverified ident needs confirmation (see #900). Uses
+                    # its own, much more lenient count/window than squawk's
+                    # (#1915) -- see IDENT_CONFIRM_COUNT/
+                    # IDENT_CONFIRM_WINDOW_SECONDS's docstring in
+                    # shared/timing.py for why.
                     flight.pending_ident, confirmed = _confirm_after_repeated_sightings(
                         flight.pending_ident, ident, msg.received_at,
+                        window_seconds=IDENT_CONFIRM_WINDOW_SECONDS,
+                        required_count=IDENT_CONFIRM_COUNT,
                     )
                     if confirmed:
                         flight.ident = ident

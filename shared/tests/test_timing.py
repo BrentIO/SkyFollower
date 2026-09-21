@@ -35,7 +35,7 @@ _ALLOWED_KINDS = {
 }
 
 # Public names that are counts, not durations, and so carry no ``_SECONDS``.
-_COUNT_NAMES = {"TCP_KEEPALIVE_PROBES"}
+_COUNT_NAMES = {"TCP_KEEPALIVE_PROBES", "IDENT_CONFIRM_COUNT"}
 
 
 class TestNamingConvention:

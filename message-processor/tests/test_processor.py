@@ -65,6 +65,8 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _migrate_schema,
     _confirm_after_repeated_sightings,
     _PARITY_ERROR_CONFIRM_COUNT,
+    IDENT_CONFIRM_COUNT,
+    IDENT_CONFIRM_WINDOW_SECONDS,
     PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     main as processor_main,
 )
@@ -3962,8 +3964,13 @@ class TestSquawkConfirmation:
 class TestIdentConfirmation:
     """_update_flight's #900 ident extension: verified source (DF17/18)
     trusts immediately; unverified source (DF20/21 Comm-B BDS 2,0) needs
-    the same confirmation treatment as reserved squawks, but for every
-    value -- there's no "safe" ident subset the way ordinary squawks are."""
+    repeated-sighting confirmation, but for every value -- there's no
+    "safe" ident subset the way ordinary squawks are. Since #1915, ident
+    uses its own IDENT_CONFIRM_COUNT/IDENT_CONFIRM_WINDOW_SECONDS
+    (2 sightings, effectively unbounded within one flight), deliberately
+    more lenient than squawk's _PARITY_ERROR_CONFIRM_COUNT/
+    PARITY_ERROR_CONFIRM_WINDOW_SECONDS -- see TestSquawkConfirmation
+    above, which is unaffected and still exercises the original values."""
 
     def test_verified_ident_trusts_immediately(self):
         p, mock_redis = _make_processor()
@@ -3982,7 +3989,7 @@ class TestIdentConfirmation:
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = None
 
-        for i in range(_PARITY_ERROR_CONFIRM_COUNT - 1):
+        for i in range(IDENT_CONFIRM_COUNT - 1):
             msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
             with p._db_lock:
                 p._update_flight({"icao_hex": "A8AE7F", "ident": "N30GD", "verified": False}, msg)
@@ -3994,7 +4001,7 @@ class TestIdentConfirmation:
 
         msg = InboundMessage(
             raw="00" * 14, icao_hex="A8AE7F",
-            received_at=float(_PARITY_ERROR_CONFIRM_COUNT - 1), source="1090",
+            received_at=float(IDENT_CONFIRM_COUNT - 1), source="1090",
         )
         with p._db_lock:
             p._update_flight({"icao_hex": "A8AE7F", "ident": "N30GD", "verified": False}, msg)
@@ -4007,7 +4014,7 @@ class TestIdentConfirmation:
     def test_alternating_unverified_idents_never_confirm(self):
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = None
-        values = ["N30GD", "ABCDEF"] * _PARITY_ERROR_CONFIRM_COUNT
+        values = ["N30GD", "ABCDEF"] * IDENT_CONFIRM_COUNT
 
         for i, value in enumerate(values):
             msg = InboundMessage(raw="00" * 14, icao_hex="A8AE7F", received_at=float(i), source="1090")
@@ -4017,6 +4024,60 @@ class TestIdentConfirmation:
         f = Flight(p._db)
         f.load("A8AE7F")
         assert f.ident == ""
+
+    def test_sparse_non_clustered_sightings_still_confirm(self):
+        """#1915's real-world motivating case: interrogation-driven DF20/21
+        Comm-B replies, spaced minutes apart -- far outside the old shared
+        30-second squawk window (PARITY_ERROR_CONFIRM_WINDOW_SECONDS),
+        which would never have confirmed this. IDENT_CONFIRM_WINDOW_SECONDS
+        is effectively unbounded within one flight, so 2 sightings any
+        distance apart (short of a full flight's duration) still confirm."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        assert PARITY_ERROR_CONFIRM_WINDOW_SECONDS < 60 * 5  # sanity: the old window really is this tight
+        first_at = 0.0
+        second_at = 60.0 * 5  # 5 minutes later -- would never confirm under squawk's window
+
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="AE4DDD", received_at=first_at, source="1090")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "AE4DDD", "ident": "SAM087", "verified": False}, msg1)
+
+        f = Flight(p._db)
+        f.load("AE4DDD")
+        assert f.ident == ""
+        assert f.pending_ident["value"] == "SAM087"
+
+        msg2 = InboundMessage(raw="00" * 14, icao_hex="AE4DDD", received_at=second_at, source="1090")
+        with p._db_lock:
+            p._update_flight({"icao_hex": "AE4DDD", "ident": "SAM087", "verified": False}, msg2)
+
+        f2 = Flight(p._db)
+        f2.load("AE4DDD")
+        assert f2.ident == "SAM087"
+        assert f2.pending_ident is None
+
+    def test_sightings_outside_ident_window_never_confirm(self):
+        """The ident window is wide, not infinite -- two sightings further
+        apart than IDENT_CONFIRM_WINDOW_SECONDS itself still don't confirm,
+        confirming this is a real (very large) window, not a bypass."""
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = None
+
+        msg1 = InboundMessage(raw="00" * 14, icao_hex="AE4DDD", received_at=0.0, source="1090")
+        msg2 = InboundMessage(
+            raw="00" * 14, icao_hex="AE4DDD",
+            received_at=float(IDENT_CONFIRM_WINDOW_SECONDS + 1), source="1090",
+        )
+        with p._db_lock:
+            p._update_flight({"icao_hex": "AE4DDD", "ident": "SAM087", "verified": False}, msg1)
+            p._update_flight({"icao_hex": "AE4DDD", "ident": "SAM087", "verified": False}, msg2)
+
+        f = Flight(p._db)
+        f.load("AE4DDD")
+        assert f.ident == ""
+        assert f.pending_ident["value"] == "SAM087"
+        assert len(f.pending_ident["sightings"]) == 1
 
 
 class TestForceArchiveFromRules:
