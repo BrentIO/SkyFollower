@@ -52,6 +52,12 @@ export interface AircraftListRow {
   /** isEmergencySquawk(flight.squawk) -- drives the row's emergency
    * highlight, overriding normal banding entirely. */
   emergency: boolean;
+  /** True when flight.receiver_sources includes "978" (UAT) -- drives the
+   * Tags column's blue "U" badge (#1901). */
+  isUat: boolean;
+  /** True when flight.receiver_sources includes "EXTERNAL" -- drives the
+   * Tags column's blue "E" badge (#1901). */
+  isExternal: boolean;
 }
 
 // One aircraft's row. `flight` is an AircraftRecord (not just MapFlight)
@@ -79,6 +85,8 @@ export function buildAircraftListRow(flight: AircraftRecord, center: CenterPoint
     distanceNm: distanceDisplay != null ? Number.parseFloat(distanceDisplay) : null,
     distanceDisplay,
     emergency: isEmergencySquawk(flight.squawk),
+    isUat: !!flight.receiver_sources?.includes("978"),
+    isExternal: !!flight.receiver_sources?.includes("EXTERNAL"),
   };
 }
 

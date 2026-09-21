@@ -10,14 +10,16 @@ import { IconButton } from "./IconButton";
 
 // Copied verbatim (Tailwind class strings, not just visually similar hex
 // values) from management-ui/frontend/src/views/LookupView.tsx's
-// BADGE_CLASSES/Badge -- only the "green" (Military) and "yellow" (Special
-// Livery) variants are used here. Exported so a plain unit test (no
-// jsdom/render harness in this project -- see lib/config.test.ts) can
-// assert byte-for-byte equality against that source, rather than only
-// exercising these strings through a rendered DOM.
+// BADGE_CLASSES/Badge -- "green" (Military), "yellow" (Special Livery), and
+// "blue" (#1901, UAT/978 and External source tags on the Aircraft list) are
+// used here. Exported so a plain unit test (no jsdom/render harness in this
+// project -- see lib/config.test.ts) can assert byte-for-byte equality
+// against that source, rather than only exercising these strings through a
+// rendered DOM.
 export const BADGE_CLASSES = {
   yellow: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+  blue: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200",
 } as const;
 export const BADGE_BASE = "rounded px-2 py-0.5 text-xs font-semibold";
 
