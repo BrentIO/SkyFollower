@@ -324,10 +324,23 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
     expect(callSite).toContain("loading={radarPlaybackLoading}");
   });
 
-  it("#1909: the popover pins itself above every InfoBoxLayer label via MAX_LABEL_Z_INDEX + 1", () => {
-    expect(controlsPanelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";');
+  it("#1953: the popover no longer needs its own zIndex -- the outer column wrapper covers it", () => {
     const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");
     const callSite = controlsPanelSource.slice(popoverIndex, popoverIndex + 1200);
+    expect(callSite).not.toContain("style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}");
+  });
+});
+
+describe("outer column wrapper -- #1953: every button pinned above every InfoBoxLayer label", () => {
+  it("imports MAX_LABEL_Z_INDEX and applies it to the top-4/right-4 column wrapper", () => {
+    expect(controlsPanelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";');
+    const wrapperIndex = controlsPanelSource.indexOf('className="pointer-events-none absolute top-4 right-4 flex flex-col items-end gap-2"');
+    expect(wrapperIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(wrapperIndex, wrapperIndex + 900);
     expect(callSite).toContain("style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}");
+  });
+
+  it("does not leave AircraftDetailPanel's own zIndex convention untouched (same MAX_LABEL_Z_INDEX + 1 constant, not a duplicated literal)", () => {
+    expect(controlsPanelSource).not.toMatch(/zIndex:\s*1001/);
   });
 });
