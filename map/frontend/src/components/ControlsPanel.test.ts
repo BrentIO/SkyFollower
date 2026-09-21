@@ -273,7 +273,22 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
 
   it("the expanded popover wires an on/off toggle to onToggleRadar", () => {
     expect(controlsPanelSource).toContain("onClick={onToggleRadar}");
-    expect(controlsPanelSource).toContain("aria-pressed={radarOn}");
+    expect(controlsPanelSource).toContain("aria-checked={radarOn}");
+  });
+
+  it("#1911: the on/off control is a phone-style toggle switch (role=switch, sliding thumb), not a bordered text button", () => {
+    const toggleIndex = controlsPanelSource.indexOf("onClick={onToggleRadar}");
+    expect(toggleIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(toggleIndex, toggleIndex + 700);
+    expect(callSite).toContain('role="switch"');
+    expect(callSite).toContain("aria-checked={radarOn}");
+    expect(callSite).not.toContain(">On<");
+    expect(callSite).not.toContain(">Off<");
+    // Track color reflects on/off state, and the inner thumb slides via a
+    // translate-x change -- the two load-bearing visual pieces of the
+    // switch idiom, not just decorative classes.
+    expect(callSite).toContain("radarOn ? \"bg-blue-600\"");
+    expect(callSite).toContain('radarOn ? "translate-x-4" : "translate-x-0.5"');
   });
 
   it("the opacity slider is a 0-1 range input wired to onRadarOpacityChange, disabled when radar is off", () => {

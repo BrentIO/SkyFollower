@@ -195,14 +195,28 @@ export function ControlsPanel({
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>
+                {/* Phone-style toggle switch, replacing the bordered On/Off
+                    text button -- radar-specific, not a shared component
+                    (a deliberate scope decision, not an oversight).
+                    role="switch"/aria-checked is the correct ARIA pattern
+                    for this control shape, matching (and improving on) the
+                    aria-pressed convention every other on/off button here
+                    still uses. */}
                 <button
                   type="button"
                   onClick={onToggleRadar}
-                  aria-pressed={radarOn}
+                  role="switch"
+                  aria-checked={radarOn}
                   aria-label={radarOn ? "Turn radar off" : "Turn radar on"}
-                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${toggleButtonClass(radarOn)}`}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                    radarOn ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-600"
+                  }`}
                 >
-                  {radarOn ? "On" : "Off"}
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      radarOn ? "translate-x-4" : "translate-x-0.5"
+                    }`}
+                  />
                 </button>
               </div>
               <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
