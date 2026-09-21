@@ -1,5 +1,5 @@
 pymongo==4.18.1
 pika==1.4.4
-boto3==1.43.96
+boto3==1.43.97
 pyarrow==25.0.1
 pydantic==2.13.5
