@@ -65,3 +65,22 @@ export function radarFrameTileUrl(offsetMinutes: number): string {
   const padded = String(offsetMinutes).padStart(2, "0");
   return `${RADAR_TILE_HOST}/c/tile.py/1.0.0/nexrad-n0q-m${padded}m/{z}/{x}/{y}.png`;
 }
+
+// #1910 (2nd attempt): the source/layer id for one playback frame.
+// Previously the playback effect reused a single MapLibre source across
+// all 7 frames, retargeting it with setTiles() -- verified live (real
+// browser, Playwright) that this never actually behaves as "instant once
+// prefetched": each retarget makes MapLibre re-request that raster
+// source's *entire* zoom pyramid (z0-z8, ~20 tile requests per frame, not
+// just the current view's tile), and isSourceLoaded()/'sourcedata' only
+// resolves once EVERY one of those requests settles -- individually fast
+// (double-digit-to-low-hundreds ms each) but serialized across 7 frames,
+// the whole prefetch phase measured 20-30+ real seconds before playback
+// ever started, nowhere near instant. Giving each frame its own
+// source+layer, all added and loaded in parallel up front, then animated
+// by toggling `visibility` (no network, no re-decode, genuinely instant)
+// is the standard flip-book pattern for this exact problem and avoids
+// the repeated-retarget cost entirely.
+export function radarPlaybackFrameId(offsetMinutes: number): string {
+  return `sf-radar-playback-${offsetMinutes}`;
+}

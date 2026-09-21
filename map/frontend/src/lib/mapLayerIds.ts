@@ -59,13 +59,10 @@ export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
 // above it -- "above the base map, below everything this app draws."
 export const RADAR_SOURCE_ID = "sf-radar";
 export const RADAR_LAYER_ID = "sf-radar-raster";
-// Single source/layer reused across every playback frame via
-// RasterTileSource.setTiles() rather than one source per frame -- only
-// ever fetches the one frame currently on screen, and only exists for the
-// duration of an active play session (added when play starts, removed on
-// pause/off), so idle/paused state fetches nothing here either.
-export const RADAR_PLAYBACK_SOURCE_ID = "sf-radar-playback";
-export const RADAR_PLAYBACK_LAYER_ID = "sf-radar-playback-raster";
+// Playback (#1896; rebuilt in #1910's 2nd attempt) uses one source+layer
+// per frame (see lib/radar.ts's radarPlaybackFrameId), not a single
+// reused id -- so there's no fixed constant for it here, unlike the
+// current-snapshot source/layer above.
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,
