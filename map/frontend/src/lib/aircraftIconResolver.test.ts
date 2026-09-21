@@ -55,7 +55,7 @@ describe("resolveAircraftShape", () => {
   it("falls back on the raw emitter category when type and description are absent", () => {
     expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A7" })).toBe("H60");
     expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "b2" })).toBe("BALL");
-    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A5" })).toBe("B744");
+    expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A5" })).toBe("B772"); // #1906
     // Subcategory with no mapping (e.g. "A0"/"C3") -> plain fallback.
     expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "A0" })).toBe(FALLBACK_SHAPE);
     expect(resolveAircraftShape({ icao_hex: "A", emitter_category: "C3" })).toBe(FALLBACK_SHAPE);
