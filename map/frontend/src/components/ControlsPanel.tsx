@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PAUSE_ICON, PLAY_ICON, RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
+import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import { IconButton } from "./IconButton";
 
@@ -178,6 +179,13 @@ export function ControlsPanel({
               // handling here, matching this codebase's other disclosure
               // (AircraftListPanel's drawer also only closes on its own
               // explicit toggle).
+              //
+              // #1909: pinned above every InfoBoxLayer label box, same
+              // MAX_LABEL_Z_INDEX + 1 convention AircraftDetailPanel/
+              // AircraftListPanel already use -- without this, an
+              // info box with a high altitude-derived z-index (up to
+              // MAX_LABEL_Z_INDEX itself) paints over this popover.
+              style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>

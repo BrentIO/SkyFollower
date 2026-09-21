@@ -300,4 +300,11 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
   it("only renders the popover's controls when radarExpanded is true", () => {
     expect(controlsPanelSource).toContain("{radarExpanded && (");
   });
+
+  it("#1909: the popover pins itself above every InfoBoxLayer label via MAX_LABEL_Z_INDEX + 1", () => {
+    expect(controlsPanelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";');
+    const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");
+    const callSite = controlsPanelSource.slice(popoverIndex, popoverIndex + 1200);
+    expect(callSite).toContain("style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}");
+  });
 });
