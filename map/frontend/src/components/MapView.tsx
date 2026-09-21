@@ -29,8 +29,6 @@ import {
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
   RADAR_LAYER_ID,
-  RADAR_PLAYBACK_LAYER_ID,
-  RADAR_PLAYBACK_SOURCE_ID,
   RADAR_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
@@ -64,6 +62,7 @@ import {
   RADAR_REFRESH_INTERVAL_MS,
   RADAR_TILE_SIZE,
   radarFrameTileUrl,
+  radarPlaybackFrameId,
 } from "../lib/radar";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
@@ -224,6 +223,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // pause before the loop visibly starts reads as "loading," not a
   // stalled click. Transient, like radarPlaying itself.
   const [radarPlaybackLoading, setRadarPlaybackLoading] = useState(false);
+  // Which of the 7 per-frame playback layers (radarPlaybackFrameId) is
+  // currently the one actually shown (raster-opacity > 0), so the
+  // dedicated opacity-sync effect below knows which single layer to push
+  // a live slider value to instead of blanket-applying it to all 7 (which
+  // would make every frame visible simultaneously, defeating playback
+  // entirely). Null whenever playback isn't running. A ref, not state --
+  // updated every 500ms by the playback interval and only ever read by
+  // an effect, never rendered.
+  const radarActiveFrameIdRef = useRef<string | null>(null);
   function handleToggleRadar() {
     setRadarOn((prev) => {
       const next = !prev;
@@ -1096,8 +1104,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (map.getLayer(RADAR_LAYER_ID)) {
       map.setPaintProperty(RADAR_LAYER_ID, "raster-opacity", radarOpacity);
     }
-    if (map.getLayer(RADAR_PLAYBACK_LAYER_ID)) {
-      map.setPaintProperty(RADAR_PLAYBACK_LAYER_ID, "raster-opacity", radarOpacity);
+    // Only the one playback frame currently being shown (see
+    // radarActiveFrameIdRef) -- every other frame layer stays at
+    // raster-opacity 0 (still fully loaded, just invisible; see the
+    // playback effect below for why visibility:none isn't used instead).
+    const activeId = radarActiveFrameIdRef.current;
+    if (activeId && map.getLayer(activeId)) {
+      map.setPaintProperty(activeId, "raster-opacity", radarOpacity);
     }
   }, [radarOpacity, radarOn, radarPlaying, mapLoaded]);
 
@@ -1120,31 +1133,31 @@ function MapViewInner({ config }: { config: AppConfig }) {
     return () => clearInterval(interval);
   }, [radarOn, radarPlaying, mapLoaded]);
 
-  // Playback (#1896, prefetch behavior fixed in #1910) -- steps through
+  // Playback (#1896; rebuilt in #1910's 2nd attempt) -- steps through
   // RADAR_PLAYBACK_OFFSETS_MINUTES (last 30 minutes, oldest to newest,
   // ending on the current frame) on a fixed interval, looping continuously
-  // while `radarPlaying` is true. A single reused source/layer, retargeted
-  // per frame via `setTiles()` rather than one source per frame -- only
-  // ever fetches frames for the one viewport currently on screen, and this
-  // whole source/layer only exists for the duration of an active play
-  // session (added here, removed by this same effect's cleanup), so idle/
-  // paused/off state fetches nothing here either. The snapshot layer is
-  // hidden (not removed -- its own effect above owns its lifecycle) for
-  // the duration so the playback layer is what's actually visible; the
-  // cleanup restores it, which is also what "pause reverts to the current
+  // while `radarPlaying` is true. The snapshot layer is hidden (not
+  // removed -- its own effect above owns its lifecycle) for the duration
+  // so the playback layers are what's actually visible; the cleanup
+  // restores it, which is also what "pause reverts to the current
   // snapshot immediately" (#1896) falls out of.
   //
-  // #1910: the original version retargeted this source straight onto the
-  // fixed 500ms interval with nothing prefetched, so most steps displayed
-  // a blank/loading tile mid-fetch -- it read as "flashing," not animating.
-  // Fixed by prefetching every frame sequentially first (waiting for each
-  // one's tiles to actually finish loading, via `map.isSourceLoaded()`,
-  // not just firing the request) before starting the visible interval --
-  // by the time the fast loop runs, every frame's tiles are already warm
-  // in the browser's own HTTP cache, so each `setTiles()` during the loop
-  // resolves instantly instead of triggering a fresh network fetch.
-  // `radarPlaybackLoading` surfaces this prefetch phase on the Play button
-  // as a spinner (ControlsPanel.tsx) so the pause reads as "loading."
+  // #1910's first attempt (a single reused source, retargeted via
+  // setTiles() -- both the original naive version and a follow-up
+  // sourcedata-based prefetch) was verified live (real browser,
+  // Playwright, see the issue) to never actually become fast: MapLibre
+  // requests a raster source's *entire* zoom pyramid on every retarget
+  // (z0-z8, ~20 tile requests per frame), and isSourceLoaded() only
+  // resolves once literally all of them settle -- individually quick but
+  // serialized across 7 sequential retargets, the whole prefetch phase
+  // measured 20-30+ real seconds, regardless of which MapLibre event was
+  // used to detect "loaded." This version gives each frame its own
+  // source+layer (radarPlaybackFrameId), all added and left to load in
+  // parallel up front (hidden), waited on together via a single
+  // requestAnimationFrame poll rather than a per-frame event/timeout
+  // dance, then animated purely by toggling `visibility` between the 7
+  // already-loaded layers -- no network, no re-decode, genuinely instant,
+  // the standard flip-book pattern for this exact problem.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !radarOn || !radarPlaying) return;
@@ -1155,78 +1168,104 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
     let cancelled = false;
     let interval: ReturnType<typeof setInterval> | undefined;
+    let rafHandle: number | undefined;
 
     map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "none");
 
-    map.addSource(RADAR_PLAYBACK_SOURCE_ID, {
-      type: "raster",
-      tiles: [radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[0])],
-      tileSize: RADAR_TILE_SIZE,
-      minzoom: RADAR_MIN_ZOOM,
-      maxzoom: RADAR_MAX_ZOOM,
-    });
-    map.addLayer(
-      {
-        id: RADAR_PLAYBACK_LAYER_ID,
-        type: "raster",
-        source: RADAR_PLAYBACK_SOURCE_ID,
-        paint: { "raster-opacity": radarOpacity },
-      },
-      RANGE_RING_LAYER_ID,
-    );
+    const frameIds = RADAR_PLAYBACK_OFFSETS_MINUTES.map(radarPlaybackFrameId);
 
-    // Resolves once RADAR_PLAYBACK_SOURCE_ID's tiles are loaded for the
-    // current viewport, or after RADAR_FRAME_LOAD_TIMEOUT_MS -- whichever
-    // comes first. The timeout means one slow/failed frame during prefetch
-    // degrades (that frame plays back not-yet-cached) rather than blocking
-    // playback from ever starting.
-    function waitForCurrentFrameToLoad(): Promise<void> {
+    RADAR_PLAYBACK_OFFSETS_MINUTES.forEach((offsetMinutes, i) => {
+      const id = frameIds[i];
+      map.addSource(id, {
+        type: "raster",
+        tiles: [radarFrameTileUrl(offsetMinutes)],
+        tileSize: RADAR_TILE_SIZE,
+        minzoom: RADAR_MIN_ZOOM,
+        maxzoom: RADAR_MAX_ZOOM,
+      });
+      // Every layer stays layout-visible the whole time -- a raster
+      // layer's tiles are only ever requested for a source whose layer is
+      // actually visible (verified live: visibility:"none" here meant
+      // the tiles never loaded at all, opacity or not, even well past
+      // RADAR_FRAME_LOAD_TIMEOUT_MS). raster-opacity 0 is the paint-only
+      // equivalent of "hidden" that doesn't gate loading -- every frame
+      // genuinely loads in parallel, and "which one is shown" is purely
+      // which one currently has a nonzero opacity.
+      map.addLayer(
+        {
+          id,
+          type: "raster",
+          source: id,
+          paint: { "raster-opacity": 0 },
+        },
+        RANGE_RING_LAYER_ID,
+      );
+    });
+
+    // Resolves once every one of the 7 sources reports loaded on 3
+    // consecutive animation frames, or after RADAR_FRAME_LOAD_TIMEOUT_MS
+    // total -- whichever comes first. Requiring 3 straight `true` reads
+    // (not just one) guards against isSourceLoaded() reporting a false
+    // positive on the very first tick, before MapLibre has dispatched any
+    // tile request yet for a source that was only just added -- verified
+    // live this false positive is real (an addSource+addLayer pair
+    // doesn't synchronously start loading; checking again immediately
+    // found every source trivially "loaded" with zero tiles actually
+    // fetched). Polling via requestAnimationFrame rather than an
+    // event/timeout pair per frame also sidesteps the separate fragility
+    // #1910's first attempt hit: no dependency on which specific MapLibre
+    // event fires when for a specific source.
+    function waitForAllFramesToLoad(): Promise<void> {
       return new Promise((resolve) => {
-        if (radarMap.isSourceLoaded(RADAR_PLAYBACK_SOURCE_ID)) {
-          resolve();
-          return;
+        const deadline = Date.now() + RADAR_FRAME_LOAD_TIMEOUT_MS;
+        let consecutiveLoadedReads = 0;
+        function check() {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          const allLoaded = frameIds.every((id) => radarMap.isSourceLoaded(id));
+          consecutiveLoadedReads = allLoaded ? consecutiveLoadedReads + 1 : 0;
+          if (consecutiveLoadedReads >= 3 || Date.now() > deadline) {
+            resolve();
+            return;
+          }
+          rafHandle = requestAnimationFrame(check);
         }
-        const timeout = setTimeout(() => {
-          radarMap.off("idle", onIdle);
-          resolve();
-        }, RADAR_FRAME_LOAD_TIMEOUT_MS);
-        function onIdle() {
-          if (!radarMap.isSourceLoaded(RADAR_PLAYBACK_SOURCE_ID)) return;
-          clearTimeout(timeout);
-          radarMap.off("idle", onIdle);
-          resolve();
-        }
-        radarMap.on("idle", onIdle);
+        check();
       });
     }
 
-    async function prefetchThenPlay() {
+    async function loadThenPlay() {
       setRadarPlaybackLoading(true);
-      const source = radarMap.getSource(RADAR_PLAYBACK_SOURCE_ID) as maplibregl.RasterTileSource;
-      for (const offsetMinutes of RADAR_PLAYBACK_OFFSETS_MINUTES) {
-        if (cancelled) return;
-        source.setTiles([radarFrameTileUrl(offsetMinutes)]);
-        await waitForCurrentFrameToLoad();
-      }
+      await waitForAllFramesToLoad();
       if (cancelled) return;
       setRadarPlaybackLoading(false);
 
       let frameIndex = 0;
-      source.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
+      radarActiveFrameIdRef.current = frameIds[frameIndex];
+      radarMap.setPaintProperty(frameIds[frameIndex], "raster-opacity", radarOpacity);
       interval = setInterval(() => {
-        frameIndex = (frameIndex + 1) % RADAR_PLAYBACK_OFFSETS_MINUTES.length;
-        source.setTiles([radarFrameTileUrl(RADAR_PLAYBACK_OFFSETS_MINUTES[frameIndex])]);
+        const previousId = frameIds[frameIndex];
+        frameIndex = (frameIndex + 1) % frameIds.length;
+        radarActiveFrameIdRef.current = frameIds[frameIndex];
+        radarMap.setPaintProperty(frameIds[frameIndex], "raster-opacity", radarOpacity);
+        radarMap.setPaintProperty(previousId, "raster-opacity", 0);
       }, RADAR_FRAME_INTERVAL_MS);
     }
 
-    prefetchThenPlay();
+    loadThenPlay();
 
     return () => {
       cancelled = true;
       setRadarPlaybackLoading(false);
+      radarActiveFrameIdRef.current = null;
+      if (rafHandle !== undefined) cancelAnimationFrame(rafHandle);
       if (interval) clearInterval(interval);
-      if (map.getLayer(RADAR_PLAYBACK_LAYER_ID)) map.removeLayer(RADAR_PLAYBACK_LAYER_ID);
-      if (map.getSource(RADAR_PLAYBACK_SOURCE_ID)) map.removeSource(RADAR_PLAYBACK_SOURCE_ID);
+      frameIds.forEach((id) => {
+        if (map.getLayer(id)) map.removeLayer(id);
+        if (map.getSource(id)) map.removeSource(id);
+      });
       if (map.getLayer(RADAR_LAYER_ID)) map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- radarOpacity

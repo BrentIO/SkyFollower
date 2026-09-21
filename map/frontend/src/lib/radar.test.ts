@@ -4,6 +4,7 @@ import {
   RADAR_MIN_ZOOM,
   RADAR_PLAYBACK_OFFSETS_MINUTES,
   radarFrameTileUrl,
+  radarPlaybackFrameId,
 } from "./radar";
 
 describe("radarFrameTileUrl", () => {
@@ -38,5 +39,20 @@ describe("zoom bounds", () => {
   it("caps at the empirically-verified native max zoom", () => {
     expect(RADAR_MIN_ZOOM).toBe(0);
     expect(RADAR_MAX_ZOOM).toBe(8);
+  });
+});
+
+describe("radarPlaybackFrameId", () => {
+  it("produces a distinct id for every offset in the playback sequence", () => {
+    const ids = new Set(RADAR_PLAYBACK_OFFSETS_MINUTES.map(radarPlaybackFrameId));
+    expect(ids.size).toBe(RADAR_PLAYBACK_OFFSETS_MINUTES.length);
+  });
+
+  it("is deterministic for the same offset", () => {
+    expect(radarPlaybackFrameId(30)).toBe(radarPlaybackFrameId(30));
+  });
+
+  it("includes the offset value in the id, for easy debugging against the real MapLibre style", () => {
+    expect(radarPlaybackFrameId(15)).toContain("15");
   });
 });
