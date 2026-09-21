@@ -21,9 +21,70 @@ import type { GeoJSONSourceDiff } from "maplibre-gl";
 import type { AircraftRecord, TrailPoint } from "./aircraftState";
 import { altitudeColor } from "./altitudeColor";
 import { isFollowLost } from "./followTarget";
+import { greatCircleNm, initialBearing } from "./geo";
 import { buildTrailRuns } from "./trailSegments";
 
 export const EMPTY_FEATURE_COLLECTION: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+// #1950: message-processor only overwrites an aircraft's reported heading
+// when a velocity message actually carries a GPS track/IAS-heading field --
+// it never decays, so it can go stale (keep pointing the old direction)
+// indefinitely once those messages stop arriving, even as the aircraft's
+// actual track visibly changes. trailHeading() derives a heading from
+// where the aircraft has actually been moving, as a check against that.
+
+// Minimum distance (nm) a trail point must be from the aircraft's current
+// position before it's used to derive a heading -- closely-spaced points
+// are dominated by GPS/ADS-B position jitter rather than real direction of
+// travel, which matters most for a stationary/taxiing aircraft (where any
+// bearing from jitter alone would be noise, not signal). This single
+// distance gate is also what makes "not enough usable trail yet" fall out
+// naturally: a brand-new track or one that hasn't moved far enough simply
+// has no qualifying point, so trailHeading returns null and the caller
+// keeps today's behavior.
+const MIN_TRAIL_HEADING_SEPARATION_NM = 0.05;
+
+// Reported heading vs. trail-derived heading must diverge by more than
+// this before the trail heading wins -- a small difference is ordinary
+// noise/rounding, not the stale-heading bug this exists to catch.
+export const TRAIL_HEADING_DIVERGENCE_DEG = 20;
+
+// Shortest angular distance between two compass bearings in [0, 360), e.g.
+// angularDifference(10, 350) === 20, not 340.
+function angularDifference(a: number, b: number): number {
+  return Math.abs((((a - b + 540) % 360)) - 180);
+}
+
+// Bearing from the most recent trail point at least
+// MIN_TRAIL_HEADING_SEPARATION_NM away from `current`, to `current` --
+// i.e. "which way has this aircraft actually been moving," not "what did
+// its last heading message say." `trail` is oldest-first (see
+// aircraftState.ts), so this walks backward from the newest point. Returns
+// null when no trail point qualifies.
+export function trailHeading(trail: TrailPoint[], current: { latitude: number; longitude: number }): number | null {
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const candidate = trail[i];
+    if (greatCircleNm(candidate, current) >= MIN_TRAIL_HEADING_SEPARATION_NM) {
+      return initialBearing(candidate, current);
+    }
+  }
+  return null;
+}
+
+// The heading to render an aircraft's icon at: the reported `hdg` (or 0 if
+// absent, today's existing fallback), unless a trail-derived heading is
+// both available and diverges from it by more than
+// TRAIL_HEADING_DIVERGENCE_DEG, in which case the trail heading wins (see
+// this module's #1950 comment above). Recomputed independently on every
+// call -- no hysteresis/deadband, deliberately (see #1950).
+export function resolvedHeading(a: AircraftRecord, current: { latitude: number; longitude: number }): number {
+  const reported = a.hdg ?? 0;
+  const trail = trailHeading(a.trail, current);
+  if (trail !== null && angularDifference(trail, reported) > TRAIL_HEADING_DIVERGENCE_DEG) {
+    return trail;
+  }
+  return reported;
+}
 
 export function hasPosition(a: AircraftRecord): a is AircraftRecord & { lat: number; lon: number } {
   return a.lat != null && a.lon != null;
@@ -94,8 +155,9 @@ export function aircraftFeature(
       // "nose" heading the way fixed-wing/rotary aircraft do; their reported
       // ADS-B heading reflects drift direction, not an orientation the icon
       // should rotate to face. Force north-up for that shape regardless of
-      // the reported value (issue #1788).
-      heading: a.shape === "BALL" ? 0 : (a.hdg ?? 0),
+      // the reported value (issue #1788) -- checked first, short-circuiting
+      // resolvedHeading()'s stale-heading correction (#1950) entirely.
+      heading: a.shape === "BALL" ? 0 : resolvedHeading(a, { latitude: a.lat, longitude: a.lon }),
       color: altitudeColor(a.alt ?? null),
       selected: selected.has(a.icao_hex),
       // Reuses the existing stale-dims-the-icon paint rule (see

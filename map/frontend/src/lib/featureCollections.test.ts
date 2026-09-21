@@ -7,8 +7,10 @@ import {
   buildTrailSourceDiff,
   isAircraftVisible,
   isEmptySourceDiff,
+  resolvedHeading,
   TRAIL_BLOCK_SIZE,
   trailFeatureCollection,
+  trailHeading,
   trailSegmentFeatures,
 } from "./featureCollections";
 
@@ -247,6 +249,139 @@ describe("aircraftFeature -- lighter-than-air heading override (#1788)", () => {
     aircraft.A1B2C3.hdg = 270;
     const feature = aircraftFeature(aircraft.A1B2C3, new Set());
     expect(feature?.properties?.heading).toBe(270);
+  });
+});
+
+// Real invariant this suite relies on (see aircraftState.ts's applyEventToRecord):
+// a position event's trail push always uses that same event's own lat/lon,
+// so trail[last] === {a.lat, a.lon} whenever hasPosition(a). Unlike the
+// withTrail() helper above (which seeds current position from trail[0], the
+// *oldest* point -- fine for its own trail-block tests, wrong for heading
+// tests, which care about current position vs. trail history), this helper
+// anchors current position at trail[last], matching the real app.
+function withTrailEndingAtCurrent(icaoHex: string, trail: TrailPoint[], hdg?: number): AircraftMap {
+  const current = trail[trail.length - 1];
+  const aircraft = applySnapshot([
+    { icao_hex: icaoHex, lat: current.latitude, lon: current.longitude, alt: current.altitude ?? 1000, hdg },
+  ]);
+  return { ...aircraft, [icaoHex]: { ...aircraft[icaoHex], trail } };
+}
+
+describe("trailHeading (#1950)", () => {
+  it("returns null when the trail has fewer than 2 points", () => {
+    expect(trailHeading([], { latitude: 0, longitude: 0 })).toBeNull();
+    expect(trailHeading([{ latitude: 0, longitude: 0, altitude: null }], { latitude: 0, longitude: 0 })).toBeNull();
+  });
+
+  it("returns null when every trail point is within the jitter gate of current (near-duplicate points)", () => {
+    // ~0.00001deg steps are on the order of a meter -- far under the
+    // 0.05nm (~90m) separation gate.
+    const trail: TrailPoint[] = [
+      { latitude: 10, longitude: 20, altitude: 1000 },
+      { latitude: 10.00001, longitude: 20, altitude: 1000 },
+      { latitude: 10.00002, longitude: 20, altitude: 1000 },
+    ];
+    expect(trailHeading(trail, { latitude: 10.00002, longitude: 20 })).toBeNull();
+  });
+
+  it("returns the bearing from the most recent qualifying point, walking backward from the newest", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 }, // far behind -- should NOT be the one picked
+      { latitude: 0.99, longitude: 0, altitude: 1000 }, // ~59nm south of current, qualifies, and is the nearest qualifying point
+      { latitude: 1, longitude: 0, altitude: 1000 }, // ~0.0002nm from current -- too close to qualify on its own
+    ];
+    // Current position due north of the picked point -> bearing 0.
+    expect(trailHeading(trail, { latitude: 1.0005, longitude: 0 })).toBeCloseTo(0, 6);
+  });
+});
+
+describe("resolvedHeading (#1950)", () => {
+  it("uses the reported heading when it's within the divergence threshold of the trail heading", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 }, // due-north trail, bearing 0
+    ];
+    const aircraft: any = { hdg: 15, trail }; // 15deg off due-north, within the 20deg threshold
+    expect(resolvedHeading(aircraft, { latitude: 1, longitude: 0 })).toBe(15);
+  });
+
+  it("stays with the reported heading exactly at the threshold (divergence must exceed, not just reach, 20deg)", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 }, // bearing 0
+    ];
+    const aircraft: any = { hdg: 20, trail };
+    expect(resolvedHeading(aircraft, { latitude: 1, longitude: 0 })).toBe(20);
+  });
+
+  it("uses the trail heading once divergence exceeds the threshold", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 }, // bearing 0
+    ];
+    const aircraft: any = { hdg: 90, trail }; // stale: still reporting due-east
+    expect(resolvedHeading(aircraft, { latitude: 1, longitude: 0 })).toBeCloseTo(0, 6);
+  });
+
+  it("falls back to reported hdg (or 0) when no trail heading is available", () => {
+    expect(resolvedHeading({ hdg: 45, trail: [] } as any, { latitude: 0, longitude: 0 })).toBe(45);
+    expect(resolvedHeading({ hdg: undefined, trail: [] } as any, { latitude: 0, longitude: 0 })).toBe(0);
+  });
+});
+
+describe("aircraftFeature -- trail heading correction (#1950)", () => {
+  it("normal case: reported hdg matches the trail within the threshold -- no correction", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 }, // due-north trail
+    ];
+    const aircraft = withTrailEndingAtCurrent("A1B2C3", trail, 5); // reported hdg close to the trail's own bearing
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(5);
+  });
+
+  it("diverging case: stale reported hdg is replaced by the trail-derived bearing", () => {
+    // Aircraft was flying east (hdg still says so), trail shows it now
+    // heading due north -- the #1950 motivating scenario.
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 }, // due-north trail, bearing 0
+    ];
+    const aircraft = withTrailEndingAtCurrent("A1B2C3", trail, 90); // stale hdg: due-east
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBeCloseTo(0, 6);
+    expect(feature?.properties?.heading).not.toBe(90);
+  });
+
+  it("missing-heading case: no reported hdg and no usable trail falls back to 0, unchanged from today", () => {
+    const aircraft = withOnePositionedAircraft("A1B2C3"); // single seed point, hdg unset
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(0);
+  });
+
+  it("low-speed/jitter case: closely-spaced trail points never trigger a spurious correction", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 10, longitude: 20, altitude: 1000 },
+      { latitude: 10.00001, longitude: 20, altitude: 1000 },
+      { latitude: 10.00002, longitude: 20.00001, altitude: 1000 },
+    ];
+    const aircraft = withTrailEndingAtCurrent("A1B2C3", trail, 250); // any reported heading -- should be left alone
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(250);
+  });
+
+  it("does not alter the BALL-shape north-up override -- checked before any trail-heading logic runs", () => {
+    const trail: TrailPoint[] = [
+      { latitude: 0, longitude: 0, altitude: 1000 },
+      { latitude: 1, longitude: 0, altitude: 1000 },
+    ];
+    const aircraft = applySnapshot([
+      { icao_hex: "A1B2C3", lat: 1, lon: 0, alt: 1000, hdg: 270, aircraft: { icao_hex: "A1B2C3", emitter_category: "B2" } },
+    ]);
+    aircraft.A1B2C3.trail = trail;
+    expect(aircraft.A1B2C3.shape).toBe("BALL");
+    const feature = aircraftFeature(aircraft.A1B2C3, new Set());
+    expect(feature?.properties?.heading).toBe(0);
   });
 });
 
