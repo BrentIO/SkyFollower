@@ -195,12 +195,13 @@ export function ControlsPanel({
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>
-                {/* #1911: phone-style toggle switch, replacing the bordered
-                    On/Off text button -- radar-specific, not a shared
-                    component (per Brent's call). role="switch"/aria-checked
-                    is the correct ARIA pattern for this control shape,
-                    matching (and improving on) the aria-pressed convention
-                    every other on/off button here still uses. */}
+                {/* Phone-style toggle switch, replacing the bordered On/Off
+                    text button -- radar-specific, not a shared component
+                    (a deliberate scope decision, not an oversight).
+                    role="switch"/aria-checked is the correct ARIA pattern
+                    for this control shape, matching (and improving on) the
+                    aria-pressed convention every other on/off button here
+                    still uses. */}
                 <button
                   type="button"
                   onClick={onToggleRadar}
