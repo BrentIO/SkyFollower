@@ -36,8 +36,17 @@ def prune_none(value: Any) -> Any:
     return value
 
 
-def set_json(client: Any, key: str, obj: Any, path: str = "$") -> None:
+def set_json(client: Any, key: str, obj: Any, path: str = "$", nx: bool = False) -> Any:
     """Write `obj` to Redis as a JSON document at `key`/`path`, omitting any
     field whose value is None and preserving non-ASCII characters as-is.
-    `client` may be a redis client or a pipeline."""
-    client.json(encoder=_ENCODER).set(key, path, prune_none(obj))
+    `client` may be a redis client or a pipeline.
+
+    `nx=True` writes only if `key` does not already exist (Redis JSON.SET's
+    native NX option), for a runner that must never overwrite another
+    source's existing record -- see `us-faa-telephony-designators`. Every
+    other caller passes the default `nx=False`, unchanged from this
+    function's prior unconditional-overwrite behavior. Returns the
+    underlying JSON.SET result (truthy on success, `None` if an `nx`/`xx`
+    condition wasn't met) so a caller can tell whether the write actually
+    happened; every existing caller ignores this."""
+    return client.json(encoder=_ENCODER).set(key, path, prune_none(obj), nx=nx)

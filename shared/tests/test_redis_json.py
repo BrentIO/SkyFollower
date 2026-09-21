@@ -44,7 +44,7 @@ class TestSetJson:
         client = MagicMock()
         set_json(client, "aircraft:registry:A8AE7F", {"a": 1, "b": None})
         client.json.return_value.set.assert_called_once_with(
-            "aircraft:registry:A8AE7F", "$", {"a": 1}
+            "aircraft:registry:A8AE7F", "$", {"a": 1}, nx=False
         )
 
     def test_default_path_is_root(self):
@@ -62,13 +62,39 @@ class TestSetJson:
     def test_works_with_a_pipeline_object(self):
         pipe = MagicMock()
         set_json(pipe, "key", {"a": 1, "b": None})
-        pipe.json.return_value.set.assert_called_once_with("key", "$", {"a": 1})
+        pipe.json.return_value.set.assert_called_once_with("key", "$", {"a": 1}, nx=False)
 
     def test_uses_an_ascii_preserving_encoder(self):
         client = MagicMock()
         set_json(client, "key", {"a": 1})
         _, kwargs = client.json.call_args
         assert kwargs["encoder"].ensure_ascii is False
+
+    def test_nx_defaults_to_false(self):
+        client = MagicMock()
+        set_json(client, "key", {"a": 1})
+        _, kwargs = client.json.return_value.set.call_args
+        assert kwargs["nx"] is False
+
+    def test_nx_true_is_passed_through(self):
+        client = MagicMock()
+        set_json(client, "operator:ARSIX", {"name": "NYC Environmental Protection"}, nx=True)
+        client.json.return_value.set.assert_called_once_with(
+            "operator:ARSIX", "$", {"name": "NYC Environmental Protection"}, nx=True
+        )
+
+    def test_returns_the_underlying_json_set_result(self):
+        client = MagicMock()
+        client.json.return_value.set.return_value = "OK"
+        assert set_json(client, "key", {"a": 1}) == "OK"
+
+    def test_returns_none_when_nx_write_is_skipped(self):
+        """A real NX write against an existing key returns None -- the
+        signal a caller uses to tell "already present, not written" apart
+        from a successful write."""
+        client = MagicMock()
+        client.json.return_value.set.return_value = None
+        assert set_json(client, "key", {"a": 1}, nx=True) is None
 
 
 class TestSetJsonUtf8OnTheWire:

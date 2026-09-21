@@ -417,6 +417,13 @@ updates:
       time: "23:40"
       timezone: "Etc/UTC"
   - package-ecosystem: "pip"
+    directory: "/runners/us-faa-telephony-designators"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "23:50"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "pip"
     directory: "/runners/vrs-standing-data"
     schedule:
       interval: "weekly"
@@ -863,6 +870,13 @@ updates:
       interval: "weekly"
       day: "friday"
       time: "23:40"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "docker"
+    directory: "/runners/us-faa-telephony-designators"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "23:50"
       timezone: "Etc/UTC"
   - package-ecosystem: "docker"
     directory: "/runners/vrs-standing-data"
