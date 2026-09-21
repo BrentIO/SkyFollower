@@ -19,6 +19,6 @@
     "enabled": false
   },
   "dependencies": {
-    "swagger-ui-dist": "^5.32.15"
+    "swagger-ui-dist": "^5.33.0"
   }
 }
