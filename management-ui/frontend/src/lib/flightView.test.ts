@@ -71,6 +71,38 @@ describe("altitudeColor", () => {
   });
 });
 
+// #1912: the darkened 6,000-15,000ft band (roughly h 54-160), ported in
+// lockstep from map/frontend's copy of this same table so both frontends
+// stay identical. Hue and saturation are unchanged from before #1912
+// throughout this whole describe block -- only lightness moved.
+describe("altitudeColor -- #1912 darkened band", () => {
+  it("darkens the real reported case (SWA1760, 8250ft) by double digits", () => {
+    // Pre-#1912 value was hsl(75.3, 88.0%, 41.5%).
+    expect(altitudeColor(8250)).toBe("hsl(75.3, 88.0%, 26.2%)");
+  });
+
+  it("is darkest near the middle of the band (9000-10000ft), not just at the edges", () => {
+    expect(altitudeColor(9000)).toBe("hsl(85.0, 88.0%, 24.8%)");
+    expect(altitudeColor(10000)).toBe("hsl(112.5, 88.0%, 24.6%)");
+  });
+
+  it("tapers back to the unchanged neighboring value exactly at the 6000ft lower boundary", () => {
+    expect(altitudeColor(6000)).toBe("hsl(54.0, 88.0%, 39.6%)");
+  });
+
+  it("has fully rejoined the unchanged ramp by 15000ft", () => {
+    expect(altitudeColor(15000)).toBe("hsl(162.1, 88.0%, 40.0%)");
+  });
+
+  it("keeps every altitude outside the band byte-identical to before #1912", () => {
+    expect(altitudeColor(0)).toBe("hsl(20.0, 88.0%, 50.0%)");
+    expect(altitudeColor(5000)).toBe("hsl(48.5, 88.0%, 47.9%)");
+    expect(altitudeColor(22000)).toBe("hsl(200.7, 88.0%, 58.0%)");
+    expect(altitudeColor(40000)).toBe("hsl(300.0, 88.0%, 43.0%)");
+    expect(altitudeColor(51000)).toBe("hsl(0.0, 88.0%, 53.0%)");
+  });
+});
+
 describe("darkenColor", () => {
   it("reduces lightness by 10 percentage points, keeping hue/saturation", () => {
     expect(darkenColor("hsl(167.6, 88.0%, 40.0%)")).toBe("hsl(167.6, 88.0%, 30.0%)");

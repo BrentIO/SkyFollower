@@ -1,18 +1,37 @@
-// Ported verbatim (logic and breakpoint tables unchanged) from
-// management-ui/frontend/src/lib/flightView.ts's altitudeColor()/
-// darkenColor() -- this is a separate, standalone frontend project, so it
-// carries its own copy rather than importing across the two. altitudeColor
-// is used for the aircraft icon fill (MapView.tsx's symbol layer
-// `icon-color`), the live trail color (MapView.tsx's trail `line-color`),
-// and the Trace Points dot color (lib/tracePoints.ts), all driven off an
-// altitude value -- same mechanism throughout, per design. darkenColor is
-// used only by Trace Points, for the dot's stroke.
+// Originally ported verbatim from management-ui/frontend/src/lib/
+// flightView.ts's altitudeColor()/darkenColor() -- this is a separate,
+// standalone frontend project, so it carries its own copy rather than
+// importing across the two. The l breakpoints for h 60-140 were darkened
+// (#1912, see the table below) and the same darkening was ported into
+// management-ui's copy in lockstep, so the two tables stay identical.
+// altitudeColor is used for the aircraft icon fill (MapView.tsx's symbol
+// layer `icon-color`), the live trail color (MapView.tsx's trail
+// `line-color`), and the Trace Points dot color (lib/tracePoints.ts), all
+// driven off an altitude value -- same mechanism throughout, per design.
+// darkenColor is used only by Trace Points, for the dot's stroke.
 
 // Altitude-to-color lookup table (hue and lightness each interpolated from
 // their own set of breakpoints below), giving a smooth climb/cruise/descent
 // color ramp. Only an "air" table is needed here: null altitude is handled
 // separately as pure black (see altitudeColor below) rather than through a
 // ground/unknown table entry.
+//
+// The l breakpoints for h 60-140 (roughly the 6,000-11,000ft altitude band
+// -- see the h table below) are darkened ~13-16 points relative to their
+// neighbors (#1912): that hue range is a yellow-green-through-green that
+// reads as low-contrast against NEXRAD weather-radar reflectivity, which
+// conventionally also shades light/moderate precipitation in the same
+// green family (confirmed against a real reported case -- an aircraft at
+// 8,250ft nearly invisible over a green radar return). Hue is left
+// untouched: shifting it risked colliding with the already-blue cruise-
+// altitude band (h 200-266, roughly 18,500-27,000ft) further up this same
+// table. Darkening instead leans on this file's own already-established
+// principle that a darker color reads clearly against this app's light
+// basemap (see the null-altitude case below). The darkening is isolated to
+// h 60-140 -- h 50 and h 160, its boundary breakpoints, are unchanged, so
+// the dip tapers smoothly in from the lighter neighboring bands on both
+// sides rather than creating a hard edge. Every altitude outside roughly
+// 6,000-15,000ft renders byte-for-byte identically to before this change.
 const COLOR_BY_ALT_AIR = {
   s: 88,
   h: [
@@ -33,11 +52,11 @@ const COLOR_BY_ALT_AIR = {
     { h: 40, val: 52 },
     { h: 46, val: 51 },
     { h: 50, val: 46 },
-    { h: 60, val: 43 },
-    { h: 80, val: 41 },
-    { h: 100, val: 41 },
-    { h: 120, val: 41 },
-    { h: 140, val: 41 },
+    { h: 60, val: 30 },
+    { h: 80, val: 25 },
+    { h: 100, val: 24 },
+    { h: 120, val: 25 },
+    { h: 140, val: 28 },
     { h: 160, val: 40 },
     { h: 180, val: 40 },
     { h: 190, val: 44 },
