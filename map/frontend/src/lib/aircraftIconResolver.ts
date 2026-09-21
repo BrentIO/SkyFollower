@@ -138,7 +138,9 @@ export const CATEGORY_SHAPES: Record<string, string> = {
   A2: "CRJ2", // small (15,500-75,000 lb) -- regional jets / turboprops / bizjets
   A3: "A320", // large (75,000-300,000 lb)
   A4: "B752", // high-vortex large (the B757)
-  A5: "B744", // heavy (> 300,000 lb)
+  A5: "B772", // heavy (> 300,000 lb) -- today's heavy-jet fleet is
+             // overwhelmingly twin-engine; B744 (4 engines) was a poor
+             // representative pick, chosen via rendered comparison (#1906).
   A6: "F16", // high performance (> 5g, > 400 kt)
   A7: "H60", // rotorcraft
   // Set B -- glider / balloon / ultralight / UAV / space
