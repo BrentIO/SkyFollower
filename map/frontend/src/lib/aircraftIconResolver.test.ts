@@ -29,6 +29,49 @@ describe("resolveAircraftShape", () => {
     expect(resolveAircraftShape({ icao_hex: "A", type_designator: "CL35" })).toBe("CRJ2");
   });
 
+  // #1914 Finding 2: 31 designators that previously fell through to the
+  // L2J/L3J/L4J description-code tier (rendering as a full-size airliner)
+  // now have a TYPE_ALIASES entry, grouped by which existing shape their
+  // real-world size lands closest to. One representative per group here;
+  // the group's own comment in aircraftIconResolver.ts lists every member.
+  it("aliases light bizjets missed from the existing Learjet/light-jet groups (#1914)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "BE40" })).toBe("LJ35"); // Beechjet 400
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "LJ25" })).toBe("LJ35"); // Learjet 25
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "PRM1" })).toBe("LJ35"); // Premier 1
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "C501" })).toBe("C25B"); // Citation 1SP
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "EA50" })).toBe("C25B"); // Eclipse 550
+  });
+
+  it("aliases large-cabin Gulfstreams and Falcons missed from their existing groups (#1914)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "GA6C" })).toBe("GLF6"); // G600
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "GA8C" })).toBe("GLF6"); // G800
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "FA20" })).toBe("FA7X"); // Falcon 200
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "FA6X" })).toBe("FA7X"); // Falcon 6X
+  });
+
+  it("aliases mid-size bizjets to C750 (Citation X-class) and MD81 to the existing MD8x group (#1914)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "HA4T" })).toBe("C750"); // Hawker Horizon
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "GA4C" })).toBe("C750"); // G400
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "MD81" })).toBe("B712"); // MD-81
+  });
+
+  it("aliases the COMAC ARJ-21 regional jet to CRJX rather than the full-airliner default (#1914)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "AJ27" })).toBe("CRJX");
+  });
+
+  it("leaves genuinely airliner/military-class designators on the description-code default (#1914)", () => {
+    // Fokker 100: a real ~100-seat narrowbody airliner -- A320 is the
+    // right general class, not the Finding 2 bug.
+    expect(
+      resolveAircraftShape({ icao_hex: "A", type_designator: "F100", description_code: "L2J" }),
+    ).toBe("A320");
+    // MiG-29: a fighter, not a bizjet miscategorization -- a different,
+    // unrelated problem this issue doesn't address.
+    expect(
+      resolveAircraftShape({ icao_hex: "A", type_designator: "MG29", description_code: "L2J" }),
+    ).toBe("A320");
+  });
+
   it("falls back to the description code + WTC when the type is unknown", () => {
     expect(
       resolveAircraftShape({ icao_hex: "A", description_code: "L2J", wake_turbulence_category: "H" }),

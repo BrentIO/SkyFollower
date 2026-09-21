@@ -31,15 +31,23 @@ export const TYPE_ALIASES: Record<string, string> = {
   E170: "E170", E175: "E170", E75L: "E170", E75S: "E170",
   E190: "E195", E290: "E195", E195: "E195", E295: "E195",
   E135: "E170", E145: "E170", E45X: "E170",
+  // E275 ("ERJ-190-500") -- same E-Jet family as E190/E290/E295 above,
+  // just missed from that group originally (#1914 Finding 2).
+  E275: "E195",
   // Bombardier CRJ / CSeries / Dash 8
   CRJ1: "CRJ2", CRJ2: "CRJ2", CRJ7: "CRJ7", CRJ9: "CRJ9", CRJX: "CRJX",
   // Bombardier Challenger -- no dedicated shape; CRJ2's T-tail/rear-engine
   // silhouette is the closest existing match at bizjet scale (#1903).
   CL60: "CRJ2", CL30: "CRJ2", CL35: "CRJ2",
+  // COMAC ARJ-21 -- a genuine ~90-seat regional jet (27.3m span), not a
+  // bizjet, but notably smaller than the L2J-tier's A320 default (35.8m) --
+  // CRJX (biggest CRJ shape) is the closer real-world size match among
+  // already-established shapes (#1914 Finding 2).
+  AJ27: "CRJX",
   BCS1: "BCS1", BCS3: "BCS3", A221: "BCS1", A223: "BCS3",
   DH8A: "DH8C", DH8B: "DH8C", DH8C: "DH8C", DH8D: "DH8D",
   // McDonnell Douglas
-  MD82: "B712", MD83: "B712", MD87: "B712", MD88: "B712", MD90: "B712",
+  MD81: "B712", MD82: "B712", MD83: "B712", MD87: "B712", MD88: "B712", MD90: "B712",
   MD11: "MD11", DC10: "DC10", DC93: "B712", B712: "B712",
   // ATR / regional turboprops
   AT43: "AT45", AT44: "AT45", AT45: "AT45", AT46: "AT45",
@@ -50,17 +58,48 @@ export const TYPE_ALIASES: Record<string, string> = {
   // BAe 146 / RJ / Avro
   B461: "RJ85", B462: "RJ85", B463: "RJ85", RJ1H: "RJ85", RJ70: "RJ85", RJ85: "RJ85",
   // Business jets
+  // C501/C551/C55B: Citation 1SP/2SP/Bravo -- same Citation light-jet
+  // family as the C5xx/C56x/C68x group below, missed originally (#1914
+  // Finding 2). ASTR/H25A/GSPN: real wingspans (15.7-16.3m/13.4-14.3m/
+  // 13.3m) land closest to this group's C25B (14.33m, CJ2) among already-
+  // established targets.
   C25A: "C25B", C25B: "C25B", C25C: "C25B", C25M: "C25B", C500: "C25B",
-  C510: "C25B", C525: "C25B", C550: "C25B", C560: "C25B", C56X: "C25B",
+  C501: "C25B", C510: "C25B", C525: "C25B", C550: "C25B", C551: "C25B",
+  C55B: "C25B", C560: "C25B", C56X: "C25B", ASTR: "C25B", H25A: "C25B",
+  GSPN: "C25B", EA50: "C25B",
   C650: "C25B", C680: "C25B", C68A: "C25B", C700: "C750", C750: "C750",
+  // GA4C (Gulfstream G400, ~19.3m span) and HA4T (Hawker Horizon/Raytheon
+  // 4000, ~20.0m span) land closest to C750's 19.74m (Citation X) among
+  // already-established targets (#1914 Finding 2).
+  GA4C: "C750", HA4T: "C750",
   E50P: "C25B", E55P: "C25B", E545: "C25B", E550: "C25B",
   LJ31: "LJ35", LJ35: "LJ35", LJ40: "LJ35", LJ45: "LJ35", LJ55: "LJ35",
   LJ60: "LJ35", LJ70: "LJ35", LJ75: "LJ35",
+  // LJ23/24/25/28: older Learjet variants, same family as the LJ3x/4x/5x/
+  //6x/7x group above, missed originally. BE40/BE4W (Beechjet 400/400XT),
+  // MU30 (Mitsubishi MU-300 Diamond -- literally the airframe Beechjet 400
+  // was developed from), PRM1 (Premier 1), WW24 (IAI Westwind), JCOM (IAI
+  // Commodore, Westwind's predecessor), SBR1 (Sabreliner 40/50/60/65), and
+  // SJ30 (Swearingen SJ30) are all real-world 12-14m-span light bizjets --
+  // the same class LJ35 (12.04m) already represents (#1914 Finding 2).
+  LJ23: "LJ35", LJ24: "LJ35", LJ25: "LJ35", LJ28: "LJ35",
+  BE40: "LJ35", BE4W: "LJ35", MU30: "LJ35", PRM1: "LJ35", WW24: "LJ35",
+  JCOM: "LJ35", SBR1: "LJ35", SJ30: "LJ35",
   H25B: "C25B", H25C: "C25B", HDJT: "C25B",
   GLF2: "GLF6", GLF3: "GLF6", GLF4: "GLF6", GLF5: "GLF6", GLF6: "GLF6",
   G150: "LJ35", GALX: "GLF6", G280: "GLF6",
+  // GA5C/GA6C/GA7C/GA8C: Gulfstream G500/G600/G700/G800, all real spans
+  // 28-32m -- same large-cabin class as the existing GLF2-5 group, which
+  // already spans multiple Gulfstream generations under one shape (#1914
+  // Finding 2).
+  GA5C: "GLF6", GA6C: "GLF6", GA7C: "GLF6", GA8C: "GLF6",
   GLEX: "GL5T", GL5T: "GL5T", GL7T: "GL5T", GLF: "GLF6",
-  F2TH: "FA7X", FA50: "FA7X", FA7X: "FA7X", FA8X: "FA7X", F900: "FA7X", F900EX: "FA7X",
+  // FA10/FA20/FA6X: Falcon 100/200/6X, same Falcon-family bucket as
+  // F2TH/FA50/F900/F900EX below despite real size variance across the
+  // family -- matching this file's own established precedent for the
+  // Gulfstream/Citation groups (#1914 Finding 2).
+  F2TH: "FA7X", FA50: "FA7X", FA10: "FA7X", FA20: "FA7X", FA6X: "FA7X",
+  FA7X: "FA7X", FA8X: "FA7X", F900: "FA7X", F900EX: "FA7X",
   PC24: "C25B",
   // Light GA / pistons / turboprops
   C82R: "C172", C82S: "C172", C72R: "C172", C152: "C172", C162: "C172",
