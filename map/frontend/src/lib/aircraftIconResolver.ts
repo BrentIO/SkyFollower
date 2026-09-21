@@ -33,6 +33,9 @@ export const TYPE_ALIASES: Record<string, string> = {
   E135: "E170", E145: "E170", E45X: "E170",
   // Bombardier CRJ / CSeries / Dash 8
   CRJ1: "CRJ2", CRJ2: "CRJ2", CRJ7: "CRJ7", CRJ9: "CRJ9", CRJX: "CRJX",
+  // Bombardier Challenger -- no dedicated shape; CRJ2's T-tail/rear-engine
+  // silhouette is the closest existing match at bizjet scale (#1903).
+  CL60: "CRJ2", CL30: "CRJ2", CL35: "CRJ2",
   BCS1: "BCS1", BCS3: "BCS3", A221: "BCS1", A223: "BCS3",
   DH8A: "DH8C", DH8B: "DH8C", DH8C: "DH8C", DH8D: "DH8D",
   // McDonnell Douglas

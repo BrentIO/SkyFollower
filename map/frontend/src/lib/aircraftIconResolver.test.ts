@@ -23,6 +23,12 @@ describe("resolveAircraftShape", () => {
     expect(resolveAircraftShape({ icao_hex: "A", type_designator: "B77F" })).toBe("B77W");
   });
 
+  it("aliases the Bombardier Challenger family to CRJ2 (#1903)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "CL60" })).toBe("CRJ2");
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "CL30" })).toBe("CRJ2");
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "CL35" })).toBe("CRJ2");
+  });
+
   it("falls back to the description code + WTC when the type is unknown", () => {
     expect(
       resolveAircraftShape({ icao_hex: "A", description_code: "L2J", wake_turbulence_category: "H" }),
