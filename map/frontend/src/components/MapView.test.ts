@@ -861,70 +861,92 @@ describe("map render loop (idle redraws)", () => {
   });
 });
 
-describe("radar overlay (#1896)", () => {
-  it("inserts the current-snapshot layer before RANGE_RING_LAYER_ID -- above the base map, below everything this app draws", () => {
-    expect(addLayerBeforeId("RADAR_LAYER_ID")).toBe("RANGE_RING_LAYER_ID");
+describe("radar overlay (#1896, #1965)", () => {
+  it("captures each ambient-cache frame's layer before RANGE_RING_LAYER_ID -- above the base map, below everything this app draws", () => {
+    const captureFnIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    expect(captureFnIndex).toBeGreaterThan(-1);
+    const addLayerIndex = mapViewSource.indexOf("radarMap.addLayer(", captureFnIndex);
+    expect(addLayerIndex).toBeGreaterThan(-1);
+    const callEnd = mapViewSource.indexOf("RANGE_RING_LAYER_ID,", addLayerIndex);
+    expect(callEnd).toBeGreaterThan(-1);
+    expect(callEnd - addLayerIndex).toBeLessThan(200);
   });
 
   it("inserts every per-frame playback layer before RANGE_RING_LAYER_ID too (#1910 2nd attempt: one source+layer per frame, not a single reused one)", () => {
-    const forEachIndex = mapViewSource.indexOf("RADAR_PLAYBACK_OFFSETS_MINUTES.forEach((offsetMinutes, i) => {");
-    expect(forEachIndex).toBeGreaterThan(-1);
-    const addLayerIndex = mapViewSource.indexOf("map.addLayer(", forEachIndex);
+    const guardIndex = mapViewSource.indexOf('if (step.source.kind !== "fetch") return;');
+    expect(guardIndex).toBeGreaterThan(-1);
+    const addLayerIndex = mapViewSource.indexOf("map.addLayer(", guardIndex);
     const callEnd = mapViewSource.indexOf("RANGE_RING_LAYER_ID,", addLayerIndex);
     expect(callEnd).toBeGreaterThan(-1);
     expect(callEnd - addLayerIndex).toBeLessThan(300);
   });
 
-  it("declares the current-snapshot source with the empirically-verified zoom bounds from lib/radar.ts, not hardcoded numbers", () => {
-    const currentSourceIndex = mapViewSource.indexOf("map.addSource(RADAR_SOURCE_ID,");
-    expect(currentSourceIndex).toBeGreaterThan(-1);
-    const call = mapViewSource.slice(currentSourceIndex, mapViewSource.indexOf("});", currentSourceIndex));
-    expect(call).toContain("minzoom: RADAR_MIN_ZOOM");
-    expect(call).toContain("maxzoom: RADAR_MAX_ZOOM");
-    expect(call).toContain("tileSize: RADAR_TILE_SIZE");
-  });
-
-  it("declares each per-frame playback source with the same zoom bounds", () => {
-    const forEachIndex = mapViewSource.indexOf("RADAR_PLAYBACK_OFFSETS_MINUTES.forEach((offsetMinutes, i) => {");
-    const addSourceIndex = mapViewSource.indexOf("map.addSource(id,", forEachIndex);
+  it("declares each ambient-cache slot's source with the empirically-verified zoom bounds from lib/radar.ts, not hardcoded numbers", () => {
+    const captureFnIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    expect(captureFnIndex).toBeGreaterThan(-1);
+    const addSourceIndex = mapViewSource.indexOf("radarMap.addSource(id,", captureFnIndex);
     expect(addSourceIndex).toBeGreaterThan(-1);
     const call = mapViewSource.slice(addSourceIndex, mapViewSource.indexOf("});", addSourceIndex));
     expect(call).toContain("minzoom: RADAR_MIN_ZOOM");
     expect(call).toContain("maxzoom: RADAR_MAX_ZOOM");
     expect(call).toContain("tileSize: RADAR_TILE_SIZE");
-    expect(call).toContain("tiles: [radarFrameTileUrl(offsetMinutes)]");
   });
 
-  it("#1910 (2nd attempt): every playback layer is added layout-visible (never visibility:none) -- verified live that a hidden raster layer's tiles never load at all", () => {
-    const forEachIndex = mapViewSource.indexOf("RADAR_PLAYBACK_OFFSETS_MINUTES.forEach((offsetMinutes, i) => {");
-    const forEachEnd = mapViewSource.indexOf("});\n\n    // Resolves once every one of the 7 sources", forEachIndex);
-    expect(forEachEnd).toBeGreaterThan(forEachIndex);
-    const forEachBody = mapViewSource.slice(forEachIndex, forEachEnd);
+  it("declares each freshly-fetched playback source with the same zoom bounds", () => {
+    const guardIndex = mapViewSource.indexOf('if (step.source.kind !== "fetch") return;');
+    const addSourceIndex = mapViewSource.indexOf("map.addSource(id,", guardIndex);
+    expect(addSourceIndex).toBeGreaterThan(-1);
+    const call = mapViewSource.slice(addSourceIndex, mapViewSource.indexOf("});", addSourceIndex));
+    expect(call).toContain("minzoom: RADAR_MIN_ZOOM");
+    expect(call).toContain("maxzoom: RADAR_MAX_ZOOM");
+    expect(call).toContain("tileSize: RADAR_TILE_SIZE");
+    expect(call).toContain("tiles: [radarFrameTileUrl(step.offsetMinutes)]");
+  });
+
+  it("#1910 (2nd attempt): every freshly-fetched playback layer is added layout-visible (never visibility:none) -- verified live that a hidden raster layer's tiles never load at all", () => {
+    const guardIndex = mapViewSource.indexOf('if (step.source.kind !== "fetch") return;');
+    const forEachEnd = mapViewSource.indexOf("// Resolves once every one of the 7 frames", guardIndex);
+    expect(forEachEnd).toBeGreaterThan(guardIndex);
+    const forEachBody = mapViewSource.slice(guardIndex, forEachEnd);
     expect(forEachBody).not.toContain("layout: { visibility:");
     expect(forEachBody).toContain('paint: { "raster-opacity": 0 }');
   });
 
-  it("the on/off effect adds/removes the current-snapshot source+layer whole, rather than only toggling layout visibility -- the hard tile-fetch guarantee", () => {
-    const effectIndex = mapViewSource.indexOf("if (radarOn) {");
+  it("the ambient-capture effect adds/removes each slot's source+layer whole, rather than only toggling layout visibility -- the hard tile-fetch guarantee", () => {
+    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
     expect(effectIndex).toBeGreaterThan(-1);
-    const effectBody = mapViewSource.slice(effectIndex, mapViewSource.indexOf("[radarOn, mapLoaded]);", effectIndex));
-    expect(effectBody).toContain("map.addSource(RADAR_SOURCE_ID,");
-    expect(effectBody).toContain("map.addLayer(");
-    expect(effectBody).toContain("map.removeLayer(RADAR_LAYER_ID)");
-    expect(effectBody).toContain("map.removeSource(RADAR_SOURCE_ID)");
+    const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(-1);
+    const effectBody = mapViewSource.slice(effectIndex, depsIndex);
+    expect(effectBody).toContain("radarMap.addSource(id,");
+    expect(effectBody).toContain("radarMap.addLayer(");
+    expect(effectBody).toContain("radarMap.removeLayer(id)");
+    expect(effectBody).toContain("radarMap.removeSource(id)");
     expect(effectBody).not.toContain("setLayoutProperty");
   });
 
-  it("the on/off effect does not depend on radarOpacity -- an opacity change must never re-add the source/re-fetch tiles", () => {
-    const effectIndex = mapViewSource.indexOf("if (radarOn) {");
-    const depsIndex = mapViewSource.indexOf("[radarOn, mapLoaded]);", effectIndex);
+  it("the ambient-capture effect does not depend on radarOpacity or radarPlaying -- neither should restart the capture interval or re-fetch tiles", () => {
+    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
     expect(depsIndex).toBeGreaterThan(-1);
-    expect(depsIndex - effectIndex).toBeLessThan(2000);
+    expect(depsIndex - effectIndex).toBeLessThan(3000);
+  });
+
+  it("#1965: captures an ambient frame immediately and then every RADAR_REFRESH_INTERVAL_MS, independent of radarPlaying (read from a ref, not the effect's own deps), and stops on cleanup", () => {
+    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
+    const effectBody = mapViewSource.slice(effectIndex, depsIndex);
+    expect(effectBody).toContain("captureAmbientFrame();");
+    expect(effectBody).toContain("const interval = setInterval(captureAmbientFrame, RADAR_REFRESH_INTERVAL_MS);");
+    expect(effectBody).toContain("clearInterval(interval);");
+    // Only the *visible* opacity update is skipped while playing -- the
+    // frame is still always written into the cache either way.
+    expect(effectBody).toContain("if (radarPlayingRef.current) return;");
+    expect(effectBody).toContain("radarAmbientCacheRef.current.set(slot, Date.now());");
   });
 
   it("opacity changes go through setPaintProperty only, never rebuild a source", () => {
-    const opacityEffectIndex = mapViewSource.indexOf('map.setPaintProperty(RADAR_LAYER_ID, "raster-opacity"');
-    expect(opacityEffectIndex).toBeGreaterThan(-1);
+    expect(mapViewSource).toContain('if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", radarOpacity);');
     // Only the one active playback frame (radarActiveFrameIdRef), not a
     // blanket apply to all 7 -- that would make every frame visible at
     // once, defeating playback (#1910 2nd attempt).
@@ -932,15 +954,18 @@ describe("radar overlay (#1896)", () => {
     expect(mapViewSource).toContain('map.setPaintProperty(activeId, "raster-opacity", radarOpacity);');
   });
 
-  it("the current-snapshot refresh interval only runs while radar is on and not playing, and is cleared on cleanup", () => {
-    const guardIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || radarPlaying) return;");
-    expect(guardIndex).toBeGreaterThan(-1);
-    const body = mapViewSource.slice(guardIndex, guardIndex + 400);
-    expect(body).toContain("RADAR_REFRESH_INTERVAL_MS");
-    expect(body).toContain("return () => clearInterval(interval);");
+  it("#1965: plans playback frames from the ambient cache before deciding what to fetch fresh", () => {
+    const effectIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || !radarPlaying) return;");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(effectIndex, mapViewSource.indexOf("async function loadThenPlay()", effectIndex));
+    expect(body).toContain("const plan = planRadarPlaybackFrames(cacheEntries, Date.now());");
+    expect(body).toContain(
+      'step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes)',
+    );
+    expect(body).toContain('const fetchedFrameIds = plan\n      .filter((step) => step.source.kind === "fetch")');
   });
 
-  it("#1910 (2nd attempt): playback steps by toggling raster-opacity between 7 pre-loaded frame layers, never calling setTiles during the loop", () => {
+  it("#1910 (2nd attempt): playback steps by toggling raster-opacity between the planned frame layers, never calling setTiles during the loop", () => {
     const loadThenPlayIndex = mapViewSource.indexOf("async function loadThenPlay()");
     expect(loadThenPlayIndex).toBeGreaterThan(-1);
     const body = mapViewSource.slice(loadThenPlayIndex, mapViewSource.indexOf("loadThenPlay();", loadThenPlayIndex));
@@ -948,22 +973,20 @@ describe("radar overlay (#1896)", () => {
     expect(body).toContain('radarMap.setPaintProperty(previousId, "raster-opacity", 0)');
     expect(body).toContain("RADAR_FRAME_INTERVAL_MS");
     expect(body).not.toContain("setTiles");
-    // One addSource call inside the per-frame forEach -- 7 distinct
-    // sources (one per offset), not a single one reused across frames.
-    expect(mapViewSource).toContain("RADAR_PLAYBACK_OFFSETS_MINUTES.map(radarPlaybackFrameId)");
   });
 
-  it("playback's cleanup tears down all 7 per-frame source/layers and restores the snapshot layer's visibility -- pause reverts to the current picture immediately", () => {
+  it("playback's cleanup tears down only the frames it fetched fresh (ambient-cache frames outlive the loop) and restores the ambient cache's own current display -- pause reverts to the current picture immediately", () => {
     const loadThenPlayIndex = mapViewSource.indexOf("async function loadThenPlay()");
     expect(loadThenPlayIndex).toBeGreaterThan(-1);
     const cleanupIndex = mapViewSource.indexOf("cancelled = true;", loadThenPlayIndex);
     expect(cleanupIndex).toBeGreaterThan(-1);
-    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 500);
+    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 1500);
     expect(cleanupBody).toContain("radarActiveFrameIdRef.current = null;");
-    expect(cleanupBody).toContain("frameIds.forEach((id) => {");
+    expect(cleanupBody).toContain("fetchedFrameIds.forEach((id) => {");
     expect(cleanupBody).toContain("map.removeLayer(id)");
     expect(cleanupBody).toContain("map.removeSource(id)");
-    expect(cleanupBody).toContain('map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible")');
+    expect(cleanupBody).toContain("const newest = radarNewestAmbientSlotRef.current;");
+    expect(cleanupBody).toContain('map.setPaintProperty(id, "raster-opacity", radarOpacityRef.current);');
   });
 
   it("turning radar off also stops playback, so turning it back on later doesn't silently resume animating", () => {

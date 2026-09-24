@@ -84,3 +84,78 @@ export function radarFrameTileUrl(offsetMinutes: number): string {
 export function radarPlaybackFrameId(offsetMinutes: number): string {
   return `sf-radar-playback-${offsetMinutes}`;
 }
+
+// #1965: the ambient rolling cache's ring-buffer size. Deliberately equal to
+// RADAR_PLAYBACK_OFFSETS_MINUTES.length (7 slots covering the same 30
+// minutes / 5-minute cadence the playback loop targets) -- a full cache is
+// exactly enough to cover every playback slot, and no more.
+export const RADAR_AMBIENT_CACHE_CAPACITY = RADAR_PLAYBACK_OFFSETS_MINUTES.length;
+
+// #1965: id for one ambient-cache ring-buffer slot's source+layer. Distinct
+// from radarPlaybackFrameId (keyed by minute-offset, torn down every time
+// playback stops) -- an ambient slot is keyed by its position in the ring
+// buffer and persists for as long as radar stays on, whether or not
+// playback is ever used.
+export function radarAmbientFrameId(slot: number): string {
+  return `sf-radar-ambient-${slot}`;
+}
+
+export interface RadarAmbientCacheEntry {
+  /** Ring-buffer slot holding this frame (0..RADAR_AMBIENT_CACHE_CAPACITY-1). */
+  slot: number;
+  /** When this frame's tiles were fetched, i.e. what moment it depicts. */
+  timestampMs: number;
+}
+
+// #1965: how close an ambient frame's capture time has to be to one of the
+// 7 target playback slots to be reused as-is, instead of fetching that slot
+// fresh. Half of RADAR_REFRESH_INTERVAL_MS's 5-minute cadence: with ambient
+// captures landing (ideally) exactly every 5 minutes, +/-2.5 minutes is the
+// widest tolerance that still maps every possible capture time to exactly
+// one target slot with no gaps and no slot eligible for two captures at
+// once. Real ambient cadence has some jitter (refresh timers aren't
+// millisecond-precise, and a tab backgrounded/foregrounded can skew an
+// interval), so this is a real approximation, not a zero-cost one -- see
+// #1965's own "trade-offs" section.
+export const RADAR_AMBIENT_MATCH_TOLERANCE_MS = 2.5 * 60 * 1000;
+
+export type RadarPlaybackFrameSource = { kind: "ambient"; slot: number } | { kind: "fetch" };
+
+export interface RadarPlaybackPlan {
+  offsetMinutes: number;
+  source: RadarPlaybackFrameSource;
+}
+
+/**
+ * For each of the 7 playback target slots (RADAR_PLAYBACK_OFFSETS_MINUTES,
+ * relative to `nowMs`), decides whether an existing ambient-cache entry is
+ * close enough (RADAR_AMBIENT_MATCH_TOLERANCE_MS) to reuse as-is, or whether
+ * that slot has to be fetched fresh from IEM's archived endpoint (#1965).
+ * Greedily assigns each cache entry to its single closest unclaimed target
+ * slot, oldest-target-first, so no entry is reused for two slots at once.
+ * An empty/near-empty `cache` degrades to "fetch everything," i.e. today's
+ * pre-#1965 behavior -- no regression versus the pre-existing worst case.
+ */
+export function planRadarPlaybackFrames(
+  cache: readonly RadarAmbientCacheEntry[],
+  nowMs: number,
+): RadarPlaybackPlan[] {
+  const unclaimed = [...cache];
+  return RADAR_PLAYBACK_OFFSETS_MINUTES.map((offsetMinutes) => {
+    const targetMs = nowMs - offsetMinutes * 60 * 1000;
+    let bestIndex = -1;
+    let bestDelta = RADAR_AMBIENT_MATCH_TOLERANCE_MS;
+    unclaimed.forEach((entry, index) => {
+      const delta = Math.abs(entry.timestampMs - targetMs);
+      if (delta <= bestDelta) {
+        bestDelta = delta;
+        bestIndex = index;
+      }
+    });
+    if (bestIndex === -1) {
+      return { offsetMinutes, source: { kind: "fetch" } };
+    }
+    const [matched] = unclaimed.splice(bestIndex, 1);
+    return { offsetMinutes, source: { kind: "ambient", slot: matched.slot } };
+  });
+}

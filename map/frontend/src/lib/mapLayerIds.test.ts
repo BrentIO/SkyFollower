@@ -3,7 +3,6 @@ import {
   AIRCRAFT_LAYER_ID,
   AIRCRAFT_OUTLINE_LAYER_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
-  RADAR_LAYER_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_RING_LABEL_LAYER_ID,
   RANGE_RING_LAYER_ID,
@@ -11,6 +10,7 @@ import {
   TRAIL_HIT_AREA_LAYER_ID,
   TRAIL_LAYER_ID,
 } from "./mapLayerIds";
+import { radarAmbientFrameId, radarPlaybackFrameId } from "./radar";
 
 describe("SELECTABLE_LAYER_IDS", () => {
   it("includes the aircraft icon layer", () => {
@@ -39,7 +39,8 @@ describe("SELECTABLE_LAYER_IDS", () => {
     expect(SELECTABLE_LAYER_IDS).not.toContain(AIRCRAFT_OUTLINE_LAYER_ID);
   });
 
-  it("excludes the radar overlay's current-snapshot layer (#1896)", () => {
-    expect(SELECTABLE_LAYER_IDS).not.toContain(RADAR_LAYER_ID);
+  it("excludes the radar overlay's per-frame layers (#1896/#1965)", () => {
+    expect(SELECTABLE_LAYER_IDS).not.toContain(radarAmbientFrameId(0));
+    expect(SELECTABLE_LAYER_IDS).not.toContain(radarPlaybackFrameId(0));
   });
 });
