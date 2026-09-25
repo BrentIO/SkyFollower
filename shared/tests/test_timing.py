@@ -112,6 +112,12 @@ class TestInvariants:
     def test_default_flight_ttl_is_five_minutes(self):
         assert timing.DEFAULT_FLIGHT_TTL_SECONDS == 300
 
+    def test_rabbitmq_poll_hang_timeout_exceeds_the_connect_and_read_timeout_it_backstops(self):
+        assert (
+            timing.RABBITMQ_POLL_HANG_TIMEOUT_SECONDS
+            > timing.HTTP_CONNECT_TIMEOUT_SECONDS + timing.HTTP_TIMEOUT_SECONDS
+        )
+
     def test_tcp_keepalive_detection_budget_is_about_ninety_seconds(self):
         budget = (
             timing.TCP_KEEPIDLE_SECONDS

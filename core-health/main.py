@@ -72,7 +72,9 @@ from shared.timing import (
     GHCR_VERSION_CHECK_INTERVAL_SECONDS,
     GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
+    HTTP_CONNECT_TIMEOUT_SECONDS,
     HTTP_TIMEOUT_SECONDS,
+    RABBITMQ_POLL_HANG_TIMEOUT_SECONDS,
     RABBITMQ_POLL_INTERVAL_SECONDS,
     REDIS_POLL_INTERVAL_SECONDS,
 )
@@ -525,6 +527,19 @@ class CoreHealth:
                     "object_id": f"SkyFollower_core_health_{field}",
                     "device": device,
                     "icon": icon,
+                    # Matches _ensure_queue_discovery's own expire_after
+                    # convention exactly (#1967): before this, every sensor
+                    # published here had no staleness signal at all -- a
+                    # fully-hung poll loop left them showing their last
+                    # retained value forever, confirmed live, unlike the
+                    # per-queue sensors below (which already had this) that
+                    # correctly aged out to unavailable. Applied uniformly
+                    # to every sensor this function publishes, RabbitMQ-
+                    # and Redis-derived alike -- REDIS_POLL_INTERVAL_SECONDS
+                    # already equals RABBITMQ_POLL_INTERVAL_SECONDS (see
+                    # shared/timing.py), so one constant covers both
+                    # cadences without inventing a second one.
+                    "expire_after": RABBITMQ_POLL_INTERVAL_SECONDS * 3,
                 }
                 if state_class:
                     payload["state_class"] = state_class
@@ -544,11 +559,71 @@ class CoreHealth:
     # ------------------------------------------------------------------
 
     def _rmq_get(self, path: str):
-        response = self._session.get(
-            f"{self._rmq_base_url}{path}", auth=self._rmq_auth, timeout=HTTP_TIMEOUT_SECONDS
-        )
-        response.raise_for_status()
-        return response.json()
+        """Issues the GET on a short-lived daemon thread and joins it with
+        a hard wall-clock deadline (RABBITMQ_POLL_HANG_TIMEOUT_SECONDS),
+        independent of the (connect, read) timeout tuple passed to requests
+        itself. Confirmed live (#1967): a connection pooled across a
+        RabbitMQ restart can be left half-open in a way some requests/
+        urllib3 versions/pool states never notice, so the timeout tuple
+        alone isn't a sufficient backstop -- without this, a single wedged
+        GET hangs _rabbitmq_poll_loop forever with no log output at all. A
+        plain threading.Thread (not concurrent.futures.ThreadPoolExecutor)
+        is deliberate: a thread that's genuinely still blocked when this
+        returns is simply abandoned (it's a daemon thread, so it can't
+        block process shutdown either); ThreadPoolExecutor registers an
+        atexit hook that joins every worker thread it ever created, which
+        would make a truly wedged call hang interpreter shutdown too.
+        """
+        url = f"{self._rmq_base_url}{path}"
+        outcome: dict = {}
+
+        def _do_get() -> None:
+            try:
+                response = self._session.get(
+                    url, auth=self._rmq_auth,
+                    timeout=(HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_TIMEOUT_SECONDS),
+                )
+                response.raise_for_status()
+                outcome["value"] = response.json()
+            except Exception as exc:  # noqa: BLE001 -- re-raised on the caller's thread below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=_do_get, daemon=True, name="rabbitmq-poll-get")
+        worker.start()
+        worker.join(RABBITMQ_POLL_HANG_TIMEOUT_SECONDS)
+        if worker.is_alive():
+            # The (connect, read) timeout above has already failed to
+            # bound this call -- exactly the half-open-socket scenario
+            # from #1967. Logged unconditionally (not gated on
+            # self._rmq_connected like the generic failure warning below)
+            # because a hang is a distinct failure mode from an ordinary
+            # request exception and deserves its own visible signal every
+            # time it happens, not just on the first occurrence.
+            logger.warning(
+                "RabbitMQ Management API GET %s exceeded its %ss watchdog; recreating the HTTP session.",
+                path, RABBITMQ_POLL_HANG_TIMEOUT_SECONDS,
+            )
+            self._recreate_session()
+            raise TimeoutError(
+                f"RabbitMQ Management API GET {path} exceeded "
+                f"{RABBITMQ_POLL_HANG_TIMEOUT_SECONDS}s watchdog"
+            )
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["value"]
+
+    def _recreate_session(self) -> None:
+        """Discards the current requests.Session() and replaces it with a
+        fresh one. A pooled/kept-alive connection left half-open by a
+        RabbitMQ restart has no way to be told "the far end came back,
+        reconnect" short of throwing the whole session away -- confirmed
+        live (#1967) that reusing it indefinitely is exactly what left the
+        poller permanently stuck."""
+        try:
+            self._session.close()
+        except Exception:  # noqa: BLE001 -- best-effort cleanup only
+            pass
+        self._session = requests.Session()
 
     def _rabbitmq_poll_loop(self) -> None:
         while not self._shutdown.is_set():
@@ -575,6 +650,13 @@ class CoreHealth:
             if self._rmq_connected:
                 logger.warning("RabbitMQ Management API poll failed: %s", exc)
             self._rmq_connected = False
+            # Recreate on every failure, not just a detected hang (#1967)
+            # -- an outright connection error can leave the pool holding a
+            # connection in a state just as unusable as the half-open-
+            # socket case, and there's no cheap way to tell those apart
+            # from here. A fresh Session() next tick costs nothing a
+            # genuinely down broker wasn't already going to cost anyway.
+            self._recreate_session()
             overview = nodes = queues = exchange = None
 
         self._publish_core_discovery()
