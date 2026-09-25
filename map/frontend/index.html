@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SkyFollower Map</title>
+    <!-- #2001: info-box text (InfoBoxLayer.tsx) used Tailwind's default
+         font-mono stack, which has no cross-platform member -- it falls
+         through to Android's generic "monospace" keyword, resolving to a
+         genuinely different typeface than Apple's SF Mono. Loaded here
+         (rather than a bare @import in index.css) so the browser can start
+         the font fetch in parallel with CSS parsing; src/index.css's
+         @theme block points font-mono at it, falling back to the original
+         per-OS stack if the fetch fails (e.g. no internet access). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { buildInfoBoxLines, type InfoBoxAircraft } from "../lib/infoBox";
+import { buildInfoBoxLines, type InfoBoxAircraft, type TrendDirection } from "../lib/infoBox";
 import { altitudeZIndex, sortByLabelStackOrder } from "../lib/labelStackOrder";
 
 // Restored (#1851) as the aircraft info-box's only implementation, after
@@ -73,7 +73,12 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
         >
           {b.lines.ident !== null && <div className="text-[12px] font-bold whitespace-nowrap">{b.lines.ident}</div>}
           {b.lines.altitudeSpeed !== null && (
-            <div className="text-[10.5px] whitespace-nowrap">{b.lines.altitudeSpeed}</div>
+            <div className="text-[10.5px] whitespace-nowrap">
+              {b.lines.altitudeSpeed.altitude}
+              {b.lines.altitudeSpeed.trend !== null && <TrendGlyph direction={b.lines.altitudeSpeed.trend} />}
+              {b.lines.altitudeSpeed.altitude !== null && b.lines.altitudeSpeed.groundspeed !== null && " "}
+              {b.lines.altitudeSpeed.groundspeed}
+            </div>
           )}
           {b.lines.registrationType !== null && (
             <div className="text-[10.5px] whitespace-nowrap">{b.lines.registrationType}</div>
@@ -81,5 +86,30 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
         </div>
       ))}
     </div>
+  );
+}
+
+// #2001: the vertical-speed trend used to be a plain Unicode up/down arrow
+// character rendered inline as text. A specific character isn't guaranteed
+// to be in every font's glyph table -- on macOS the font-mono stack's SF
+// Mono glyph for it fell back to a different, undersized substitute font,
+// while the surrounding digits (which every font covers) rendered fine. An SVG
+// shape sized in `em`s (tied to the line's own font-size) sidesteps
+// per-glyph font-fallback entirely and renders identically on every
+// platform. `fill="currentColor"` picks up the box's white text color for
+// free, matching how the arrow character inherited it before. `align-*`
+// nudges the shape up from its own bottom edge onto the text baseline --
+// a flat SVG's baseline is its bottom edge by default, which reads low
+// next to the digits' x-height otherwise.
+function TrendGlyph({ direction }: { direction: NonNullable<TrendDirection> }) {
+  return (
+    <svg
+      viewBox="0 0 10 10"
+      className="inline-block h-[0.7em] w-[0.7em] align-[0.05em]"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <polygon points={direction === "up" ? "5,1 9,8 1,8" : "5,9 1,2 9,2"} />
+    </svg>
   );
 }
