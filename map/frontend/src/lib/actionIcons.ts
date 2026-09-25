@@ -196,3 +196,18 @@ export const MINIMIZE_ICON: IconSpec = {
     { d: "M16 21v-3a2 2 0 0 1 2-2h3" },
   ],
 };
+
+// #2000: Lucide's "Scaling" glyph (fetched byte-for-byte from
+// lucide-icons/lucide's icons/scaling.svg, same convention as above) --
+// a diagonal-resize arrow inside a frame, reading as "resize this content,"
+// for ControlsPanel's new display-scale control (the icon/info-box size
+// multiplier). Deliberately distinct from MAXIMIZE_ICON/MINIMIZE_ICON above
+// -- those are about the whole page's fullscreen state, not per-element size.
+export const DISPLAY_SCALE_ICON: IconSpec = {
+  paths: [
+    { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" },
+    { d: "M14 15H9v-5" },
+    { d: "M16 3h5v5" },
+    { d: "M21 3 9 15" },
+  ],
+};

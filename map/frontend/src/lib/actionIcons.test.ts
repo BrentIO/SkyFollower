@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DISPLAY_SCALE_ICON,
   FOLLOW_ICON,
   ISOLATE_ICON,
   MAXIMIZE_ICON,
@@ -169,5 +170,25 @@ describe("MAXIMIZE_ICON / MINIMIZE_ICON", () => {
 
   it("MAXIMIZE_ICON and MINIMIZE_ICON are visually distinct (different geometry, not identical paths)", () => {
     expect(MAXIMIZE_ICON.paths?.map((p) => p.d)).not.toEqual(MINIMIZE_ICON.paths?.map((p) => p.d));
+  });
+});
+
+// #2000: DISPLAY_SCALE_ICON path data copied byte-for-byte from
+// lucide-icons/lucide's icons/scaling.svg (as of this writing) -- same
+// fetch-don't-guess convention as above.
+describe("DISPLAY_SCALE_ICON", () => {
+  it("is Lucide's Scaling glyph (a frame with a diagonal resize arrow)", () => {
+    expect(DISPLAY_SCALE_ICON.paths).toEqual([
+      { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" },
+      { d: "M14 15H9v-5" },
+      { d: "M16 3h5v5" },
+      { d: "M21 3 9 15" },
+    ]);
+    expect(DISPLAY_SCALE_ICON.circles).toBeUndefined();
+  });
+
+  it("is visually distinct from MAXIMIZE_ICON/MINIMIZE_ICON (different geometry, not identical paths)", () => {
+    expect(DISPLAY_SCALE_ICON.paths?.map((p) => p.d)).not.toEqual(MAXIMIZE_ICON.paths?.map((p) => p.d));
+    expect(DISPLAY_SCALE_ICON.paths?.map((p) => p.d)).not.toEqual(MINIMIZE_ICON.paths?.map((p) => p.d));
   });
 });

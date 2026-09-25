@@ -11,13 +11,13 @@
 // loadPersistedControls() below.
 
 const STORAGE_KEY = "skyfollower-map:controls:v1";
-// Bumped 1 -> 2 for #1896's radarOn/radarOpacity addition -- a stored
-// payload from before that shape existed fails isPersistedControls below
-// (missing fields) even without the version check, but bumping the
-// version is this file's own documented mechanism for a shape change and
-// costs nothing extra, so it's done on principle rather than relying on
-// the shape check alone.
-const STORAGE_VERSION = 2;
+// Bumped 1 -> 2 for #1896's radarOn/radarOpacity addition, 2 -> 3 for
+// #2000's displayScale addition -- a stored payload from before either
+// shape existed fails isPersistedControls below (missing fields) even
+// without the version check, but bumping the version is this file's own
+// documented mechanism for a shape change and costs nothing extra, so
+// it's done on principle rather than relying on the shape check alone.
+const STORAGE_VERSION = 3;
 
 export interface PersistedControls {
   historyAll: boolean;
@@ -26,6 +26,11 @@ export interface PersistedControls {
   rangeOutlineVisible: boolean;
   radarOn: boolean;
   radarOpacity: number;
+  /** #2000: multiplies the aircraft icon-size expression and the info
+   * box's rendered size (see MapView.tsx/InfoBoxLayer.tsx) -- an
+   * operator-facing fix for a display where the fixed CSS-pixel defaults
+   * render too large. 1 is the no-op default. */
+  displayScale: number;
 }
 
 // Today's hardcoded defaults, matching MapView.tsx's own literal
@@ -34,6 +39,9 @@ export interface PersistedControls {
 // decision (raised from an earlier 0.2) -- applies only when no stored
 // payload exists at all; an existing stored value (0.2 or anything else)
 // is never overwritten just because it matches the old default.
+// displayScale's default of 1 is a hard requirement, not just a starting
+// point -- #2000's acceptance criteria require zero visual change for an
+// operator who never touches the new control.
 const DEFAULTS: PersistedControls = {
   historyAll: false,
   labelsAll: false,
@@ -41,6 +49,7 @@ const DEFAULTS: PersistedControls = {
   rangeOutlineVisible: false,
   radarOn: false,
   radarOpacity: 0.5,
+  displayScale: 1,
 };
 
 interface StoredShape {
@@ -65,7 +74,8 @@ function isPersistedControls(value: unknown): value is PersistedControls {
     isBoolean(v.mapLabelsOn) &&
     isBoolean(v.rangeOutlineVisible) &&
     isBoolean(v.radarOn) &&
-    isFiniteNumber(v.radarOpacity)
+    isFiniteNumber(v.radarOpacity) &&
+    isFiniteNumber(v.displayScale)
   );
 }
 
