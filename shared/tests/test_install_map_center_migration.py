@@ -30,12 +30,15 @@ _DO_UPGRADE = _extract_function("do_upgrade")
 
 # docker is stubbed to a no-op -- these tests only care about the .env
 # rewrite, not the real pull/up sequence (no daemon available in CI/local
-# test runs anyway).
+# test runs anyway). fetch_role is stubbed too now that do_upgrade calls it
+# (#1961) -- its own re-fetch behavior is covered by
+# test_install_upgrade_compose_refetch.py, so it's a no-op here.
 _HARNESS = """
 set -eu
 DEV_BUILD=0
 BRANCH=""
 docker() { return 0; }
+fetch_role() { return 0; }
 """
 
 
