@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* #2001: pins Tailwind's font-mono utility (used only by InfoBoxLayer.tsx's
+   on-map info box) to a single self-consistent web font, loaded via the
+   <link> tags in index.html, instead of Tailwind v4's default per-OS stack
+   (ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ...). That
+   default stack has no member on Android, which fell through to the
+   stack's final generic "monospace" keyword -- a genuinely different
+   typeface than Apple's SF Mono, which macOS/iPadOS resolve to. JetBrains
+   Mono: Apache-2.0 licensed, free for web embedding, hosted on Google
+   Fonts. Kept as the *first* stack entry (not the only one) so a blocked/
+   failed font fetch still falls back to a monospace font instead of the
+   browser's serif/sans-serif default. */
+@theme {
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+}
+
 /* Without this, the browser has no way to know the page follows a
    coordinated light/dark presentation, so native UI chrome it renders
    itself can end up with mismatched contrast in dark mode. Same

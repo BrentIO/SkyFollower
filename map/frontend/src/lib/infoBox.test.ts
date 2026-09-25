@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAltitudeSpeedLine,
   buildInfoBoxLines,
   formatAltitude,
-  formatAltitudeSpeedLine,
   formatGroundspeed,
   formatIdentLine,
   formatRegistrationTypeLine,
   trendArrow,
+  trendDirection,
 } from "./infoBox";
 
 describe("trendArrow", () => {
@@ -33,6 +34,40 @@ describe("trendArrow", () => {
   });
 });
 
+describe("trendDirection -- #2001's direction-value counterpart to trendArrow(), used only by the info box", () => {
+  it("returns 'up' when climbing above the +500ft/min threshold", () => {
+    expect(trendDirection(501)).toBe("up");
+    expect(trendDirection(3000)).toBe("up");
+  });
+
+  it("returns 'down' when descending below the -500ft/min threshold", () => {
+    expect(trendDirection(-501)).toBe("down");
+    expect(trendDirection(-3000)).toBe("down");
+  });
+
+  it("returns null (no arrow) when level, inclusive of the threshold", () => {
+    expect(trendDirection(0)).toBeNull();
+    expect(trendDirection(500)).toBeNull();
+    expect(trendDirection(-500)).toBeNull();
+    expect(trendDirection(250)).toBeNull();
+  });
+
+  it("returns null when vertical_speed is unknown", () => {
+    expect(trendDirection(null)).toBeNull();
+    expect(trendDirection(undefined)).toBeNull();
+  });
+
+  it("agrees with trendArrow()'s direction at every threshold boundary", () => {
+    for (const vs of [501, 3000, -501, -3000, 0, 500, -500, 250, null, undefined]) {
+      const arrow = trendArrow(vs);
+      const direction = trendDirection(vs);
+      if (arrow === "↑") expect(direction).toBe("up");
+      else if (arrow === "↓") expect(direction).toBe("down");
+      else expect(direction).toBeNull();
+    }
+  });
+});
+
 describe("formatAltitude", () => {
   it("formats full feet with no thousands separator, never flight-level shorthand", () => {
     expect(formatAltitude(35000)).toBe("35000");
@@ -55,30 +90,46 @@ describe("formatGroundspeed", () => {
   });
 });
 
-describe("formatAltitudeSpeedLine", () => {
-  it("renders the full example from the design spec", () => {
-    expect(formatAltitudeSpeedLine({ alt: 35000, vs: -1200, velocity: 450 })).toBe("35000↓ 450kt");
+describe("buildAltitudeSpeedLine", () => {
+  it("renders the full example from the design spec, as parts", () => {
+    expect(buildAltitudeSpeedLine({ alt: 35000, vs: -1200, velocity: 450 })).toEqual({
+      altitude: "35000",
+      trend: "down",
+      groundspeed: "450kt",
+    });
   });
 
-  it("omits the arrow entirely when level", () => {
-    expect(formatAltitudeSpeedLine({ alt: 35000, vs: 0, velocity: 450 })).toBe("35000 450kt");
+  it("omits the trend entirely when level", () => {
+    expect(buildAltitudeSpeedLine({ alt: 35000, vs: 0, velocity: 450 })).toEqual({
+      altitude: "35000",
+      trend: null,
+      groundspeed: "450kt",
+    });
   });
 
-  it("omits the groundspeed half when velocity is unknown, keeping altitude+arrow", () => {
-    expect(formatAltitudeSpeedLine({ alt: 12000, vs: 1500, velocity: null })).toBe("12000↑");
+  it("omits the groundspeed half when velocity is unknown, keeping altitude+trend", () => {
+    expect(buildAltitudeSpeedLine({ alt: 12000, vs: 1500, velocity: null })).toEqual({
+      altitude: "12000",
+      trend: "up",
+      groundspeed: null,
+    });
   });
 
-  it("omits the altitude+arrow half when altitude is unknown, keeping groundspeed", () => {
-    expect(formatAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 })).toBe("200kt");
+  it("omits the altitude+trend half when altitude is unknown, keeping groundspeed", () => {
+    expect(buildAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 })).toEqual({
+      altitude: null,
+      trend: null,
+      groundspeed: "200kt",
+    });
   });
 
-  it("never attaches an arrow to a missing altitude even if vertical_speed is known", () => {
-    const result = formatAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 });
-    expect(result).not.toContain("↑");
+  it("never attaches a trend to a missing altitude even if vertical_speed is known", () => {
+    const result = buildAltitudeSpeedLine({ alt: null, vs: 1500, velocity: 200 });
+    expect(result?.trend).toBeNull();
   });
 
   it("returns null (whole line omitted) when both altitude and velocity are unknown", () => {
-    expect(formatAltitudeSpeedLine({ alt: null, vs: null, velocity: null })).toBeNull();
+    expect(buildAltitudeSpeedLine({ alt: null, vs: null, velocity: null })).toBeNull();
   });
 });
 
@@ -137,7 +188,7 @@ describe("buildInfoBoxLines", () => {
     });
     expect(lines).toEqual({
       ident: "DAL659",
-      altitudeSpeed: "35000↓ 450kt",
+      altitudeSpeed: { altitude: "35000", trend: "down", groundspeed: "450kt" },
       registrationType: "N988DL B752",
     });
   });

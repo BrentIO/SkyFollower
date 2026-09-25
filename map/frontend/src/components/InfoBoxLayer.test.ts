@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+
 // Vite's `?raw` suffix (see MapView.test.ts's own use of this) -- no
 // jsdom/component-render test setup in this project (lib/config.test.ts),
-// so the box's conditional style logic is checked by reading the actual
-// source text rather than rendering.
+// so both the displayScale style logic (#2000) and the arrow-glyph
+// rendering change (#2001) are checked against the actual source text
+// rather than a rendered DOM.
 import infoBoxLayerSource from "./InfoBoxLayer.tsx?raw";
 
 // #2000: displayScale (ControlsPanel's operator-facing "Display Scale"
@@ -41,12 +43,48 @@ describe("InfoBoxLayer -- displayScale prop", () => {
   });
 
   // Guards against this change accidentally touching #2001's territory
-  // (font family / trend-arrow glyph), which is being implemented
-  // concurrently against this same file.
+  // (font family / trend-arrow glyph), which was implemented concurrently
+  // against this same file.
   it("does not touch the font-mono class or the existing text-size/padding classes", () => {
     expect(infoBoxLayerSource).toContain("font-mono");
     expect(infoBoxLayerSource).toContain("px-1.5 py-1");
     expect(infoBoxLayerSource).toContain("text-[12px]");
     expect(infoBoxLayerSource).toContain("text-[10.5px]");
+  });
+});
+
+describe("InfoBoxLayer -- #2001 vertical-speed trend glyph", () => {
+  it("no longer embeds the Unicode trend arrow characters as text", () => {
+    expect(infoBoxLayerSource).not.toContain("↑");
+    expect(infoBoxLayerSource).not.toContain("↓");
+  });
+
+  it("renders the trend via the dedicated TrendGlyph component, driven by lines.altitudeSpeed.trend", () => {
+    expect(infoBoxLayerSource).toContain(
+      "b.lines.altitudeSpeed.trend !== null && <TrendGlyph direction={b.lines.altitudeSpeed.trend} />",
+    );
+  });
+
+  it("TrendGlyph is a currentColor-fill SVG sized in ems (not px), so it scales with the surrounding text", () => {
+    const glyphIndex = infoBoxLayerSource.indexOf("function TrendGlyph(");
+    expect(glyphIndex).toBeGreaterThan(-1);
+    const glyphBody = infoBoxLayerSource.slice(glyphIndex, glyphIndex + 600);
+    expect(glyphBody).toContain('fill="currentColor"');
+    expect(glyphBody).toContain("h-[0.7em]");
+    expect(glyphBody).toContain("w-[0.7em]");
+    expect(glyphBody).not.toMatch(/width="\d/);
+    expect(glyphBody).not.toMatch(/height="\d/);
+  });
+
+  it("TrendGlyph picks a distinct shape for up vs. down", () => {
+    const glyphIndex = infoBoxLayerSource.indexOf("function TrendGlyph(");
+    const glyphBody = infoBoxLayerSource.slice(glyphIndex, glyphIndex + 600);
+    expect(glyphBody).toContain('direction === "up" ?');
+  });
+
+  it("leaves the box's existing font/size/padding classes untouched (issue #2000's concern, not #2001's)", () => {
+    expect(infoBoxLayerSource).toContain("rounded bg-black/40 px-1.5 py-1 font-mono leading-tight text-white");
+    expect(infoBoxLayerSource).toContain("text-[12px] font-bold whitespace-nowrap");
+    expect(infoBoxLayerSource).toContain("text-[10.5px] whitespace-nowrap");
   });
 });
