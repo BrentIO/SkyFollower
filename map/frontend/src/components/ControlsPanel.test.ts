@@ -331,6 +331,61 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
   });
 });
 
+describe("Display Scale control (#2000) -- last in the column, after Radar", () => {
+  it("renders after Radar", () => {
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    expect(scaleIndex).toBeGreaterThan(radarIndex);
+  });
+
+  it("uses DISPLAY_SCALE_ICON", () => {
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
+    expect(callSite).toContain("icon={DISPLAY_SCALE_ICON}");
+  });
+
+  it("the icon's active state reflects whether displayScale differs from the 1.0 no-op default, not whether the popover is expanded", () => {
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
+    expect(callSite).toContain("active={displayScale !== 1}");
+  });
+
+  it("the icon's onClick toggles local expand state, not onDisplayScaleChange directly", () => {
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
+    expect(callSite).toContain("setScaleExpanded");
+    expect(callSite).not.toContain("onClick={onDisplayScaleChange}");
+  });
+
+  it("declares local scaleExpanded state via useState, not lifted/persisted", () => {
+    expect(controlsPanelSource).toContain("useState(false)");
+    expect(controlsPanelSource).toContain("setScaleExpanded");
+  });
+
+  it("only renders the popover's controls when scaleExpanded is true", () => {
+    expect(controlsPanelSource).toContain("{scaleExpanded && (");
+  });
+
+  it("the slider spans 0.5-1.5 in 0.05 steps and is wired to onDisplayScaleChange", () => {
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    const sliderIndex = controlsPanelSource.indexOf('type="range"', scaleIndex);
+    expect(sliderIndex).toBeGreaterThan(-1);
+    const callSite = controlsPanelSource.slice(sliderIndex - 50, sliderIndex + 300);
+    expect(callSite).toContain("min={0.5}");
+    expect(callSite).toContain("max={1.5}");
+    expect(callSite).toContain("step={0.05}");
+    expect(callSite).toContain("value={displayScale}");
+    expect(callSite).toContain("onDisplayScaleChange");
+  });
+
+  it("is never disabled -- unlike Radar's opacity slider, there's no on/off state gating this control", () => {
+    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
+    const sliderIndex = controlsPanelSource.indexOf('type="range"', scaleIndex);
+    const callSite = controlsPanelSource.slice(sliderIndex, sliderIndex + 300);
+    expect(callSite).not.toContain("disabled=");
+  });
+});
+
 describe("outer column wrapper -- #1953: every button pinned above every InfoBoxLayer label", () => {
   it("imports MAX_LABEL_Z_INDEX and applies it to the top-4/right-4 column wrapper", () => {
     expect(controlsPanelSource).toContain('import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";');

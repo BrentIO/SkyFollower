@@ -586,7 +586,7 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
 describe("InfoBoxLayer screen-position sync (#1851)", () => {
   it("imports InfoBoxLayer unconditionally and renders it, gated only on mapLoaded", () => {
     expect(mapViewSource).toContain('import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer"');
-    const usageIndex = mapViewSource.indexOf("<InfoBoxLayer items=");
+    const usageIndex = mapViewSource.indexOf("<InfoBoxLayer");
     const returnIndex = mapViewSource.lastIndexOf("  return (", usageIndex);
     expect(usageIndex).toBeGreaterThan(-1);
     expect(returnIndex).toBeGreaterThan(-1);
@@ -620,9 +620,23 @@ describe("InfoBoxLayer screen-position sync (#1851)", () => {
   });
 
   it("passes selected/showAll/hoveredId straight through to InfoBoxLayer, unchanged from the pre-#1808 contract", () => {
-    expect(mapViewSource).toContain(
-      "<InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />",
-    );
+    const callIndex = mapViewSource.indexOf("<InfoBoxLayer");
+    expect(callIndex).toBeGreaterThan(-1);
+    const call = mapViewSource.slice(callIndex, mapViewSource.indexOf("/>", callIndex) + 2);
+    expect(call).toContain("items={infoBoxItems}");
+    expect(call).toContain("selected={selected}");
+    expect(call).toContain("showAll={labelsAll}");
+    expect(call).toContain("hoveredId={hoveredId}");
+  });
+
+  // #2000: the same displayScale multiplier driving the aircraft icon's own
+  // icon-size expression, so the icon and its info box always scale
+  // together from one control.
+  it("passes displayScale through to InfoBoxLayer", () => {
+    const callIndex = mapViewSource.indexOf("<InfoBoxLayer");
+    expect(callIndex).toBeGreaterThan(-1);
+    const call = mapViewSource.slice(callIndex, mapViewSource.indexOf("/>", callIndex) + 2);
+    expect(call).toContain("displayScale={displayScale}");
   });
 });
 
@@ -776,14 +790,14 @@ describe("AIRCRAFT_OUTLINE_LAYER_ID -- dilated-silhouette outline for icon_scale
   });
 
   it("uses the same per-shape icon-image and rotation as AIRCRAFT_LAYER_ID -- the outline must be the same silhouette, at the same heading, or it won't line up with the real icon", () => {
-    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID");
+    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID", { displayScale: 1 });
     expect(layout["icon-image"]).toEqual(["concat", "sf-ac-", ["get", "shape"]]);
     expect(layout["icon-rotate"]).toEqual(["get", "heading"]);
     expect(layout["icon-rotation-alignment"]).toBe("map");
   });
 
   it("#1912: icon-size enlargement is data-driven -- 1.075x (thin outline) when unselected, 1.15x (the original selection ring, unchanged) when selected -- at every real icon_scale in this range", () => {
-    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID");
+    const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID", { displayScale: 1 });
     for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
       const realSize = 0.55 * icon_scale;
 
@@ -819,6 +833,61 @@ describe("AIRCRAFT_OUTLINE_LAYER_ID -- dilated-silhouette outline for icon_scale
     expect(evaluateExpr(filter, { icon_scale: 1 })).toBe(false);
     // #1912: unlike before, an unselected aircraft in range matches too.
     expect(evaluateExpr(filter, { icon_scale: 0.722, selected: false })).toBe(true);
+  });
+});
+
+describe("display scale multiplier (#2000)", () => {
+  // A wall/panel-mounted display's true physical pixel density can't be
+  // read from the browser (devicePixelRatio only reflects OS scaling, not
+  // physical PPI -- see the issue's own research), so this is a manual,
+  // persisted operator control (ControlsPanel's Display Scale popover)
+  // rather than an automatic one. 1 is the required no-op default -- an
+  // operator who never touches the control must see byte-identical
+  // rendering to before this feature existed.
+
+  it("initializes from loadPersistedControls().displayScale, the same lazy-initializer convention every other persisted control uses", () => {
+    expect(mapViewSource).toContain(
+      "const [displayScale, setDisplayScale] = useState(() => loadPersistedControls().displayScale);",
+    );
+  });
+
+  it("AIRCRAFT_LAYER_ID's icon-size multiplies in displayScale alongside the existing 0.55 base and icon_scale, and is a no-op at displayScale = 1", () => {
+    const layout = extractLayerLayout("AIRCRAFT_LAYER_ID", { displayScale: 1 });
+    for (const icon_scale of [0.6, 0.989, 1, 1.435]) {
+      expect(evaluateExpr(layout["icon-size"], { icon_scale })).toBeCloseTo(0.55 * icon_scale, 10);
+    }
+  });
+
+  it("AIRCRAFT_LAYER_ID's icon-size scales linearly with displayScale away from the default", () => {
+    for (const displayScale of [0.5, 0.75, 1.5]) {
+      const layout = extractLayerLayout("AIRCRAFT_LAYER_ID", { displayScale });
+      const size = evaluateExpr(layout["icon-size"], { icon_scale: 1 }) as number;
+      expect(size).toBeCloseTo(0.55 * displayScale, 10);
+    }
+  });
+
+  it("AIRCRAFT_OUTLINE_LAYER_ID's icon-size carries the same displayScale multiplier, on top of its own 1.075x/1.15x outline enlargement", () => {
+    for (const displayScale of [0.5, 1, 1.5]) {
+      const layout = extractLayerLayout("AIRCRAFT_OUTLINE_LAYER_ID", { displayScale });
+      const unselected = evaluateExpr(layout["icon-size"], { icon_scale: 0.8, selected: false }) as number;
+      const selected = evaluateExpr(layout["icon-size"], { icon_scale: 0.8, selected: true }) as number;
+      expect(unselected).toBeCloseTo(0.55 * displayScale * 0.8 * 1.075, 10);
+      expect(selected).toBeCloseTo(0.55 * displayScale * 0.8 * 1.15, 10);
+    }
+  });
+
+  it("a dedicated effect pushes both layers' icon-size live via setLayoutProperty whenever displayScale changes, gated on mapLoaded -- MapLibre has no way to make a layout property track outside state on its own", () => {
+    const effectIndex = mapViewSource.indexOf("map.setLayoutProperty(AIRCRAFT_LAYER_ID, \"icon-size\"");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const depsIndex = mapViewSource.indexOf("}, [displayScale, mapLoaded]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(effectIndex, depsIndex);
+    expect(body).toContain("map.setLayoutProperty(AIRCRAFT_OUTLINE_LAYER_ID, \"icon-size\"");
+  });
+
+  it("is persisted alongside the other controls and passed through to both ControlsPanel and InfoBoxLayer", () => {
+    expect(mapViewSource).toContain("displayScale={displayScale}");
+    expect(mapViewSource).toContain("onDisplayScaleChange={setDisplayScale}");
   });
 });
 
@@ -1039,11 +1108,18 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(body).toContain("radarPlaybackLoading={radarPlaybackLoading}");
   });
 
-  it("radarOn/radarOpacity are persisted; radarPlaying is not", () => {
-    expect(mapViewSource).toContain(
-      "savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity });",
-    );
-    expect(mapViewSource).not.toContain("radarPlaying: ");
+  it("radarOn/radarOpacity/displayScale are persisted; radarPlaying is not", () => {
+    const callIndex = mapViewSource.indexOf("savePersistedControls({");
+    expect(callIndex).toBeGreaterThan(-1);
+    const call = mapViewSource.slice(callIndex, mapViewSource.indexOf("});", callIndex) + 3);
+    expect(call).toContain("historyAll,");
+    expect(call).toContain("labelsAll,");
+    expect(call).toContain("mapLabelsOn,");
+    expect(call).toContain("rangeOutlineVisible,");
+    expect(call).toContain("radarOn,");
+    expect(call).toContain("radarOpacity,");
+    expect(call).toContain("displayScale,");
+    expect(call).not.toContain("radarPlaying");
   });
 
   it("the attribution control is added manually (not via the Map constructor option), so it can be swapped when radar toggles", () => {

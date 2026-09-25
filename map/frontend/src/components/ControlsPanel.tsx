@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { PAUSE_ICON, PLAY_ICON, RADAR_ICON, ROUTE_ICON, TAGS_ICON, TYPE_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
+import {
+  DISPLAY_SCALE_ICON,
+  PAUSE_ICON,
+  PLAY_ICON,
+  RADAR_ICON,
+  ROUTE_ICON,
+  TAGS_ICON,
+  TYPE_ICON,
+  WEATHER_RADAR_ICON,
+} from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
@@ -70,6 +79,15 @@ export interface ControlsPanelProps {
    * play/pause icon, and disables it, so the pause before the loop
    * visibly starts reads as "loading," not a stalled click. */
   radarPlaybackLoading: boolean;
+  /** #2000: multiplies both the aircraft icon-size expression (MapView.tsx)
+   * and the info box's rendered size (InfoBoxLayer.tsx, via a CSS
+   * transform) -- an operator-facing fix for a display where the fixed
+   * CSS-pixel defaults render too large. A display's true physical pixel
+   * density can't be read from the browser (see the issue's own research),
+   * so this is a manual control rather than an automatic one, persisted
+   * per-browser the same way radarOpacity is. 1 is the no-op default. */
+  displayScale: number;
+  onDisplayScaleChange: (value: number) => void;
 }
 
 // Top-right floating controls: one unified vertically stacked column mixing
@@ -117,6 +135,8 @@ export function ControlsPanel({
   radarPlaying,
   onToggleRadarPlaying,
   radarPlaybackLoading,
+  displayScale,
+  onDisplayScaleChange,
 }: ControlsPanelProps) {
   // Purely local, transient UI state -- whether the radar popover is open.
   // Not lifted to MapView/persisted: unlike radarOn/radarOpacity, this
@@ -124,6 +144,10 @@ export function ControlsPanel({
   // AircraftListPanel's own open/closed drawer state, which also resets
   // fresh each load).
   const [radarExpanded, setRadarExpanded] = useState(false);
+  // Same rationale as radarExpanded above -- only whether the popover is
+  // open is transient/local; displayScale itself is lifted to MapView and
+  // persisted there (#2000).
+  const [scaleExpanded, setScaleExpanded] = useState(false);
 
   return (
     <div
@@ -247,6 +271,41 @@ export function ControlsPanel({
                 loading={radarPlaybackLoading}
                 size="md"
               />
+            </div>
+          )}
+        </div>
+        {/* #2000: display-scale multiplier -- a wall/panel-mounted display's
+            true physical pixel density can't be read from the browser (a
+            devicePixelRatio-only auto-scale would miss the "same DPR,
+            different physical screen size" case entirely, per the issue's
+            own research), so this is a manual, persisted control rather
+            than an automatic one -- same popover-behind-an-icon-button
+            shape as the Radar control above, since there's no natural
+            on/off state to gate it on. The icon reads "active" whenever the
+            operator has moved off the 1.0 no-op default, purely as a
+            visual reminder that a non-default scale is in effect. */}
+        <div className="relative">
+          <IconButton
+            label="Display Scale"
+            icon={DISPLAY_SCALE_ICON}
+            active={displayScale !== 1}
+            onClick={() => setScaleExpanded((prev) => !prev)}
+            size="md"
+          />
+          {scaleExpanded && (
+            <div className="absolute top-0 right-full mr-2 flex w-48 flex-col gap-3 rounded-md border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
+              <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
+                <span>Display Scale ({Math.round(displayScale * 100)}%)</span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={1.5}
+                  step={0.05}
+                  value={displayScale}
+                  onChange={(e) => onDisplayScaleChange(Number(e.target.value))}
+                  aria-label="Display scale"
+                />
+              </label>
             </div>
           )}
         </div>

@@ -35,6 +35,15 @@ export interface InfoBoxLayerProps {
   showAll: boolean;
   /** icao_hex of the aircraft currently hovered, if any -- shown as a transient label. */
   hoveredId?: string | null;
+  /** #2000: ControlsPanel's operator-facing display-scale multiplier
+   * (MapView.tsx state, persisted via controlsPersistence.ts), shared with
+   * the aircraft icon's own icon-size expression so both scale together
+   * from one control. Applied as a CSS transform (see the box's style
+   * below) rather than by recomputing each font-size/padding value --
+   * scales the whole box uniformly, including its background/padding, with
+   * no risk of drifting out of proportion with the text inside it. 1 is
+   * the no-op default. */
+  displayScale: number;
 }
 
 // Renders one floating ATC-style info box per labeled aircraft, directly
@@ -46,7 +55,7 @@ export interface InfoBoxLayerProps {
 // aircraft are close together. Where boxes overlap, the higher-altitude
 // aircraft's box draws on top (see lib/labelStackOrder.ts); unknown-altitude
 // aircraft sit at the bottom of the stack.
-export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLayerProps) {
+export function InfoBoxLayer({ items, selected, showAll, hoveredId, displayScale }: InfoBoxLayerProps) {
   const boxes = useMemo(() => {
     const labeled = items.filter((item) => showAll || selected.has(item.id) || item.id === hoveredId);
 
@@ -69,6 +78,18 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId }: InfoBoxLay
             left: b.item.x + b.item.offset,
             top: b.item.y + b.item.offset,
             zIndex: altitudeZIndex(b.item.aircraft.alt),
+            // #2000: scaling from the top-left corner (the box's own
+            // anchor point, per infoBoxOffset.ts) keeps that corner fixed
+            // on screen as the box grows/shrinks, so this needs no changes
+            // to the left/top math above. Only added when displayScale
+            // actually differs from the 1.0 no-op default -- an unused
+            // `transform` would still promote every box to its own
+            // compositor layer, a real cost this component has been tuned
+            // to avoid (see this file's own #1851 history) for zero visual
+            // benefit at the default setting.
+            ...(displayScale !== 1
+              ? { transform: `scale(${displayScale})`, transformOrigin: "top left" }
+              : {}),
           }}
         >
           {b.lines.ident !== null && <div className="text-[12px] font-bold whitespace-nowrap">{b.lines.ident}</div>}

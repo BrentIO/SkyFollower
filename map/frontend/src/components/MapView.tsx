@@ -204,13 +204,27 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // own useState below).
   const [radarOn, setRadarOn] = useState(() => loadPersistedControls().radarOn);
   const [radarOpacity, setRadarOpacity] = useState(() => loadPersistedControls().radarOpacity);
+  // #2000: multiplies both the aircraft icon-size expression (below) and
+  // InfoBoxLayer's rendered size -- see ControlsPanel.tsx's displayScale
+  // prop doc for why this is a manual, persisted control rather than an
+  // automatic devicePixelRatio-derived one. 1 is the no-op default, so an
+  // operator who never touches the new control sees no change at all.
+  const [displayScale, setDisplayScale] = useState(() => loadPersistedControls().displayScale);
 
   // Persists the control toggles above to localStorage on every change, so
   // a reload restores them via the lazy initializers above instead of
   // resetting to today's hardcoded defaults.
   useEffect(() => {
-    savePersistedControls({ historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity });
-  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity]);
+    savePersistedControls({
+      historyAll,
+      labelsAll,
+      mapLabelsOn,
+      rangeOutlineVisible,
+      radarOn,
+      radarOpacity,
+      displayScale,
+    });
+  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity, displayScale]);
 
   // Whether the last-30-minutes playback loop is animating -- transient UI
   // state, not persisted (a reload always starts paused on the current
@@ -802,9 +816,17 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
+          // #2000: `displayScale` (a plain number, read from closure at
+          // layer-creation time) is the operator-facing multiplier on top
+          // of the base 0.55/icon_scale sizing -- 1 by default, a no-op.
+          // This is a fixed value baked in at `map.on("load")` time, not
+          // reactive on its own; the effect below pushes any later change
+          // via setLayoutProperty, since MapLibre has no way to make a
+          // layout property track outside state directly.
           "icon-size": [
             "*",
             0.55,
+            displayScale,
             ["coalesce", ["get", "icon_scale"], 1],
             ["case", ["boolean", ["get", "selected"], false], 1.15, 1.075],
           ],
@@ -829,7 +851,11 @@ function MapViewInner({ config }: { config: AppConfig }) {
           "icon-rotation-alignment": "map",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
-          "icon-size": ["*", 0.55, ["coalesce", ["get", "icon_scale"], 1]],
+          // #2000: see AIRCRAFT_OUTLINE_LAYER_ID's icon-size comment above --
+          // same displayScale multiplier, same "baked in at mount, kept
+          // live by the effect below" mechanism, applied here too so the
+          // outline and the real icon always stay in lockstep.
+          "icon-size": ["*", 0.55, displayScale, ["coalesce", ["get", "icon_scale"], 1]],
         },
         paint: {
           // Icon fill is altitude-based; it never changes on selection --
@@ -1079,6 +1105,30 @@ function MapViewInner({ config }: { config: AppConfig }) {
       map.setLayoutProperty(layerId, "visibility", visibility);
     }
   }, [mapLabelsOn, mapLoaded]);
+
+  // #2000: display-scale multiplier -- a live `icon-size` layout-property
+  // update only, never a layer rebuild. The two layers' addLayer calls
+  // above already bake in whatever displayScale was at mount time (correct
+  // for first paint); this effect is what makes a later slider change take
+  // effect immediately, same "push a live property update on state change"
+  // shape as the radar-opacity effect above uses for raster-opacity.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    map.setLayoutProperty(AIRCRAFT_LAYER_ID, "icon-size", [
+      "*",
+      0.55,
+      displayScale,
+      ["coalesce", ["get", "icon_scale"], 1],
+    ]);
+    map.setLayoutProperty(AIRCRAFT_OUTLINE_LAYER_ID, "icon-size", [
+      "*",
+      0.55,
+      displayScale,
+      ["coalesce", ["get", "icon_scale"], 1],
+      ["case", ["boolean", ["get", "selected"], false], 1.15, 1.075],
+    ]);
+  }, [displayScale, mapLoaded]);
 
   // "Range Outline" toggle -- pushes the polled envelope (useRangeOutline
   // above, which itself stops polling and reports an empty
@@ -1679,7 +1729,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
       <div className="relative min-w-0 flex-1">
         <div ref={mapContainerRef} className="h-full w-full" />
         {mapLoaded && (
-          <InfoBoxLayer items={infoBoxItems} selected={selected} showAll={labelsAll} hoveredId={hoveredId} />
+          <InfoBoxLayer
+            items={infoBoxItems}
+            selected={selected}
+            showAll={labelsAll}
+            hoveredId={hoveredId}
+            displayScale={displayScale}
+          />
         )}
         {selectedAircraft && (
           <AircraftDetailPanel
@@ -1718,6 +1774,8 @@ function MapViewInner({ config }: { config: AppConfig }) {
           radarPlaying={radarPlaying}
           onToggleRadarPlaying={() => setRadarPlaying((prev) => !prev)}
           radarPlaybackLoading={radarPlaybackLoading}
+          displayScale={displayScale}
+          onDisplayScaleChange={setDisplayScale}
         />
       </div>
       <AircraftListPanel
