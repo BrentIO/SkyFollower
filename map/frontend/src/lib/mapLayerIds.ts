@@ -63,20 +63,14 @@ export const CENTER_POINT_SOURCE_ID = "sf-center-point";
 export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
 
 // Live weather radar overlay (#1896, see lib/radar.ts for the tile-URL/
-// zoom-bounds/frame-sequence logic). RADAR_SOURCE_ID/RADAR_LAYER_ID is the
-// always-current snapshot, added/removed whole (not layout-visibility-
-// toggled) when the operator turns the layer on/off, so there's a hard
-// guarantee it never fetches a tile while off rather than relying on
-// whether an invisible layer's source still requests tiles. Added first
-// inside the map's "load" handler, before any other SkyFollower layer, so
-// every later plain addLayer() (no explicit beforeId) naturally stacks
-// above it -- "above the base map, below everything this app draws."
-export const RADAR_SOURCE_ID = "sf-radar";
-export const RADAR_LAYER_ID = "sf-radar-raster";
-// Playback (#1896; rebuilt in #1910's 2nd attempt) uses one source+layer
-// per frame (see lib/radar.ts's radarPlaybackFrameId), not a single
-// reused id -- so there's no fixed constant for it here, unlike the
-// current-snapshot source/layer above.
+// zoom-bounds/frame-sequence/ambient-cache logic). Both the always-current
+// display and playback are built from per-frame sources+layers (
+// radarAmbientFrameId / radarPlaybackFrameId in lib/radar.ts, #1965) added
+// and removed whole (not layout-visibility-toggled) when the operator turns
+// the layer on/off, so there's a hard guarantee nothing fetches a tile
+// while off rather than relying on whether an invisible layer's source
+// still requests tiles -- so there's no fixed id constant for either one
+// here, unlike this file's other single-instance layers.
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,

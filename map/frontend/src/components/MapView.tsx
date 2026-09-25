@@ -28,8 +28,6 @@ import {
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
-  RADAR_LAYER_ID,
-  RADAR_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
@@ -54,15 +52,18 @@ import {
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { isWithinCenterTolerance } from "../lib/mapCentered";
 import {
+  planRadarPlaybackFrames,
+  RADAR_AMBIENT_CACHE_CAPACITY,
   RADAR_FRAME_INTERVAL_MS,
   RADAR_FRAME_LOAD_TIMEOUT_MS,
   RADAR_MAX_ZOOM,
   RADAR_MIN_ZOOM,
-  RADAR_PLAYBACK_OFFSETS_MINUTES,
   RADAR_REFRESH_INTERVAL_MS,
   RADAR_TILE_SIZE,
+  radarAmbientFrameId,
   radarFrameTileUrl,
   radarPlaybackFrameId,
+  type RadarAmbientCacheEntry,
 } from "../lib/radar";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
@@ -232,6 +233,35 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // updated every 500ms by the playback interval and only ever read by
   // an effect, never rendered.
   const radarActiveFrameIdRef = useRef<string | null>(null);
+  // #1965: the ambient rolling cache -- keyed by ring-buffer slot (0..
+  // RADAR_AMBIENT_CACHE_CAPACITY-1), value is the capture timestamp of
+  // whatever's currently loaded into that slot's source. Refs, not state:
+  // written every RADAR_REFRESH_INTERVAL_MS by an effect and read only by
+  // other effects (the opacity sync and the playback planner), never
+  // rendered directly.
+  const radarAmbientCacheRef = useRef<Map<number, number>>(new Map());
+  // Next ring-buffer slot to (re)capture into -- wraps at
+  // RADAR_AMBIENT_CACHE_CAPACITY so the oldest entry is naturally what gets
+  // overwritten first, exactly the "oldest evicted" behavior #1965 asks
+  // for, without a separate eviction step.
+  const radarNextAmbientSlotRef = useRef(0);
+  // Which slot is the newest -- i.e. which one should be shown as "current"
+  // whenever playback isn't running. Null only before the first ambient
+  // capture completes.
+  const radarNewestAmbientSlotRef = useRef<number | null>(null);
+  // Mirrors of state that the ambient-capture interval (below) needs to
+  // read at fire time without restarting the interval on every change --
+  // restarting on radarOpacity would be harmless but wasteful, and
+  // restarting on radarPlaying would defeat #1965's entire point (capture
+  // is supposed to keep running, silently, through Play/Pause).
+  const radarOpacityRef = useRef(radarOpacity);
+  useEffect(() => {
+    radarOpacityRef.current = radarOpacity;
+  }, [radarOpacity]);
+  const radarPlayingRef = useRef(radarPlaying);
+  useEffect(() => {
+    radarPlayingRef.current = radarPlaying;
+  }, [radarPlaying]);
   function handleToggleRadar() {
     setRadarOn((prev) => {
       const next = !prev;
@@ -1081,118 +1111,129 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.addControl(attributionControlRef.current);
   }, [radarOn, mapLoaded]);
 
-  // Radar on/off (#1896) -- the current-snapshot source/layer is added and
-  // removed *whole*, not layout-visibility-toggled, so there's a hard
-  // guarantee it never fetches a tile while off, rather than relying on
-  // whether an invisible layer's source still requests tiles. `beforeId:
-  // RANGE_RING_LAYER_ID` -- already added inside the map's "load" handler
-  // by the time `mapLoaded` is true -- lands this immediately above the
-  // base map's own style layers and below every layer this app draws
-  // (range rings first, then everything else), matching #1896's "above
-  // base map, below aircraft outlines." Initial `raster-opacity` here is
-  // whatever `radarOpacity` happens to be at toggle-on time; the dedicated
-  // opacity effect below (same `radarOn` dependency, so it re-runs in the
-  // same pass) is what keeps it correct afterward -- this effect
-  // deliberately does NOT depend on `radarOpacity` itself, or every
-  // opacity-slider drag would tear down and re-add the source, re-fetching
-  // every on-screen tile for no reason.
+  // Ambient rolling cache (#1965, replacing #1896's single reused
+  // current-snapshot source/layer) -- a small ring buffer of
+  // RADAR_AMBIENT_CACHE_CAPACITY per-slot sources+layers (radarAmbientFrameId),
+  // added/removed *whole* on radarOn, so there's still a hard guarantee
+  // nothing fetches a tile while off. One capture fires immediately on
+  // toggle-on, then again every RADAR_REFRESH_INTERVAL_MS -- deliberately
+  // regardless of radarPlaying (read from a ref, not the dependency array),
+  // because #1965's entire point is that this keeps filling the cache
+  // *through* playback, not just before it. `beforeId: RANGE_RING_LAYER_ID`
+  // matches #1896's original "above base map, below everything this app
+  // draws" stacking.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded) return;
-    if (radarOn) {
-      if (!map.getSource(RADAR_SOURCE_ID)) {
-        map.addSource(RADAR_SOURCE_ID, {
+    if (!map || !mapLoaded || !radarOn) return;
+    const radarMap = map;
+
+    function captureAmbientFrame() {
+      const slot = radarNextAmbientSlotRef.current;
+      radarNextAmbientSlotRef.current = (slot + 1) % RADAR_AMBIENT_CACHE_CAPACITY;
+      const id = radarAmbientFrameId(slot);
+      const url = radarFrameTileUrl(0);
+      const existingSource = radarMap.getSource(id) as maplibregl.RasterTileSource | undefined;
+      if (existingSource) {
+        // Ring buffer wrapped back onto a previously-used slot -- retarget
+        // (forces a reload, same as the old single-source refresh) rather
+        // than removing/re-adding, so only this one slot's tiles are
+        // re-fetched, not the whole cache.
+        existingSource.setTiles([url]);
+      } else {
+        radarMap.addSource(id, {
           type: "raster",
-          tiles: [radarFrameTileUrl(0)],
+          tiles: [url],
           tileSize: RADAR_TILE_SIZE,
           minzoom: RADAR_MIN_ZOOM,
           maxzoom: RADAR_MAX_ZOOM,
         });
       }
-      if (!map.getLayer(RADAR_LAYER_ID)) {
-        map.addLayer(
-          {
-            id: RADAR_LAYER_ID,
-            type: "raster",
-            source: RADAR_SOURCE_ID,
-            paint: { "raster-opacity": radarOpacity },
-          },
+      if (!radarMap.getLayer(id)) {
+        radarMap.addLayer(
+          { id, type: "raster", source: id, paint: { "raster-opacity": 0 } },
           RANGE_RING_LAYER_ID,
         );
       }
-    } else {
-      if (map.getLayer(RADAR_LAYER_ID)) map.removeLayer(RADAR_LAYER_ID);
-      if (map.getSource(RADAR_SOURCE_ID)) map.removeSource(RADAR_SOURCE_ID);
+      radarAmbientCacheRef.current.set(slot, Date.now());
+
+      const previousNewest = radarNewestAmbientSlotRef.current;
+      radarNewestAmbientSlotRef.current = slot;
+      // Playback owns the visible radar layer for its own duration (see
+      // the playback effect below) -- this capture still lands in the
+      // cache either way, it just doesn't touch what's on screen, or which
+      // slot is "newest," until playback's own cleanup restores the
+      // current display.
+      if (radarPlayingRef.current) return;
+      radarMap.setPaintProperty(id, "raster-opacity", radarOpacityRef.current);
+      if (previousNewest !== null && previousNewest !== slot) {
+        const previousId = radarAmbientFrameId(previousNewest);
+        if (radarMap.getLayer(previousId)) radarMap.setPaintProperty(previousId, "raster-opacity", 0);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- radarOpacity
-    // intentionally excluded, see comment above.
+
+    captureAmbientFrame();
+    const interval = setInterval(captureAmbientFrame, RADAR_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      for (let slot = 0; slot < RADAR_AMBIENT_CACHE_CAPACITY; slot++) {
+        const id = radarAmbientFrameId(slot);
+        if (radarMap.getLayer(id)) radarMap.removeLayer(id);
+        if (radarMap.getSource(id)) radarMap.removeSource(id);
+      }
+      radarAmbientCacheRef.current.clear();
+      radarNextAmbientSlotRef.current = 0;
+      radarNewestAmbientSlotRef.current = null;
+    };
   }, [radarOn, mapLoaded]);
 
   // Radar opacity -- a live `raster-opacity` paint-property update only,
-  // never a tile re-fetch. Re-runs whenever the layer might have just been
-  // (re)created (radarOn/radarPlaying/mapLoaded), so a freshly-added layer
-  // immediately picks up the current slider value rather than whatever
-  // stale default its own addLayer call above used.
+  // never a tile re-fetch. Re-runs whenever the layer(s) that should carry
+  // it might have just changed (radarOn/radarPlaying/mapLoaded), so a
+  // freshly-shown layer immediately picks up the current slider value
+  // rather than whatever stale default its own addLayer call used.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
-    if (map.getLayer(RADAR_LAYER_ID)) {
-      map.setPaintProperty(RADAR_LAYER_ID, "raster-opacity", radarOpacity);
+    if (!radarPlaying) {
+      // Whichever ambient slot is newest is what's on screen as "current"
+      // (see the ambient-capture effect above).
+      const newest = radarNewestAmbientSlotRef.current;
+      if (newest !== null) {
+        const id = radarAmbientFrameId(newest);
+        if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", radarOpacity);
+      }
     }
     // Only the one playback frame currently being shown (see
     // radarActiveFrameIdRef) -- every other frame layer stays at
     // raster-opacity 0 (still fully loaded, just invisible; see the
     // playback effect below for why visibility:none isn't used instead).
+    // May itself be a reused ambient-cache layer id (#1965) -- setPaintProperty
+    // doesn't care which effect originally added a given layer id.
     const activeId = radarActiveFrameIdRef.current;
     if (activeId && map.getLayer(activeId)) {
       map.setPaintProperty(activeId, "raster-opacity", radarOpacity);
     }
   }, [radarOpacity, radarOn, radarPlaying, mapLoaded]);
 
-  // Current-snapshot auto-refresh, only while radar is on and not
-  // animating (playback takes over the visual slot entirely -- see the
-  // playback effect below). Matches IEM's own `Cache-Control: public,
-  // max-age=300` on the current-tile endpoint (verified against a live
-  // response, see #1896) -- the browser's HTTP cache naturally serves
-  // fresh content again once this window elapses, so re-requesting the
-  // identical URL on this cadence is what actually picks up a new image
-  // rather than a no-op. `setTiles` on the *same* url array is what forces
-  // MapLibre to reload rather than assume nothing changed.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoaded || !radarOn || radarPlaying) return;
-    const interval = setInterval(() => {
-      const source = map.getSource(RADAR_SOURCE_ID) as maplibregl.RasterTileSource | undefined;
-      source?.setTiles([radarFrameTileUrl(0)]);
-    }, RADAR_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [radarOn, radarPlaying, mapLoaded]);
-
-  // Playback (#1896; rebuilt in #1910's 2nd attempt) -- steps through
-  // RADAR_PLAYBACK_OFFSETS_MINUTES (last 30 minutes, oldest to newest,
-  // ending on the current frame) on a fixed interval, looping continuously
-  // while `radarPlaying` is true. The snapshot layer is hidden (not
-  // removed -- its own effect above owns its lifecycle) for the duration
-  // so the playback layers are what's actually visible; the cleanup
-  // restores it, which is also what "pause reverts to the current
-  // snapshot immediately" (#1896) falls out of.
+  // Playback (#1896; rebuilt in #1910's 2nd attempt; reworked again in
+  // #1965) -- steps through RADAR_PLAYBACK_OFFSETS_MINUTES (last 30
+  // minutes, oldest to newest, ending on the current frame) on a fixed
+  // interval, looping continuously while `radarPlaying` is true.
   //
   // #1910's first attempt (a single reused source, retargeted via
-  // setTiles() -- both the original naive version and a follow-up
-  // sourcedata-based prefetch) was verified live (real browser,
-  // Playwright, see the issue) to never actually become fast: MapLibre
+  // setTiles()) was verified live to never actually become fast: MapLibre
   // requests a raster source's *entire* zoom pyramid on every retarget
-  // (z0-z8, ~20 tile requests per frame), and isSourceLoaded() only
-  // resolves once literally all of them settle -- individually quick but
-  // serialized across 7 sequential retargets, the whole prefetch phase
-  // measured 20-30+ real seconds, regardless of which MapLibre event was
-  // used to detect "loaded." This version gives each frame its own
-  // source+layer (radarPlaybackFrameId), all added and left to load in
-  // parallel up front (hidden), waited on together via a single
-  // requestAnimationFrame poll rather than a per-frame event/timeout
-  // dance, then animated purely by toggling `visibility` between the 7
-  // already-loaded layers -- no network, no re-decode, genuinely instant,
-  // the standard flip-book pattern for this exact problem.
+  // (z0-z8, ~20 tile requests per frame), serialized across 7 frames, 20-30+
+  // real seconds before playback started. #1910's 2nd attempt (one
+  // source+layer per frame, all loaded in parallel, animated by toggling
+  // raster-opacity) fixed *how* loading is detected and animated, but not
+  // *how much* has to be fetched: every Play press still fetched all 7
+  // frames from scratch. #1965 closes that gap by planning against the
+  // ambient rolling cache (see the effect above) first -- planRadarPlaybackFrames
+  // reuses whichever already-loaded ambient frames are close enough to a
+  // target slot, and only the actual gaps get a fresh
+  // source+layer+fetch, same flip-book mechanism #1910 already built.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !radarOn || !radarPlaying) return;
@@ -1205,15 +1246,35 @@ function MapViewInner({ config }: { config: AppConfig }) {
     let interval: ReturnType<typeof setInterval> | undefined;
     let rafHandle: number | undefined;
 
-    map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "none");
+    // Snapshot the cache once, at the moment Play is pressed -- re-planning
+    // mid-loop would mean an already-animating frame's identity changing
+    // underneath it.
+    const cacheEntries: RadarAmbientCacheEntry[] = Array.from(radarAmbientCacheRef.current.entries()).map(
+      ([slot, timestampMs]) => ({ slot, timestampMs }),
+    );
+    const plan = planRadarPlaybackFrames(cacheEntries, Date.now());
+    const frameIds = plan.map((step) =>
+      step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes),
+    );
+    const fetchedFrameIds = plan
+      .filter((step) => step.source.kind === "fetch")
+      .map((step) => radarPlaybackFrameId(step.offsetMinutes));
 
-    const frameIds = RADAR_PLAYBACK_OFFSETS_MINUTES.map(radarPlaybackFrameId);
+    // Hide every ambient slot's own "current" display for the loop's
+    // duration -- including whichever one(s) this plan reuses as a
+    // playback frame; the loop's own opacity-toggling below is what turns
+    // the right one back on at the right moment.
+    cacheEntries.forEach(({ slot }) => {
+      const id = radarAmbientFrameId(slot);
+      if (radarMap.getLayer(id)) radarMap.setPaintProperty(id, "raster-opacity", 0);
+    });
 
-    RADAR_PLAYBACK_OFFSETS_MINUTES.forEach((offsetMinutes, i) => {
-      const id = frameIds[i];
+    plan.forEach((step) => {
+      if (step.source.kind !== "fetch") return;
+      const id = radarPlaybackFrameId(step.offsetMinutes);
       map.addSource(id, {
         type: "raster",
-        tiles: [radarFrameTileUrl(offsetMinutes)],
+        tiles: [radarFrameTileUrl(step.offsetMinutes)],
         tileSize: RADAR_TILE_SIZE,
         minzoom: RADAR_MIN_ZOOM,
         maxzoom: RADAR_MAX_ZOOM,
@@ -1237,7 +1298,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
       );
     });
 
-    // Resolves once every one of the 7 sources reports loaded on 3
+    // Resolves once every one of the 7 frames reports loaded on 3
     // consecutive animation frames, or after RADAR_FRAME_LOAD_TIMEOUT_MS
     // total -- whichever comes first. Requiring 3 straight `true` reads
     // (not just one) guards against isSourceLoaded() reporting a false
@@ -1246,7 +1307,10 @@ function MapViewInner({ config }: { config: AppConfig }) {
     // live this false positive is real (an addSource+addLayer pair
     // doesn't synchronously start loading; checking again immediately
     // found every source trivially "loaded" with zero tiles actually
-    // fetched). Polling via requestAnimationFrame rather than an
+    // fetched). A frame reused from the ambient cache (#1965) was already
+    // loaded before this effect ran at all, so it reads "loaded" on the
+    // very first check -- the fewer gaps the plan above found, the sooner
+    // this resolves. Polling via requestAnimationFrame rather than an
     // event/timeout pair per frame also sidesteps the separate fragility
     // #1910's first attempt hit: no dependency on which specific MapLibre
     // event fires when for a specific source.
@@ -1297,16 +1361,33 @@ function MapViewInner({ config }: { config: AppConfig }) {
       radarActiveFrameIdRef.current = null;
       if (rafHandle !== undefined) cancelAnimationFrame(rafHandle);
       if (interval) clearInterval(interval);
-      frameIds.forEach((id) => {
+      // Only the frames this run actually fetched fresh -- reused
+      // ambient-cache frames are owned by the ambient-capture effect above
+      // and outlive this loop.
+      fetchedFrameIds.forEach((id) => {
         if (map.getLayer(id)) map.removeLayer(id);
         if (map.getSource(id)) map.removeSource(id);
       });
-      if (map.getLayer(RADAR_LAYER_ID)) map.setLayoutProperty(RADAR_LAYER_ID, "visibility", "visible");
+      // Restore the ambient cache's own "current" display. Hide every
+      // populated slot first -- whichever frame this loop happened to be
+      // showing when it stopped may itself be an ambient slot -- then show
+      // only the newest (which may have advanced past what this loop
+      // started with, if a capture landed mid-playback).
+      const cache = radarAmbientCacheRef.current;
+      cache.forEach((_timestampMs, slot) => {
+        const id = radarAmbientFrameId(slot);
+        if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", 0);
+      });
+      const newest = radarNewestAmbientSlotRef.current;
+      if (newest !== null) {
+        const id = radarAmbientFrameId(newest);
+        if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", radarOpacityRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- radarOpacity
-    // intentionally excluded here too, same reasoning as the on/off effect
-    // above (the dedicated opacity effect keeps this layer's paint
-    // property current without needing to rebuild the source per drag).
+    // intentionally excluded here too, same reasoning as the ambient-capture
+    // effect above (the dedicated opacity effect keeps the active layer's
+    // paint property current without needing to rebuild anything per drag).
   }, [radarOn, radarPlaying, mapLoaded]);
 
   // Coalesces this component's lifetime worth of sync-effect runs (below)
