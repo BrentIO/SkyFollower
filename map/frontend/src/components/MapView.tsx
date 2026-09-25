@@ -552,7 +552,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
     map.addControl(attributionControlRef.current);
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
 
     // A genuine pointer/touch-driven drag should cancel Follow -- fighting
     // the operator's own input is exactly the bug this fixes. Follow's own
