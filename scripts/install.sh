@@ -2321,6 +2321,16 @@ do_upgrade() {
     role_dir="$(dirname "$env_file")"
     echo
     echo "-- ${role_dir} --"
+    # Re-fetch this role's compose file (and any config/*.example) the same
+    # way a first install does, via fetch_role -- an upgrade that only ever
+    # pulls images and never refreshes the compose file can never deliver a
+    # new service, label, or port mapping to an existing deployment (#1961).
+    # default_folder_for_role() guarantees folder name == role name, so
+    # basename is a reliable way back to the role fetch_role expects.
+    # fetch_role's own no-clobber logic (message-processor/receiver's
+    # per-instance service blocks, already-derived config/* files) applies
+    # unchanged here -- nothing about upgrade needs its own copy of that.
+    fetch_role "$(basename "$role_dir")" "$role_dir"
     # Rewrite SKYFOLLOWER_VERSION in place -- every other line, including
     # any operator edits, is left exactly as it is. Also renames the map
     # role's MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys (the "center"
