@@ -95,12 +95,43 @@ describe("applyWsEvent -- position/metadata merge", () => {
     expect(next.A1B2C3.lat).toBe(5); // metadata's own position fields still applied to current-state
   });
 
-  it("un-fades (clears stale) on any live position/metadata update", () => {
+  it("un-fades (clears stale) on a position update -- always genuine, never resent", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
     const staled = applyWsEvent(base, { type: "stale", icao_hex: "A1B2C3" });
     expect(staled.A1B2C3.stale).toBe(true);
     const revived = applyWsEvent(staled, { type: "position", icao_hex: "A1B2C3", hdg: 10 });
     expect(revived.A1B2C3.stale).toBe(false);
+  });
+
+  it("un-fades (clears stale) on a metadata update whose last_message is genuinely newer", () => {
+    const base = applyWsEvent(
+      applySnapshot([{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }]),
+      { type: "stale", icao_hex: "A1B2C3" },
+    );
+    expect(base.A1B2C3.stale).toBe(true);
+    const revived = applyWsEvent(base, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      last_message: "2026-09-13T12:01:00Z",
+    });
+    expect(revived.A1B2C3.stale).toBe(false);
+  });
+
+  it("#1966: does NOT un-fade on a metadata resend carrying the same last_message as already recorded", () => {
+    const base = applyWsEvent(
+      applySnapshot([{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }]),
+      { type: "stale", icao_hex: "A1B2C3" },
+    );
+    expect(base.A1B2C3.stale).toBe(true);
+    // message-processor's _map_metadata_resend_loop resends the exact same
+    // (frozen) last_message every ~60s -- this must not re-brighten the
+    // aircraft, or it would flash live/stale forever with no real data.
+    const resent = applyWsEvent(base, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      last_message: "2026-09-13T12:00:00Z",
+    });
+    expect(resent.A1B2C3.stale).toBe(true);
   });
 
   it("un-hides (clears hidden) on any live position/metadata update", () => {
@@ -116,19 +147,23 @@ describe("applyWsEvent -- position/metadata merge", () => {
 });
 
 describe("applyWsEvent -- lastReceivedAt stamping", () => {
-  it("stamps lastReceivedAt to `now` on a position event, unconditionally", () => {
+  it("stamps lastReceivedAt to `now` on a position event, unconditionally (position is never resent)", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3" }]);
     const next = applyWsEvent(base, { type: "position", icao_hex: "A1B2C3", hdg: 10 }, { now: 5000 });
     expect(next.A1B2C3.lastReceivedAt).toBe(5000);
   });
 
-  it("stamps lastReceivedAt to `now` on a metadata event, even when no displayed field changes", () => {
+  it("stamps lastReceivedAt from a metadata event's own last_message, not wall-clock `now`", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3", ident: "DAL659" }], 1000);
-    const next = applyWsEvent(base, { type: "metadata", icao_hex: "A1B2C3", ident: "DAL659" }, { now: 9000 });
-    expect(next.A1B2C3.lastReceivedAt).toBe(9000);
+    const next = applyWsEvent(
+      base,
+      { type: "metadata", icao_hex: "A1B2C3", ident: "DAL659", last_message: "2026-09-13T12:00:00Z" },
+      { now: 9000 },
+    );
+    expect(next.A1B2C3.lastReceivedAt).toBe(Date.parse("2026-09-13T12:00:00Z"));
   });
 
-  it("advances lastReceivedAt forward on each successive position/metadata event", () => {
+  it("advances lastReceivedAt forward on each successive position event", () => {
     let state = applyWsEvent({}, { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 }, { now: 1000 });
     expect(state.A1B2C3.lastReceivedAt).toBe(1000);
     state = applyWsEvent(state, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 }, { now: 2000 });
@@ -144,6 +179,90 @@ describe("applyWsEvent -- lastReceivedAt stamping", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3" }], 1000);
     const staled = applyWsEvent(base, { type: "stale", icao_hex: "A1B2C3" }, { now: 9999 });
     expect(staled.A1B2C3.lastReceivedAt).toBeUndefined();
+  });
+
+  // #1966 -- monotonic-max-by-event-timestamp: a metadata resend carrying
+  // an unchanged last_message must never advance lastReceivedAt, even
+  // though it arrives at a later wall-clock `now` than the last genuine
+  // update.
+  describe("monotonic max by event timestamp (#1966)", () => {
+    it("a metadata event advances lastReceivedAt when its last_message is genuinely newer", () => {
+      let state = applyWsEvent(
+        {},
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: 1000 },
+      );
+      expect(state.A1B2C3.lastReceivedAt).toBe(Date.parse("2026-09-13T12:00:00Z"));
+
+      state = applyWsEvent(
+        state,
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:01:00Z" },
+        { now: 2000 },
+      );
+      expect(state.A1B2C3.lastReceivedAt).toBe(Date.parse("2026-09-13T12:01:00Z"));
+    });
+
+    it("a metadata resend carrying the same last_message does not advance lastReceivedAt, despite arriving later", () => {
+      let state = applyWsEvent(
+        {},
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: 1000 },
+      );
+      const firstStamp = state.A1B2C3.lastReceivedAt;
+
+      // Simulates message-processor's unconditional ~60s metadata resend:
+      // same last_message, much later wall-clock arrival.
+      state = applyWsEvent(
+        state,
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: 61000 },
+      );
+      expect(state.A1B2C3.lastReceivedAt).toBe(firstStamp);
+    });
+
+    it("a metadata event with an older last_message than already recorded does not move lastReceivedAt backward", () => {
+      let state = applyWsEvent(
+        {},
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:01:00Z" },
+        { now: 1000 },
+      );
+      const firstStamp = state.A1B2C3.lastReceivedAt;
+
+      state = applyWsEvent(
+        state,
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: 2000 },
+      );
+      expect(state.A1B2C3.lastReceivedAt).toBe(firstStamp);
+    });
+
+    it("a metadata event with no last_message at all leaves lastReceivedAt untouched", () => {
+      let state = applyWsEvent(
+        {},
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: 1000 },
+      );
+      const firstStamp = state.A1B2C3.lastReceivedAt;
+
+      state = applyWsEvent(state, { type: "metadata", icao_hex: "A1B2C3", ident: "DAL659" }, { now: 2000 });
+      expect(state.A1B2C3.lastReceivedAt).toBe(firstStamp);
+    });
+
+    it("a position event's later wall-clock arrival advances lastReceivedAt past an earlier metadata event's last_message", () => {
+      let state = applyWsEvent(
+        {},
+        { type: "metadata", icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" },
+        { now: Date.parse("2026-09-13T12:00:00Z") },
+      );
+      const metadataStamp = state.A1B2C3.lastReceivedAt;
+      state = applyWsEvent(
+        state,
+        { type: "position", icao_hex: "A1B2C3", lat: 1, lon: 2 },
+        { now: Date.parse("2026-09-13T12:05:00Z") },
+      );
+      expect(state.A1B2C3.lastReceivedAt).toBe(Date.parse("2026-09-13T12:05:00Z"));
+      expect(state.A1B2C3.lastReceivedAt).toBeGreaterThan(metadataStamp as number);
+    });
   });
 });
 

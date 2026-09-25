@@ -221,9 +221,10 @@ heading; it's expected and normal for an aircraft's displayed position to
 sit still while its heading updates on its own, or vice versa. `metadata`
 fields merge into the same per-aircraft hash the same way.
 
-The out-of-order check, the merge `HSET`, both TTL refreshes, and the
-trail `RPUSH` (`position` packets only) are all performed server-side in
-a single round trip by `EVALSHA` → `shared/lua/map_apply_update.lua`
+The out-of-order check, the merge `HSET`, all TTL refreshes (`flight:live`'s
+conditionally on `position` packets only -- see [Lifecycle](#lifecycle)
+below), and the trail `RPUSH` (`position` packets only) are all performed
+server-side in a single round trip by `EVALSHA` → `shared/lua/map_apply_update.lua`
 (`SCRIPT LOAD`ed once at startup, matching message-processor's
 `merge_aircraft.lua`/`route_airports.lua` convention), which also returns
 the merged current-state so `FlightStateStore.apply_update()` never needs
@@ -234,14 +235,13 @@ a separate `HGETALL` to build the WebSocket event payload.
 Dedicated Redis instance (`MAP_REDIS_*`), no persistence -- pure in-memory,
 fully reconstructible from live UDP traffic (the range outline additionally
 persists to disk -- see [Range Outline](#range-outline)). Four keys per
-tracked aircraft, all TTL'd in seconds and refreshed on every UDP update
-for that aircraft, plus two untracked-by-aircraft keys:
+tracked aircraft, all TTL'd in seconds, plus two untracked-by-aircraft keys:
 
 | Key | TTL | Contents |
 |---|---|---|
-| `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale` |
-| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide` |
-| `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove` |
+| `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale`. Refreshed only by `position` packets, not `metadata` (#1966) -- see [Lifecycle](#lifecycle) below |
+| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide`. Refreshed by both `position` and `metadata` packets -- unlike `flight:live` above, this is unrelated to the stale/live distinction |
+| `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove`. Refreshed by both `position` and `metadata` packets |
 | `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` (25,000 -- see [Trail History Caps](#trail-history-caps)) after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 | `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing}:{band}"`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
@@ -264,11 +264,17 @@ TTL'd keys above expiring:
 
 The hidden stage exists so a briefly-lost aircraft leaves the screen
 quickly without losing its trail history: if contact resumes before
-`MAP_EVICT_SECONDS`, the aircraft reappears (a `position`/`metadata` event
-clears both `stale` and `hidden` client-side, see
-`src/lib/aircraftState.ts`) with its pre-gap trail intact, rendered as one
-continuous flight -- the gap itself renders as a normal trail segment, with
-no special dashed/faded styling.
+`MAP_EVICT_SECONDS`, the aircraft reappears with its pre-gap trail intact,
+rendered as one continuous flight -- the gap itself renders as a normal
+trail segment, with no special dashed/faded styling. A `position` event
+always clears both `stale` and `hidden` client-side; a `metadata` event
+clears `hidden` unconditionally too (matching `flight:visible`'s own
+unconditional refresh above), but only clears `stale` when its own carried
+timestamp is genuinely newer than the last one this client already
+recorded for that aircraft -- otherwise it's indistinguishable from
+message-processor's unconditional metadata resend, which must not
+re-brighten an aircraft with no real new data (#1966; see
+`src/lib/aircraftState.ts`'s `applyEventToRecord`).
 
 `GET /api/flights` only ever lists currently-*visible* aircraft (backed by
 `flight:visible:{icao_hex}`, not `flight:detail:{icao_hex}` -- see
@@ -693,7 +699,11 @@ backend has no origin to measure from in that case either.
   REST snapshot, then every WebSocket event, with the same
   merge-never-overwrite semantics as `state_store.py`'s `apply_update`. A
   `hide` event sets a `hidden` flag without deleting the record or its
-  trail; any `position`/`metadata` event clears both `stale` and `hidden`.
+  trail; any `position`/`metadata` event clears `hidden`, but only clears
+  `stale` (and advances `lastReceivedAt`, the Aircraft Detail Panel's "Last
+  Message Received") when the event carries genuinely newer data than
+  already recorded -- not on message-processor's unconditional metadata
+  resend, which repeats the same timestamp (#1966).
 - `src/lib/featureCollections.ts` -- builds the MapLibre aircraft-icon and
   per-segment trail GeoJSON feature collections from the live `AircraftMap`,
   filtering out `hidden` aircraft from both.

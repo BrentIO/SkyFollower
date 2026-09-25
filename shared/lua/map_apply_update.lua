@@ -2,9 +2,10 @@
 --
 -- Collapses map/state_store.py's FlightStateStore.apply_update into a
 -- single round trip: the out-of-order check, the merge HSET, all three TTL
--- refreshes (flight:detail:{icao_hex}'s EXPIRE, flight:live:{icao_hex}'s
--- SET...EX, and flight:visible:{icao_hex}'s SET...EX), and -- for
--- `position` packets only -- the trail RPUSH, then returns the full merged
+-- refreshes (flight:detail:{icao_hex}'s EXPIRE and flight:visible:{icao_hex}'s
+-- SET...EX on every accepted packet, flight:live:{icao_hex}'s SET...EX on
+-- `position` packets only -- see #1966 below), and -- for `position`
+-- packets only -- the trail RPUSH, then returns the full merged
 -- current-state so the caller never needs a separate HGETALL to build the
 -- WebSocket event payload.
 --
@@ -22,7 +23,8 @@
 --           are spliced back together as raw text, so none of cjson's
 --           empty-array/empty-object ambiguity (see route_airports.lua's
 --           header comment) ever enters the round trip.
--- ARGV[6] : stale_seconds (flight:live:{icao_hex} TTL)
+-- ARGV[6] : stale_seconds (flight:live:{icao_hex} TTL -- only applied for
+--           `position` packets, see #1966 below)
 -- ARGV[7] : evict_seconds (flight:detail:{icao_hex} / flight:trail:{icao_hex} TTL)
 -- ARGV[8] : hide_seconds (flight:visible:{icao_hex} TTL)
 -- ARGV[9] : max_trail_points -- flight:trail:{icao_hex} is LTRIMmed to the
@@ -81,7 +83,25 @@ table.insert(hset_args, cjson.encode(timestamp))
 
 redis.call('HSET', detail_key, unpack(hset_args))
 redis.call('EXPIRE', detail_key, evict_seconds)
-redis.call('SET', live_key, '1', 'EX', stale_seconds)
+-- flight:live's TTL (the "stale" signal) is refreshed for `position`
+-- packets only -- not `metadata`. message-processor's
+-- _map_metadata_resend_loop unconditionally re-sends every active
+-- flight's `metadata` datagram every MAP_METADATA_RESEND_INTERVAL_SECONDS
+-- regardless of whether any real data changed, purely so a restarted map
+-- service can recover a still-active flight's metadata (see
+-- message-processor/README.md). That resend carries the same (frozen)
+-- last_message timestamp as before, so it's accepted here (equal
+-- timestamps aren't out-of-order, see the epsilon comment above) -- but
+-- refreshing flight:live on it would make an aircraft with no real
+-- position update in minutes cycle stale/live once per resend interval,
+-- fully decoupled from whether anything actually happened (#1966).
+-- flight:visible's TTL refresh stays unconditional on purpose: the
+-- resend's resync/keep-on-screen purpose is legitimate and unrelated to
+-- the stale/live distinction -- only "is this aircraft still active at
+-- all" (visible), not "was a real position just received" (live).
+if msg_type == 'position' then
+    redis.call('SET', live_key, '1', 'EX', stale_seconds)
+end
 redis.call('SET', visible_key, '1', 'EX', hide_seconds)
 
 -- Re-reading the hash after the write (rather than folding the

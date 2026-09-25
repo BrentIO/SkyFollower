@@ -6,6 +6,8 @@ Redis instance (never core Redis -- see map/README.md):
 
 - ``flight:live:{icao_hex}`` -- short-TTL sentinel, no meaningful value.
   Its expiry is the "stale" signal (see FlightStateStore.parse_expired_key).
+  TTL refreshed only by `position` packets, not `metadata` -- see
+  FlightStateStore.apply_update's docstring (#1966).
 - ``flight:visible:{icao_hex}`` -- a second, longer-TTL sentinel. Its
   expiry is the "hide" signal: the aircraft leaves the map's screen, but
   its detail/trail data is left alone so a resumed flight reappears as one
@@ -224,9 +226,27 @@ class FlightStateStore:
         self, icao_hex: str, msg_type: str, timestamp: float, fields: dict,
     ) -> Optional[dict]:
         """Merges `fields` into icao_hex's current-state hash and refreshes
-        all three TTLs, unless `timestamp` is at or before -- for `position`
-        packets only, strictly before -- the last-applied timestamp for
-        this aircraft (see the note on equal timestamps below).
+        flight:detail's and flight:visible's TTLs, unless `timestamp` is at
+        or before -- for `position` packets only, strictly before -- the
+        last-applied timestamp for this aircraft (see the note on equal
+        timestamps below).
+
+        flight:live's TTL -- the "stale"/"live" signal -- is refreshed only
+        for `msg_type == "position"`, not `"metadata"` (#1966). Message-
+        processor's `_map_metadata_resend_loop` unconditionally re-sends
+        every active flight's `metadata` datagram every
+        `MAP_METADATA_RESEND_INTERVAL_SECONDS` regardless of whether
+        anything actually changed, purely so a restarted map service can
+        recover a still-active flight's metadata (see
+        message-processor/README.md). That resend carries the same
+        (frozen) `last_message` timestamp as before, so it's accepted here,
+        not dropped (equal timestamps aren't out-of-order) -- but if it
+        refreshed flight:live too, an aircraft with no real position update
+        in minutes would cycle stale/live once per resend interval,
+        completely decoupled from whether any real data arrived. flight:
+        detail/flight:visible keep refreshing on both packet types: that's
+        the legitimate resync ("still know about this aircraft") and
+        keep-on-screen behavior, unrelated to the stale/live distinction.
 
         Returns the full merged, decoded current-state dict on success, or
         None if the packet was dropped as out-of-order.
