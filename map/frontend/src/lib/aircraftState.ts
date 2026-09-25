@@ -65,16 +65,29 @@ export interface AircraftRecord extends MapFlight {
   /** Oldest-first; see TracePoint's own docstring. */
   tracePoints: TracePoint[];
   /**
-   * Epoch ms of the last `position` or `metadata` WS event actually
-   * received for this aircraft (see applyWsEvent's position/metadata case)
-   * -- stamped unconditionally on every such event, unlike the wire's own
-   * `last_message` field (MapFlight.last_message), which the message
-   * processor only re-sends when a displayed field changes and would
-   * therefore freeze on a steady cruise flight. Drives the aircraft detail
-   * panel's live-relative "Last Message Received" row (lib/aircraftDetail.ts,
-   * components/AircraftDetailPanel.tsx). Undefined until the first
-   * position/metadata event, unless applySnapshot could seed it from the
-   * wire's `last_message` on initial load.
+   * Epoch ms of the last *genuinely new* `position` or `metadata` message
+   * received for this aircraft (see applyEventToRecord's position/metadata
+   * case) -- a monotonic max of each event's own carried timestamp (a
+   * `position` event's arrival time, since position packets are never
+   * resent -- see below; a `metadata` event's own `last_message`) against
+   * whatever was already recorded, never the wall-clock arrival time of an
+   * arbitrary WS message. This deliberately differs from stamping "now" on
+   * every position/metadata event: message-processor's metadata resend
+   * loop unconditionally re-sends every active flight's `metadata`
+   * datagram every ~60s for map-service restart recovery, carrying the
+   * *same* `last_message` as before (see message-processor/README.md and
+   * #1966) -- treating that resend as evidence of a fresh message would
+   * make this field (and the stale/live cycle that reads it) reset every
+   * ~60s regardless of whether the aircraft is still actually transmitting.
+   * A `position` event, in contrast, is never resent -- message-processor
+   * only ever sends one for a message actually just decoded -- so its
+   * wall-clock arrival time is itself a genuine freshness signal.
+   *
+   * Drives the aircraft detail panel's live-relative "Last Message
+   * Received" row (lib/aircraftDetail.ts, components/AircraftDetailPanel.tsx).
+   * Undefined until the first position/metadata event with a usable
+   * timestamp, unless applySnapshot could seed it from the wire's
+   * `last_message` on initial load.
    */
   lastReceivedAt?: number;
   /**
@@ -279,22 +292,43 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
     case "metadata": {
       const { icao_hex } = event;
       const { type: _type, ...fields } = event;
+      // A `position` event is never resent (message-processor only ever
+      // sends one for a message just decoded), so arrival time itself is
+      // a genuine freshness signal. A `metadata` event, however, can be
+      // message-processor's unconditional ~60s resend carrying the exact
+      // same `last_message` as before -- its own carried timestamp, not
+      // arrival time, is what actually tells resend and real update apart
+      // (see AircraftRecord.lastReceivedAt's docstring and #1966).
+      const eventTimestamp = event.type === "position" ? now : parseWireTimestamp(event.last_message);
+      const previousLastReceivedAt = existing?.lastReceivedAt;
+      // Monotonic max: a resend carrying an unchanged last_message must
+      // never move lastReceivedAt at all, forward or back -- only a
+      // genuinely newer timestamp (or the very first one ever seen for
+      // this aircraft) advances it.
+      const nextLastReceivedAt =
+        eventTimestamp == null
+          ? previousLastReceivedAt
+          : previousLastReceivedAt == null
+            ? eventTimestamp
+            : Math.max(eventTimestamp, previousLastReceivedAt);
+      const isGenuinelyFresh =
+        eventTimestamp != null && (previousLastReceivedAt == null || eventTimestamp > previousLastReceivedAt);
       const merged: AircraftRecord = {
         ...(existing ?? {
           icao_hex, stale: false, hidden: false, trail: [], tracePoints: [],
           shape: FALLBACK_SHAPE, iconScale: shapeScale(FALLBACK_SHAPE),
         }),
         ...fields,
-        stale: false, // Any live update un-fades a previously-stale aircraft.
+        // Only genuinely fresh data un-fades a stale aircraft -- a
+        // metadata resend carrying old data must never re-brighten one
+        // that's already dimmed (#1966). No existing record means this is
+        // the first event ever seen for this aircraft, which is always
+        // genuine.
+        stale: existing && !isGenuinelyFresh ? existing.stale : false,
         hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
         pendingRemoval: false, // ...and cancels a deferred eviction (contact resumed).
       };
-      // Unconditional on every position/metadata event -- a message was
-      // actually just heard from this aircraft, regardless of whether any
-      // displayed field changed (see AircraftRecord.lastReceivedAt's
-      // docstring for why this deliberately differs from the wire's own
-      // last_message field).
-      merged.lastReceivedAt = now;
+      merged.lastReceivedAt = nextLastReceivedAt;
       merged.trail = event.type === "position" ? pushTrailPoint(existing?.trail ?? [], merged) : (existing?.trail ?? []);
       merged.tracePoints =
         event.type === "position" ? pushTracePoint(existing?.tracePoints ?? [], merged, now) : (existing?.tracePoints ?? []);
