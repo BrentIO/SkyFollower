@@ -23,11 +23,35 @@ export type TrendArrow = "↑" | "↓" | "";
 // Derives the climb/descend glyph from vertical_speed. Level (within
 // ±500ft/min, inclusive) or unknown vertical_speed both omit the arrow --
 // there is no third "level" glyph.
+//
+// Kept exactly as-is (Unicode glyph, not a direction enum) for its other
+// two callers -- lib/aircraftListRow.ts's list panel and
+// lib/aircraftDetail.ts's detail panel -- which render it as ordinary text
+// and aren't part of issue #2001. See trendDirection() below for the
+// info-box-only replacement.
 export function trendArrow(verticalSpeed: number | null | undefined): TrendArrow {
   if (verticalSpeed == null) return "";
   if (verticalSpeed > VERTICAL_SPEED_LEVEL_THRESHOLD) return "↑";
   if (verticalSpeed < -VERTICAL_SPEED_LEVEL_THRESHOLD) return "↓";
   return "";
+}
+
+export type TrendDirection = "up" | "down" | null;
+
+// Same ±500ft/min threshold as trendArrow(), but returns a direction
+// instead of a Unicode character. #2001: the info box renders the trend
+// as an inline SVG glyph rather than a font glyph (a specific Unicode
+// character isn't guaranteed to be in every platform's font's glyph
+// table, and macOS was observed silently substituting a different,
+// undersized fallback font for just that character) -- InfoBoxLayer.tsx
+// needs a direction value to pick an SVG shape, not a character to embed
+// in text. A separate function rather than reusing trendArrow()'s output
+// so the two Unicode-text callers above stay untouched.
+export function trendDirection(verticalSpeed: number | null | undefined): TrendDirection {
+  if (verticalSpeed == null) return null;
+  if (verticalSpeed > VERTICAL_SPEED_LEVEL_THRESHOLD) return "up";
+  if (verticalSpeed < -VERTICAL_SPEED_LEVEL_THRESHOLD) return "down";
+  return null;
 }
 
 // "35000" -- full feet, no thousands separator, never flight-level shorthand.
@@ -40,18 +64,27 @@ export function formatGroundspeed(velocityKt: number): string {
   return `${Math.round(velocityKt)}kt`;
 }
 
-// Line 2: "35000↓ 450kt". Either half (altitude+arrow, or groundspeed)
-// is independently omitted when its underlying field is unknown -- never
-// shown as a placeholder. The whole line is omitted (null) only when both
-// halves are unknown. The trend arrow is only ever attached to a known
-// altitude (an arrow with nothing to its left would be a stray glyph).
-export function formatAltitudeSpeedLine(aircraft: InfoBoxAircraft): string | null {
-  const altitudePart =
-    aircraft.alt != null ? `${formatAltitude(aircraft.alt)}${trendArrow(aircraft.vs)}` : null;
-  const speedPart = aircraft.velocity != null ? formatGroundspeed(aircraft.velocity) : null;
+export interface AltitudeSpeedLine {
+  altitude: string | null;
+  trend: TrendDirection;
+  groundspeed: string | null;
+}
 
-  const parts = [altitudePart, speedPart].filter((p): p is string => p !== null);
-  return parts.length > 0 ? parts.join(" ") : null;
+// Line 2: rendered by InfoBoxLayer.tsx as "35000<arrow> 450kt". Returned
+// as parts, not one formatted string like line 1/3, because the trend
+// renders as an inline SVG glyph there, not a character embedded in text
+// (#2001). Either altitude or groundspeed alone is independently omitted
+// (null) when its underlying field is unknown -- never a placeholder. The
+// whole line is omitted (returns null) only when both are unknown. trend
+// is only ever non-null alongside a known altitude (an arrow with nothing
+// to its left would be a stray glyph).
+export function buildAltitudeSpeedLine(aircraft: InfoBoxAircraft): AltitudeSpeedLine | null {
+  const altitude = aircraft.alt != null ? formatAltitude(aircraft.alt) : null;
+  const trend = altitude !== null ? trendDirection(aircraft.vs) : null;
+  const groundspeed = aircraft.velocity != null ? formatGroundspeed(aircraft.velocity) : null;
+
+  if (altitude === null && groundspeed === null) return null;
+  return { altitude, trend, groundspeed };
 }
 
 // Line 3: "N988DL B752". A missing registration or type designator is
@@ -73,7 +106,7 @@ export function formatIdentLine(aircraft: InfoBoxAircraft): string | null {
 
 export interface InfoBoxLines {
   ident: string | null;
-  altitudeSpeed: string | null;
+  altitudeSpeed: AltitudeSpeedLine | null;
   registrationType: string | null;
 }
 
@@ -86,7 +119,7 @@ export interface InfoBoxLines {
 export function buildInfoBoxLines(aircraft: InfoBoxAircraft): InfoBoxLines {
   return {
     ident: formatIdentLine(aircraft),
-    altitudeSpeed: formatAltitudeSpeedLine(aircraft),
+    altitudeSpeed: buildAltitudeSpeedLine(aircraft),
     registrationType: formatRegistrationTypeLine(aircraft),
   };
 }
