@@ -162,7 +162,43 @@ RABBITMQ_POLL_INTERVAL_SECONDS = 30
 REDIS_POLL_INTERVAL_SECONDS = 30
 
 # Deadline on each core-health HTTP request to the RabbitMQ management API.
+# This is the *read* half of the (connect, read) tuple actually passed to
+# requests -- see HTTP_CONNECT_TIMEOUT_SECONDS below. Left unchanged in
+# shape/meaning here (still a bare float) because shared/version_check.py
+# also imports this name for its own single-float GHCR request timeout;
+# splitting it into a tuple here would have silently changed that call
+# site's behaviour too.
 HTTP_TIMEOUT_SECONDS = 10
+
+# Deadline on establishing the TCP connection for that same RabbitMQ
+# management API request, kept as its own constant rather than folding into
+# HTTP_TIMEOUT_SECONDS above. Confirmed live (#1967): a single-float
+# requests timeout does not reliably bound a connection that was pooled
+# across a RabbitMQ restart and left half-open by the far end -- the socket
+# looks alive locally, so a read-side deadline alone isn't what actually
+# catches that case. An explicit (connect, read) tuple is requests'/
+# urllib3's own documented way to bound both phases independently. Five
+# seconds is ample for a TCP handshake to a broker on the same host/LAN;
+# anything slower than that is itself worth failing fast on, the same as an
+# outright connection refusal would be.
+HTTP_CONNECT_TIMEOUT_SECONDS = 5
+
+# Hard wall-clock deadline core-health places on a single RabbitMQ
+# Management API GET, layered on top of (not instead of) the (connect,
+# read) timeout above. Exists because that timeout tuple is not itself a
+# sufficient backstop: confirmed live (#1967) that a connection left
+# half-open by a RabbitMQ restart went unnoticed by requests/urllib3's own
+# timeout machinery, hanging the polling thread forever with no log output
+# at all. The GET now runs on a short-lived daemon thread that the poller
+# joins with this deadline; exceeding it means the (connect, read) timeout
+# has already failed to fire, so the wedged session is discarded and
+# recreated rather than reused. Set comfortably above
+# HTTP_CONNECT_TIMEOUT_SECONDS + HTTP_TIMEOUT_SECONDS (15s, see the
+# cross-file invariant below) so a request that is genuinely obeying its
+# own timeout always finishes well before this fires -- the margin exists
+# so ordinary network jitter never trips the watchdog on a request that was
+# always going to time out cleanly on its own.
+RABBITMQ_POLL_HANG_TIMEOUT_SECONDS = 25
 
 # How often core-health polls the container registry for the latest
 # published image tag of every component, to drive the Home Assistant
@@ -338,4 +374,11 @@ assert MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS > MAP_HEARTBEAT_INTERVAL_SECONDS, (
 )
 assert MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS > MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS, (
     "MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS must exceed MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS"
+)
+
+# The watchdog only exists to catch a (connect, read) timeout that failed to
+# fire on its own (#1967) -- it must never be tight enough to trip on a
+# request that is behaving normally and about to time out by itself.
+assert RABBITMQ_POLL_HANG_TIMEOUT_SECONDS > HTTP_CONNECT_TIMEOUT_SECONDS + HTTP_TIMEOUT_SECONDS, (
+    "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS must exceed the (connect, read) timeout it backstops"
 )

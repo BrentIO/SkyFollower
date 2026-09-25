@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import sys
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,6 +63,8 @@ receiver_message_count_key = _mod.receiver_message_count_key
 MQTT_ROOT = _mod.MQTT_ROOT
 CORE_DEVICE_IDENTIFIER = _mod.CORE_DEVICE_IDENTIFIER
 RABBITMQ_POLL_INTERVAL_SECONDS = _mod.RABBITMQ_POLL_INTERVAL_SECONDS
+HTTP_CONNECT_TIMEOUT_SECONDS = _mod.HTTP_CONNECT_TIMEOUT_SECONDS
+HTTP_TIMEOUT_SECONDS = _mod.HTTP_TIMEOUT_SECONDS
 ARCHIVE_QUEUE_NAME = _mod.ARCHIVE_QUEUE_NAME
 ADSB_EXCHANGE = _mod.ADSB_EXCHANGE
 _installed_version = _mod._installed_version
@@ -1002,6 +1006,210 @@ class TestPollRabbitmqOnce:
 
         published = _state_publishes(app._mqtt)
         assert "SkyFollower/message-processor/mp-1/statistic/registration_misses_hour" in published
+
+
+# ---------------------------------------------------------------------------
+# RabbitMQ HTTP timeout / hang watchdog / session recreation (#1967)
+# ---------------------------------------------------------------------------
+
+class TestRmqGetTimeoutTuple:
+    def test_uses_an_explicit_connect_read_timeout_tuple(self):
+        """A single float timeout (the pre-#1967 behavior) doesn't
+        reliably bound a connection left half-open by a RabbitMQ restart --
+        the fix passes requests an explicit (connect, read) tuple instead."""
+        app = _wired_app()
+        response = MagicMock()
+        response.json.return_value = {"ok": True}
+        response.raise_for_status = MagicMock()
+        app._session.get.return_value = response
+
+        result = app._rmq_get("/api/overview")
+
+        assert result == {"ok": True}
+        _, kwargs = app._session.get.call_args
+        assert kwargs["timeout"] == (HTTP_CONNECT_TIMEOUT_SECONDS, HTTP_TIMEOUT_SECONDS)
+
+    def test_propagates_the_response_exception_when_not_hung(self):
+        app = _wired_app()
+        app._session.get.side_effect = Exception("connection refused")
+        with pytest.raises(Exception, match="connection refused"):
+            app._rmq_get("/api/overview")
+
+
+class TestRecreateSession:
+    def test_replaces_the_session_object(self):
+        app = _wired_app()
+        old_session = app._session
+        app._recreate_session()
+        assert app._session is not old_session
+        old_session.close.assert_called_once()
+
+    def test_tolerates_a_failure_closing_the_old_session(self):
+        app = _wired_app()
+        app._session.close.side_effect = Exception("already gone")
+        app._recreate_session()  # must not raise
+        assert app._session is not None
+
+    def test_poll_failure_recreates_the_session(self):
+        """Proposed fix #1 in #1967: recreate self._session whenever a poll
+        fails, not just on a detected hang -- an outright connection error
+        can leave the pool holding a connection just as unusable."""
+        app = _wired_app()
+        old_session = app._session
+        app._session.get.side_effect = Exception("connection refused")
+
+        app._poll_rabbitmq_once()
+
+        assert app._session is not old_session
+
+    def test_successful_poll_does_not_recreate_the_session(self):
+        app = _wired_app()
+        old_session = app._session
+        response = MagicMock()
+        response.json.return_value = {}
+        response.raise_for_status = MagicMock()
+        app._session.get.return_value = response
+        app._redis.smembers.return_value = set()
+
+        app._poll_rabbitmq_once()
+
+        assert app._session is old_session
+
+
+class TestRmqGetHangWatchdog:
+    """Simulates the confirmed-live #1967 scenario -- a GET that never
+    returns because the (connect, read) timeout tuple itself failed to
+    fire (a connection left half-open by a RabbitMQ restart). A true
+    half-open TCP hang can't be reproduced in a unit test, so these instead
+    make the mocked session.get() block past a (monkeypatched, tiny)
+    watchdog deadline, which is exactly the condition
+    RABBITMQ_POLL_HANG_TIMEOUT_SECONDS exists to detect."""
+
+    def test_hung_get_raises_timeout_and_recreates_the_session(self, monkeypatch):
+        monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
+        app = _wired_app()
+        old_session = app._session
+
+        def _hang(*args, **kwargs):
+            time.sleep(0.3)
+            raise AssertionError("must never be observed by the test")
+
+        app._session.get.side_effect = _hang
+
+        with pytest.raises(TimeoutError):
+            app._rmq_get("/api/overview")
+
+        assert app._session is not old_session
+
+    def test_hang_is_logged_as_its_own_warning(self, monkeypatch, caplog):
+        """Acceptance criterion: a hang must produce log output of its own
+        -- before #1967, a wedged poll thread produced total silence."""
+        monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
+        app = _wired_app()
+
+        def _hang(*args, **kwargs):
+            time.sleep(0.3)
+
+        app._session.get.side_effect = _hang
+
+        with caplog.at_level(logging.WARNING, logger="core-health"):
+            with pytest.raises(TimeoutError):
+                app._rmq_get("/api/overview")
+
+        assert any("watchdog" in record.message for record in caplog.records)
+
+    def test_poll_once_survives_a_hung_get_and_marks_disconnected(self, monkeypatch):
+        monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
+        app = _wired_app()
+
+        def _hang(*args, **kwargs):
+            time.sleep(0.3)
+
+        app._session.get.side_effect = _hang
+
+        app._poll_rabbitmq_once()  # must not raise, must not block for 0.3s
+
+        assert app._rmq_connected is False
+        published = _state_publishes(app._mqtt)
+        assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
+
+    def test_next_poll_after_a_hang_uses_the_recreated_session(self, monkeypatch):
+        """Confirms the recovery path: once the wedged session is
+        discarded, a subsequent GET goes through the fresh session and can
+        succeed again -- this is what "polling resumes within a bounded
+        time" means in the absence of a live RabbitMQ to restart."""
+        monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
+        app = _wired_app()
+
+        def _hang(*args, **kwargs):
+            time.sleep(0.3)
+
+        app._session.get.side_effect = _hang
+
+        with pytest.raises(TimeoutError):
+            app._rmq_get("/api/overview")
+
+        recreated_session = app._session
+        response = MagicMock()
+        response.json.return_value = {"ok": True}
+        response.raise_for_status = MagicMock()
+        recreated_session.get = MagicMock(return_value=response)
+
+        result = app._rmq_get("/api/overview")
+
+        assert result == {"ok": True}
+        recreated_session.get.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Broker-level discovery expire_after (#1967)
+# ---------------------------------------------------------------------------
+
+class TestCoreDiscoveryExpireAfter:
+    """Before #1967, _publish_core_discovery's payloads had no expire_after
+    at all, unlike _ensure_queue_discovery's per-queue sensors -- a fully-
+    hung poll loop left them showing their last retained value forever with
+    no staleness signal in Home Assistant."""
+
+    def test_general_sensor_gets_expire_after(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery["homeassistant/sensor/SkyFollower_core_health_rabbitmq_connected/config"]
+        assert payload["expire_after"] == RABBITMQ_POLL_INTERVAL_SECONDS * 3
+
+    def test_rabbitmq_group_sensor_gets_expire_after(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery[
+            "homeassistant/sensor/SkyFollower_core_health_rabbitmq_connections_total/config"
+        ]
+        assert payload["expire_after"] == RABBITMQ_POLL_INTERVAL_SECONDS * 3
+
+    def test_redis_group_sensor_gets_expire_after(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        discovery = _discovery_payloads(app._mqtt)
+        payload = discovery["homeassistant/sensor/SkyFollower_core_health_redis_used_memory_bytes/config"]
+        assert payload["expire_after"] == RABBITMQ_POLL_INTERVAL_SECONDS * 3
+
+    def test_expire_after_matches_the_per_queue_sensor_convention(self):
+        app = _wired_app()
+        app._publish_core_discovery()
+        app._publish_queue_stats({
+            "name": "skyfollower-message-processor-mp-1",
+            "consumers": 1, "consumer_utilisation": 0.5,
+            "messages_ready": 0, "messages_unacknowledged": 0,
+            "state": "running", "memory": 0, "message_bytes": 0,
+            "message_stats": {},
+        })
+        discovery = _discovery_payloads(app._mqtt)
+        broker_level = discovery["homeassistant/sensor/SkyFollower_core_health_rabbitmq_connected/config"]
+        per_queue = discovery[
+            "homeassistant/sensor/SkyFollower_message_processor_mp-1_queue_consumers/config"
+        ]
+        assert broker_level["expire_after"] == per_queue["expire_after"]
 
 
 # ---------------------------------------------------------------------------
