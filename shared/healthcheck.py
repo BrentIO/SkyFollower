@@ -2,20 +2,13 @@
 """Docker HEALTHCHECK entrypoint for the long-running services (receiver,
 message processor, archive processor).
 
-Each of those writes /app/health/heartbeat every HEALTHCHECK_INTERVAL_SECONDS
-seconds, and only while it is genuinely connected to its upstreams -- so a
-stale file means the process is wedged or disconnected, not merely idle.
+Each writes /app/health/heartbeat every HEALTHCHECK_INTERVAL_SECONDS
+seconds, only while genuinely connected to its upstreams, so a stale file
+means wedged or disconnected, not merely idle.
 
-The staleness threshold (HEALTHCHECK_MAX_AGE_SECONDS) is a shade under three
-write intervals: one missed write is normal jitter (a slow tick, a paused
-container), two in a row is not. Compose polls this every 15s with
-retries: 3, so a real outage is reported within roughly a minute while a
-single hiccup never flips the container to unhealthy.
-
-Deliberately dependency-free and stdlib-only -- it runs inside every one of
-those images, and a healthcheck that can fail on an import is worse than no
-healthcheck at all. shared/timing.py, imported below for the threshold, is
-itself stdlib-only for exactly this reason.
+Deliberately dependency-free and stdlib-only: a healthcheck that can fail
+on an import is worse than no healthcheck at all, which is also why
+shared/timing.py (imported below) is itself stdlib-only.
 """
 
 import os

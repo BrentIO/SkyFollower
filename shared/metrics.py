@@ -1,13 +1,12 @@
 """
 Shared helper for the Redis-backed period-counter mechanism used by
-message-processor and archive-processor (see shared/lua/incr_period_counter.lua).
+message-processor and archive-processor (see
+shared/lua/incr_period_counter.lua).
 
-A period counter (an "hour" or "today" bucket) resets itself at a real UTC
-clock boundary via Redis's own EXPIREAT rather than any scheduled reset job.
-next_period_boundary() computes that absolute boundary instant so the
-caller can hand it straight to incr_period_counter.lua's EXPIREAT argument,
-with no drift between when this is computed and when Redis executes the
-expire.
+A period counter resets itself at a real UTC clock boundary via Redis's
+own EXPIREAT rather than a scheduled reset job. next_period_boundary()
+computes that absolute boundary instant for the caller to pass straight
+to EXPIREAT.
 """
 
 from __future__ import annotations

@@ -3,11 +3,10 @@ Guards scripts/install.sh's `--upgrade` migration of the map role's
 "center" reference point env vars.
 
 MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE were renamed to MAP_CENTER_LATITUDE/
-MAP_CENTER_LONGITUDE with no dual-read period -- an operator's existing
-`.env` must be rewritten in place by `--upgrade`, the same way it already
-rewrites SKYFOLLOWER_VERSION in place, so nothing needs a manual edit for
-the rename to take effect. These assertions exercise do_upgrade()'s env-file
-rewrite directly (stubbing `docker` so no real compose/pull/up happens).
+MAP_CENTER_LONGITUDE with no dual-read period, so an operator's existing
+`.env` must be rewritten in place by `--upgrade`. These assertions
+exercise do_upgrade()'s env-file rewrite directly (stubbing `docker` so
+no real compose/pull/up happens).
 """
 
 from __future__ import annotations
@@ -28,11 +27,9 @@ def _extract_function(name: str) -> str:
 
 _DO_UPGRADE = _extract_function("do_upgrade")
 
-# docker is stubbed to a no-op -- these tests only care about the .env
-# rewrite, not the real pull/up sequence (no daemon available in CI/local
-# test runs anyway). fetch_role is stubbed too now that do_upgrade calls it
-# (#1961) -- its own re-fetch behavior is covered by
-# test_install_upgrade_compose_refetch.py, so it's a no-op here.
+# docker is stubbed to a no-op: these tests only care about the .env
+# rewrite. fetch_role is stubbed too (its own re-fetch behavior is
+# covered by test_install_upgrade_compose_refetch.py).
 _HARNESS = """
 set -eu
 DEV_BUILD=0

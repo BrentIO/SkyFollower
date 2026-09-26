@@ -1,15 +1,13 @@
 """
-Integration tests for shared/lua/route_airports.lua, run against a live Redis
-(RedisJSON + Lua scripting required — a redis-stack instance).
+Integration tests for shared/lua/route_airports.lua, run against a live
+Redis (RedisJSON + Lua scripting required -- a redis-stack instance).
 
-These tests exercise the actual Lua script via EVALSHA, the same way a
-caller would, rather than mocking the resolution behavior. There's no way to
-verify Lua semantics (e.g. cjson's empty-table-as-object quirk) by testing
-Python code alone.
+Exercises the actual Lua script via EVALSHA rather than mocking the
+resolution behavior, since Lua semantics (e.g. cjson's empty-table-as-
+object quirk) can't be verified by testing Python code alone.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379). If none is reachable, every test in this module is skipped
-rather than failed, since CI does not run a Redis service for this workflow.
+localhost:6379); skipped, not failed, when none is reachable.
 """
 
 from __future__ import annotations
@@ -22,15 +20,9 @@ import pytest
 
 redis = pytest.importorskip("redis")
 
-# Under pytest-xdist, a "module"-scoped fixture is instantiated once per
-# worker *process*, not once globally -- if this module's tests get split
-# across workers (which happens unpredictably once there's enough other
-# work in the full suite to balance against), each worker independently
-# seeds/tears down the shared airport:{code} records below against the
-# one live Redis every worker actually talks to, racing each other. Pinning
-# every test in this module to a single xdist group keeps them all on one
-# worker, so the module-scoped fixtures below are only ever really
-# instantiated once.
+# Keeps this module's tests on one pytest-xdist worker: a module-scoped
+# fixture is per-worker-process, so splitting across workers would race
+# concurrent seed/teardown of the shared airport:{code} records below.
 pytestmark = pytest.mark.xdist_group(name="route_airports_lua")
 
 _LUA_PATH = pathlib.Path(__file__).parent.parent / "lua" / "route_airports.lua"
@@ -56,17 +48,9 @@ def route_airports_sha(redis_client):
     return redis_client.script_load(_LUA_PATH.read_text())
 
 
-# Every airport:{code} record any test in this module needs, seeded once for
-# the whole module rather than per-test. Two tests deliberately reuse the
-# same six ICAO codes (test_six_airport_route / test_reverse_route_order_
-# matters_not_just_membership -- same airports, opposite order, to prove the
-# result reflects route order and not just membership), and record content
-# is identical regardless of which test "owns" it, so sharing one seed is
-# correct. Per-test create/delete of these same keys used to race under
-# pytest-xdist: two tests sharing a code could land on different worker
-# processes and run concurrently against the one shared live Redis, so one
-# test's teardown could delete a key out from under another test's
-# still-in-progress EVALSHA.
+# Every airport:{code} record any test in this module needs, seeded once
+# for the whole module rather than per-test, since per-test create/delete
+# of shared codes used to race across pytest-xdist workers.
 _ALL_AIRPORTS = {
     code: {"icao_code": code, "name": code + " Airport"}
     for code in [

@@ -1,15 +1,13 @@
 """
-Integration tests for shared/lua/incr_period_counter.lua, run against a live
-Redis (Lua scripting only -- no RedisJSON needed, unlike merge_aircraft.lua).
+Integration tests for shared/lua/incr_period_counter.lua, run against a
+live Redis (Lua scripting only -- no RedisJSON needed).
 
-These tests exercise the actual Lua script via EVALSHA, the same way the
-receiver (and eventually the message processor) calls it, rather than mocking
-the increment/expiry behavior. There's no way to verify the
-exists-then-conditionally-expire semantics by testing Python code alone.
+Exercises the actual Lua script via EVALSHA rather than mocking the
+increment/expiry behavior, since the exists-then-conditionally-expire
+semantics can't be verified by testing Python code alone.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379). If none is reachable, every test in this module is skipped
-rather than failed, since CI does not run a Redis service for this workflow.
+localhost:6379); skipped, not failed, when none is reachable.
 """
 
 from __future__ import annotations
@@ -23,10 +21,8 @@ import pytest
 
 redis = pytest.importorskip("redis")
 
-# See shared/tests/test_merge_aircraft_lua.py's own comment on this pattern --
-# a module-scoped fixture is per pytest-xdist *worker*, so tests in this
-# module racing another worker's tests against the same live Redis is a real
-# risk once the full suite is large enough to get split across workers.
+# Keeps this module's tests on one pytest-xdist worker; see
+# test_merge_aircraft_lua.py for the same fix and its rationale.
 pytestmark = pytest.mark.xdist_group(name="incr_period_counter_lua")
 
 _LUA_PATH = pathlib.Path(__file__).parent.parent / "lua" / "incr_period_counter.lua"
@@ -105,15 +101,10 @@ class TestIncrPeriodCounter:
     def test_key_actually_expires_and_resets_at_a_real_boundary(
         self, redis_client, script_sha, counter_key
     ):
-        """End-to-end proof the reset mechanism genuinely works at a real
-        clock boundary -- not just that EXPIREAT/TTL were set correctly
-        (see test_sets_expiry_only_on_creation above). Uses a short,
-        near-future "boundary" (2s out) rather than waiting a real UTC
-        hour/day, but exercises the exact same mechanism
-        message-processor/archive-processor rely on: Redis's own TTL
-        expiry deletes the key, and the next increment after that
-        naturally recreates it fresh (existed == 0 again) rather than
-        continuing to accumulate."""
+        """End-to-end proof the reset mechanism works at a real clock
+        boundary, not just that EXPIREAT/TTL were set correctly. Uses a
+        short, near-future boundary (2s) rather than waiting a real UTC
+        hour/day."""
         near_future = int(time.time()) + 2
         result = _incr(redis_client, script_sha, counter_key, 5, near_future)
         assert result == 5

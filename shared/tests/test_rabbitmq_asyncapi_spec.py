@@ -1,14 +1,10 @@
 """
-Anti-drift guard for specs/asyncapi-amqp.yaml -- the AsyncAPI document
-covering SkyFollower's RabbitMQ/AMQP topology (the sibling document to
-specs/asyncapi.yaml's MQTT topics).
+Anti-drift guard for specs/asyncapi-amqp.yaml, the AsyncAPI document
+covering SkyFollower's RabbitMQ/AMQP topology.
 
 shared/rabbitmq_topology.py is the single source of truth for every
-exchange/queue name, argument, and binding value used at runtime. Nothing
-enforces that the AsyncAPI document describing that topology stays in sync
-with it -- these assertions are that enforcement, so a future rename of
-any of those constants can't land without this file (and therefore
-specs/asyncapi-amqp.yaml) being touched too.
+exchange/queue name, argument, and binding value used at runtime; nothing
+else enforces that the AsyncAPI document stays in sync with it.
 """
 
 from __future__ import annotations
@@ -65,11 +61,9 @@ class TestAdsbExchange:
         assert binding["exchange"]["name"] == ADSB_EXCHANGE
 
     def test_exchange_type_extension_matches_the_real_plugin_type(self):
-        """exchange.type is a strict AsyncAPI enum (topic/direct/fanout/
-        default/headers) that x-consistent-hash cannot appear in --
-        represented instead via the x-rabbitmqExchangeType specification
-        extension. This guards that extension value against drifting from
-        the real ADSB_EXCHANGE_TYPE constant."""
+        """exchange.type is a strict AsyncAPI enum that x-consistent-hash
+        cannot appear in, so it's represented via the x-rabbitmqExchangeType
+        extension instead. Guards that extension against drift."""
         binding = _amqp_binding("adsbExchange")
         assert "type" not in binding["exchange"], (
             "exchange.type must stay unset -- x-consistent-hash is not a "
@@ -139,12 +133,9 @@ class TestMessageProcessorQueue:
 
 class TestEveryChannelUsesTheCurrentBindingVersion:
     def test_all_amqp_bindings_pin_0_3_0(self):
-        """0.3.0 is the AMQP binding version actually bundled in the
-        AsyncAPI 3.1.0 JSON Schema (verified against
-        asyncapi/spec-json-schemas' 3.1.0 schema during implementation) --
-        pinning it explicitly, and checking it here, means a future
-        AsyncAPI/bindings upgrade that changes the enum is caught by a
-        failing test rather than a silently-invalid document."""
+        """0.3.0 is the AMQP binding version bundled in the AsyncAPI
+        3.1.0 JSON Schema; pinning and checking it here catches a future
+        bindings upgrade that changes the enum."""
         for name, channel in _SPEC["channels"].items():
             assert channel["bindings"]["amqp"]["bindingVersion"] == "0.3.0", name
         for name, operation in _SPEC["operations"].items():

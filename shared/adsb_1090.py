@@ -46,7 +46,6 @@ def parse_tcp_stream(data: bytes, buf: bytearray) -> list[str]:
         elif byte in _HEX_BYTES:
             buf.extend([byte])
         else:
-            # Invalid byte inside message — discard partial
-            buf.clear()
+            buf.clear()  # invalid byte inside message: discard partial
 
     return messages

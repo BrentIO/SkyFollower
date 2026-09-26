@@ -2,21 +2,14 @@
 Minimal MQTT presence for the two long-running services that publish no
 telemetry of their own -- management-ui and map.
 
-The receiver, message processor, and archive processor each run a periodic
-telemetry loop. management-ui and map have nothing equivalent to report:
-they just need to (a) appear in Home Assistant with their running image
-version and (b) self-register so core-health can drive an "update
-available" entity for them. So this helper connects, publishes the
-retained discovery + started_at + version topics once per connect, and
-then simply stays connected -- no periodic publish, no stats.
+Unlike the receiver/message-processor/archive-processor's periodic
+telemetry loops, these only need to appear in Home Assistant and
+self-register for core-health's "update available" entity. This helper
+publishes the retained discovery + started_at + version topics once per
+connect and then just stays connected -- no periodic publish, no stats.
 
-It is built on three primitives every other component's MQTT code uses:
-shared/mqtt.py's build_mqtt_client() (connection + optional auth +
-last-will), shared/ha_discovery.py's build_ha_device() (the discovery
-`device` block, whose sw_version carries the running version), and
-shared/mqtt_register.py's publish_register() (the self-registration
-message core-health reads to learn this component exists and which GHCR
-image to check for updates).
+Built on shared/mqtt.py's build_mqtt_client(), shared/ha_discovery.py's
+build_ha_device(), and shared/mqtt_register.py's publish_register().
 """
 
 from __future__ import annotations
@@ -141,11 +134,9 @@ class MqttPresence:
             "payload_available": ONLINE,
             "payload_not_available": OFFLINE,
         }
-        # Only Start Time gets an entity. The running version is already
-        # carried in every discovery payload's device block via sw_version
-        # (and published as a plain retained statistic topic for core-health
-        # to read), so a standalone version sensor would just duplicate it --
-        # the same choice the receiver and archive processor make.
+        # Only Start Time gets an entity; the running version is already
+        # carried via sw_version in the device block, so a standalone
+        # version sensor would just duplicate it.
         payload = {
             **availability,
             "state_topic": f"{self._stat_base}/started_at",

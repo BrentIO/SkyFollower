@@ -557,10 +557,8 @@ class TestBlockHelpers:
         }
 
     def test_map_udp_config_never_raises_on_its_own(self, monkeypatch):
-        """Same optional-endpoint convention as mqtt_config() -- both
-        MAP_UDP_HOST/MAP_UDP_PORT unset must not raise, and must leave the
-        feature fully disabled (blank host, port 0), with the position
-        throttle defaulting to 1 second."""
+        """Same optional-endpoint convention as mqtt_config(): unset must
+        not raise, and must leave the feature fully disabled."""
         monkeypatch.delenv("MAP_UDP_HOST", raising=False)
         monkeypatch.delenv("MAP_UDP_PORT", raising=False)
         monkeypatch.delenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", raising=False)

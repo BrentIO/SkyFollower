@@ -1,20 +1,14 @@
 """
 Guards scripts/install.sh's `--upgrade` re-fetch of each role's compose
-file (#1961).
+file (#1961): do_upgrade() calls the existing fetch_role() per role
+directory before the pull/up step, reusing its no-clobber logic rather
+than reinventing it.
 
-Before this fix, do_upgrade()'s entire body was an .env rewrite followed by
-`docker compose pull && up -d` against whatever compose file already
-happened to be on disk -- a compose-file-only change (a new service, a new
-label, a port mapping) merged into the repo could never reach an existing
-deployment no matter how many times --upgrade ran. The fix has do_upgrade()
-call the existing fetch_role() per role directory, before the pull/up step,
-reusing its no-clobber logic rather than reinventing it. These assertions
-exercise do_upgrade() + fetch_role() together (stubbing `docker` and
-`http_get` so no real compose/pull/up or network fetch happens) and confirm
-the two compose files with per-instance generated service blocks --
-docker-compose.message-processor.yaml and docker-compose.receiver.yaml --
-and any config/* file already derived from a .example template are still
-never clobbered by an upgrade.
+These assertions exercise do_upgrade() + fetch_role() together (stubbing
+`docker` and `http_get` so no real compose/pull/up or network fetch
+happens) and confirm the two compose files with per-instance generated
+service blocks, and any config/* file already derived from a .example
+template, are still never clobbered by an upgrade.
 """
 
 from __future__ import annotations
@@ -37,13 +31,11 @@ _FUNCS = "\n".join(
     _extract_function(n) for n in ("fetch_role", "role_files", "role_data_dirs", "do_upgrade")
 )
 
-# docker is stubbed to a no-op -- these tests only care about which files
-# fetch_role touches, not the real pull/up sequence (no daemon available in
-# CI/local test runs anyway). http_get is stubbed instead of curl/wget
-# directly (install.sh picks one of those at parse time, before fetch_role
-# is even reachable) so no real network fetch happens; the stub writes a
-# marker recording the exact URL requested, so a test can tell a given file
-# really went through fetch_role's fetch path rather than being pre-seeded.
+# docker is stubbed to a no-op: these tests only care which files
+# fetch_role touches, not the real pull/up sequence. http_get is stubbed
+# so no real network fetch happens; the stub writes a marker recording
+# the exact URL requested, so a test can tell a file really went through
+# fetch_role's fetch path rather than being pre-seeded.
 _HARNESS = """
 set -eu
 DEV_BUILD=0

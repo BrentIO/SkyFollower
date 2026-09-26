@@ -1,25 +1,18 @@
 """
 Latest-version lookup against the GitHub Container Registry.
 
-`core-health` compares the running version of every SkyFollower component
-(already on the MQTT broker via each component's HA discovery `device`
-block) against the newest calendar-versioned image tag published to GHCR,
-and surfaces the difference as a Home Assistant `update` entity. This
-module is the GHCR half of that: given an image name, return the newest
-`YYYY.MM.BB` tag or `None`.
+`core-health` compares each SkyFollower component's running version
+against the newest calendar-versioned image tag published to GHCR, and
+surfaces the difference as a Home Assistant `update` entity. This module
+is the GHCR half: given an image name, return the newest `YYYY.MM.BB` tag
+or `None`.
 
-It is deliberately best-effort. Every failure mode -- a network error, a
-non-200 response, malformed JSON, a rate-limit answer, an image with no
-parseable tags -- is logged and turned into `None`. Nothing here raises,
-so a caller looping over every component's image never has to guard an
-individual lookup.
+Deliberately best-effort -- every failure mode is logged and turned into
+`None`; nothing here raises.
 
-GHCR's Registry v2 API requires a bearer token even for a public image:
-the caller first fetches an anonymous pull token, then presents it on the
-tags-list request. The token is memoised in-process with a short TTL so a
-single poll pass over dozens of images reuses one token instead of
-fetching a fresh one per image. The poll cadence itself
-(`GHCR_VERSION_CHECK_INTERVAL_SECONDS`) lives in the caller, not here.
+GHCR's Registry v2 API requires a bearer token even for a public image.
+The token is memoised in-process with a short TTL so one poll pass over
+dozens of images reuses a single token.
 """
 
 from __future__ import annotations

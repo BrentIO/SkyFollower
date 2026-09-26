@@ -1,11 +1,9 @@
 """
 Shared Redis client construction for SkyFollower.
 
-Every component that talks to Redis (message processor, archive processor,
-management-UI backend, and all 42 runners) builds its redis.Redis through
-build_redis_client() so the required password is applied consistently,
-instead of being reimplemented -- or missed -- at each of the ~45
-independent call sites.
+Every component that talks to Redis builds its redis.Redis through
+build_redis_client() so the required password is applied consistently
+instead of being reimplemented at each call site.
 """
 
 from __future__ import annotations
@@ -17,10 +15,9 @@ def build_redis_client(redis_config: dict) -> redis_lib.Redis:
     """
     Build a redis.Redis from a component's `redis` config block.
 
-    `password` is passed unconditionally: shared/config.py's redis_config()
-    treats REDIS_PASSWORD as required, so every caller already has one by
-    the time this runs. Every component authenticates as the "default"
-    user with this same password -- no per-component Redis ACL users.
+    `password` is passed unconditionally since shared/config.py's
+    redis_config() treats REDIS_PASSWORD as required. Every component
+    authenticates as the "default" user -- no per-component ACL users.
     """
     return redis_lib.Redis(
         host=redis_config["host"],

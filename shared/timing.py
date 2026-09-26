@@ -1,74 +1,48 @@
 """
-The single definition point for every timing value SkyFollower depends on.
+The single definition point for every timing value SkyFollower depends on:
+loop cadences, key/record TTLs, I/O deadlines, retry backoffs, and rolling
+windows that cross a component boundary or carry a cross-file invariant.
 
-Loop cadences, key/record TTLs, I/O deadlines, retry backoffs and rolling
-windows used to be scattered across the tree as bare integer literals,
-per-file module constants under a dozen different names, and a handful of
-environment variables that only governed internal behaviour. This module
-collects everything that either crosses a component boundary or carries a
-cross-file invariant, so there is exactly one place to read and one place
-to change.
+Naming convention: ``<SUBJECT>_<KIND>_SECONDS``, where KIND is one of
+``INTERVAL`` (loop cadence), ``TTL`` (key/record expiry), ``TIMEOUT``
+(I/O deadline), ``WINDOW`` (rolling span), or ``BACKOFF`` (retry delay). A
+few values use a domain term instead (``MAX_AGE``, ``MAX_LAG``,
+``KEEPIDLE``/``KEEPINTVL`` for TCP keepalive) -- deliberate, not drift.
+Count constants omit ``_SECONDS`` (e.g. ``TCP_KEEPALIVE_PROBES``).
 
-Naming convention
------------------
-``<SUBJECT>_<KIND>_SECONDS``
+``flight_ttl_seconds`` is operator-tunable via the
+``config:flight_ttl_seconds`` Redis key; only its fallback default lives
+here, as ``DEFAULT_FLIGHT_TTL_SECONDS``.
 
-* ``INTERVAL`` -- a recurring loop cadence
-* ``TTL``      -- a key or record expiry
-* ``TIMEOUT``  -- a single I/O deadline
-* ``WINDOW``   -- a rolling span measured backwards from now
-* ``BACKOFF``  -- the delay between retry attempts
-
-A few values keep a domain term of art in place of one of those words
-(``MAX_AGE`` for a staleness threshold, ``MAX_LAG`` for a freshness bound,
-``KEEPIDLE`` / ``KEEPINTVL`` for the kernel's own TCP-keepalive option
-names) -- those spellings are deliberate, not drift.
-
-No name in this module has a leading underscore: it is a public module and
-every constant is meant to be imported by name. Values that are counts
-rather than durations omit the ``_SECONDS`` suffix (``TCP_KEEPALIVE_PROBES``).
-
-``flight_ttl_seconds`` is intentionally *not* here as a fixed value: it is
-the one timing value an operator may tune per deployment, carried in the
-``config:flight_ttl_seconds`` Redis key and read once at startup by the
-message processor and the archive processor. Only its fallback default
-lives here, as ``DEFAULT_FLIGHT_TTL_SECONDS``.
-
-Stdlib-only, no imports: ``shared/healthcheck.py`` -- the dependency-free
-Docker HEALTHCHECK entrypoint -- imports from here, so this module must
-never grow a third-party dependency.
+Stdlib-only, no imports: ``shared/healthcheck.py`` imports from here and
+must never gain a third-party dependency.
 """
 
 from __future__ import annotations
 
 # --- Liveness -------------------------------------------------------------
 
-# How often each long-running component (receiver, message processor,
-# archive processor, core-health) rewrites its /app/health/heartbeat file
-# while genuinely connected to its upstreams.
+# How often each long-running component rewrites its heartbeat file.
 HEALTHCHECK_INTERVAL_SECONDS = 15
 
-# Docker's HEALTHCHECK treats the heartbeat file as stale -- and the
-# container as unhealthy -- once it is older than this. A shade under three
-# write intervals: one missed write is normal jitter, two in a row is not.
+# Docker's HEALTHCHECK treats the heartbeat file as stale past this age.
+# Kept under 3x the write interval so one missed write is still tolerated.
 HEALTHCHECK_MAX_AGE_SECONDS = 40
 
 # --- MQTT / telemetry ----------------------------------------------------
 
-# Cadence at which the receiver, message processor and archive processor
-# publish their MQTT statistic topics. Purely time-based -- no component
-# publishes early on a message-count trigger.
+# Cadence for the receiver/message-processor/archive-processor MQTT
+# statistic topics. Purely time-based, not message-count triggered.
 MQTT_PUBLISH_INTERVAL_SECONDS = 30
 
 # --- Redis identity heartbeat ------------------------------------------------
 
-# How often the receiver and message processor refresh the TTL on their
-# Redis identity/registration key (the duplicate-instance guard).
+# How often the receiver and message processor refresh their Redis
+# identity/registration key (the duplicate-instance guard).
 HEARTBEAT_INTERVAL_SECONDS = 30
 
-# TTL set on that key. Twice the refresh interval, so a single missed
-# refresh never drops the claim. Named outright rather than derived as
-# ``HEARTBEAT_INTERVAL_SECONDS * 2`` at each call site.
+# TTL on that key -- twice the refresh interval so one missed refresh never
+# drops the claim.
 HEARTBEAT_TTL_SECONDS = 60
 
 # --- Config polling -----------------------------------------------------
@@ -82,255 +56,174 @@ CONFIG_POLL_INTERVAL_SECONDS = 30
 # Wait between reconnect attempts to RabbitMQ / Redis / S3 after a drop.
 RECONNECT_BACKOFF_SECONDS = 10
 
-# How long a receiver source connection must stay continuously up before a
-# reconnect resets that connection's accumulated reconnect_count to zero --
-# so the metric reflects a *current* flapping episode, not one that ended
-# weeks ago. 3x RECONNECT_BACKOFF_SECONDS: long enough that a connection
-# still flapping (fail, wait, retry) can never cross it, short enough that
-# the count reflects recovery quickly.
+# Minimum uptime before a receiver source connection's reconnect_count
+# resets to zero, so the metric reflects the current flapping episode.
 RECONNECT_COUNT_RESET_AGE_SECONDS = 30
 
-# Deadline on a RabbitMQ connection sitting in the broker's blocked state --
-# publishers halted by a resource alarm (disk-free or high memory) while the
-# TCP connection itself stays up. pika tears the connection down once this
-# elapses, so the receiver's sole publishing thread reconnects and
-# re-validates instead of staying wedged inside a basic_publish that will
-# never return. Comfortably longer than a brief alarm flap, short enough
-# that a genuinely stuck alarm cannot hide behind a healthy-looking
-# connection.
+# Deadline on a RabbitMQ connection sitting in the broker's blocked state
+# (publishers halted by a resource alarm). pika tears the connection down
+# once this elapses, so the receiver reconnects instead of staying wedged
+# inside a basic_publish that would never return.
 RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS = 30
 
 # Minimum spacing between drain attempts against a single fallback-queue
-# row, independent of how often the caller invokes drain() -- keeps a
-# flapping connection from burning through the retry threshold in well
-# under a real recovery window. Default of FallbackQueue's
-# ``min_retry_interval_seconds`` parameter.
+# row, regardless of how often the caller invokes drain(). Default of
+# FallbackQueue's ``min_retry_interval_seconds`` parameter.
 FALLBACK_RETRY_BACKOFF_SECONDS = 30
 
 # --- Rolling windows --------------------------------------------------------
 
-# Rolling window over which _RateTracker measures messages-per-second, in
+# Rolling window over which _RateTracker measures messages-per-second in
 # the receiver and the message processor.
 RATE_WINDOW_SECONDS = 30
 
-# Trailing window over which the message processor requires repeated
-# sightings before trusting a reserved squawk sourced from a message it
-# could not CRC-verify (#900). Ident used to share this constant too, but
-# was split out (#1915) with its own, independently-derived values below --
-# do not reuse this one for ident.
+# Confirmation window for a reserved squawk sourced from a message that
+# could not be CRC-verified. Ident has its own, independently-derived
+# values below -- do not reuse this one for ident.
 PARITY_ERROR_CONFIRM_WINDOW_SECONDS = 30
 
 # Repeated-sightings confirmation for an ident sourced from a message the
-# message processor could not CRC-verify (DF20/21 Comm-B BDS 2,0 -- the
-# only ident source for an aircraft with no ADS-B Out). Deliberately much
-# more lenient than squawk's (#1915): squawk's 5-in-30s bar was tuned for a
-# tiny, corruption-attractor-prone value space (4 reserved codes reachable
-# by a few bit flips), which ident's ~8-character alphanumeric space isn't
-# -- two independent corrupted decodes landing on the exact same wrong
-# string by chance is vanishingly unlikely, so 2 sightings is already far
-# stronger evidence than squawk's threshold ever was for its own value
-# space. The window is set far larger than any realistic single flight
-# (DF20/21 Comm-B replies are interrogation-driven, not periodic, so a
-# tight rolling window can simply never see 2 sightings fall inside it for
-# an aircraft that isn't under frequent SSR polling -- see #1915's SAM087
-# case). This value only needs to outlast one flight's total duration, not
-# bound anything itself: `Flight.pending_ident` is per-flight-row state
-# that's destroyed when the flight is evicted (DEFAULT_FLIGHT_TTL_SECONDS-
-# gated inactivity, message-processor's _evict_stale()), so the window
-# never actually has to expire a sighting in practice -- 24 hours safely
-# exceeds even the longest realistic flight, civil or military.
+# message processor could not CRC-verify. The window is set far larger
+# than any realistic flight because DF20/21 Comm-B replies are
+# interrogation-driven, not periodic -- a tight window could simply never
+# see a second sighting for an aircraft not under frequent SSR polling.
+# Only needs to outlast one flight; `Flight.pending_ident` is destroyed on
+# eviction regardless.
 IDENT_CONFIRM_COUNT = 2
 IDENT_CONFIRM_WINDOW_SECONDS = 24 * 60 * 60
 
 # --- Message-age gating -----------------------------------------------------
 
 # Maximum age of a source message before a downstream emission based on it
-# is suppressed -- an older match is still recorded, just not emitted, since
-# it would no longer be actionable.
+# is suppressed -- an older match is still recorded, just not emitted.
 MAX_MESSAGE_LAG_SECONDS = 30
 
 # --- core-health polling --------------------------------------------------
 
 # How often core-health polls RabbitMQ's HTTP management API. RabbitMQ
-# aggregates its stats broker-side on a ~5s internal interval, so this
-# stays comfortably fresh without re-reading unchanged cached data.
+# aggregates stats broker-side on a ~5s interval, so this stays fresh
+# without re-reading unchanged cached data.
 RABBITMQ_POLL_INTERVAL_SECONDS = 30
 
-# How often core-health issues Redis INFO / MEMORY STATS. Redis's health
-# signals (memory, persistence status, error counts) do not move on a
-# sub-minute timescale in ways that matter here.
+# How often core-health issues Redis INFO / MEMORY STATS.
 REDIS_POLL_INTERVAL_SECONDS = 30
 
-# Deadline on each core-health HTTP request to the RabbitMQ management API.
-# This is the *read* half of the (connect, read) tuple actually passed to
-# requests -- see HTTP_CONNECT_TIMEOUT_SECONDS below. Left unchanged in
-# shape/meaning here (still a bare float) because shared/version_check.py
-# also imports this name for its own single-float GHCR request timeout;
-# splitting it into a tuple here would have silently changed that call
-# site's behaviour too.
+# Read-half deadline on each core-health HTTP request to the RabbitMQ
+# management API, passed as the (connect, read) tuple with
+# HTTP_CONNECT_TIMEOUT_SECONDS below. shared/version_check.py also imports
+# this name for its own single-float GHCR request timeout, so its
+# shape/meaning must stay a bare float.
 HTTP_TIMEOUT_SECONDS = 10
 
-# Deadline on establishing the TCP connection for that same RabbitMQ
-# management API request, kept as its own constant rather than folding into
-# HTTP_TIMEOUT_SECONDS above. Confirmed live (#1967): a single-float
-# requests timeout does not reliably bound a connection that was pooled
-# across a RabbitMQ restart and left half-open by the far end -- the socket
-# looks alive locally, so a read-side deadline alone isn't what actually
-# catches that case. An explicit (connect, read) tuple is requests'/
-# urllib3's own documented way to bound both phases independently. Five
-# seconds is ample for a TCP handshake to a broker on the same host/LAN;
-# anything slower than that is itself worth failing fast on, the same as an
-# outright connection refusal would be.
+# Connect-half deadline for that same request, kept separate from
+# HTTP_TIMEOUT_SECONDS so requests/urllib3 can bound each phase
+# independently.
 HTTP_CONNECT_TIMEOUT_SECONDS = 5
 
-# Hard wall-clock deadline core-health places on a single RabbitMQ
-# Management API GET, layered on top of (not instead of) the (connect,
-# read) timeout above. Exists because that timeout tuple is not itself a
-# sufficient backstop: confirmed live (#1967) that a connection left
-# half-open by a RabbitMQ restart went unnoticed by requests/urllib3's own
-# timeout machinery, hanging the polling thread forever with no log output
-# at all. The GET now runs on a short-lived daemon thread that the poller
-# joins with this deadline; exceeding it means the (connect, read) timeout
-# has already failed to fire, so the wedged session is discarded and
-# recreated rather than reused. Set comfortably above
-# HTTP_CONNECT_TIMEOUT_SECONDS + HTTP_TIMEOUT_SECONDS (15s, see the
-# cross-file invariant below) so a request that is genuinely obeying its
-# own timeout always finishes well before this fires -- the margin exists
-# so ordinary network jitter never trips the watchdog on a request that was
-# always going to time out cleanly on its own.
+# Wall-clock deadline core-health places on a single RabbitMQ Management
+# API GET, layered on top of the (connect, read) timeout above. A
+# connection left half-open by a broker restart can go unnoticed by
+# requests/urllib3's own timeout machinery and hang the polling thread
+# indefinitely; the GET runs on a short-lived daemon thread that the
+# poller joins with this deadline, discarding and recreating the session
+# if it fires. Set above HTTP_CONNECT_TIMEOUT_SECONDS + HTTP_TIMEOUT_SECONDS
+# (see the cross-file invariant below) so a well-behaved request always
+# finishes first.
 RABBITMQ_POLL_HANG_TIMEOUT_SECONDS = 25
 
-# How often core-health polls the container registry for the latest
-# published image tag of every component, to drive the Home Assistant
-# "update available" entities. Deliberately slow -- one pass fetches a
-# token plus a tags list for roughly fifty images, the published tags
-# only move on a release, and nothing downstream needs it fresher than
-# daily.
+# How often core-health polls the container registry for each component's
+# latest published image tag, to drive Home Assistant's "update available"
+# entities. Deliberately slow -- roughly fifty images per pass, and
+# published tags only move on a release.
 GHCR_VERSION_CHECK_INTERVAL_SECONDS = 86400
 
-# Delay before core-health's first container-registry poll after startup.
-# Long enough for the retained Home Assistant discovery configs already on
-# the broker to arrive and populate the component registry, short enough
-# that the "update available" entities are not blank for long after a
-# restart.
+# Delay before core-health's first container-registry poll after startup,
+# so retained Home Assistant discovery configs have time to arrive first.
 GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS = 30
 
 # --- Receiver source sockets ----------------------------------------------
 
-# TCP keepalive timers on every readsb source socket. The receiver only
-# ever reads from these, so a peer that vanishes without a clean FIN/RST is
-# otherwise indistinguishable from a quiet feed. First probe after 60s
-# idle, then 3 probes 10s apart -- a ~90s detection budget, far below the
-# ~2-hour OS default, without false-positiving on a legitimately quiet
-# feed (a live peer answers the probes).
+# TCP keepalive timers on every readsb source socket -- the receiver only
+# reads from these, so a peer that vanishes without FIN/RST is otherwise
+# indistinguishable from a quiet feed. First probe after 60s idle, then 3
+# probes 10s apart.
 TCP_KEEPIDLE_SECONDS = 60
 TCP_KEEPINTVL_SECONDS = 10
 TCP_KEEPALIVE_PROBES = 3
 
 # Minimum spacing between "N unparseable lines" summary warnings, per
-# source connection -- keeps a genuine format mismatch visible without
-# flooding the log at high traffic volume.
+# source connection.
 UNPARSEABLE_WARNING_INTERVAL_SECONDS = 60
 
 # --- Archive processor --------------------------------------------------
 
 # TTL on the archive:last_segment:{icao_hex} pointer used for split-flight
-# stitching. One day: long enough to bridge a mid-flight queue rebind,
-# short enough that a genuinely completed flight's pointer clears itself.
+# stitching.
 STITCH_POINTER_TTL_SECONDS = 86400
 
 # --- Runner enrichment TTLs ----------------------------------------------
 
 # TTL every data runner sets on the enrichment keys it writes
-# (registration / operator / type / airport / livery). Long enough that a
-# single missed weekly run never expires live data.
+# (registration / operator / type / airport / livery).
 ENRICHMENT_TTL_SECONDS = 14 * 86400
 
 # TTL the vrs-standing-data runner sets on route:{ident}. Shorter than
-# ENRICHMENT_TTL_SECONDS on purpose: the upstream route data refreshes
-# daily, so a 3-day ceiling keeps it from silently going stale for over a
-# week if a run or two is missed.
+# ENRICHMENT_TTL_SECONDS because the upstream route data refreshes daily.
 ROUTE_TTL_SECONDS = 3 * 86400
 
 # --- Flight TTL default -------------------------------------------------
 
 # Fallback for flight_ttl_seconds when config:flight_ttl_seconds is unset.
-# Aircraft are held in the active store this long after their last message
-# before the flight is considered complete. This is the one timing value
-# an operator may override (via that Redis key), which is why only the
-# default lives here.
 DEFAULT_FLIGHT_TTL_SECONDS = 300
 
 # --- Map service ----------------------------------------------------------
 
 # How often the map service flushes buffered position/metadata/stale/remove
-# events to each connected WebSocket client, coalescing several aircraft
-# updates arriving within the window into one frame instead of one frame
-# per update.
+# events to each connected WebSocket client, coalescing updates arriving
+# within the window into one frame.
 MAP_WS_BATCH_INTERVAL_SECONDS = 0.25
 
-# Fallback for MAP_UDP_MIN_POSITION_INTERVAL_SECONDS when unset -- the
-# minimum spacing, per icao_hex, between `position` datagrams message
-# processor's _MapUdpPublisher will actually send toward the map service.
-# Sub-second position updates aren't perceptible on a map, so this is the
-# single biggest lever on UDP volume / map-Redis write rate. Like
-# DEFAULT_FLIGHT_TTL_SECONDS above, this is the one operator-tunable value
-# here (via that env var), so only its fallback default lives here.
+# Fallback for MAP_UDP_MIN_POSITION_INTERVAL_SECONDS when unset: minimum
+# spacing, per icao_hex, between `position` datagrams the message
+# processor's _MapUdpPublisher sends toward the map service.
 DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS = 1
 
-# How often each message processor's dedicated _map_heartbeat_loop ticks.
-# The loop skips actually sending a `heartbeat` datagram on a given tick if
-# a `position`/`metadata` datagram already went out within this same
-# window (see _MapUdpPublisher.last_sent_at in message-processor/main.py),
-# so a busy processor's own traffic keeps the map's per-processor status
-# green without a standalone heartbeat ever being needed.
+# How often each message processor's _map_heartbeat_loop ticks. The loop
+# skips sending a `heartbeat` datagram on a tick if a `position`/`metadata`
+# datagram already went out within this window.
 MAP_HEARTBEAT_INTERVAL_SECONDS = 5
 
 # How often the message processor unconditionally resends every active
-# flight's `metadata` datagram toward the map service, regardless of
-# whether any of its fields changed since the last send. The ordinary
-# change-gated path (_maybe_publish_map_metadata) can, in the worst case,
-# send `metadata` for a flight exactly once for its entire duration --
-# fine for the map's live state, but a UDP datagram is fire-and-forget
-# with no delivery confirmation, and the map service's own Redis carries
-# no persistence (see map/README.md's Fault Tolerance section). This
-# periodic sweep is what lets a map-service restart actually recover
-# within one MAP_EVICT_SECONDS window, matching that documented guarantee.
+# flight's `metadata` datagram, regardless of field changes. The map
+# service's own Redis carries no persistence, so this periodic sweep is
+# what lets a map-service restart recover within one MAP_EVICT_SECONDS
+# window.
 MAP_METADATA_RESEND_INTERVAL_SECONDS = 60
 
 # Per-processor status thresholds the map service applies to
-# now - last_seen, where last_seen is updated by *any* map UDP message
-# type carrying processor_id (heartbeat, position, or metadata alike --
-# see map/state_store.py's processor_status()). green ("Connected") at or
-# under this many seconds -- three missed heartbeat intervals, so one
-# dropped datagram never flips a processor to amber.
+# now - last_seen (updated by any map UDP message type carrying
+# processor_id). green ("Connected") at or under this age -- three missed
+# heartbeat intervals.
 MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS = 15
 
-# amber ("Reconnecting") from the green threshold up to this many seconds;
-# red ("Disconnected") beyond it, or if the processor has never been seen
-# at all. Twelve missed heartbeat intervals.
+# amber ("Reconnecting") from the green threshold up to this age; red
+# ("Disconnected") beyond it, or if never seen.
 MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS = 60
 
-# How long finalised daily range-outline snapshots
-# (./data/map/range-outline/{YYYY-MM-DD}.json) are kept on disk. Files
-# older than this are deleted on each snapshot write; GET
-# /api/range-outline?date= past this window returns HTTP 404. A fixed
-# policy, not operator-tunable -- same rationale as
-# MAP_WS_BATCH_INTERVAL_SECONDS above.
+# How long finalised daily range-outline snapshots are kept on disk before
+# being deleted on the next snapshot write; requests past this window
+# return HTTP 404.
 MAP_RANGE_OUTLINE_TTL_SECONDS = 30 * 86400
 
 # How often the map service rewrites the in-progress day's range-outline
-# snapshot to disk (only when it has changed since the last write) and
-# checks for the UTC-date rollover. A crash loses at most this much of the
-# current day's far-edge updates.
+# snapshot to disk (only if changed) and checks for UTC-date rollover.
 MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS = 60
 
 # --- Rule trigger counters --------------------------------------------------
 
-# TTL the message processor sets on each rule_triggers:{identifier}:{date}
-# day key. One day of margin past the 30-day window the management-ui
-# backend sums, so a day key can never expire mid-read at the boundary.
-# The lifetime key (rule_triggers:{identifier}:lifetime) never expires.
+# TTL on each rule_triggers:{identifier}:{date} day key -- one day of
+# margin past the 30-day window management-ui's backend sums. The lifetime
+# key (rule_triggers:{identifier}:lifetime) never expires.
 RULE_TRIGGER_DAY_TTL_SECONDS = 31 * 86400
 
 
@@ -339,11 +232,7 @@ RULE_TRIGGER_DAY_TTL_SECONDS = 31 * 86400
 # TTL on the skyfollower-archive-raw-frames queue (an `x-message-ttl` queue
 # argument, so message-processor multiplies this by 1000 for RabbitMQ's
 # millisecond units) -- a short-lived, manually-drained forensic queue, not
-# the permanent archive. Long enough to comfortably investigate an incident
-# noticed the same day, short enough that an unattended queue with no
-# consumer service of its own can never accumulate indefinitely. Not
-# operator-tunable -- a fixed policy, same rationale as
-# MAP_RANGE_OUTLINE_TTL_SECONDS above.
+# the permanent archive.
 RAW_FRAMES_QUEUE_TTL_SECONDS = 8 * 3600
 
 
@@ -351,24 +240,18 @@ RAW_FRAMES_QUEUE_TTL_SECONDS = 8 * 3600
 # Checked at import so a later edit to one value cannot silently break the
 # contract it shares with another.
 
-# Two missed heartbeat writes must still leave the file inside the max-age
-# window; the third is what legitimately trips the container to unhealthy.
 assert HEALTHCHECK_INTERVAL_SECONDS * 2 < HEALTHCHECK_MAX_AGE_SECONDS, (
     "HEALTHCHECK_MAX_AGE_SECONDS must stay above two heartbeat intervals"
 )
 
-# A single missed refresh must not drop the Redis identity claim.
 assert HEARTBEAT_TTL_SECONDS > HEARTBEAT_INTERVAL_SECONDS, (
     "HEARTBEAT_TTL_SECONDS must exceed HEARTBEAT_INTERVAL_SECONDS"
 )
 
-# Route data is deliberately the more perishable of the two runner TTLs.
 assert ROUTE_TTL_SECONDS < ENRICHMENT_TTL_SECONDS, (
     "ROUTE_TTL_SECONDS is meant to be shorter than ENRICHMENT_TTL_SECONDS"
 )
 
-# One missed heartbeat tick must never flip a processor straight to amber,
-# and the green/amber boundary must sit strictly inside the amber/red one.
 assert MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS > MAP_HEARTBEAT_INTERVAL_SECONDS, (
     "MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS must exceed MAP_HEARTBEAT_INTERVAL_SECONDS"
 )
@@ -376,9 +259,6 @@ assert MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS > MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS
     "MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS must exceed MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS"
 )
 
-# The watchdog only exists to catch a (connect, read) timeout that failed to
-# fire on its own (#1967) -- it must never be tight enough to trip on a
-# request that is behaving normally and about to time out by itself.
 assert RABBITMQ_POLL_HANG_TIMEOUT_SECONDS > HTTP_CONNECT_TIMEOUT_SECONDS + HTTP_TIMEOUT_SECONDS, (
     "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS must exceed the (connect, read) timeout it backstops"
 )

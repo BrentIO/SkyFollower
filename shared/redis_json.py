@@ -1,20 +1,14 @@
 """
 Shared write path for RedisJSON documents.
 
-All data runners build an enrichment record as a plain dict, often leaving
-`None` in place for fields with no data (e.g. `row["model"] or None`). Writing
-that dict straight to Redis stores literal JSON `null` for those fields,
-which forces every consumer to distinguish "null" from "missing".
+Writing a dict straight to Redis stores literal JSON `null` for any field
+left as `None`, forcing every consumer to distinguish "null" from
+"missing". redis-py's JSON client also defaults to
+`ensure_ascii=True`, escaping non-ASCII characters unreadably.
 
-redis-py's JSON client also serializes with `json.dumps(..., ensure_ascii=True)`
-by default, which escapes every non-ASCII character (e.g. accented Latin,
-Cyrillic, Georgian script) as a `\\uXXXX` sequence. That's valid JSON but
-unreadable in Redis Insight and other tooling.
-
-`set_json()` is the single choke point every runner writes enrichment records
-through, so both invariants — no null values, UTF-8 stored as-is — are
-enforced once here rather than needing to be re-implemented in each runner's
-record-building logic.
+`set_json()` is the single choke point every runner writes enrichment
+records through, enforcing both invariants -- no null values, UTF-8
+stored as-is -- once instead of in each runner.
 """
 
 from __future__ import annotations
@@ -37,16 +31,12 @@ def prune_none(value: Any) -> Any:
 
 
 def set_json(client: Any, key: str, obj: Any, path: str = "$", nx: bool = False) -> Any:
-    """Write `obj` to Redis as a JSON document at `key`/`path`, omitting any
-    field whose value is None and preserving non-ASCII characters as-is.
-    `client` may be a redis client or a pipeline.
+    """Write `obj` to Redis as a JSON document at `key`/`path`, omitting
+    any field whose value is None and preserving non-ASCII characters
+    as-is. `client` may be a redis client or a pipeline.
 
-    `nx=True` writes only if `key` does not already exist (Redis JSON.SET's
-    native NX option), for a runner that must never overwrite another
-    source's existing record -- see `us-faa-telephony-designators`. Every
-    other caller passes the default `nx=False`, unchanged from this
-    function's prior unconditional-overwrite behavior. Returns the
-    underlying JSON.SET result (truthy on success, `None` if an `nx`/`xx`
-    condition wasn't met) so a caller can tell whether the write actually
-    happened; every existing caller ignores this."""
+    `nx=True` writes only if `key` does not already exist (Redis
+    JSON.SET's native NX option), for a runner that must never overwrite
+    another source's existing record. Returns the underlying JSON.SET
+    result so a caller can tell whether the write happened."""
     return client.json(encoder=_ENCODER).set(key, path, prune_none(obj), nx=nx)

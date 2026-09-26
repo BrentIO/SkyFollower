@@ -1,17 +1,13 @@
 """
 Anti-drift guard for specs/aws/cloudformation.yaml.
 
-The template spans all three archive-facing components (archive-processor,
-archive-compaction, management-ui), so no single component owns it and it
-lives in shared/. It is the single source of truth for the live Glue
-table, and CloudFormation performs ZERO validation of the Glue partition-
-projection Parameters map -- a typo there deploys green and returns zero
-rows forever. These assertions cover what AWS will not.
-
-specs/data-dictionary.yaml's archive_parquet_index.fields is the enforced
-source of truth for the 9 index columns, in order. shared/glue_projection.py
-is the enforced source of truth for the partition-projection Parameters map
-and the storage.location.template placeholders.
+The template spans all three archive-facing components, so it lives in
+shared/ rather than under any one of them. CloudFormation performs zero
+validation of the Glue partition-projection Parameters map -- a typo
+there deploys green and returns zero rows forever. These assertions
+cover what AWS will not, checking the template against
+specs/data-dictionary.yaml's archive_parquet_index.fields and
+shared/glue_projection.py as the enforced sources of truth.
 """
 
 from __future__ import annotations
