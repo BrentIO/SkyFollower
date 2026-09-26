@@ -119,12 +119,9 @@ def _build_record(aircraft: dict, icao_hex: str, registration: str) -> dict:
     if year and str(year).strip() and str(year) != "0":
         aircraft_fields["manufactured_date"] = f"{year}-01-01"
 
-    # registrant sub-object — built from owners[], not the structurally
-    # identical operator field, per policy: only registered owners are
-    # tracked. Multiple co-owners are common (e.g. gliders); all names are
-    # collected, but street/city/postal_code/country come from the first
-    # owner only, since the record shape has no room for a full address per
-    # co-owner.
+    # Built from owners[], not the structurally identical operator field --
+    # only registered owners are tracked. All co-owner names are collected,
+    # but address fields come from the first owner only.
     registrant: dict = {}
     owners = aircraft.get("owners") or []
 
@@ -437,12 +434,8 @@ def main() -> None:
     ttl = ENRICHMENT_TTL_SECONDS
 
     session = requests.Session()
-    # Content-Type is required here, not just descriptive -- island.is's
-    # Apollo Server gateway runs its default CSRF-prevention plugin, which
-    # rejects any request missing a Content-Type outside a small
-    # exemption list (or specific Apollo-only headers CloudFront strips
-    # before they reach the origin). Without this, every request gets a
-    # 400 regardless of the persisted-query hash's validity (#1905).
+    # Required, not just descriptive: island.is's Apollo gateway 400s any
+    # request missing Content-Type, regardless of query validity.
     session.headers.update({"User-Agent": "P5Software SkyFollower", "Content-Type": "application/json"})
 
     status = "failure"

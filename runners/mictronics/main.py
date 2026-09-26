@@ -342,12 +342,9 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
         pipe.execute()
 
     for row in rows:
-        # A LEFT JOIN with no matching types row leaves *every* joined
-        # column NULL -- gating on manufacturer_model alone was meant to
-        # detect that "no match" case, but incorrectly also discarded a
-        # real match's description_code whenever that designator's types
-        # row happens to have manufacturer_model unset but description_code
-        # populated (or vice versa). Check both columns instead.
+        # A LEFT JOIN with no matching types row leaves every joined column
+        # NULL; gating on manufacturer_model alone would miss a match whose
+        # types row has only description_code set. Check both columns.
         types_row = row if (row["manufacturer_model"] is not None or row["description_code"] is not None) else None
         record = build_aircraft_record(row, types_row)
         key = aircraft_mictronics_key(record["icao_hex"])
@@ -452,7 +449,6 @@ def publish_completion_stats(
         client.connect(mc["host"], port=mc.get("port", 1883), keepalive=60)
         client.loop_start()
 
-        # Wait briefly for connection
         import time
         deadline = time.monotonic() + 5
         while not connected and time.monotonic() < deadline:
@@ -553,13 +549,9 @@ def main() -> None:
     types_imported = 0
 
     try:
-        # 1. Download and extract
         files = download_and_extract(DOWNLOAD_URL)
-
-        # 2. Stage in SQLite
         conn = stage_data(files, db_path)
 
-        # 3. Ensure search index exists, then write to Redis
         _ensure_search_index(r)
         records_imported = write_to_redis(conn, r, ttl)
         operators_imported = write_operators_to_redis(conn, r, ttl)
@@ -577,7 +569,6 @@ def main() -> None:
         status = "failure"
 
     finally:
-        # 4. Publish MQTT stats regardless of success/failure
         try:
             publish_completion_stats(cfg, records_imported, operators_imported, types_imported, status)
         except Exception as exc:

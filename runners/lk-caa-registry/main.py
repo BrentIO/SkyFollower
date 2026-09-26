@@ -22,8 +22,7 @@ real additional aircraft.
 
 TLS verification is disabled: caa.lk serves only its leaf certificate,
 without the intermediate needed to build a trust chain from a standard
-root store (confirmed via `openssl s_client -showcerts`), so every
-compliant TLS client -- not just this one -- fails to verify it as-is.
+root store, so every compliant TLS client fails to verify it as-is.
 
 PDF columns (0-based):
   0: Ref.No       (not stored; sequence number)
@@ -31,9 +30,7 @@ PDF columns (0-based):
   2: Model No.    → aircraft.model
   3: Registration → lookup key (4R- prefix; no distinct owner column)
   4: Operator     → registrant.names[0] (this register has no owner
-                     column, only the operator; same convention as
-                     jo-carc-registry/tt-caa-registry for operator-only
-                     sources)
+                     column, only the operator)
 
 Data source: https://www.caa.lk/en/downloads/sl-aircraft-register
 """

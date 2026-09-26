@@ -11,30 +11,21 @@ data to aircraft:registry:{icao_hex} with 14-day TTL, publishes MQTT
 completion stats, then exits.
 
 Only the Traditional Chinese page (zh-hant) actually renders a table on
-plain HTTP fetch -- the /en-us/ path returns the same page shell with
-unrendered Vue.js template placeholders and no table content, so the
-Operator column is genuine Chinese text (e.g. 澳門航空股份有限公司),
-stored as-is rather than transliterated.
+plain HTTP fetch -- the /en-us/ path returns unrendered Vue.js template
+placeholders with no table content, so the Operator column is stored
+as-is in Chinese rather than transliterated.
 
 The Operator column uses rowspan to span every aircraft belonging to the
-same operator (e.g. rowspan="23" for the first operator) rather than
-repeating the operator name on every row -- table is expanded to a full
-grid before parsing so column indices are always fixed, the same
-approach kg-caa-registry uses for its own rowspan-merged operator column.
+same operator rather than repeating the name on every row; the table is
+expanded to a full grid before parsing so column indices stay fixed.
 
 Table columns (0-based, after rowspan expansion):
   0: Operator (經營人)             → registrant.names -- no separate owner
-                                     column exists in this source, same
-                                     approach sg-caas-registry/tt-caa-registry/
-                                     jo-carc-registry take for their own
-                                     operator-only sources
+                                     column exists in this source
   1: Registration Number (註冊編號) → registration lookup key (B-M-prefix)
-  2: Aircraft Type (型號)          → aircraft.model -- combined
-                                     manufacturer+model string (e.g.
-                                     "空中巴士 A321-231" / "Airbus A321-231"),
-                                     no reliable delimiter to split
-                                     manufacturer out, same approach
-                                     bs-caa-registry/tt-caa-registry take
+  2: Aircraft Type (型號)          → aircraft.model -- a combined
+                                     manufacturer+model string with no
+                                     reliable delimiter to split it
 
 No serial number, address, or registration date columns exist in this
 source -- a minimal register (operator/registration/type only).
@@ -151,10 +142,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     for row in _expand_table(table):
         if len(row) <= _COL_MODEL:
             continue
-        # A handful of registration cells have the mark split across
-        # multiple text nodes in the source HTML (e.g. "B-MBU" rendering
-        # as "B-MB U") -- strip all internal whitespace, not just collapse
-        # runs of it, before validating.
+        # A handful of registration cells split the mark across multiple
+        # text nodes (e.g. "B-MBU" renders as "B-MB U"); strip all spaces.
         registration = row[_COL_REGISTRATION].replace(" ", "")
         if not _REG_RE.match(registration):
             continue

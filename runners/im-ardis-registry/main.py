@@ -113,12 +113,7 @@ _POST_DATA = {
 # ---------------------------------------------------------------------------
 
 def _header_text(cell) -> str:
-    """Extract column header text, stripping ARDIS sort-link prefix if present.
-
-    ARDIS header cells contain a sort link whose get_text() concatenates as
-    'Sort column by Registration MarkRegistration Mark'. The regex uses a
-    backreference to detect this pattern and extract just the column name.
-    """
+    """Extract column header text, stripping the ARDIS sort-link prefix if present."""
     text = cell.get_text(strip=True)
     m = _SORT_HEADER_RE.match(text)
     return m.group(1) if m else text
@@ -242,9 +237,9 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write ARDIS data to aircraft:detail keys in Redis. Returns count written."""
     records = [rec for rec in (_build_record(row) for row in rows) if rec is not None]
 
-    # Type-designator consensus (#1888): ARDIS writes manufacturer/model but
-    # never an ICAO type_designator. Hexes Mictronics already labels are
-    # free training data -- see shared/type_designator_consensus.py.
+    # ARDIS writes manufacturer/model but never an ICAO type_designator;
+    # deduce one from hexes Mictronics already labels (see
+    # shared/type_designator_consensus.py).
     mictronics_designators = fetch_mictronics_type_designators(r, (rec["icao_hex"] for rec in records))
     consensus_table = build_consensus_table(
         (

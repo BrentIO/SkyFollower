@@ -415,12 +415,8 @@ class TestPublishCompletionStats:
 
 
 # ---------------------------------------------------------------------------
-# Request headers (#1905) -- island.is's Apollo Server gateway runs its
-# default CSRF-prevention plugin, which 400s any request missing a
-# Content-Type outside a small exemption list, regardless of whether the
-# persisted-query hash is valid. Asserted against the real requests.Session
-# main() builds, not a re-implementation of the header dict, so a
-# regression here fails this test rather than only surfacing in production.
+# Request headers -- regression guard for the Content-Type header (#1905),
+# asserted against the real requests.Session main() builds.
 # ---------------------------------------------------------------------------
 
 class TestRequestHeaders:
