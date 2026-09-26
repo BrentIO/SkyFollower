@@ -1,28 +1,23 @@
 """
 Worker role: long-lived RabbitMQ consumer. Each message is one calendar
 day (`{"date": "YYYY-MM-DD"}`); a worker holds exactly one day in flight
-at a time (prefetch_count=1) since a day is a substantial unit of work,
-not a quick pop-and-done. Scale by running more worker containers
+at a time (prefetch_count=1). Scale by running more worker containers
 (`docker compose ... up --scale worker=N`), not by adding concurrency
-inside one process -- see docker-compose.legacy-migration.yaml.
+inside one process.
 
 Per day: query Mongo for that day's flights, run per-flight guards, copy
 anything not already present at the computed destination key, and upload
 one compacted Parquet index file covering every flight in the day. See
-common.py's guard_reason()/copy_and_verify() for the per-flight rules this
-implements.
+common.py's guard_reason()/copy_and_verify() for the per-flight rules.
 
-process_day() is Mongo-cursor-plus-up-to-three-S3-round-trips-per-flight
-work, easily minutes long for a busy day. It must never run on the pika
-connection thread: a BlockingConnection can only send AMQP heartbeat
-frames while control is inside pika's own loop, so a long callback starves
-heartbeats and the broker drops the connection out from under it (see the
-GitHub issue this fixes). Instead, on_message() only parses the delivery
-and hands it to a single background thread (build_worker_loop) that does
-the real work and marshals the ack/nack -- and any DLQ publishes, since a
-pika channel is not thread-safe -- back onto the connection thread via
-connection.add_callback_threadsafe(), mirroring archive-processor's
-worker-pool pattern.
+process_day() can run minutes long for a busy day and must never run on
+the pika connection thread -- a BlockingConnection can only send AMQP
+heartbeats while control is inside pika's own loop, so a long callback
+starves heartbeats and the broker drops the connection. on_message()
+instead only parses the delivery and hands it to a background thread
+(build_worker_loop), which marshals the ack/nack and any DLQ publishes
+back onto the connection thread via connection.add_callback_threadsafe(),
+since a pika channel is not thread-safe.
 """
 
 from __future__ import annotations
@@ -73,11 +68,10 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, date_str: str) -> list[tuple[str, str]]:
     """
-    Runs entirely on the background worker thread (see build_worker_loop),
-    never on the pika connection thread. Returns the DLQ entries collected
-    along the way as `(doc_id, reason)` pairs -- publishing them, like the
-    eventual ack/nack, is the connection thread's job, so this function
-    never touches the RabbitMQ channel itself.
+    Runs entirely on the background worker thread, never on the pika
+    connection thread. Returns collected DLQ entries as `(doc_id, reason)`
+    pairs -- publishing them, like the eventual ack/nack, is the
+    connection thread's job, so this function never touches the channel.
     """
     logger.info("Day %s: starting", date_str)
 
@@ -97,9 +91,7 @@ def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, dat
         try:
             flight = build_completed_flight(doc)
         except ValidationError as exc:
-            # Not one of guard_reason()'s known cardinality-4/2 cases --
-            # an unexpected shape problem. Still a single bad document,
-            # not a reason to fail the whole day.
+            # A single bad document, not a reason to fail the whole day.
             dlq_entries.append((doc_id, f"unexpected document shape: {exc}"))
             continue
 
@@ -133,30 +125,22 @@ def process_day(collection, s3_client, source_bucket: str, dest_bucket: str, dat
 
 
 def build_on_message(handoff: "queue.Queue"):
-    """
-    Runs on the pika connection thread. Parses just enough to route the
-    message (keeping the malformed-message drop-not-requeue behaviour),
-    then hands off to the background worker thread and returns immediately
-    -- process_day's Mongo/S3 work must never block this thread. Factory
-    rather than a closure inlined in run() so it's unit-testable without a
-    real connection.
-    """
+    """Runs on the pika connection thread: parses just enough to route
+    the message, then hands off to the background worker thread and
+    returns immediately -- process_day's work must never block this thread."""
 
     def on_message(ch, method, _properties, body):
         try:
             payload = json.loads(body)
             date_str = payload["date"]
         except (json.JSONDecodeError, KeyError) as exc:
-            # Can never succeed on redelivery -- acking (dropping) it,
-            # rather than nacking, is what prevents this from becoming an
-            # infinite redelivery loop that also wedges the queue behind
-            # it (prefetch_count=1).
+            # A malformed message can never succeed on redelivery -- ack
+            # (drop) rather than nack, to avoid an infinite redelivery loop
+            # that also wedges the queue behind it (prefetch_count=1).
             logger.error("Malformed queue message, dropping: %s (body=%r)", exc, body)
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        # prefetch_count=1 means at most one item is ever pending here, so
-        # an unbounded Queue needs no backpressure.
         handoff.put((date_str, method.delivery_tag))
 
     return on_message
@@ -164,10 +148,9 @@ def build_on_message(handoff: "queue.Queue"):
 
 def _schedule(connection, callback) -> None:
     """Marshal a callback onto the pika connection thread. If the
-    connection has already been replaced by a reconnect, this fails
-    harmlessly and the day is picked up again on redelivery (S3 copies are
-    idempotent via dest_object_exists(), and the index write is a plain
-    overwrite) -- same reasoning as archive-processor's _ack()."""
+    connection was already replaced by a reconnect, this fails harmlessly
+    and the day is picked up again on redelivery (S3 copies are idempotent
+    via dest_object_exists(), and the index write is a plain overwrite)."""
     try:
         connection.add_callback_threadsafe(callback)
     except Exception as exc:
@@ -175,14 +158,9 @@ def _schedule(connection, callback) -> None:
 
 
 def build_worker_loop(handoff, connection, channel, collection, s3_client, source_bucket, dest_bucket, shutdown_event):
-    """
-    Background thread body for one connection's lifetime: pulls one
-    `(date_str, delivery_tag)` at a time off `handoff`, runs process_day
-    (all the Mongo/S3 work happens here, off the connection thread), and
-    marshals the outcome -- DLQ publishes plus the final ack/nack -- back
-    onto the connection thread via `_schedule`, since `channel` is only
-    safe to touch there.
-    """
+    """Background thread body: pulls one `(date_str, delivery_tag)` off
+    `handoff`, runs process_day, and marshals the outcome (DLQ publishes
+    plus ack/nack) back onto the connection thread via `_schedule`."""
 
     def _ack_success(dlq_entries: list[tuple[str, str]], delivery_tag: int) -> None:
         for doc_id, reason in dlq_entries:
@@ -195,9 +173,7 @@ def build_worker_loop(handoff, connection, channel, collection, s3_client, sourc
     def worker_loop() -> None:
         while not shutdown_event.is_set():
             if connection.is_closed:
-                # This thread's connection was replaced by a reconnect
-                # elsewhere (run()'s loop starts a fresh thread against the
-                # new one) -- nothing left for this one to do.
+                # Connection was replaced by a reconnect elsewhere -- nothing left to do.
                 return
             try:
                 date_str, delivery_tag = handoff.get(timeout=1.0)
@@ -207,11 +183,8 @@ def build_worker_loop(handoff, connection, channel, collection, s3_client, sourc
             try:
                 dlq_entries = process_day(collection, s3_client, source_bucket, dest_bucket, date_str)
             except Exception:
-                # Systemic (Mongo/S3/RabbitMQ) failure, not a per-flight
-                # data problem -- those are collected into dlq_entries
-                # inside process_day and never raise. Give up on this day
-                # and let RabbitMQ redeliver it, rather than waiting on a
-                # timeout.
+                # Systemic (Mongo/S3/RabbitMQ) failure, not a per-flight data
+                # problem -- those are collected into dlq_entries and never raise.
                 logger.exception("Unrecoverable error processing day %s; requeueing", date_str)
                 _schedule(connection, lambda tag=delivery_tag: _nack_failure(tag))
                 continue
@@ -229,19 +202,11 @@ def build_shutdown_handler(channel, shutdown_event: threading.Event):
     unit-testable in isolation from signal.signal()/a real connection."""
 
     def _handle_signal(sig, frame):
-        # Signal handlers run on the main thread even when delivered while
-        # it's blocked inside start_consuming()'s C call, so calling
-        # stop_consuming() directly here is safe -- same as
-        # archive-processor's shutdown(). Without a handler, SIGTERM (from
-        # docker compose down/stop or a scale-down) exits immediately with
-        # no clean stop_consuming()/connection.close(), sitting out the
-        # full stop-grace period before SIGKILL.
-        #
-        # A day still being processed by the worker thread is deliberately
-        # not waited on: it's already minutes long by design, RabbitMQ
-        # will requeue it once this connection closes, and S3 progress
-        # made on it so far is idempotent on redelivery -- same tradeoff
-        # archive-processor's shutdown() makes for its in-flight flights.
+        # Signal handlers run on the main thread even while it's blocked
+        # inside start_consuming()'s C call, so stop_consuming() is safe to
+        # call directly here. A day still in flight is deliberately not
+        # waited on: RabbitMQ will requeue it once this connection closes,
+        # and S3 progress made on it so far is idempotent on redelivery.
         logger.info("Shutdown requested, stopping consumer...")
         shutdown_event.set()
         try:
@@ -273,14 +238,9 @@ def run(args: argparse.Namespace) -> None:
             handoff: "queue.Queue" = queue.Queue()
             channel.basic_consume(queue=WORK_QUEUE_NAME, on_message_callback=build_on_message(handoff))
 
-            # One thread per connection: if this reconnects, the old
-            # thread (if a day is still in flight on it) is left to finish
-            # against the now-closed connection/channel -- its eventual
-            # _schedule() call logs a harmless warning instead of acking,
-            # per build_worker_loop's docstring. Vastly simpler than
-            # migrating an in-flight day onto the new connection, and
-            # reconnects are rare for a tool this long-running only during
-            # a one-time migration.
+            # One thread per connection: if this reconnects, an old thread
+            # still finishing a day against the closed connection just logs
+            # a harmless warning from _schedule() instead of acking.
             threading.Thread(
                 target=build_worker_loop(
                     handoff, connection, channel, collection, s3_client, source_bucket, dest_bucket, shutdown_event

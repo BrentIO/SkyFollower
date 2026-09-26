@@ -3,11 +3,8 @@
 SkyFollower Legacy Migration
 
 One-time tool that copies the legacy MongoDB-tracked flight archive into
-this repo's S3/Parquet archive format (see the GitHub issue this tool
-implements, "Migrate ~8M legacy flights (MongoDB) to the new S3 archive
-format", for the full design -- and README.md for the operator runbook:
-RabbitMQ user provisioning, IAM setup, and how the two passes fit
-together).
+this repo's S3/Parquet archive format. See README.md for the operator
+runbook (RabbitMQ provisioning, IAM setup, how the two passes fit together).
 
 Three roles, one binary:
 
@@ -24,9 +21,8 @@ import os
 import socket
 import sys
 
-# Add /app to sys.path so shared/ is importable. Two levels up, not one:
-# unlike archive-processor/message-processor/etc. (directly under /app),
-# this tool lives under tools/legacy-migration -- one directory deeper.
+# Two levels up (not one): this tool lives under tools/legacy-migration,
+# one directory deeper than the services that mount shared/ directly under /app.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 import producer  # noqa: E402
@@ -41,11 +37,8 @@ _ROLES = {"produce": producer, "work": worker, "verify": verify}
 
 
 def _add_file_handler() -> None:
-    """
-    Bind-mounted ./logs/ (see docker-compose.legacy-migration.yaml), one
-    file per worker container -- named by hostname so `--scale` produces
-    one file each -- in addition to stdout.
-    """
+    """Bind-mounted ./logs/, one file per worker container (named by
+    hostname so `--scale` produces one each), in addition to stdout."""
     log_dir = "/app/logs"
     os.makedirs(log_dir, exist_ok=True)
     handler = logging.FileHandler(os.path.join(log_dir, f"{socket.gethostname()}.log"))

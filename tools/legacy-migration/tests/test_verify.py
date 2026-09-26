@@ -38,10 +38,8 @@ class _FakeS3:
     def __init__(self, pages_by_prefix: dict, source_etags: dict, index_exists=True):
         self._paginator = _FakePaginator(pages_by_prefix)
         self._source_etags = source_etags
-        # True (default): every compacted-index HeadObject succeeds, so
-        # tests that don't care about the index-presence check are
-        # unaffected by it. A set of "YYYY-MM-DD" strings: only those days'
-        # index files exist. False: no index file exists for any day.
+        # True (default): every index HeadObject succeeds. A set of
+        # "YYYY-MM-DD" strings: only those days' index files exist. False: none do.
         self._index_exists = index_exists
 
     def get_paginator(self, name):

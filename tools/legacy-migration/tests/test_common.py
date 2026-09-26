@@ -144,10 +144,9 @@ class TestS3Retry:
 
 
 class _FakeS3:
-    """Fakes exactly the boto3 calls copy_and_verify()/dest_object_exists()
-    make. head_object's *first* call always represents the source-side
-    check; the second (only made by copy_and_verify, after copy_object)
-    represents the destination-side check."""
+    """Fakes the boto3 calls copy_and_verify()/dest_object_exists() make.
+    head_object's first call is the source-side check; the second (only
+    made by copy_and_verify, after copy_object) is the destination-side check."""
 
     def __init__(self, head_exc=None, source_head=None, dest_head=None, copy_exc=None):
         self._head_exc = head_exc
