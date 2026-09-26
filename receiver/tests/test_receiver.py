@@ -357,14 +357,10 @@ class TestReconnectCounter:
 
 
 # ---------------------------------------------------------------------------
-# TCP keepalive on source sockets
-#
-# A peer that vanishes without a clean FIN/RST leaves the receiver holding a
-# half-open socket forever (it only ever reads, never writes, so it never
-# provokes an RST). Keepalive makes the kernel probe an idle connection and
-# tear it down when the peer stops answering, after which _source_loop's
-# existing reconnect path takes over. The three timer values are fixed
-# module constants, not configuration.
+# TCP keepalive on source sockets -- a peer that vanishes without a clean
+# FIN/RST leaves the receiver holding a half-open socket forever (it only
+# reads, never writes, so it never provokes an RST). Keepalive makes the
+# kernel probe and tear down an unresponsive idle connection instead.
 # ---------------------------------------------------------------------------
 
 class TestTcpKeepalive:
@@ -772,10 +768,8 @@ class TestUnparseableLineLogging:
 class TestEnqueueLive:
     """_enqueue_live() is the entire live path off the source threads:
     drop the message on the in-memory queue and return. Routing is gated
-    on self._backlogged (#1956), not merely on whether the live queue
-    happens to be full right now -- see TestBacklogFlag below for the
-    ordering guarantee that gate provides. This class covers the plain
-    nominal (not backlogged) path plus the two triggers that set the flag."""
+    on self._backlogged (#1956), not just on live-queue fullness -- see
+    TestBacklogFlag for the ordering guarantee that gate provides."""
 
     def _make_receiver(self):
         from receiver.main import Receiver
@@ -894,14 +888,9 @@ class TestEnqueueLive:
 
 
 # ---------------------------------------------------------------------------
-# self._backlogged -- the single ordering gate (#1956). While clear, new
-# messages go straight to the fast in-memory live queue (nominal path, no
-# disk I/O, no behavior change from before this fix). The instant it's
-# set -- live queue full, or a publish failed -- every subsequent message,
-# no matter how much room the live queue has, routes to the overflow queue
-# instead, so nothing can ever be published ahead of an older row still
-# waiting in queue.db. It only clears once both are confirmed drained to
-# zero in the same rabbitmq-thread pass.
+# self._backlogged -- the ordering gate (#1956). While set, every new
+# message routes to the overflow queue regardless of live-queue room, so
+# nothing can publish ahead of an older row still in queue.db.
 # ---------------------------------------------------------------------------
 
 class TestBacklogFlag:
@@ -1113,8 +1102,7 @@ class TestPublishOne:
         assert kwargs["body"] == b'{"raw": "AA"}'
 
     def test_publish_updates_the_staleness_signal(self):
-        """Informational only (#1956) -- never consulted for routing, but
-        refreshed on every successful publish."""
+        """Informational only -- refreshed on every successful publish."""
         r = self._make_receiver()
         ch = MagicMock()
         with patch("receiver.main.time.time", return_value=1010.0):
@@ -1169,17 +1157,10 @@ class TestFallbackPutWrapsRoutingKey:
 
 
 # ---------------------------------------------------------------------------
-# _rmq_publish_loop — the sole publishing thread. It always drains whatever
-# the live queue currently holds before touching a single fallback-backlog
-# row, exactly as before #1956 -- that raw mechanic didn't change. What
-# changed is upstream, at the enqueue side (see TestBacklogFlag): while
-# self._backlogged is set, nothing new can ever land in the live queue, so
-# in production this loop only ever finds pre-backlog leftovers there, not
-# a continuous stream of fresh arrivals leapfrogging an older backlog. The
-# tests below that put items directly into _live_queue (bypassing
-# _enqueue_live) are exercising this loop's raw drain mechanics in
-# isolation -- they deliberately violate the invariant _enqueue_live
-# enforces in production, which is fine for testing the mechanic itself.
+# _rmq_publish_loop -- always drains the live queue before touching a
+# fallback-backlog row. Tests here put items directly into _live_queue,
+# bypassing the _enqueue_live invariant (see TestBacklogFlag) to exercise
+# this loop's raw drain mechanics in isolation.
 # ---------------------------------------------------------------------------
 
 class TestRmqPublishLoop:
@@ -1211,12 +1192,10 @@ class TestRmqPublishLoop:
         assert ch.basic_publish.call_args.kwargs["exchange"] == ADSB_EXCHANGE
 
     def test_live_queue_drains_before_any_backlog_row(self):
-        """The live queue always drains first, on every pass -- this raw
-        mechanic is unchanged by #1956. What actually prevents a real
-        backlog from being leapfrogged is that _enqueue_live never lets a
-        fresh arrival reach the live queue once self._backlogged is set
-        (see TestBacklogFlag) -- so in production, whatever's in the live
-        queue when this loop runs can only be pre-backlog leftovers."""
+        """The live queue always drains first. In production this loop
+        only ever finds pre-backlog leftovers there, since _enqueue_live
+        stops feeding it once self._backlogged is set (see
+        TestBacklogFlag)."""
         r = self._make_receiver()
         r._rmq_connected = True
         for i in range(3):
@@ -1239,15 +1218,9 @@ class TestRmqPublishLoop:
         assert set(published[2:]) == {"BACK0", "BACK1", "BACK2"}
 
     def test_live_message_arriving_mid_drain_jumps_ahead_of_the_next_batch(self):
-        """Raw loop mechanic, exercised directly (see class docstring): a
-        large backlog is draining, no live traffic -- then one item is
-        placed directly on _live_queue partway through a batch. It
-        publishes before the *next* batch starts (the live queue is
-        re-checked between batches), but not mid-batch: whatever rows the
-        current batch already selected still go out first. In production
-        this exact interleaving can't happen once self._backlogged is
-        set -- _enqueue_live would have routed that item to the overflow
-        queue instead (see TestBacklogFlag)."""
+        """A live item placed mid-drain publishes before the *next* batch
+        (the live queue is re-checked between batches) but not mid-batch:
+        rows the current batch already selected still go out first."""
         r = self._make_receiver()
         r._rmq_connected = True
         for i in range(5):
@@ -1297,11 +1270,8 @@ class TestRmqPublishLoop:
         assert r._fallback.depth() == 0
 
     def test_backlogged_does_not_clear_while_a_backlog_row_is_still_cooling_down(self):
-        """A backlog row that just failed goes into retry cooldown --
-        drain_batch reports DRAIN_STOP, not DRAIN_EMPTY, for that pass.
-        self._backlogged must stay set: there is still an unconfirmed,
-        undelivered row sitting in queue.db, even though the live queue is
-        empty at the same moment."""
+        """A failed backlog row in retry cooldown reports DRAIN_STOP, not
+        DRAIN_EMPTY -- self._backlogged must stay set."""
         r = self._make_receiver()
         r._rmq_connected = True
         r._backlogged.set()
@@ -1317,11 +1287,9 @@ class TestRmqPublishLoop:
         assert r._backlogged.is_set()
 
     def test_idle_wait_sleeps_rather_than_blocking_on_the_live_queue_while_backlogged(self):
-        """While backlogged (here: a row perpetually in its retry cooldown,
-        so drain_batch reports DRAIN_STOP every pass), nothing will ever
-        arrive on the live queue (see _enqueue_live) -- the idle branch
-        must sleep and retry rather than blocking on the live queue,
-        which is what the pre-#1956 code did in this branch."""
+        """While backlogged, the idle branch must sleep and retry rather
+        than block on the live queue, since nothing will arrive there
+        (see _enqueue_live)."""
         r = self._make_receiver()
         r._rmq_connected = True
         r._backlogged.set()
@@ -1386,9 +1354,8 @@ class TestRmqPublishLoop:
 
 # ---------------------------------------------------------------------------
 # _rmq_loop must rebuild the connection when the publish path latches
-# _rmq_connected False -- the broker blocking publishers (resource alarm) is
-# exactly this: basic_publish fails but process_data_events keeps
-# succeeding. Preserves the #1136 fix intent under the sole-publisher model.
+# _rmq_connected False -- a broker blocking publishers (resource alarm) is
+# exactly this: basic_publish fails but process_data_events keeps succeeding.
 # ---------------------------------------------------------------------------
 
 
@@ -1735,12 +1702,10 @@ class TestReceiverIdAndTopics:
 # ---------------------------------------------------------------------------
 
 def _make_receiver_with_redis(cfg=None, data_dir=None, mock_redis=None):
-    """Constructs a real Receiver with Redis mocked out, the same way
-    message-processor/tests/test_processor.py's _make_processor() mocks
-    Redis -- patching redis_lib.Redis (the actual `redis` package's own
-    Redis class, shared by every module that does `import redis as
-    redis_lib`, including shared.redis_client.build_redis_client) rather
-    than receiver.main's own names."""
+    """Constructs a real Receiver with Redis mocked out by patching
+    redis_lib.Redis (the `redis` package's own class, shared by every
+    module using `import redis as redis_lib`) rather than receiver.main's
+    own names."""
     from receiver.main import Receiver
 
     cfg = cfg or {
@@ -2217,13 +2182,10 @@ class TestPeriodCounterTelemetryAndDiscovery:
         }
         return _make_receiver_with_redis(cfg=cfg, mock_redis=mock_redis)
 
-    # core-health is the sole publisher of messages_*_total_{hour,today}
-    # (value and HA discovery), reading the cross-restart-durable Redis
-    # counters the receiver's flush feeds. The receiver must not publish
-    # those two topics itself -- doing so caused two retained publishers on
-    # one topic to alternate their values. _total_lifetime is the exception:
-    # it is a device-local in-memory figure the receiver DOES publish
-    # directly (and its discovery), resetting on every receiver restart.
+    # core-health is the sole publisher of messages_*_total_{hour,today};
+    # the receiver must not also publish those two topics, or two retained
+    # publishers alternate values on the same topic. _total_lifetime is the
+    # exception -- a device-local figure the receiver publishes directly.
 
     def test_publish_telemetry_publishes_only_lifetime_not_hour_today(self):
         mock_redis = MagicMock()

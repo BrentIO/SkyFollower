@@ -72,72 +72,44 @@ from shared.uat import parse_978_line
 
 logger = logging.getLogger("receiver")
 
-# tmpfs-mounted in docker-compose.receiver.yaml -- these writes must never
-# hit the host's eMMC/SD storage, only /app/data (the fallback SQLite
-# queue) is durable/persistent. Every timing value the receiver uses is a
-# named constant from shared/timing.py -- imported above, not redefined here.
+# tmpfs-mounted (docker-compose.receiver.yaml) -- must stay ephemeral;
+# only /app/data (fallback SQLite queue) persists across restarts.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
-# In-memory hand-off between the socket-read threads and the sole
-# "rabbitmq" publishing thread. A source thread parses a message, drops it
-# here, and loops straight back to sock.recv() -- it never touches pika and
-# never waits on the broker, so backlog drain can't delay live intake. The
-# bound keeps a broker outage from growing this without limit: once it's
-# full, a source thread hands the message to the overflow queue below
-# (still without blocking). ~10k messages is a few seconds of buffer at the
-# reference message rate and a small, bounded amount of RAM to lose on a
-# hard crash mid-outage (a clean reconnect drains it first).
+# In-memory hand-off from source threads to the rabbitmq thread; bounded so
+# a broker outage can't grow it unbounded -- once full, new messages spill
+# to the overflow queue (see _OVERFLOW_QUEUE_MAXSIZE) instead of blocking.
 _LIVE_QUEUE_MAXSIZE = 10_000
 
-# Second-stage in-memory buffer for messages parsed while _live_queue is
-# already full -- i.e. RabbitMQ has been unreachable long enough that the
-# few-second live buffer backed up. A source thread hands a message here
-# with the same non-blocking put_nowait it uses for the live queue and
-# returns to the socket at once; it never does the SQLite write itself. The
-# dedicated "overflow-writer" thread is the sole consumer, batching these
-# into the durable FallbackQueue with one commit per pass -- keeping the
-# fsync-class disk write off every socket-read thread, the same way the
-# live queue keeps the pika hand-off off it. Only if this buffer ALSO fills
-# (the writer somehow can't keep pace) does a source thread fall back to a
-# direct synchronous FallbackQueue write -- a last-resort pressure valve,
-# not the steady state a sustained outage settles into.
+# Second-stage buffer once _live_queue is full. The overflow-writer thread
+# batches entries into the SQLite fallback so that write stays off the
+# socket-read threads; if this also fills, a source thread writes directly.
 _OVERFLOW_QUEUE_MAXSIZE = 50_000
 
 # Rows the overflow-writer pulls into a single executemany + commit.
 _OVERFLOW_WRITE_BATCH_MAX = 5_000
 
-# How long the overflow-writer blocks for the first message when the
-# overflow queue is empty -- short enough to exit promptly on shutdown,
-# long enough not to busy-spin while the (normal) no-outage state holds.
+# Poll timeout for the overflow-writer when its queue is empty -- short
+# enough to exit promptly on shutdown, long enough to avoid busy-spinning.
 _OVERFLOW_WRITER_IDLE_SECONDS = 1.0
 
-# Cap on how many live messages the rabbitmq thread publishes in one pass
-# before returning to process_data_events -- purely so heartbeats and the
-# broker's blocked/unblocked signals still get serviced under sustained
-# load. Whatever is left stays queued and is taken on the next pass, still
-# ahead of any fallback-drain row.
+# Cap on live messages published per pass so heartbeats and the broker's
+# blocked/unblocked signals stay serviced under load; the remainder is
+# taken on the next pass, still ahead of fallback drain.
 _LIVE_PUBLISH_BATCH_MAX = 2_000
 
-# How long the rabbitmq thread blocks waiting for the next live message
-# when both the live queue and the fallback backlog are empty -- short
-# enough to keep pika's heartbeat serviced and to pick up the first
-# message after an idle period promptly, long enough not to busy-spin.
+# Poll timeout while idle -- keeps pika's heartbeat serviced without
+# busy-spinning.
 _RMQ_IDLE_POLL_SECONDS = 1.0
 
-# Backlog rows the rabbitmq thread drains per pass once the live queue is
-# observed empty. Batching the SQLite delete+commit (one per batch instead
-# of one per row) is what lifts post-outage catch-up above the roughly
-# one-commit-per-row ceiling. This is a live-latency budget, not a
-# throughput knob: a live message can now be delayed by up to this many
-# basic_publish calls during a large catch-up instead of exactly one, so
-# it is deliberately kept two orders of magnitude below
-# _LIVE_PUBLISH_BATCH_MAX. The live queue is still re-checked between
-# every batch (never mid-batch).
+# Backlog rows drained per pass once the live queue is empty. Batching the
+# delete+commit lifts catch-up throughput above one-commit-per-row. Kept
+# well below _LIVE_PUBLISH_BATCH_MAX so a live message is delayed by at
+# most this many publishes during catch-up, not more.
 _FALLBACK_DRAIN_BATCH_MAX = 100
 
 # ---------------------------------------------------------------------------
-# Rate tracker — RATE_WINDOW_SECONDS rolling window (copied from message
-# processor pattern)
+# Rate tracker
 # ---------------------------------------------------------------------------
 
 
@@ -147,24 +119,18 @@ class _RateTracker:
         self._timestamps: deque[float] = deque()
         self._lock = threading.Lock()
 
-        # Pure in-memory running totals for *this process's own lifetime* --
-        # record() only ever adds to them, never reads/writes Redis and
-        # never resets them for a real hour/day boundary (that happens in
-        # flush_to_redis(), from the telemetry thread, never here).
-        #
-        # hour_count/today_count feed the Redis-backed, cross-restart-
-        # durable counters core-health publishes: flush_to_redis() pushes
-        # their delta into Redis every telemetry tick. lifetime_count is
-        # different -- it is never written to Redis. It is a device-local
-        # running total the receiver publishes directly, so it resets to
-        # zero on every receiver restart by design (see receiver/README.md).
+        # record() only adds to these; flush_to_redis() (telemetry thread
+        # only) is what resets them on a real hour/day boundary.
+        # hour_count/today_count feed the Redis-backed cross-restart
+        # counters core-health publishes. lifetime_count is never written
+        # to Redis -- it's a device-local total that resets to zero on
+        # every receiver restart by design (see receiver/README.md).
         self.hour_count = 0
         self.today_count = 0
         self.lifetime_count = 0
-        # Bookkeeping only flush_to_redis() touches: the last value of each
-        # Redis-flushed counter already pushed (so it can send just the
-        # delta), and the hour/day "bucket" (floored to the boundary) each
-        # counter was last flushed against, to detect a real rollover.
+        # Bookkeeping for flush_to_redis(): last value flushed per counter
+        # (to send only the delta) and each counter's current hour/day
+        # bucket, to detect a real rollover.
         self._flushed_hour = 0
         self._flushed_today = 0
         self._hour_bucket: Optional[datetime] = None
@@ -196,15 +162,10 @@ class _RateTracker:
         key_fn: Callable[[str], str],
         now: datetime,
     ) -> None:
-        """Pushes the hour/today delta accumulated since the last flush
-        into Redis (via incr_period_counter.lua), and resets
-        hour_count/today_count locally on an actually-observed UTC
-        hour/midnight rollover. lifetime_count is never flushed -- it is a
-        device-local total the receiver publishes directly.
-
-        Called only from the receiver's telemetry thread -- never the
-        per-message hot path record() runs on.
-        """
+        """Push the hour/today delta since the last flush into Redis,
+        resetting hour_count/today_count locally on an observed UTC
+        hour/midnight rollover. lifetime_count is never flushed. Called
+        only from the telemetry thread, never the record() hot path."""
         hour_bucket = now.replace(minute=0, second=0, microsecond=0)
         day_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -214,16 +175,12 @@ class _RateTracker:
             if self._day_bucket is None:
                 self._day_bucket = day_bucket
 
-            # On a detected rollover, the small remainder of messages
-            # already counted toward the now-closed period is dropped
-            # rather than flushed -- attributing it to the old bucket risks
-            # computing an EXPIREAT that's already in the past (if Redis's
-            # own TTL beat this flush to the real boundary, that would
-            # delete the key the instant it's written), and attributing it
-            # to the new bucket would double-count messages that were
-            # already local-only. Bounded to at most one flush cycle's
-            # worth (MQTT_PUBLISH_INTERVAL_SECONDS) each real rollover --
-            # see receiver/README.md.
+            # On a rollover, drop the small remainder already counted
+            # toward the closed period rather than flush it -- attributing
+            # it to the old bucket risks an EXPIREAT already in the past;
+            # to the new bucket would double-count. Bounded to at most one
+            # flush interval's worth each real rollover (see
+            # receiver/README.md).
             if hour_bucket != self._hour_bucket:
                 hour_delta = 0
                 self.hour_count = 0
@@ -255,13 +212,8 @@ class _RateTracker:
 
 
 def _load_or_create_receiver_id(data_dir: str) -> str:
-    """Load this receiver's persisted identity, generating one on first run.
-
-    Unlike a manually-set RECEIVER_ID, this needs no operator input and
-    can't collide between instances -- generated once and reused across
-    restarts so MQTT topics/HA identifiers stay stable for this container's
-    whole lifetime regardless of how many times its display name changes.
-    """
+    """Load the persisted receiver identity, generating one on first run
+    so restarts keep the same MQTT topics/HA identifiers."""
     path = os.path.join(data_dir, "receiver_id")
     if os.path.exists(path):
         existing = open(path).read().strip()
@@ -276,17 +228,9 @@ def _load_or_create_receiver_id(data_dir: str) -> str:
 def _enable_tcp_keepalive(sock: socket.socket) -> None:
     """Enable TCP keepalive with tuned timers on a source socket.
 
-    Called for every source connection (1090 and 978 alike) immediately
-    after it opens. ``SO_KEEPALIVE`` is the load-bearing part and is
-    portable. The three timer options are Linux-only: on macOS (where the
-    dev test suite runs) the names don't exist, so each is ``hasattr``
-    guarded; and even where a name exists it is only valid on a real TCP
-    socket, so the call is wrapped in ``try``/``except OSError`` -- a
-    non-TCP socket (a unit test's ``socketpair``) or an unusual platform
-    degrades to "keepalive on, default timers" rather than raising. A real
-    source socket from ``create_connection`` on a Linux container always
-    accepts them. See ``shared/timing.py``'s ``TCP_KEEPIDLE_SECONDS`` block
-    for the timing rationale.
+    SO_KEEPALIVE is portable; the three timer options are Linux-only, so
+    each is hasattr-guarded (absent on macOS, where tests run) and wrapped
+    in try/except OSError, since a non-TCP test socket rejects them too.
     """
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     for _name, _value in (
@@ -305,10 +249,8 @@ def _enable_tcp_keepalive(sock: socket.socket) -> None:
 def _sanitize_mqtt_id(value: str) -> str:
     """Replace any character outside [a-zA-Z0-9_-] with '-'.
 
-    Home Assistant discovery requires object_id/unique_id to match
-    ^[a-zA-Z0-9_-]+$. Applied wherever a source's host/port is turned into
-    a topic segment or identifier, so the runtime state topic and the
-    discovery topic/object_id/unique_id use the identical sanitized name.
+    Home Assistant discovery requires object_id/unique_id to match this
+    pattern; used wherever a source host/port becomes a topic/id segment.
     """
     return re.sub(r"[^a-zA-Z0-9_-]", "-", value)
 
@@ -324,42 +266,31 @@ class Receiver:
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
 
-        # Per-connection rate trackers keyed by (host, port) -- not the
-        # source tag, since more than one connection can share a tag (e.g.
-        # two EXTERNAL feeds) and needs independent tracking rather than a
-        # summed rate.
+        # Keyed by (host, port), not source tag -- multiple connections
+        # can share a tag (e.g. two EXTERNAL feeds) and need independent
+        # tracking.
         self._rates: dict[tuple[str, int], _RateTracker] = {}
-        # Live up/down state per connection -- True only while the TCP
-        # socket to that connection's readsb instance is open.
+        # True only while this connection's TCP socket is open.
         self._connected: dict[tuple[str, int], bool] = {}
-        # Count of drop-and-retry cycles per connection -- distinguishes a
-        # rock-solid connection from one that's currently "Connected: True"
-        # but flapping every few minutes. Reset to 0 once a reconnection has
-        # held continuously for RECONNECT_COUNT_RESET_AGE_SECONDS, so the
-        # metric tracks a current flapping episode rather than accumulating
-        # forever -- see _source_loop.
+        # Drop-and-retry cycles per connection, so a flapping connection is
+        # distinguishable from a stable one. Reset once a connection holds
+        # for RECONNECT_COUNT_RESET_AGE_SECONDS (see _source_loop).
         self._reconnect_counts: dict[tuple[str, int], int] = {}
-        # time.monotonic() when each connection last came up, or None if it
-        # is not currently up. Only used to decide whether an uptime was
-        # long enough to reset _reconnect_counts on the next drop.
+        # time.monotonic() when a connection came up, or None; used only
+        # to decide whether to reset _reconnect_counts on the next drop.
         self._connected_since: dict[tuple[str, int], Optional[float]] = {}
-        # UTC ISO-8601 timestamp of the last message processed for each
-        # connection -- None until the first one arrives, so a low-traffic
-        # feed's silence is visible directly instead of only inferred from
-        # its rate having decayed to zero.
+        # ISO-8601 timestamp of the last message per connection, or None;
+        # lets a silent feed be seen directly rather than inferred from a
+        # decayed rate.
         self._last_message_at: dict[tuple[str, int], Optional[str]] = {}
 
-        # Redis is entirely optional for the receiver -- an unset
-        # REDIS_HOST leaves this None and none of the identity-claim/
-        # heartbeat/period-counter/core-health-registration behavior below
-        # runs at all, matching the receiver's original behavior exactly
-        # (random-UUID identity, no Redis interaction).
+        # Optional: an unset REDIS_HOST leaves this None and skips all
+        # identity-claim/heartbeat/core-health-registration behavior
+        # below, preserving the original random-UUID, no-Redis behavior.
         rc = config.get("redis") or {}
         self._redis = build_redis_client(rc) if rc.get("host") else None
-        # Lazily script_load()'d on first flush rather than here -- loading
-        # it during __init__ would be a Redis call on every startup, even
-        # the "local identity already persisted, zero Redis calls" case
-        # below.
+        # Lazily script_load()'d on first flush, not here, so startup
+        # makes zero Redis calls when identity is already persisted.
         self._incr_period_counter_sha: Optional[str] = None
 
         for src in config.get("sources", []):
@@ -375,12 +306,11 @@ class Receiver:
         self._fallback = FallbackQueue(os.path.join(DATA_DIR, "queue.db"))
 
         self._id = self._resolve_identity()
-        # Optional human-friendly label for HA name/model/sensor labels --
-        # when Redis is configured, this is the same value as self._id
-        # (the claimed name IS the identity now); in the legacy no-Redis
-        # path self._id is a UUID and this stays the only human-readable
-        # label. self._id stays the stable identifier used for topic
-        # paths/unique_id regardless of whether this is set or changes.
+        # Human-friendly label for HA name/model/sensor labels. When Redis
+        # is configured this equals self._id; in the legacy no-Redis path
+        # self._id is a UUID and this is the only human-readable label.
+        # self._id remains the stable identifier for topic paths/
+        # unique_id either way.
         self._name = config.get("name")
         self._version = os.environ.get("VERSION", "dev")
 
@@ -390,37 +320,30 @@ class Receiver:
         self._rmq_connected = False
         self._rmq_lock = threading.Lock()
 
-        # The single ordering gate (#1956): clear while caught up, set the
-        # instant a message can't go straight out (live queue full, or a
-        # publish failed). While set, _enqueue_live() routes every new
-        # message to the overflow queue instead of the live queue, so the
-        # live queue can never be topped up with content newer than
-        # whatever is still waiting in queue.db -- see _enqueue_live() and
-        # _rmq_publish_loop(). A plain threading.Event rather than a bool:
-        # cheap to read on the hot path (is_set()), and set()/clear() from
-        # either the source threads or the rabbitmq thread need no
-        # additional locking of their own.
+        # Ordering gate: set as soon as a message can't go out immediately
+        # (queue full or a publish failed). While set, new messages route
+        # to the overflow queue only, so the live queue can't hold
+        # anything newer than what's still waiting in queue.db
+        # (_enqueue_live, _rmq_publish_loop enforce this). A
+        # threading.Event, not a bool, so is_set()/set()/clear() need no
+        # additional locking from either the source or rabbitmq threads.
         self._backlogged = threading.Event()
-        # Informational only -- never consulted for routing. Snapshot of
-        # "how old was the last message this thread published", refreshed
-        # each time the rabbitmq thread actually publishes something (live
-        # or backlog). Trends to ~0 while caught up; grows while draining
-        # an old backlog. Exposed via telemetry (see _publish_telemetry).
+        # Informational only -- age of the last message actually
+        # published, refreshed on each publish (live or backlog); exposed
+        # via telemetry.
         self._staleness_seconds: float = 0.0
 
-        # Live messages parsed off the source sockets, waiting for the
-        # "rabbitmq" thread to publish them -- see _LIVE_QUEUE_MAXSIZE.
-        # Each item carries the message's own received_at alongside
-        # (routing_key, payload) purely so the rabbitmq thread can compute
-        # _staleness_seconds without re-parsing the JSON payload.
+        # Parsed messages waiting for the rabbitmq thread to publish (see
+        # _LIVE_QUEUE_MAXSIZE). Each item carries received_at so the
+        # rabbitmq thread can compute staleness without re-parsing the
+        # payload.
         self._live_queue: queue.Queue[tuple[str, str, float]] = queue.Queue(
             maxsize=_LIVE_QUEUE_MAXSIZE
         )
 
-        # Overflow -- fed either when _live_queue is full, or whenever
-        # self._backlogged is set (see _enqueue_live) -- waiting for the
-        # "overflow-writer" thread to batch it into the SQLite fallback --
-        # see _OVERFLOW_QUEUE_MAXSIZE.
+        # Fed once _live_queue is full, or while self._backlogged is set
+        # (see _enqueue_live); waiting for the overflow-writer thread to
+        # batch into the SQLite fallback (see _OVERFLOW_QUEUE_MAXSIZE).
         self._overflow_queue: queue.Queue[tuple[str, str, float]] = queue.Queue(
             maxsize=_OVERFLOW_QUEUE_MAXSIZE
         )
@@ -430,29 +353,20 @@ class Receiver:
         self._mqtt_connected = False
 
     # ------------------------------------------------------------------
-    # Identity -- claim-and-persist, mirroring
-    # _claim_message_processor_id()/_heartbeat_loop in
-    # message-processor/main.py exactly.
+    # Identity -- claim-and-persist, mirroring message-processor/main.py.
     # ------------------------------------------------------------------
 
     def _resolve_identity(self) -> str:
-        """Three-case startup identity resolution:
+        """Resolve this receiver's identity at startup.
 
-        1. Local identity already persisted ({data_dir}/receiver_id, from
-           a prior successful claim, or the legacy UUID scheme) -- use it
-           immediately, zero Redis calls. Works with Redis/RabbitMQ both
-           unreachable, and is every boot after the first.
-        2. No local identity, Redis not configured at all (REDIS_HOST
-           unset) -- fall back to the original random-UUID scheme
-           unconditionally; none of the Redis-backed behavior applies.
-        3. No local identity, Redis configured:
-           a. reachable -- SET NX the configured RECEIVER_NAME; success
-              persists it locally forever after. Failure (name already
-              claimed by another live receiver) is a critical + exit.
-           b. unreachable -- critical + exit. Deliberately not a
-              fallback-and-proceed case: first-time identity establishment
-              requires Redis reachability to safely verify uniqueness.
-              Every later boot is case 1.
+        1. Local identity already persisted -- use it, zero Redis calls.
+        2. No local identity, Redis unconfigured -- fall back to a
+           random UUID.
+        3. No local identity, Redis configured -- SET NX the configured
+           RECEIVER_NAME; success persists it locally. Any failure (name
+           already claimed, or Redis unreachable) is a critical + exit,
+           since first-time identity establishment needs Redis to verify
+           uniqueness. Every later boot is case 1.
         """
         path = os.path.join(DATA_DIR, "receiver_id")
         if os.path.exists(path):
@@ -493,21 +407,12 @@ class Receiver:
         return configured_name
 
     def _register_with_core_health(self) -> None:
-        """Adds/refreshes this receiver's entry in core-health's small
-        discovery index: an idempotent SADD of the
-        receiver's name into the shared index SET, plus a per-receiver
-        JSON registration entry (just the source list -- host/port/source
-        triples) TTL'd the same as the heartbeat. Called once at the end
-        of every startup (whichever identity-resolution case ran) and
-        again on every subsequent heartbeat tick, so a receiver that
-        resumed an already-persisted identity re-registers itself just as
-        promptly as a freshly-claimed one. Lets core-health enumerate live
-        receivers via SMEMBERS + direct key reads instead of a keyspace
-        SCAN.
-
-        Fails soft -- this is best-effort discovery plumbing, never a
-        reason to affect the receiver's own startup or heartbeat.
-        """
+        """Add/refresh this receiver's entry in core-health's discovery
+        index: an idempotent SADD into the index SET plus a per-receiver
+        registration entry (source list), TTL'd like the heartbeat.
+        Called at startup and on every heartbeat tick so a resumed
+        identity re-registers as promptly as a freshly-claimed one.
+        Fails soft -- best-effort discovery plumbing only."""
         if self._redis is None:
             return
         try:
@@ -521,13 +426,10 @@ class Receiver:
             pass
 
     def _heartbeat_loop(self) -> None:
-        """Mirrors message-processor's _heartbeat_loop exactly: sleep
-        HEARTBEAT_INTERVAL_SECONDS, then refresh (unconditional EXPIRE,
-        never a second SET NX) the claim key's TTL to HEARTBEAT_TTL_SECONDS,
-        fail-soft on any Redis error. Also refreshes the core-health
-        registration on the same cadence -- this is what re-registers a
-        receiver that resumed an already-persisted identity (case 1 above)
-        without ever calling _register_with_core_health() at claim time."""
+        """Mirrors message-processor's _heartbeat_loop: refresh the claim
+        key's TTL on each tick (fail-soft), and refresh the core-health
+        registration -- this is what re-registers a receiver that resumed
+        a persisted identity."""
         while not self._shutdown.is_set():
             time.sleep(HEARTBEAT_INTERVAL_SECONDS)
             try:
@@ -553,28 +455,24 @@ class Receiver:
                 target=self._heartbeat_loop, daemon=True, name="heartbeat"
             ).start()
 
-        # Start RabbitMQ connection in a background thread
         threading.Thread(
             target=self._rmq_loop, daemon=True, name="rabbitmq"
         ).start()
 
-        # Start the overflow-writer -- batches live-queue overflow into the
-        # SQLite fallback so that write never lands on a source thread.
+        # Batches live-queue overflow into the SQLite fallback off the
+        # source threads.
         threading.Thread(
             target=self._overflow_writer_loop, daemon=True, name="overflow-writer"
         ).start()
 
-        # Start telemetry loop
         threading.Thread(
             target=self._telemetry_loop, daemon=True, name="telemetry"
         ).start()
 
-        # Start healthcheck heartbeat loop
         threading.Thread(
             target=self._healthcheck_loop, daemon=True, name="healthcheck"
         ).start()
 
-        # One thread per source
         source_threads = []
         for src_cfg in self._cfg.get("sources", []):
             t = threading.Thread(
@@ -586,7 +484,6 @@ class Receiver:
             t.start()
             source_threads.append(t)
 
-        # Block main thread until shutdown
         self._shutdown.wait()
 
     def _setup_logging(self) -> None:
@@ -635,21 +532,12 @@ class Receiver:
                 )
 
             if not self._shutdown.is_set():
-                # Reaching here always means a drop-and-retry: either the
-                # try block above raised (OSError/other exception) or the
-                # stream reader returned via its closed-connection break --
-                # a clean shutdown skips this entirely via the is_set() check.
-                #
-                # If the connection that just dropped had held continuously
-                # for at least RECONNECT_COUNT_RESET_AGE_SECONDS, the
-                # earlier flap history is stale -- zero the count so the
-                # increment below starts a fresh episode at 1. A connection
-                # still flapping (fail, wait RECONNECT_BACKOFF_SECONDS,
-                # retry, drop again) never accumulates that much uptime and
-                # keeps counting up. Clear _connected_since either way, so a
-                # cycle that fails inside socket.create_connection itself --
-                # never reaching the success branch -- can't reuse a stale
-                # timestamp from a much older connection.
+                # A drop-and-retry: reset the flap count only if the
+                # dropped connection held for RECONNECT_COUNT_RESET_AGE_SECONDS
+                # -- a connection still flapping never accumulates that much
+                # uptime. Clear _connected_since regardless, so a cycle that
+                # fails before connecting can't reuse a stale timestamp from
+                # an older connection.
                 up_since = self._connected_since.get(key)
                 if (
                     up_since is not None
@@ -745,9 +633,9 @@ class Receiver:
                         raw_hex, icao_hex, received_at, source, rate_tracker, (host, port)
                     )
                 else:
-                    # !-preambles and blank lines are routine, expected
-                    # input -- only count/log lines that looked like real
-                    # data but still failed to parse.
+                    # !-preambles and blank lines are routine -- only
+                    # count lines that looked like real data but still
+                    # failed to parse.
                     stripped = decoded_line.strip()
                     if stripped and not stripped.startswith("!"):
                         logger.debug(
@@ -771,7 +659,6 @@ class Receiver:
         if not icao_hex:
             return  # Bad or unrecognisable message — discard silently
 
-        # Normalise to 6-char uppercase
         icao_hex = icao_hex.upper()
         if len(icao_hex) != 6:
             return
@@ -817,31 +704,15 @@ class Receiver:
         self._enqueue_live(icao_hex, payload, received_at)
 
     def _enqueue_live(self, routing_key: str, payload: str, received_at: float) -> None:
-        """Hand a parsed message off for publishing and return at once --
-        the source thread never blocks on RabbitMQ and never does a disk
-        write.
+        """Hand a message off for publishing without blocking or
+        touching disk.
 
-        Routing is gated on self._backlogged, not merely on whether the
-        live queue happens to be full right now (#1956): while a real
-        backlog exists, EVERY new message -- no matter how much room the
-        live queue has -- goes to the overflow queue instead, so it can
-        never be published ahead of an older row still sitting in
-        queue.db. This is what makes it safe for the rabbitmq thread to
-        always drain the live queue first (see _rmq_publish_loop): once
-        backlogged, nothing new can land there, so it can only ever hold
-        content that predates the backlog.
-
-        The live queue is only ever the target while backlogged is clear.
-        If it's unexpectedly full at that moment (the broker has been
-        unreachable long enough that even that buffer backed up, or
-        publishing simply can't keep pace), that's the trigger that SETS
-        backlogged -- from the very next message on, every source thread
-        follows the overflow path instead, until the rabbitmq thread
-        confirms a full drain.
-
-        Either way, if the overflow queue is ALSO full, this takes a
-        direct synchronous fallback write -- the last-resort pressure
-        valve, not the path a normal outage uses."""
+        Gated on self._backlogged, not just on live-queue fullness: while
+        backlogged, every new message goes to the overflow queue
+        regardless of live-queue space, so nothing newer is published
+        ahead of an older row still in queue.db. A full live queue while
+        not yet backlogged is what SETS backlogged. If the overflow
+        queue is also full, falls back to a direct synchronous write."""
         if not self._backlogged.is_set():
             try:
                 self._live_queue.put_nowait((routing_key, payload, received_at))
@@ -854,12 +725,10 @@ class Receiver:
             self._fallback_put(routing_key, payload, received_at)
 
     def _overflow_writer_loop(self) -> None:
-        """Sole consumer of self._overflow_queue. Batches overflow messages
-        into the durable SQLite fallback with one commit per pass, so the
-        fsync-class write stays off every socket-read thread -- the disk
-        analogue of what the rabbitmq thread does for the live queue. On
-        shutdown it makes one final pass so nothing buffered in RAM is
-        dropped on a clean stop."""
+        """Sole consumer of self._overflow_queue; batches messages into
+        the durable SQLite fallback with one commit per pass, keeping
+        fsync-class writes off the socket-read threads. Makes one final
+        pass on shutdown."""
         while not self._shutdown.is_set():
             try:
                 first = self._overflow_queue.get(
@@ -872,10 +741,9 @@ class Receiver:
         self._flush_overflow_batch(None)
 
     def _flush_overflow_batch(self, first: Optional[tuple[str, str, float]]) -> None:
-        """Collect up to _OVERFLOW_WRITE_BATCH_MAX queued overflow messages
-        (starting with `first`, if the caller already dequeued one) and
-        persist them in a single FallbackQueue.put_many() -- one commit for
-        the whole batch."""
+        """Collect up to _OVERFLOW_WRITE_BATCH_MAX queued messages
+        (starting with `first`, if already dequeued) and persist them in
+        one FallbackQueue.put_many() call."""
         batch: list[tuple[str, str, float]] = []
         if first is not None:
             batch.append(first)
@@ -910,20 +778,18 @@ class Receiver:
             port=rc.get("port", 5672),
             credentials=creds,
             heartbeat=60,
-            # The publishing thread calls basic_publish directly; a broker
-            # resource alarm (disk-free / high memory) blocks publishers
-            # while leaving the TCP connection up, so without this a publish
-            # would wedge forever. pika tears the connection down when the
-            # blocked state outlasts this, and _rmq_loop reconnects.
+            # A broker resource alarm (disk-free/high memory) blocks
+            # publishers while leaving the TCP connection up; without this
+            # a publish would wedge forever. pika drops the connection once
+            # blocked exceeds this, and _rmq_loop reconnects.
             blocked_connection_timeout=RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
         )
 
     def _rmq_loop(self) -> None:
-        """Own the RabbitMQ connection and be the *only* thread that ever
-        touches its channel. Source threads drop parsed messages into
-        self._live_queue and never wait on the broker; this loop publishes
-        them, and only advances the SQLite fallback backlog when nothing is
-        waiting to go out live. Reconnects on any failure."""
+        """Own the RabbitMQ connection -- the only thread that touches
+        its channel. Source threads never wait on the broker; this loop
+        publishes queued messages and only advances the SQLite backlog
+        once nothing is waiting to go out live. Reconnects on failure."""
         while not self._shutdown.is_set():
             conn = None
             try:
@@ -966,24 +832,18 @@ class Receiver:
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
     def _rmq_publish_loop(self, conn: pika.BlockingConnection, ch) -> None:
-        """Inner loop while a connection is up: pump pika, drain whatever
-        the live queue already holds, then -- only once it's observed
-        empty -- advance the fallback backlog by one bounded batch
-        (_FALLBACK_DRAIN_BATCH_MAX rows). Returns (so _rmq_loop reconnects)
-        on shutdown or any publish/connection failure.
-
-        Ordering is guaranteed at the enqueue side (_enqueue_live), not
-        here (#1956): while self._backlogged is set, every new message
-        routes to the overflow queue instead of the live queue, so the
-        live queue can only ever hold content that predates the backlog --
-        nothing newer can be topped up into it while an older row is still
-        waiting in queue.db. That invariant is what makes it safe to drain
-        the live queue first on every pass, exactly as before this fix."""
+        """Inner loop while connected: pump pika, drain the live queue,
+        then -- only once it's empty -- advance the fallback backlog by
+        one bounded batch (_FALLBACK_DRAIN_BATCH_MAX rows). Returns (so
+        _rmq_loop reconnects) on shutdown or any publish/connection
+        failure. Draining the live queue first is safe because
+        _enqueue_live guarantees it never holds content newer than the
+        backlog while backlogged."""
         while not self._shutdown.is_set():
-            # A publish failure latches _rmq_connected False without the
-            # connection necessarily raising (broker blocking publishers on
-            # a resource alarm). Reconnect to re-validate rather than
-            # looping forever routing everything to the fallback.
+            # A publish failure can latch _rmq_connected False without
+            # the connection raising (a resource-alarm-blocked broker).
+            # Reconnect to re-validate rather than loop forever routing
+            # to the fallback.
             with self._rmq_lock:
                 if not self._rmq_connected:
                     logger.warning(
@@ -1007,28 +867,24 @@ class Receiver:
             if published_live:
                 continue
 
-            # Live queue observed empty this pass -- move the backlog
-            # forward by one bounded batch, then loop straight back to
-            # re-check the live queue before the next batch.
+            # Live queue empty this pass -- advance the backlog by one
+            # bounded batch, then loop back to re-check the live queue.
             step = self._fallback.drain_batch(
                 lambda wrapped: self._publish_fallback_row(ch, wrapped),
                 _FALLBACK_DRAIN_BATCH_MAX,
             )
             if step == DRAIN_EMPTY and self._backlogged.is_set():
-                # Confirmed empty on both sides in the same pass (the live
-                # queue was observed empty above, and this SELECT just
-                # found zero rows) -- only now is it safe to let new
-                # messages resume entering the live queue directly.
-                # Clearing on anything short of a confirmed empty drain
-                # (e.g. "queue.db is merely small") would reopen the exact
-                # ordering bug this flag exists to prevent (#1956).
+                # Confirmed empty on both sides this pass -- only now is
+                # it safe to let new messages resume entering the live
+                # queue directly. Clearing on anything less than a
+                # confirmed empty drain would reopen the ordering bug
+                # this flag exists to prevent.
                 self._backlogged.clear()
             if step == DRAIN_PROGRESSED:
                 continue
 
-            # A backlog row that failed to publish latches the connection
-            # unhealthy -- go straight back to the top to reconnect rather
-            # than idling first.
+            # A failed backlog row latches the connection unhealthy --
+            # reconnect immediately rather than idling first.
             with self._rmq_lock:
                 if not self._rmq_connected:
                     continue
@@ -1037,17 +893,14 @@ class Receiver:
                 return
 
             if self._backlogged.is_set():
-                # The head-of-queue backlog row is in its retry cooldown --
-                # nothing will arrive on the live queue right now (see
-                # _enqueue_live), so there is nothing useful to block on
-                # there. Wait rather than busy-spinning, but wake often
-                # enough to keep pika's heartbeat serviced.
+                # The head-of-queue row is in retry cooldown and
+                # _enqueue_live won't feed the live queue while
+                # backlogged -- wait rather than busy-spin.
                 time.sleep(_RMQ_IDLE_POLL_SECONDS)
                 continue
 
-            # Fully idle: nothing live, nothing backlogged. Wait for the
-            # next live message rather than busy-spinning, but wake often
-            # enough to keep pika's heartbeat serviced.
+            # Fully idle -- wait for the next live message rather than
+            # busy-spin.
             try:
                 routing_key, payload, received_at = self._live_queue.get(
                     timeout=_RMQ_IDLE_POLL_SECONDS
@@ -1057,11 +910,10 @@ class Receiver:
             self._publish_one(ch, routing_key, payload, received_at)
 
     def _publish_live_batch(self, ch) -> bool:
-        """Publish up to _LIVE_PUBLISH_BATCH_MAX queued live messages,
-        oldest-first. Returns True if at least one was dequeued this call
-        (whether or not it published cleanly -- a failure latches
-        _rmq_connected False, which the caller checks). Stops early on the
-        first failure so the caller can reconnect promptly."""
+        """Publish up to _LIVE_PUBLISH_BATCH_MAX queued messages, oldest
+        first. Returns True if at least one was dequeued, whether or not
+        it published cleanly; stops on the first failure so the caller
+        can reconnect."""
         published = 0
         while published < _LIVE_PUBLISH_BATCH_MAX:
             try:
@@ -1074,11 +926,9 @@ class Receiver:
         return published > 0
 
     def _publish_one(self, ch, routing_key: str, payload: str, received_at: float) -> bool:
-        """basic_publish one message directly on the rabbitmq thread. On
-        failure, latch the connection unhealthy, set self._backlogged (this
-        is one of the two triggers -- see _enqueue_live), and persist the
-        message to the SQLite fallback so it is never dropped. Returns
-        False on failure."""
+        """basic_publish one message on the rabbitmq thread. On failure,
+        latch the connection unhealthy, set self._backlogged, and persist
+        to the SQLite fallback so the message is never dropped."""
         try:
             ch.basic_publish(
                 exchange=ADSB_EXCHANGE,
@@ -1098,9 +948,8 @@ class Receiver:
 
     def _publish_fallback_row(self, ch, wrapped: str) -> None:
         """process_fn for FallbackQueue.drain_batch: unwrap the stored
-        {routing_key, payload, received_at} and publish it on the rabbitmq
-        thread. Raises on failure so the row stays queued (drain_batch owns
-        the retry/dead-letter accounting and stops the batch here) and
+        {routing_key, payload, received_at} and publish it. Raises on
+        failure so drain_batch keeps the row queued and retries, and
         latches the connection unhealthy so the publish loop reconnects."""
         item = json.loads(wrapped)
         try:
@@ -1110,10 +959,9 @@ class Receiver:
                 body=item["payload"].encode(),
                 properties=pika.BasicProperties(delivery_mode=2),
             )
-            # .get(), not [...]: a row already sitting in queue.db from
-            # before this field existed (mid-upgrade) has no "received_at"
-            # -- skip the staleness update for that one row rather than
-            # raising and getting stuck retrying it forever.
+            # .get(), not [...]: a pre-upgrade row in queue.db may lack
+            # "received_at" -- skip the staleness update rather than
+            # raise and retry forever.
             received_at = item.get("received_at")
             if received_at is not None:
                 self._staleness_seconds = time.time() - received_at
@@ -1123,15 +971,9 @@ class Receiver:
             raise
 
     def _fallback_put(self, routing_key: str, payload: str, received_at: float) -> None:
-        """FallbackQueue (shared/fallback_queue.py) is payload-only -- it
-        has no routing_key column of its own, unlike this component's
-        previous hand-rolled fallback queue. Persisting the routing key
-        alongside the payload keeps the drain path identical to the live
-        publish path, with no need to re-parse a stored message body to
-        work out where it was going -- so it's wrapped into one JSON string
-        here and unwrapped again in _publish_fallback_row. received_at
-        rides along too, purely for the informational staleness signal
-        (see _staleness_seconds) -- never consulted for ordering."""
+        """FallbackQueue is payload-only, with no routing_key column, so
+        the routing key and received_at are wrapped into one JSON string
+        here and unwrapped again in _publish_fallback_row."""
         self._fallback.put(json.dumps(
             {"routing_key": routing_key, "payload": payload, "received_at": received_at}
         ))
@@ -1177,27 +1019,23 @@ class Receiver:
 
     def _telemetry_loop(self) -> None:
         while not self._shutdown.is_set():
-            # Purely time-based: telemetry publishes on a fixed cadence,
-            # never early on a message-count trigger. Waiting on _shutdown
-            # rather than sleeping lets the loop exit promptly on stop.
+            # Fixed cadence, never message-count-triggered. Waiting on
+            # _shutdown (not sleep) lets this exit promptly on stop.
             self._shutdown.wait(timeout=MQTT_PUBLISH_INTERVAL_SECONDS)
 
             if self._redis is not None:
                 self._flush_period_counters()
 
-            # Draining the fallback backlog is intrinsic to _rmq_publish_loop
-            # -- it works a backlog row whenever no live message is waiting,
-            # every iteration, for as long as the connection holds -- so
-            # there is no separate drain trigger to fire here.
+            # Backlog draining happens inside _rmq_publish_loop already --
+            # no separate trigger needed here.
             self._publish_telemetry()
 
     def _flush_period_counters(self) -> None:
-        """Pushes each connection's accumulated message count into Redis.
-        Lazily loads incr_period_counter.lua on first use
-        rather than at __init__ time -- see the comment on
-        self._incr_period_counter_sha. Fails soft: a Redis hiccup here
-        just means this cycle's counts stay pending and get folded into
-        the next successful flush."""
+        """Push each connection's accumulated message count into Redis.
+        Lazily loads incr_period_counter.lua on first use rather than at
+        __init__, so startup makes no Redis call when identity is already
+        persisted locally. Fails soft: a Redis hiccup just defers this
+        cycle's counts."""
         if self._incr_period_counter_sha is None:
             try:
                 lua_path = (
@@ -1245,12 +1083,9 @@ class Receiver:
                 str(round(tracker.rate(), 2)),
                 retain=True,
             )
-            # Device-local running total for this process's lifetime,
-            # sourced straight from the in-memory counter and never from
-            # Redis -- so it resets to zero on every receiver restart, the
-            # same as messages_*_per_second above. hour/today are the ones
-            # that stay Redis-backed and cross-restart-durable, published
-            # solely by core-health.
+            # In-memory only, resets on every restart -- hour/today are
+            # the Redis-backed, cross-restart counters, published solely
+            # by core-health.
             self._mqtt.publish(
                 f"{base}/messages_{mqtt_host}_{mqtt_port}_total_lifetime",
                 str(tracker.lifetime_count),
@@ -1273,17 +1108,11 @@ class Receiver:
                     json.dumps({"last_message_received": last_message_at}),
                     retain=True,
                 )
-            # messages_*_total_{hour,today} are NOT published here: core-health
-            # owns those two topics, publishing the cross-restart-durable
-            # Redis counters this receiver's flush feeds. With REDIS_HOST
-            # unset there is no core-health path, so those two sensors simply
-            # don't exist -- see _RateTracker's docstring and
-            # receiver/README.md.
-        # Every backlog an operator cares about: the durable SQLite queue
-        # plus whatever is still buffered in memory -- the live queue
-        # waiting on the rabbitmq thread and the overflow queue waiting on
-        # the overflow-writer -- so a broker blip absorbed entirely in RAM
-        # is still visible rather than reading as zero.
+            # messages_*_total_{hour,today} are published by core-health,
+            # not here -- with REDIS_HOST unset, those sensors simply
+            # don't exist.
+        # Includes in-memory queues, not just the durable SQLite depth,
+        # so a broker blip absorbed entirely in RAM is still visible.
         local_queue_depth = (
             self._fallback.depth()
             + self._live_queue.qsize()
@@ -1294,10 +1123,9 @@ class Receiver:
             f"{base}/dead_letter_queue_depth", str(self._fallback.dead_letter_depth()), retain=True
         )
         self._mqtt.publish(f"{base}/rabbitmq_connected", str(rmq_connected), retain=True)
-        # #1956: informational only -- how old was the last message the
-        # rabbitmq thread actually published, as of its most recent
-        # publish. Near zero while caught up; grows while draining a
-        # backlog. Never consulted for routing (see self._backlogged).
+        # Informational only -- age of the last message actually
+        # published. Near zero while caught up; grows while draining a
+        # backlog.
         self._mqtt.publish(
             f"{base}/backlog_age_seconds", str(round(self._staleness_seconds, 1)), retain=True
         )
@@ -1307,10 +1135,8 @@ class Receiver:
     # ------------------------------------------------------------------
 
     def _healthcheck_loop(self) -> None:
-        """Touch a heartbeat file while genuinely connected to both RabbitMQ
-        and MQTT, for Docker's HEALTHCHECK to check the mtime of. Runs at
-        HEALTHCHECK_INTERVAL_SECONDS, tuned against HEALTHCHECK_MAX_AGE_SECONDS
-        (see shared/timing.py) independent of the MQTT publish cadence."""
+        """Touch a heartbeat file while connected to both RabbitMQ and
+        MQTT, for Docker's HEALTHCHECK to check the mtime of."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
@@ -1332,9 +1158,8 @@ class Receiver:
             return
 
         rid = self._id
-        # The friendly name (when set) is what a human actually reads;
-        # rid stays the stable identifier underneath for topic paths/
-        # unique_id regardless of which label is shown here.
+        # `display` is the human-readable label; `rid` stays the stable
+        # identifier for topic paths/unique_id regardless.
         display = self._name or rid[:8]
         base = f"SkyFollower/receiver/{rid}/statistic"
         device = build_ha_device(
@@ -1350,12 +1175,10 @@ class Receiver:
             "payload_not_available": "OFFLINE",
         }
 
-        # Entity names deliberately omit `display` -- has_entity_name below
-        # tells HA to compose the displayed label from device.name + this
-        # short name instead. The {host}:{port} (and {source}, for the
-        # per-source Messages/sec sensor) qualifiers stay: unlike `display`,
-        # they distinguish between multiple sources on the same receiver
-        # and aren't redundant with the device block.
+        # Entity names omit `display` -- has_entity_name below has HA
+        # compose the label from device.name instead. The
+        # {host}:{port}/{source} qualifiers stay since they distinguish
+        # sources on the same receiver.
         sensors = []
         for src in self._cfg.get("sources", []):
             host, port, source = src["host"], src["port"], src["source"]
@@ -1368,16 +1191,14 @@ class Receiver:
                              f"{base}/{mqtt_host}_{mqtt_port}_connected_attributes"))
             sensors.append((f"{mqtt_host}_{mqtt_port}_reconnect_count", f"{host}:{port} Reconnect Count",
                              "mdi:refresh", "total_increasing", None, None))
-            # total_increasing is the correct HA semantics for a counter
-            # that legitimately resets on a device restart -- which this
-            # one does, being sourced from the in-memory counter, not Redis.
+            # total_increasing is correct HA semantics even though this
+            # counter resets on restart (in-memory, not Redis-backed).
             sensors.append((f"messages_{mqtt_host}_{mqtt_port}_total_lifetime",
                              f"{host}:{port} Messages Total (Lifetime)",
                              "mdi:counter", "total_increasing", None, None))
-            # No discovery for messages_*_total_{hour,today}: core-health is
-            # the sole publisher of both the value and the discovery config
-            # for those two, so the receiver doesn't compete for the same
-            # unique_id -- see _publish_telemetry.
+            # core-health is the sole publisher of
+            # messages_*_total_{hour,today} discovery configs too, so this
+            # doesn't compete for the same unique_id.
         sensors += [
             ("started_at", "Start Time",
              "mdi:clock-start", None, None, None),
